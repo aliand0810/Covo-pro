@@ -2580,6 +2580,8 @@
                                 📤 Importer CSV
                                 <input type="file" id="cat-import-file" accept=".csv" style="display:none;" onchange="importCatalogueCSV(this)">
                             </label>
+                            <button class="retours-btn retours-btn-outline" onclick="catPrintArticles()" title="Imprimer la liste des articles">🖨️ Imprimer</button>
+                            <button class="retours-btn retours-btn-outline" onclick="catExportPDF()" title="Télécharger en PDF" style="background:#e74c3c;color:white;border-color:#e74c3c;">📄 PDF</button>
                         </div>
                     </div>
 
@@ -3685,17 +3687,14 @@
     </div>
 
     <div id="cancel-ticket-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:9100; justify-content:center; align-items:center;">
-        <div style="background:var(--bg-card); padding:25px; border-radius:12px; width:380px; max-width:95vw; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+        <div style="background:var(--bg-card); padding:25px; border-radius:12px; width:400px; max-width:95vw; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
             <h3 style="margin:0 0 10px 0; color:#e74c3c;">🚫 Annuler le ticket ?</h3>
             <p id="cancel-ticket-info" style="font-size:0.88rem; color:var(--gray); margin-bottom:8px;"></p>
-            <div style="background:#fdf2f2; border:1px solid #f5c6cb; border-radius:6px; padding:10px; margin-bottom:15px;">
+            <div style="background:#fdf2f2; border:1px solid #f5c6cb; border-radius:6px; padding:10px; margin-bottom:10px;">
                 <p style="margin:0; font-size:0.82rem; color:#721c24;">⚠️ Cette action est irréversible. Le ticket sera marqué comme annulé et le total sera retiré des statistiques.</p>
             </div>
-            <div style="margin-bottom:15px;">
-                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem; color:var(--text-main);">
-                    <input type="checkbox" id="cancel-restock" checked style="width:16px; height:16px; cursor:pointer;">
-                    <span>🔄 Remettre les articles en stock</span>
-                </label>
+            <div style="background:#e8f5e9; border:1px solid #a5d6a7; border-radius:6px; padding:10px; margin-bottom:15px;">
+                <p style="margin:0; font-size:0.82rem; color:#2e7d32;">📋 Un retour client sera créé en <strong>attente d'approbation</strong>. Le stock ne sera remis à jour que lorsque vous <strong>approuverez</strong> le retour dans la section « Retours client ».</p>
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                 <button onclick="executeCancelTicket()" style="background:#e74c3c; color:white; padding:10px; border-radius:6px; font-weight:bold;">🚫 Confirmer annulation</button>
@@ -6020,6 +6019,11 @@ logout = function(skipConfirmation = false) {
             a.click();
             URL.revokeObjectURL(url);
         }
+
+        // ===== Upload du ticket sur Google Drive =====
+        if (typeof window._gdUploadTicket === 'function') {
+            window._gdUploadTicket(sale, receiptHTML);
+        }
     }
 
     // ===== PRODUITS =====
@@ -7141,19 +7145,10 @@ logout = function(skipConfirmation = false) {
             const text = await file.text();
             const data = JSON.parse(text);
 
-            // ===== APERÇU DU CONTENU AVANT CONFIRMATION =====
             const nbProduits = (data.products     || []).length;
-            const nbCats     = (data.categories   || []).length;
             const nbVentes   = (data.salesHistory || []).length;
-            const nbUsers    = (data.users        || []).length;
-            const hasNight   = data.nightTariffSettings ? '✅' : '—';
-            const hasPerms   = data.cashierPermissions  ? '✅' : '—';
-            const shopName   = data.appSettings && data.appSettings.shopName ? data.appSettings.shopName : '';
 
-            const confirmed = await showConfirmModal({ filename: file.name, shopName, nbProduits, nbCats, nbVentes, nbUsers, hasNight, hasPerms });
-            if (!confirmed) return;
-
-            // ===== RESTAURATION =====
+            // ===== RESTAURATION DIRECTE (sans modale de confirmation) =====
             products     = (data.products || []).map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
             categories   = data.categories  || ["Général"];
             users        = (data.users || users).map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
@@ -7176,7 +7171,7 @@ logout = function(skipConfirmation = false) {
             if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
             saveAll(); renderAll();
             closeImportModal();
-            showScanToast(`✅ Restauration réussie — ${nbProduits} produit(s), ${nbVentes} vente(s) chargée(s) !`, 'success');
+            showScanToast(`✅ Restauration réussie — ${nbProduits} produit(s), ${nbVentes} vente(s) chargée(s) depuis "${file.name}"`, 'success');
         } catch (err) { showScanToast('❌ Fichier invalide ou corrompu'); console.error(err); }
     }
 
@@ -7330,7 +7325,6 @@ logout = function(skipConfirmation = false) {
         const file = backupFilesData[index];
         if (!file) { showScanToast('❌ Fichier introuvable'); return; }
 
-        // Lecture du contenu pour l'aperçu
         let data;
         try {
             const text = await file.text();
@@ -7341,16 +7335,9 @@ logout = function(skipConfirmation = false) {
         }
 
         const nbProduits = (data.products     || []).length;
-        const nbCats     = (data.categories   || []).length;
         const nbVentes   = (data.salesHistory || []).length;
-        const nbUsers    = (data.users        || []).length;
-        const hasNight   = data.nightTariffSettings ? '✅' : '—';
-        const hasPerms   = data.cashierPermissions  ? '✅' : '—';
-        const shopName   = data.appSettings && data.appSettings.shopName ? data.appSettings.shopName : '';
 
-        const confirmed = await showConfirmModal({ filename: file.name, shopName, nbProduits, nbCats, nbVentes, nbUsers, hasNight, hasPerms });
-        if (!confirmed) return;
-
+        // ===== RESTAURATION DIRECTE (sans modale de confirmation) =====
         try {
             products     = (data.products || []).map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
             categories   = data.categories  || ["Général"];
@@ -7375,7 +7362,7 @@ logout = function(skipConfirmation = false) {
             saveAll();
             renderAll();
             closeImportModal();
-            showScanToast(`✅ Restauration réussie — ${nbProduits} produit(s), ${nbVentes} vente(s) chargée(s) !`, 'success');
+            showScanToast(`✅ Restauration réussie — ${nbProduits} produit(s), ${nbVentes} vente(s) chargée(s) depuis "${file.name}"`, 'success');
         } catch (err) {
             showScanToast('❌ Erreur lors de la restauration');
             console.error(err);
@@ -7485,21 +7472,14 @@ logout = function(skipConfirmation = false) {
     window.executeCancelTicket = function() {
         const sale = window._currentReceiptSale;
         if (!sale) return;
-        const restock = document.getElementById('cancel-restock').checked;
         const idx = salesHistory.findIndex(s => s.id === sale.id);
         if (idx === -1) { showScanToast('⚠️ Ticket introuvable'); return; }
         salesHistory[idx].cancelled = true;
         salesHistory[idx].cancelledAt = new Date().toISOString();
-        if (restock) {
-            sale.items.forEach(item => {
-                const product = products.find(p => p.id === item.id);
-                if (product) product.stock += item.quantity;
-            });
-            localStorage.setItem('covo_products', JSON.stringify(products));
-        }
+        // ⚠️ PAS de remise en stock — le stock sera restauré uniquement lors de l'approbation du retour client
         localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory));
 
-        // ===== PUSH VERS COVO_RETOURS =====
+        // ===== PUSH VERS COVO_RETOURS (avec items détaillés pour restauration future) =====
         try {
             const retoursList = JSON.parse(localStorage.getItem('covo_retours')) || [];
             const retourId = 'RC-' + String(retoursList.length + 1).padStart(3, '0');
@@ -7534,8 +7514,17 @@ logout = function(skipConfirmation = false) {
                 comment: 'Ticket #' + sale.id + ' annulé le ' + cancelledAt.toLocaleString('fr-FR')
                     + ' | Mode paiement: ' + methodLabel
                     + ' | Total: ' + sale.total.toFixed(2) + '€'
-                    + (restock ? ' | Stock remis à jour' : ' | Stock non remis')
-                    + ' | Articles: ' + sale.items.map(i => i.name).join(', ')
+                    + ' | ⏳ Stock en attente d\'approbation'
+                    + ' | Articles: ' + sale.items.map(i => i.name).join(', '),
+                // Stocker les items détaillés pour pouvoir restaurer le stock lors de l'approbation
+                _restockItems: sale.items.map(i => ({
+                    id: i.id,
+                    name: i.name,
+                    quantity: i.quantity,
+                    unitType: i.unitType || 'unit'
+                })),
+                _restockPending: true,  // Flag: le stock n'a pas encore été remis
+                _ticketId: sale.id
             };
 
             retoursList.push(newRetour);
@@ -7550,7 +7539,7 @@ logout = function(skipConfirmation = false) {
                     type: 'retour',
                     action: 'created',
                     titre: retourId + ' créé (annulation ticket)',
-                    desc: 'Ticket #' + sale.id + ' · ' + sale.total.toFixed(2) + '€ · ' + (sale.cashierId || sale.cashier)
+                    desc: 'Ticket #' + sale.id + ' · ' + sale.total.toFixed(2) + '€ · ' + (sale.cashierId || sale.cashier) + ' · Stock en attente d\'approbation'
                 });
                 localStorage.setItem('covo_hist', JSON.stringify(hist));
             } catch(e) {}
@@ -7565,7 +7554,7 @@ logout = function(skipConfirmation = false) {
         updateProgress();
         renderStatistics();
         if (isAdmin) renderHistory();
-        showScanToast('🚫 Ticket #' + sale.id + ' annulé — retour enregistré dans COVO Retours');
+        showScanToast('🚫 Ticket #' + sale.id + ' annulé — retour en attente d\'approbation dans Retours client');
     };
 
     // ===== CORRECTION MONTANT REÇU =====
@@ -9037,13 +9026,13 @@ function retoursSeed() {
     const fmt = d => d.toISOString().split('T')[0];
     const add = n => { const d = new Date(today); d.setDate(d.getDate()+n); return d; };
     if (!rLoad('retours').length) rSave('retours', [
-      
+        
     ]);
     if (!rLoad('marchandise').length) rSave('marchandise', [
-       
+        
     ]);
     if (!rLoad('echeances').length) rSave('echeances', [
-       
+        
     ]);
 }
 
@@ -9930,6 +9919,168 @@ function exportCatalogue() {
     exportCSVData(rows, headers, 'catalogue_articles.csv');
 }
 
+// ===== IMPRIMER / PDF CATALOGUE ARTICLES =====
+function _catBuildPrintHTML() {
+    const search = (document.getElementById('cat-search')?.value || '').toLowerCase();
+    const catFilter = document.getElementById('cat-filter-cat')?.value || '';
+    const stockFilter = document.getElementById('cat-filter-stock')?.value || '';
+    const unitFilter = document.getElementById('cat-filter-unit')?.value || '';
+
+    const filtered = (products || []).filter(p => {
+        const matchSearch = !search || p.name.toLowerCase().includes(search) ||
+            (p.barcode && p.barcode.toLowerCase().includes(search)) ||
+            (p.category && p.category.toLowerCase().includes(search));
+        const matchCat = !catFilter || p.category === catFilter;
+        const matchUnit = !unitFilter || p.unitType === unitFilter;
+        const isKg = p.unitType === 'kg';
+        const isOut = p.stock <= 0;
+        const isLow = !isOut && p.stock <= (isKg ? 0.5 : 5);
+        let matchStock = true;
+        if (stockFilter === 'ok') matchStock = !isOut && !isLow;
+        else if (stockFilter === 'low') matchStock = isLow;
+        else if (stockFilter === 'out') matchStock = isOut;
+        return matchSearch && matchCat && matchUnit && matchStock;
+    });
+
+    const shopName = (typeof appSettings !== 'undefined' && appSettings.shopName) ? appSettings.shopName : 'COVO Pro';
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('fr-FR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const timeStr = now.toLocaleTimeString('fr-FR');
+
+    // Stats
+    const totalArticles = filtered.length;
+    const enStock = filtered.filter(p => p.stock > 0).length;
+    const epuises = filtered.filter(p => p.stock <= 0).length;
+    const valeurStock = filtered.reduce((sum, p) => {
+        const prix = p.unitType === 'kg' ? (p.pricePerKg || 0) : (p.price || 0);
+        return sum + (prix * p.stock);
+    }, 0);
+
+    // Grouper par catégorie
+    const cats = {};
+    filtered.forEach((p, i) => {
+        const cat = p.category || 'Sans catégorie';
+        if (!cats[cat]) cats[cat] = [];
+        cats[cat].push({ ...p, _num: i + 1 });
+    });
+
+    let tableHTML = '';
+    Object.keys(cats).sort().forEach(cat => {
+        tableHTML += `<tr class="cat-header"><td colspan="9" style="background:#2c3e50;color:white;font-weight:700;padding:8px 12px;font-size:0.9rem;">📁 ${cat} (${cats[cat].length})</td></tr>`;
+        cats[cat].forEach(p => {
+            const isKg = p.unitType === 'kg';
+            const basePrice = isKg ? p.pricePerKg : p.price;
+            const disc = p.promo || 0;
+            const finalPrice = basePrice * (1 - disc / 100);
+            const stockDisplay = isKg ? p.stock.toFixed(3) + ' kg' : String(p.stock);
+            const isOut = p.stock <= 0;
+            const isLow = !isOut && p.stock <= (isKg ? 0.5 : 5);
+            const stockColor = isOut ? '#e74c3c' : isLow ? '#e67e22' : '#27ae60';
+            let dlcStr = '—';
+            if (p.expiryDate) {
+                const today = new Date(); today.setHours(0,0,0,0);
+                const dlc = new Date(p.expiryDate); dlc.setHours(0,0,0,0);
+                const days = Math.ceil((dlc - today) / 86400000);
+                const df = p.expiryDate.split('-').reverse().join('/');
+                dlcStr = days < 0 ? `<span style="color:#e74c3c;font-weight:700;">${df} (expiré)</span>` :
+                         days <= 3 ? `<span style="color:#e67e22;font-weight:600;">${df} (${days}j)</span>` :
+                         days <= 7 ? `<span style="color:#f1c40f;">${df} (${days}j)</span>` : df;
+            }
+
+            tableHTML += `<tr>
+                <td style="text-align:center;color:#7f8c8d;font-size:0.78rem;font-family:monospace;">${p._num}</td>
+                <td style="font-weight:600;">${p.name}${isKg ? ' <span style="color:#1565c0;font-size:0.7rem;">⚖️/kg</span>' : ''}</td>
+                <td style="text-align:right;font-weight:600;color:#27ae60;">${finalPrice.toFixed(2)} €${isKg ? '/kg' : ''}</td>
+                <td style="text-align:right;font-weight:600;color:${stockColor};">${stockDisplay}</td>
+                <td style="font-size:0.78rem;color:#7f8c8d;">${p.barcode || '—'}</td>
+                <td>${dlcStr}</td>
+                <td style="text-align:center;">${disc > 0 ? '-' + disc + '%' : '—'}</td>
+                <td style="text-align:center;">${p.nightTariff ? '🌙' : '—'}</td>
+                <td style="text-align:center;">${p.active !== false ? '✅' : '👁️'}</td>
+            </tr>`;
+        });
+    });
+
+    const filterDesc = [];
+    if (catFilter) filterDesc.push('Catégorie: ' + catFilter);
+    if (stockFilter) filterDesc.push('Stock: ' + stockFilter);
+    if (unitFilter) filterDesc.push('Type: ' + unitFilter);
+    if (search) filterDesc.push('Recherche: "' + search + '"');
+    const filterLine = filterDesc.length > 0 ? `<p style="font-size:0.8rem;color:#666;margin:5px 0;">Filtres: ${filterDesc.join(' · ')}</p>` : '';
+
+    return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><title>Catalogue Articles — ${shopName}</title>
+<style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px 25px; color: #2c3e50; font-size: 0.82rem; }
+    @media print {
+        body { padding: 10px; font-size: 0.75rem; }
+        .no-print { display: none !important; }
+        table { font-size: 0.72rem; }
+        tr { page-break-inside: avoid; }
+    }
+    .header { text-align: center; margin-bottom: 15px; border-bottom: 3px solid #2c3e50; padding-bottom: 12px; }
+    .header h1 { font-size: 1.4rem; color: #2c3e50; margin-bottom: 3px; }
+    .header .subtitle { font-size: 0.85rem; color: #7f8c8d; }
+    .stats-bar { display: flex; gap: 15px; justify-content: center; margin: 12px 0; flex-wrap: wrap; }
+    .stat-chip { background: #f5f6fa; border: 1px solid #dcdde1; border-radius: 8px; padding: 6px 14px; font-size: 0.8rem; }
+    .stat-chip strong { color: #2c3e50; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th { background: #ecf0f1; color: #2c3e50; padding: 7px 10px; text-align: left; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid #bdc3c7; }
+    td { padding: 5px 10px; border-bottom: 1px solid #ecf0f1; font-size: 0.8rem; vertical-align: middle; }
+    tr:hover { background: #f8f9fa; }
+    .cat-header td { border-bottom: none; }
+    .footer { text-align: center; margin-top: 15px; font-size: 0.75rem; color: #999; border-top: 1px solid #eee; padding-top: 8px; }
+    .btn-bar { text-align: center; margin: 12px 0; }
+    .btn-bar button { padding: 8px 20px; margin: 0 5px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 0.88rem; }
+</style></head><body>
+    <div class="header">
+        <h1>📦 ${shopName} — Catalogue des articles</h1>
+        <div class="subtitle">${dateStr} à ${timeStr}</div>
+        ${filterLine}
+    </div>
+    <div class="stats-bar">
+        <span class="stat-chip">📦 <strong>${totalArticles}</strong> article(s)</span>
+        <span class="stat-chip">✅ <strong>${enStock}</strong> en stock</span>
+        <span class="stat-chip">❌ <strong>${epuises}</strong> épuisé(s)</span>
+        <span class="stat-chip">💰 Valeur stock: <strong>${valeurStock.toFixed(2)} €</strong></span>
+    </div>
+    <div class="btn-bar no-print">
+        <button onclick="window.print()" style="background:#3498db;color:white;">🖨️ Imprimer</button>
+        <button onclick="window.close()" style="background:#95a5a6;color:white;">✕ Fermer</button>
+    </div>
+    <table>
+        <thead><tr>
+            <th style="width:35px;">N°</th><th>Nom</th><th style="text-align:right;">Prix</th><th style="text-align:right;">Stock</th>
+            <th>Code-barres</th><th>DLC</th><th style="text-align:center;">Promo</th><th style="text-align:center;">Nuit</th><th style="text-align:center;">État</th>
+        </tr></thead>
+        <tbody>${tableHTML}</tbody>
+    </table>
+    <div class="footer">
+        ${shopName} — Catalogue généré le ${dateStr} à ${timeStr} — ${totalArticles} article(s) · Valeur stock: ${valeurStock.toFixed(2)} €
+    </div>
+</body></html>`;
+}
+
+function catPrintArticles() {
+    const html = _catBuildPrintHTML();
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) { showScanToast('⚠️ Le navigateur a bloqué la fenêtre — autorisez les popups', 'info'); return; }
+    win.document.write(html);
+    win.document.close();
+    setTimeout(() => win.print(), 400);
+}
+
+function catExportPDF() {
+    const html = _catBuildPrintHTML();
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (!win) { showScanToast('⚠️ Le navigateur a bloqué la fenêtre — autorisez les popups', 'info'); return; }
+    win.document.write(html);
+    win.document.close();
+    showScanToast('📄 Utilisez « Enregistrer en PDF » dans la boîte d\'impression', 'info');
+    setTimeout(() => win.print(), 400);
+}
+
 // Modals retours
 function openRetourModal(id) {
     document.getElementById(id).classList.add('open');
@@ -10199,8 +10350,15 @@ function renderRetours(data) {
         const isAutoCancel = r.motif === 'Annulation ticket caisse';
         const autoBadge = isAutoCancel ? `<span style="background:#e74c3c;color:white;font-size:0.65rem;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle;">🚫 CAISSE</span>` : '';
         const articleDisplay = isAutoCancel ? `<div style="font-size:0.76rem;max-width:200px;line-height:1.4;">${r.article.split(' | ').map(a=>`<div>• ${a}</div>`).join('')}</div>` : r.article;
+        // Indicateur restock
+        let restockBadge = '';
+        if (isAutoCancel && r._restockPending) {
+            restockBadge = `<div style="font-size:0.68rem;margin-top:3px;padding:2px 6px;background:#fff3cd;border:1px solid #f39c12;border-radius:4px;color:#856404;display:inline-block;">⏳ Stock en attente</div>`;
+        } else if (isAutoCancel && r._restockPending === false) {
+            restockBadge = `<div style="font-size:0.68rem;margin-top:3px;padding:2px 6px;background:#d4edda;border:1px solid #28a745;border-radius:4px;color:#155724;display:inline-block;">✅ Stock restauré</div>`;
+        }
         return `<tr oncontextmenu="retourCtxOpen(event,'${r.id}','retour')">
-            <td><strong style="color:#3498db">${r.id}</strong>${autoBadge}</td>
+            <td><strong style="color:#3498db">${r.id}</strong>${autoBadge}${restockBadge}</td>
             <td>${r.date}</td>
             <td><strong>${r.client}</strong></td>
             <td>${articleDisplay}</td>
@@ -10210,8 +10368,10 @@ function renderRetours(data) {
             <td style="font-size:0.77rem">${r.remboursement}</td>
             <td><span class="retours-badge-st ${s.c}">${s.i} ${s.l}</span></td>
             <td><div style="display:flex;gap:4px;flex-wrap:wrap;">
-                ${r.statut==='pending'?`<button class="retours-btn retours-btn-sm" style="background:#2ecc71;color:white;" onclick="setRetourStatus('${r.id}','approved')">✅</button><button class="retours-btn retours-btn-sm" style="background:#f1c40f;color:#333;" onclick="setRetourStatus('${r.id}','processing')">⚙️</button>`:''}
+                ${r.statut==='pending'?`<button class="retours-btn retours-btn-sm" style="background:#2ecc71;color:white;" onclick="setRetourStatus('${r.id}','approved')" title="Approuver${r._restockPending?' (remettra le stock)':''}">✅</button><button class="retours-btn retours-btn-sm" style="background:#f1c40f;color:#333;" onclick="setRetourStatus('${r.id}','processing')">⚙️</button>`:''}
+                ${r.statut==='processing'?`<button class="retours-btn retours-btn-sm" style="background:#2ecc71;color:white;" onclick="setRetourStatus('${r.id}','approved')" title="Approuver${r._restockPending?' (remettra le stock)':''}">✅</button>`:''}
                 ${r.statut!=='refused'&&r.statut!=='approved'?`<button class="retours-btn retours-btn-sm" style="background:#e74c3c;color:white;" onclick="setRetourStatus('${r.id}','refused')">❌</button>`:''}
+                ${r.statut==='approved'&&isAutoCancel?`<button class="retours-btn retours-btn-sm" style="background:#e67e22;color:white;font-size:0.65rem;" onclick="setRetourStatus('${r.id}','pending')" title="Revenir en attente (le stock sera retiré)">↩️ Annuler</button>`:''}
                 <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="delRetour('${r.id}')">🗑️</button>
             </div></td>
         </tr>`;
@@ -10351,10 +10511,54 @@ function saveEcheance() {
 // ===== STATUS =====
 function setRetourStatus(id, status) {
     const list = rLoad('retours'); const r = list.find(x=>x.id===id);
-    if (!r) return; r.statut = status; rSave('retours', list);
+    if (!r) return;
+
+    const oldStatus = r.statut;
+    r.statut = status;
+
+    // ===== RESTAURATION DU STOCK LORS DE L'APPROBATION =====
+    if (status === 'approved' && r._restockPending && r._restockItems && r._restockItems.length > 0) {
+        // Remettre le stock des articles du ticket annulé
+        let restockedNames = [];
+        r._restockItems.forEach(item => {
+            const product = products.find(p => p.id === item.id);
+            if (product) {
+                product.stock += item.quantity;
+                restockedNames.push(item.name + ' (+' + (item.unitType === 'kg' ? item.quantity.toFixed(3) + 'kg' : item.quantity) + ')');
+            }
+        });
+        r._restockPending = false; // Marquer comme restauré
+        r.comment = (r.comment || '') + ' | ✅ Stock restauré le ' + new Date().toLocaleString('fr-FR') + ' : ' + restockedNames.join(', ');
+        localStorage.setItem('covo_products', JSON.stringify(products));
+        if (typeof renderProducts === 'function') renderProducts();
+        rToast('✅ Retour approuvé — stock remis à jour (' + restockedNames.length + ' article(s))', 'success');
+    }
+    // Si le retour était approuvé (stock restauré) et qu'on revient en arrière (refusé ou pending), retirer le stock
+    else if (oldStatus === 'approved' && status !== 'approved' && r._restockItems && r._restockItems.length > 0 && !r._restockPending) {
+        let unrestockedNames = [];
+        r._restockItems.forEach(item => {
+            const product = products.find(p => p.id === item.id);
+            if (product) {
+                product.stock -= item.quantity;
+                if (product.stock < 0) product.stock = 0;
+                unrestockedNames.push(item.name);
+            }
+        });
+        r._restockPending = true; // Remettre le flag
+        r.comment = (r.comment || '') + ' | ↩️ Stock retiré le ' + new Date().toLocaleString('fr-FR') + ' (statut changé à ' + status + ')';
+        localStorage.setItem('covo_products', JSON.stringify(products));
+        if (typeof renderProducts === 'function') renderProducts();
+        rToast('↩️ Statut modifié — stock retiré (' + unrestockedNames.length + ' article(s))', 'info');
+    } else {
+        rToast('Statut mis à jour','success');
+    }
+
+    rSave('retours', list);
     addRetourHist(status,'retour',`Retour ${id}: ${RSL.retour[status]?.l||status}`,`Client: ${r.client}`);
     refreshRetours();
-    rToast('Statut mis à jour','success');
+    // Sauvegarder tout
+    if (typeof autoSave === 'function') autoSave();
+    else if (typeof window._covoAutoSave === 'function') window._covoAutoSave();
 }
 
 function setMarcStatus(id, status) {
@@ -11511,6 +11715,81 @@ function initAdminSections() {
         _updateExpiryMarquee();
         setInterval(_updateExpiryMarquee, 60000);
     });
+
+    // ===========================================================================
+    // ===== UPLOAD TICKET DE CAISSE SUR GOOGLE DRIVE ===========================
+    // ===========================================================================
+    let _gdTicketFolderId = null;
+    const GD_TICKET_FOLDER = 'Tickets de caisse';
+
+    async function _gdEnsureTicketFolder() {
+        if (_gdTicketFolderId) return _gdTicketFolderId;
+        if (!_gdConnected || !_gdAccessToken) return null;
+        try {
+            // Chercher le dossier existant
+            const q = encodeURIComponent(`name='${GD_TICKET_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name)');
+            const data = await resp.json();
+            if (data.files && data.files.length > 0) {
+                _gdTicketFolderId = data.files[0].id;
+                return _gdTicketFolderId;
+            }
+            // Créer le dossier
+            const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: GD_TICKET_FOLDER, mimeType: 'application/vnd.google-apps.folder' })
+            });
+            const folder = await cr.json();
+            if (folder.id) {
+                _gdTicketFolderId = folder.id;
+                return _gdTicketFolderId;
+            }
+        } catch(e) {
+            console.warn('GDrive ticket folder error:', e);
+        }
+        return null;
+    }
+
+    // Fonction globale appelée depuis validateSale
+    window._gdUploadTicket = async function(sale, receiptHTML) {
+        if (!_gdConnected || !_gdAccessToken) return;
+        try {
+            const folderId = await _gdEnsureTicketFolder();
+            if (!folderId) return;
+
+            const now = new Date(sale.date);
+            const dateStr = now.toISOString().split('T')[0];
+            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const fileName = `ticket_${dateStr}_${timeStr}_#${sale.id}.html`;
+
+            const printableContent = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Ticket #${sale.id}</title>
+<style>body{font-family:'Courier New',monospace;padding:20px;max-width:300px;margin:0 auto;color:#000;background:#fff;}</style>
+</head><body>${receiptHTML}</body></html>`;
+
+            const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
+            const boundary = '----CovoTicketBoundary' + Date.now();
+            const body = 
+                '--' + boundary + '\r\n' +
+                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                metadata + '\r\n' +
+                '--' + boundary + '\r\n' +
+                'Content-Type: text/html\r\n\r\n' +
+                printableContent + '\r\n' +
+                '--' + boundary + '--';
+
+            await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+                body: body
+            });
+
+            console.log('✅ Ticket #' + sale.id + ' uploadé sur Google Drive → ' + GD_TICKET_FOLDER);
+        } catch(e) {
+            console.warn('GDrive ticket upload error:', e);
+        }
+    };
 
 })();
 // ===== FIN MODULE GOOGLE DRIVE =====
