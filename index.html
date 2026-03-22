@@ -4605,7 +4605,8 @@ function toggleInfoSection(headerElement) {
         darkEl.textContent = darkActive ? '🌙 Activé' : '☀️ Désactivé';
 
         // --- Statut Google Drive ---
-        const driveConnected = typeof _gdConnected !== 'undefined' && _gdConnected;
+        const gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : { connected: false };
+        const driveConnected = gdState.connected === true;
         const dotEl = document.getElementById('aw-drive-dot');
         const labelEl = document.getElementById('aw-drive-label');
         const emailEl = document.getElementById('aw-drive-email');
@@ -4616,9 +4617,8 @@ function toggleInfoSection(headerElement) {
             dotEl.classList.add('connected');
             labelEl.textContent = '✅ Connecté à Google Drive';
             labelEl.style.color = '#2ecc71';
-            emailEl.textContent = (typeof _gdUserEmail !== 'undefined' && _gdUserEmail) ? '📧 ' + _gdUserEmail : '';
-            const lastSave = localStorage.getItem('gdrive_last_save');
-            lastSaveEl.textContent = lastSave ? '⏱ Dernière sauvegarde : ' + new Date(lastSave).toLocaleString('fr-FR') : '⏱ Aucune sauvegarde encore';
+            emailEl.textContent = gdState.email ? '📧 ' + gdState.email : '';
+            lastSaveEl.textContent = gdState.lastSave ? '⏱ Dernière sauvegarde : ' + new Date(gdState.lastSave).toLocaleString('fr-FR') : '⏱ Aucune sauvegarde encore';
             if (saveBtn) saveBtn.disabled = false;
         } else {
             dotEl.classList.remove('connected');
@@ -4630,22 +4630,30 @@ function toggleInfoSection(headerElement) {
         }
 
         // --- Liste des sauvegardes ---
-        awLoadBackupList(driveConnected);
+        awLoadBackupList(driveConnected, gdState);
 
         modal.classList.add('active');
     }
 
-    async function awLoadBackupList(driveConnected) {
+    async function awLoadBackupList(driveConnected, gdState) {
         const listEl = document.getElementById('aw-backup-list');
         const countEl = document.getElementById('aw-backup-count');
         if (!listEl) return;
 
-        if (driveConnected && typeof _gdFolderId !== 'undefined' && _gdFolderId) {
-            // Charger depuis Google Drive
+        // Récupérer l'état Drive si non fourni
+        if (!gdState && typeof window._gdGetState === 'function') {
+            gdState = window._gdGetState();
+            driveConnected = gdState.connected === true;
+        }
+        const folderId = gdState && gdState.folderId;
+
+        if (driveConnected && folderId) {
+            // Charger depuis Google Drive via le fetch public exposé
             listEl.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.4);font-size:0.8rem;">⏳ Chargement depuis Google Drive…</div>';
             try {
-                const q = encodeURIComponent(`'${_gdFolderId}' in parents and trashed=false and mimeType='application/json'`);
-                const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,size,modifiedTime,createdTime)&orderBy=createdTime desc&pageSize=10');
+                const fetchFn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+                const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType='application/json'`);
+                const resp = await fetchFn('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,size,modifiedTime,createdTime)&orderBy=createdTime desc&pageSize=10');
                 const data = await resp.json();
                 const files = data.files || [];
                 if (countEl) countEl.textContent = files.length + ' fichier(s)';
@@ -4670,6 +4678,7 @@ function toggleInfoSection(headerElement) {
                 }).join('');
             } catch(e) {
                 listEl.innerHTML = '<div style="text-align:center;padding:16px;color:#e74c3c;font-size:0.8rem;">❌ Erreur chargement Drive</div>';
+                console.error('awLoadBackupList error:', e);
             }
         } else if (typeof backupFilesData !== 'undefined' && backupFilesData.length > 0) {
             // Sauvegardes locales déjà chargées
@@ -4690,7 +4699,7 @@ function toggleInfoSection(headerElement) {
         } else {
             if (countEl) countEl.textContent = '';
             listEl.innerHTML = `<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.35);font-size:0.8rem;">
-                ${driveConnected ? '⚠️ Aucun dossier Drive sélectionné' : '☁️ Connectez Google Drive ou chargez un dossier local depuis le panneau Admin pour afficher les sauvegardes'}
+                ${driveConnected ? '⚠️ Aucun dossier Drive sélectionné — choisissez un dossier dans le Panneau Admin' : '☁️ Connectez Google Drive ou chargez un dossier local depuis le panneau Admin pour afficher les sauvegardes'}
             </div>`;
         }
     }
@@ -4699,12 +4708,13 @@ function toggleInfoSection(headerElement) {
         const btn = document.getElementById('aw-save-now-btn');
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Sauvegarde…'; }
         try {
-            if (typeof gdriveSaveNow === 'function') {
-                await gdriveSaveNow();
-                // Rafraichir la liste et le timestamp
+            if (typeof window.gdriveSaveNow === 'function') {
+                await window.gdriveSaveNow();
+                // Rafraîchir le statut depuis le getter
+                const gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
                 const lastSaveEl = document.getElementById('aw-drive-last-save');
-                if (lastSaveEl) lastSaveEl.textContent = '⏱ Dernière sauvegarde : ' + new Date().toLocaleString('fr-FR');
-                await awLoadBackupList(true);
+                if (lastSaveEl && gdState.lastSave) lastSaveEl.textContent = '⏱ Dernière sauvegarde : ' + new Date(gdState.lastSave).toLocaleString('fr-FR');
+                await awLoadBackupList(gdState.connected, gdState);
             }
         } finally {
             if (btn) { btn.disabled = false; btn.textContent = '💾 Sauvegarder maintenant'; }
@@ -12139,6 +12149,22 @@ function initAdminSections() {
         } catch(e) {
             console.warn('GDrive ticket upload error:', e);
         }
+    };
+
+    // ---- Getter d'état public (utilisé par openAdminWelcomeModal et autres) ----
+    window._gdGetState = function() {
+        return {
+            connected: _gdConnected,
+            email: _gdUserEmail,
+            folderId: _gdFolderId,
+            folderName: _gdFolderName,
+            lastSave: localStorage.getItem('gdrive_last_save') || null
+        };
+    };
+
+    // Exposer _gdFetch pour les appels depuis l'extérieur (awLoadBackupList)
+    window._gdFetchPublic = function(url, opts) {
+        return _gdFetch(url, opts);
     };
 
 })();
