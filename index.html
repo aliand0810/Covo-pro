@@ -1451,6 +1451,50 @@
         .aw-backup-item-meta { font-size:0.68rem; color:rgba(255,255,255,0.45); margin-top:2px; }
         .aw-backup-restore-btn { background:#f57c00; color:white; border:none; padding:5px 10px; border-radius:6px; font-size:0.75rem; font-weight:600; cursor:pointer; white-space:nowrap; flex-shrink:0; }
         .aw-backup-restore-btn:hover { background:#e65100; }
+
+        /* ===== MODALE RÉCAP RESTAURATION ===== */
+        #restore-preview-modal {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+        #restore-preview-modal.active { display: flex; }
+        .rp-box {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border: 2px solid #f57c00;
+            border-radius: 18px;
+            width: 92%;
+            max-width: 480px;
+            padding: 0;
+            box-shadow: 0 20px 60px rgba(245,124,0,0.35);
+            animation: adminWelcomeIn 0.3s cubic-bezier(0.34,1.56,0.64,1);
+            overflow: hidden;
+        }
+        .rp-header {
+            background: linear-gradient(135deg,#f57c00,#e65100);
+            padding: 18px 22px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .rp-header h3 { margin:0; color:white; font-size:1.05rem; font-weight:700; }
+        .rp-body { padding: 22px; }
+        .rp-filename { font-size:0.8rem; color:rgba(255,255,255,0.5); margin-bottom:16px; word-break:break-all; }
+        .rp-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px; }
+        .rp-stat { background:rgba(255,255,255,0.07); border-radius:10px; padding:14px; text-align:center; border:1px solid rgba(255,255,255,0.1); }
+        .rp-stat .rp-val { font-size:1.6rem; font-weight:700; color:#f57c00; }
+        .rp-stat .rp-lbl { font-size:0.7rem; color:rgba(255,255,255,0.55); margin-top:4px; }
+        .rp-stat.success .rp-val { color:#2ecc71; }
+        .rp-stat.danger  .rp-val { color:#e74c3c; }
+        .rp-warn { background:rgba(231,76,60,0.12); border:1px solid rgba(231,76,60,0.3); border-radius:8px; padding:10px 14px; font-size:0.8rem; color:rgba(255,120,100,0.9); margin-bottom:18px; }
+        .rp-actions { display:flex; gap:10px; }
+        .rp-btn-cancel { flex:1; background:rgba(255,255,255,0.1); color:white; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:11px; cursor:pointer; font-weight:600; font-size:0.88rem; }
+        .rp-btn-cancel:hover { background:rgba(255,255,255,0.18); }
+        .rp-btn-confirm { flex:2; background:linear-gradient(135deg,#f57c00,#e65100); color:white; border:none; border-radius:8px; padding:11px; cursor:pointer; font-weight:700; font-size:0.9rem; transition:transform 0.15s; }
+        .rp-btn-confirm:hover { transform:translateY(-1px); }
         .admin-welcome-actions {
             display: flex;
             gap: 12px;
@@ -4780,10 +4824,57 @@ function toggleInfoSection(headerElement) {
         }
     }
 
+    // ===== MODALE RÉCAP RESTAURATION =====
+    let _rpPendingCallback = null; // fonction à appeler si confirmé
+
+    function showRestorePreview(fileName, data, onConfirm) {
+        const modal = document.getElementById('restore-preview-modal');
+        if (!modal) { onConfirm(); return; }
+
+        const sales = data.salesHistory || data.covo_sales || [];
+        const salesArr = Array.isArray(sales) ? sales : [];
+        const valid    = salesArr.filter(s => !s.cancelled).length;
+        const cancelled= salesArr.filter(s =>  s.cancelled).length;
+        const total    = salesArr.length;
+        const prods    = (data.products || []).length;
+
+        document.getElementById('rp-filename').textContent     = '📄 ' + fileName;
+        document.getElementById('rp-products').textContent     = prods;
+        document.getElementById('rp-total-tickets').textContent= total;
+        document.getElementById('rp-valid').textContent        = valid;
+        document.getElementById('rp-cancelled').textContent    = cancelled;
+
+        _rpPendingCallback = onConfirm;
+        modal.classList.add('active');
+    }
+
+    function closeRestorePreview() {
+        const modal = document.getElementById('restore-preview-modal');
+        if (modal) modal.classList.remove('active');
+        _rpPendingCallback = null;
+    }
+
+    function confirmRestorePreview() {
+        const modal = document.getElementById('restore-preview-modal');
+        if (modal) modal.classList.remove('active');
+        if (typeof _rpPendingCallback === 'function') _rpPendingCallback();
+        _rpPendingCallback = null;
+    }
+
     async function awRestoreFile(fileId, fileName) {
-        if (!confirm('⚠️ Restaurer « ' + fileName + ' » ?\nCela remplacera TOUTES les données locales.')) return;
-        closeAdminWelcomeModal();
-        if (typeof gdriveRestoreFile === 'function') await gdriveRestoreFile(fileId, fileName);
+        // Charger les données d'abord pour afficher le récap
+        try {
+            const fetchFn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+            const resp = await fetchFn('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
+            const text = await resp.text();
+            const data = JSON.parse(text);
+            showRestorePreview(fileName, data, async () => {
+                closeAdminWelcomeModal();
+                if (typeof gdriveRestoreFile === 'function') await gdriveRestoreFile(fileId, fileName, data);
+            });
+        } catch(e) {
+            showScanToast('❌ Impossible de charger le fichier', 'error');
+        }
     }
 
     function awGoTo(target) {
@@ -7690,39 +7781,39 @@ logout = function(skipConfirmation = false) {
             return;
         }
 
-        const nbProduits = (data.products     || []).length;
-        const nbVentes   = (data.salesHistory || []).length;
-
-        // ===== RESTAURATION DIRECTE (sans modale de confirmation) =====
-        try {
-            products     = (data.products || []).map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
-            categories   = data.categories  || ["Général"];
-            users        = (data.users || users).map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
-            salesHistory = data.salesHistory || [];
-            promoTypes   = data.promoTypes   || [0, 5, 10, 15, 20, 25, 30, 50];
-            appSettings  = data.appSettings  || { logoUrl: '' };
-            if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
-            if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false;
-            if (data.nightTariffSettings)  nightTariffSettings  = data.nightTariffSettings;
-            if (data.cashierPermissions)   cashierPermissions   = data.cashierPermissions;
-            if (data.pendingSync)          pendingSync          = data.pendingSync;
-            if (data.deliveryGoal)         deliveryGoal         = data.deliveryGoal;
-            if (data.covo_dark_mode != null) localStorage.setItem('covo_dark_mode', data.covo_dark_mode);
-            // ===== MODULE RETOURS & ÉCHÉANCES =====
-            if (data.covo_retours)     localStorage.setItem('covo_retours',     JSON.stringify(data.covo_retours));
-            if (data.covo_marchandise) localStorage.setItem('covo_marchandise', JSON.stringify(data.covo_marchandise));
-            if (data.covo_echeances)   localStorage.setItem('covo_echeances',   JSON.stringify(data.covo_echeances));
-            if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
-            if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
-            if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
-            saveAll();
-            renderAll();
-            closeImportModal();
-            showScanToast(`✅ Restauration réussie — ${nbProduits} produit(s), ${nbVentes} vente(s) chargée(s) depuis "${file.name}"`, 'success');
-        } catch (err) {
-            showScanToast('❌ Erreur lors de la restauration');
-            console.error(err);
-        }
+        // Afficher le récap avant de restaurer
+        showRestorePreview(file.name, data, () => {
+            try {
+                products     = (data.products || []).map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
+                categories   = data.categories  || ["Général"];
+                users        = (data.users || users).map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
+                salesHistory = data.salesHistory || [];
+                promoTypes   = data.promoTypes   || [0, 5, 10, 15, 20, 25, 30, 50];
+                appSettings  = data.appSettings  || { logoUrl: '' };
+                if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
+                if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false;
+                if (data.nightTariffSettings)  nightTariffSettings  = data.nightTariffSettings;
+                if (data.cashierPermissions)   cashierPermissions   = data.cashierPermissions;
+                if (data.pendingSync)          pendingSync          = data.pendingSync;
+                if (data.deliveryGoal)         deliveryGoal         = data.deliveryGoal;
+                if (data.covo_dark_mode != null) localStorage.setItem('covo_dark_mode', data.covo_dark_mode);
+                if (data.covo_retours)     localStorage.setItem('covo_retours',     JSON.stringify(data.covo_retours));
+                if (data.covo_marchandise) localStorage.setItem('covo_marchandise', JSON.stringify(data.covo_marchandise));
+                if (data.covo_echeances)   localStorage.setItem('covo_echeances',   JSON.stringify(data.covo_echeances));
+                if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
+                if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
+                if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
+                saveAll();
+                renderAll();
+                closeImportModal();
+                const nbP = (data.products||[]).length;
+                const nbV = (data.salesHistory||[]).filter(s=>!s.cancelled).length;
+                showScanToast(`✅ Restauration réussie — ${nbP} produit(s), ${nbV} vente(s) validée(s)`, 'success');
+            } catch (err) {
+                showScanToast('❌ Erreur lors de la restauration');
+                console.error(err);
+            }
+        });
     }
 
     async function exportToExcel() {
@@ -9224,6 +9315,42 @@ logout = function(skipConfirmation = false) {
         <div style="display:flex; gap:10px;">
             <button onclick="closeKgModal()" style="flex:1; background:#e0e0e0; color:#333; padding:13px; border-radius:10px; font-size:1rem; font-weight:bold; border:none; cursor:pointer;">✖ Annuler</button>
             <button onclick="confirmKgModal()" style="flex:2; background:var(--success); color:white; padding:13px; border-radius:10px; font-size:1rem; font-weight:bold; border:none; cursor:pointer; box-shadow:0 4px 12px rgba(46,204,113,0.4);">✅ Valider</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MODALE RÉCAP RESTAURATION ===== -->
+<div id="restore-preview-modal">
+    <div class="rp-box">
+        <div class="rp-header">
+            <h3>📋 Récapitulatif de la restauration</h3>
+            <button onclick="closeRestorePreview()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+        </div>
+        <div class="rp-body">
+            <div class="rp-filename" id="rp-filename"></div>
+            <div class="rp-grid">
+                <div class="rp-stat">
+                    <div class="rp-val" id="rp-products">-</div>
+                    <div class="rp-lbl">📦 Produits</div>
+                </div>
+                <div class="rp-stat" style="grid-column:1/-1;">
+                    <div class="rp-val" id="rp-total-tickets">-</div>
+                    <div class="rp-lbl">🧾 Total tickets</div>
+                </div>
+                <div class="rp-stat success">
+                    <div class="rp-val" id="rp-valid">-</div>
+                    <div class="rp-lbl">✅ Validés</div>
+                </div>
+                <div class="rp-stat danger">
+                    <div class="rp-val" id="rp-cancelled">-</div>
+                    <div class="rp-lbl">🚫 Annulés</div>
+                </div>
+            </div>
+            <div class="rp-warn">⚠️ Cette action remplacera <strong>toutes les données locales</strong> de façon irréversible.</div>
+            <div class="rp-actions">
+                <button class="rp-btn-cancel" onclick="closeRestorePreview()">✖ Annuler</button>
+                <button class="rp-btn-confirm" id="rp-confirm-btn" onclick="confirmRestorePreview()">✅ Confirmer la restauration</button>
+            </div>
         </div>
     </div>
 </div>
@@ -11436,9 +11563,7 @@ function initAdminSections() {
 
         if (lbl) {
             if (connected) {
-                const email = _gdUserEmail ? ' · ' + _gdUserEmail : '';
-                const folder = _gdFolderName ? ' 📁 ' + _gdFolderName : '';
-                lbl.textContent = '☁️ Drive connecté' + email + folder;
+                lbl.textContent = '☁️ Drive connecté';
                 lbl.style.color = '#52be80';
             } else if (isOnline) {
                 lbl.textContent = '● En ligne';
@@ -11978,13 +12103,32 @@ function initAdminSections() {
     };
 
     // Restaurer un fichier spécifique par son ID
-    window.gdriveRestoreFile = async function(fileId, fileName) {
-        if (!confirm('⚠️ Restaurer « ' + fileName + ' » ?\nCela remplacera TOUTES les données locales.')) return;
+    window.gdriveRestoreFile = async function(fileId, fileName, preloadedData) {
+        let data = preloadedData;
         try {
-            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
-            const text = await resp.text();
-            const data = JSON.parse(text);
+            if (!data) {
+                const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
+                const text = await resp.text();
+                data = JSON.parse(text);
+            }
 
+            // Si appelé sans preview (ex: depuis gdrive-restore-modal), afficher le récap
+            if (!preloadedData) {
+                showRestorePreview(fileName, data, () => _gdApplyRestore(data, fileName));
+                return;
+            }
+
+            // Appelé depuis awRestoreFile (préchargé) → appliquer directement
+            await _gdApplyRestore(data, fileName);
+
+        } catch(err) {
+            console.error('GDrive restore error:', err);
+            showScanToast('❌ Erreur lors de la restauration de « ' + fileName + ' »', 'error');
+        }
+    };
+
+    async function _gdApplyRestore(data, fileName) {
+        try {
             if (data.products)             { products = data.products.map(p => ({ unitType:'unit', pricePerKg:null, ...p })); }
             if (data.categories)            categories = data.categories;
             if (data.promoTypes)            promoTypes = data.promoTypes;
@@ -12003,21 +12147,21 @@ function initAdminSections() {
             if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
             if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
 
-            // Fermer la modale
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
 
-            // Bloquer temporairement la sauvegarde GDrive pour éviter un cycle
             _gdRestoring = true;
             saveAll();
             setTimeout(() => { _gdRestoring = false; }, 3000);
 
-            showScanToast('✅ Données restaurées depuis « ' + fileName + ' » (' + (data._savedAt ? new Date(data._savedAt).toLocaleString('fr-FR') : '?') + ')', 'success');
+            const nbP = (data.products||[]).length;
+            const nbV = (data.salesHistory||[]).filter(s=>!s.cancelled).length;
+            showScanToast('✅ Restauré depuis « ' + fileName + ' » — ' + nbP + ' produit(s), ' + nbV + ' vente(s) validée(s)', 'success');
         } catch(err) {
-            console.error('GDrive restore error:', err);
-            showScanToast('❌ Erreur lors de la restauration de « ' + fileName + ' »', 'error');
+            console.error('GDrive apply restore error:', err);
+            showScanToast('❌ Erreur lors de la restauration', 'error');
         }
-    };
+    }
 
     let _gdRestoring = false; // Flag pour bloquer la sauvegarde pendant une restauration
 
