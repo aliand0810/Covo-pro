@@ -2357,12 +2357,14 @@
 </style>
 </head>
 <body>
-    <!-- ===== BARRE STATUS + MARQUEE PÉREMPTIONS ===== -->
+    <!-- ===== BARRE STATUS UNIFIÉE ===== -->
     <div id="gdrive-status-bar">
         <div class="gd-info">
-            <span class="gd-dot"></span>
-            <span class="gd-saving" id="gdrive-saving-indicator">⏳</span>
-            <span class="gd-time" id="gdrive-last-save-time"></span>
+            <!-- Point statut réseau + Drive fusionnés -->
+            <span class="gd-dot" id="gd-main-dot"></span>
+            <span id="gd-main-label" style="font-size:0.7rem;white-space:nowrap;">Hors ligne</span>
+            <span class="gd-saving" id="gdrive-saving-indicator">⏳ Sauvegarde…</span>
+            <span class="gd-time" id="gdrive-last-save-time" style="margin-left:4px;"></span>
         </div>
         <div id="expiry-marquee-wrap"></div>
     </div>
@@ -2373,10 +2375,6 @@
                 <img id="header-logo" src="" alt="Logo Entreprise">
                 <div class="brand-container">  
                 
-            </div>
-            <div class="connection-status">
-                <span class="status-dot online" id="status-dot"></span>
-                <span id="connection-text">En ligne</span>
             </div>
         </div>
         <div style="display:flex; align-items:center; gap:15px;">
@@ -5456,16 +5454,12 @@ function toggleInfoSection(headerElement) {
     // ===== GESTION ÉTAT CONNEXION =====
     function updateConnectionStatus() {
         isOnline = navigator.onLine;
-        const dot = document.getElementById('status-dot');
-        const text = document.getElementById('connection-text');
-        
+        // Mettre à jour la barre unifiée via le module GDrive si disponible
+        if (typeof _gdUpdateNetworkStatus === 'function') {
+            _gdUpdateNetworkStatus();
+        }
         if (isOnline) {
-            dot.className = 'status-dot online';
-            text.textContent = 'En ligne';
             syncPendingData();
-        } else {
-            dot.className = 'status-dot offline';
-            text.textContent = 'Hors ligne';
         }
     }
 
@@ -11420,18 +11414,74 @@ function initAdminSections() {
         const bar = document.getElementById('gdrive-status-bar');
         if (!bar) return;
         if (connected) { bar.classList.add('connected'); } else { bar.classList.remove('connected'); }
-        const tm  = document.getElementById('gdrive-last-save-time');
+
+        const dot   = document.getElementById('gd-main-dot');
+        const lbl   = document.getElementById('gd-main-label');
+        const tm    = document.getElementById('gdrive-last-save-time');
+        const isOnline = navigator.onLine;
+
+        if (dot) {
+            // Vert = Drive connecté, Orange = en ligne sans Drive, Rouge = hors ligne
+            if (connected) {
+                dot.style.background = '#2ecc71';
+                dot.style.boxShadow  = '0 0 6px #2ecc7188';
+            } else if (isOnline) {
+                dot.style.background = '#f39c12';
+                dot.style.boxShadow  = '0 0 4px #f39c1288';
+            } else {
+                dot.style.background = '#e74c3c';
+                dot.style.boxShadow  = '0 0 4px #e74c3c88';
+            }
+        }
+
+        if (lbl) {
+            if (connected) {
+                const email = _gdUserEmail ? ' · ' + _gdUserEmail : '';
+                const folder = _gdFolderName ? ' 📁 ' + _gdFolderName : '';
+                lbl.textContent = '☁️ Drive connecté' + email + folder;
+                lbl.style.color = '#52be80';
+            } else if (isOnline) {
+                lbl.textContent = '● En ligne';
+                lbl.style.color = '#f39c12';
+            } else {
+                lbl.textContent = '● Hors ligne';
+                lbl.style.color = '#e74c3c';
+            }
+        }
+
         if (tm) {
             if (time) {
                 const d = new Date(time);
-                const hms = d.toLocaleTimeString('fr-FR');
                 const isToday = d.toDateString() === new Date().toDateString();
-                tm.textContent = isToday ? hms : d.toLocaleDateString('fr-FR') + ' ' + hms;
-            } else if (!connected) {
+                const dateStr = isToday
+                    ? d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',second:'2-digit'})
+                    : d.toLocaleDateString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
+                tm.textContent = connected ? '· Sauvegardé ' + dateStr : '';
+                tm.style.color = '#52be80';
+            } else {
                 tm.textContent = '';
             }
         }
     }
+
+    // Mettre à jour le label réseau sans toucher au Drive
+    function _gdUpdateNetworkStatus() {
+        const connected = typeof _gdConnected !== 'undefined' && _gdConnected;
+        if (!connected) {
+            const dot = document.getElementById('gd-main-dot');
+            const lbl = document.getElementById('gd-main-label');
+            if (dot) {
+                dot.style.background = navigator.onLine ? '#f39c12' : '#e74c3c';
+                dot.style.boxShadow  = navigator.onLine ? '0 0 4px #f39c1288' : '0 0 4px #e74c3c88';
+            }
+            if (lbl) {
+                lbl.textContent = navigator.onLine ? '● En ligne' : '● Hors ligne';
+                lbl.style.color = navigator.onLine ? '#f39c12' : '#e74c3c';
+            }
+        }
+    }
+    window.addEventListener('online',  _gdUpdateNetworkStatus);
+    window.addEventListener('offline', _gdUpdateNetworkStatus);
 
     function _gdShowSaving(show) {
         const el = document.getElementById('gdrive-saving-indicator');
@@ -11498,9 +11548,7 @@ function initAdminSections() {
                     // Start auto-save
                     _gdStartAutoSave();
 
-                    // Immediate first save if folder is set
-                    if (_gdFolderId) await _gdDoSave();
-
+                    // Pas de sauvegarde immédiate à la connexion — sera déclenchée lors d'une vraie modification
                     showScanToast('✅ Google Drive connecté — sauvegarde automatique activée', 'success');
                 }
             });
@@ -12128,6 +12176,8 @@ function initAdminSections() {
         const wasConnected = localStorage.getItem('gdrive_connected') === '1';
         _gdUserEmail = localStorage.getItem('gdrive_email') || '';
         _gdFolderName = localStorage.getItem('gdrive_folder_name') || '';
+        // Init du statut réseau au démarrage
+        _gdUpdateNetworkStatus();
         if (lastSave) _gdUpdateStatusBar(false, '', lastSave);
         if (wasConnected && savedClientId) {
             setTimeout(() => _gdSilentConnect(savedClientId), 1500);
