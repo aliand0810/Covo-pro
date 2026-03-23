@@ -4538,6 +4538,10 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_rhist:       JSON.parse(localStorage.getItem('covo_rhist')       || '[]'),
                 covo_hist:        JSON.parse(localStorage.getItem('covo_hist')        || '[]'),
                 covo_sales:       JSON.parse(localStorage.getItem('covo_sales')       || '[]'),
+                // Module Investissements
+                covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
+                covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
+                covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
                 _version: 17, _savedAt
             }, null, 2);
             const writable = await covoFileHandle.createWritable();
@@ -4585,6 +4589,10 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
             if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
             if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
+            // Module Investissements
+            if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
+            if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
+            if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
             // Sync localStorage principal
             localStorage.setItem('covo_products',      JSON.stringify(products));
             localStorage.setItem('covo_categories',    JSON.stringify(categories));
@@ -4932,6 +4940,7 @@ function toggleInfoSection(headerElement) {
         const total    = salesArr.length;
         const prods    = (data.products || []).length;
         const solde    = validSales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
+        const nbInv    = (data.covo_investissements || []).length;
 
         document.getElementById('rp-filename').textContent     = '📄 ' + fileName;
         document.getElementById('rp-products').textContent     = prods;
@@ -4939,6 +4948,9 @@ function toggleInfoSection(headerElement) {
         document.getElementById('rp-valid').textContent        = valid;
         document.getElementById('rp-cancelled').textContent    = cancelled;
         document.getElementById('rp-solde').textContent        = solde.toFixed(2).replace('.', ',') + ' €';
+        // Achats investissements
+        const rpInvEl = document.getElementById('rp-investissements');
+        if (rpInvEl) rpInvEl.textContent = nbInv + ' achat(s)';
 
         _rpPendingCallback = onConfirm;
         modal.classList.add('active');
@@ -7659,7 +7671,11 @@ logout = function(skipConfirmation = false) {
             covo_echeances:  JSON.parse(localStorage.getItem('covo_echeances')  || '[]'),
             covo_rhist:      JSON.parse(localStorage.getItem('covo_rhist')      || '[]'),
             covo_hist:       JSON.parse(localStorage.getItem('covo_hist')       || '[]'),
-            covo_sales:      JSON.parse(localStorage.getItem('covo_sales')      || '[]')
+            covo_sales:      JSON.parse(localStorage.getItem('covo_sales')      || '[]'),
+            // ===== MODULE INVESTISSEMENTS =====
+            covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
+            covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
+            covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]')
         }, null, 2);
 
         const saved = await saveFileToSelectedFolder(filename, content, 'application/json');
@@ -7712,6 +7728,10 @@ logout = function(skipConfirmation = false) {
             if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
             if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
             if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
+            // ===== MODULE INVESTISSEMENTS =====
+            if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
+            if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
+            if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
             saveAll(); renderAll();
             closeImportModal();
             showScanToast(`✅ Restauration réussie — ${nbProduits} produit(s), ${nbVentes} vente(s) chargée(s) depuis "${file.name}"`, 'success');
@@ -7899,9 +7919,14 @@ logout = function(skipConfirmation = false) {
                 if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
                 if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
                 if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
+                // Module Investissements
+                if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
+                if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
+                if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
                 saveAll();
                 renderAll();
                 closeImportModal();
+                if (typeof invUpdateStats === 'function') invUpdateStats();
                 const nbP = (data.products||[]).length;
                 const nbV = (data.salesHistory||[]).filter(s=>!s.cancelled).length;
                 showScanToast(`✅ Restauration réussie — ${nbP} produit(s), ${nbV} vente(s) validée(s)`, 'success');
@@ -9540,6 +9565,10 @@ logout = function(skipConfirmation = false) {
                 <div class="rp-stat" style="grid-column:1/-1;background:rgba(46,204,113,0.12);border:1.5px solid rgba(46,204,113,0.3);">
                     <div class="rp-val" id="rp-solde" style="color:#2ecc71;">-</div>
                     <div class="rp-lbl">💰 CA total (tickets validés)</div>
+                </div>
+                <div class="rp-stat" style="grid-column:1/-1;background:rgba(155,89,182,0.1);border:1.5px solid rgba(155,89,182,0.3);">
+                    <div class="rp-val" id="rp-investissements" style="color:#9b59b6;">-</div>
+                    <div class="rp-lbl">💼 Achats / Investissements</div>
                 </div>
             </div>
             <div class="rp-warn">⚠️ Cette action remplacera <strong>toutes les données locales</strong> de façon irréversible.</div>
@@ -12625,6 +12654,10 @@ function initAdminSections() {
                 covo_rhist:       JSON.parse(localStorage.getItem('covo_rhist')       || '[]'),
                 covo_hist:        JSON.parse(localStorage.getItem('covo_hist')        || '[]'),
                 covo_sales:       JSON.parse(localStorage.getItem('covo_sales')       || '[]'),
+                // Module Investissements
+                covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
+                covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
+                covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
                 _version: 17,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
@@ -12782,12 +12815,17 @@ function initAdminSections() {
             if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
             if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
             if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
+            // Module Investissements
+            if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
+            if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
+            if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
 
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
 
             _gdRestoring = true;
             saveAll();
+            if (typeof invUpdateStats === 'function') invUpdateStats();
             setTimeout(() => { _gdRestoring = false; }, 3000);
 
             const nbP = (data.products||[]).length;
