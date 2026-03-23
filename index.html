@@ -8753,10 +8753,10 @@ logout = function(skipConfirmation = false) {
             d.style.background = 'var(--bg-card,#fff)';
         });
         // Sélectionner celui-ci
-        el.style.border = '2px solid #27ae60';
-        el.style.background = 'rgba(39,174,96,0.07)';
+        el.style.border = '2px solid #e67e22';
+        el.style.background = 'rgba(230,126,34,0.07)';
 
-        _rcSelectedItem = { sale, itemIdx, item: sale.items[itemIdx] };
+        _rcSelectedItem = { sale, itemIdx, item: sale.items[itemIdx], condition: null };
 
         const item = sale.items[itemIdx];
         const isKg = item.unitType === 'kg';
@@ -8764,17 +8764,87 @@ logout = function(skipConfirmation = false) {
         const lineTotal = (item.price * item.quantity).toFixed(2);
 
         const infoEl = document.getElementById('rc-selected-info');
-        infoEl.innerHTML = `Article sélectionné : <strong>${item.name}</strong> · ${qtyLabel} · <strong style="color:#27ae60;">${lineTotal} €</strong> seront déduits des ventes du jour.`;
+        infoEl.innerHTML = `
+            <div style="font-weight:600; font-size:0.85rem; margin-bottom:10px; color:var(--text-main,#2c3e50);">
+                Article : <strong>${item.name}</strong> · ${qtyLabel} · <strong style="color:#e67e22;">${lineTotal} €</strong>
+            </div>
+            <div style="font-size:0.8rem; font-weight:600; color:var(--text-secondary,#888); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">
+                État de l'article :
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button onclick="rcSetCondition('normal', this)" class="rc-cond-btn" data-cond="normal"
+                    style="flex:1; min-width:100px; padding:10px 8px; border:2px solid #27ae60; border-radius:10px; background:rgba(39,174,96,0.08); color:#27ae60; font-weight:700; font-size:0.82rem; cursor:pointer; transition:all 0.15s; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                    <span style="font-size:1.3rem;">↩️</span> Retour normal
+                </button>
+                <button onclick="rcSetCondition('defectueux', this)" class="rc-cond-btn" data-cond="defectueux"
+                    style="flex:1; min-width:100px; padding:10px 8px; border:2px solid #e74c3c; border-radius:10px; background:rgba(231,76,60,0.08); color:#e74c3c; font-weight:700; font-size:0.82rem; cursor:pointer; transition:all 0.15s; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                    <span style="font-size:1.3rem;">⚠️</span> Défectueux
+                </button>
+                <button onclick="rcSetCondition('abime', this)" class="rc-cond-btn" data-cond="abime"
+                    style="flex:1; min-width:100px; padding:10px 8px; border:2px solid #f39c12; border-radius:10px; background:rgba(243,156,18,0.08); color:#f39c12; font-weight:700; font-size:0.82rem; cursor:pointer; transition:all 0.15s; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                    <span style="font-size:1.3rem;">🔨</span> Abîmé
+                </button>
+            </div>
+            <div id="rc-condition-note" style="display:none; margin-top:10px; font-size:0.82rem; padding:8px 12px; border-radius:8px;"></div>
+        `;
         infoEl.style.display = 'block';
+        infoEl.style.background = 'var(--input-bg,#f8f9fa)';
+        infoEl.style.border = '1.5px solid var(--border-color,#e0e0e0)';
+        infoEl.style.color = 'var(--text-main,#2c3e50)';
 
+        // Désactiver le bouton confirmer jusqu'au choix de l'état
+        const btn = document.getElementById('rc-confirm-btn');
+        btn.disabled = true; btn.style.opacity = '0.4'; btn.style.cursor = 'not-allowed';
+    }
+
+    function rcSetCondition(cond, btnEl) {
+        if (!_rcSelectedItem) return;
+        _rcSelectedItem.condition = cond;
+
+        // Reset styles de tous les boutons
+        document.querySelectorAll('.rc-cond-btn').forEach(b => {
+            b.style.opacity = '0.5';
+            b.style.transform = 'scale(1)';
+        });
+        // Mettre en valeur le bouton choisi
+        btnEl.style.opacity = '1';
+        btnEl.style.transform = 'scale(1.04)';
+
+        const noteEl = document.getElementById('rc-condition-note');
+        if (cond === 'normal') {
+            noteEl.style.display = 'block';
+            noteEl.style.background = 'rgba(39,174,96,0.1)';
+            noteEl.style.color = '#1e7e34';
+            noteEl.textContent = '↩️ Retour standard — article remis en stock.';
+        } else if (cond === 'defectueux') {
+            noteEl.style.display = 'block';
+            noteEl.style.background = 'rgba(231,76,60,0.1)';
+            noteEl.style.color = '#c0392b';
+            noteEl.textContent = '⚠️ Article défectueux — le retour sera signalé avec motif "Produit défectueux". Stock remis à jour.';
+        } else if (cond === 'abime') {
+            noteEl.style.display = 'block';
+            noteEl.style.background = 'rgba(243,156,18,0.1)';
+            noteEl.style.color = '#7d5a00';
+            noteEl.textContent = '🔨 Article abîmé — le retour sera signalé avec motif "Produit endommagé". Stock remis à jour.';
+        }
+
+        // Activer le bouton confirmer
         const btn = document.getElementById('rc-confirm-btn');
         btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
     }
 
     function rcRetour() {
         if (!_rcSelectedItem) return;
-        const { sale, itemIdx, item } = _rcSelectedItem;
+        const { sale, itemIdx, item, condition } = _rcSelectedItem;
         const lineTotal = parseFloat((item.price * item.quantity).toFixed(2));
+
+        // Motif selon l'état choisi
+        const conditionLabels = {
+            normal:     { motif: 'Retour article client', badge: '↩️', label: 'Retour normal' },
+            defectueux: { motif: 'Produit défectueux',   badge: '⚠️', label: 'Article défectueux' },
+            abime:      { motif: 'Produit endommagé à la livraison', badge: '🔨', label: 'Article abîmé' }
+        };
+        const condInfo = conditionLabels[condition] || conditionLabels.normal;
 
         // 1. Marquer l'article comme retourné dans le ticket original
         const origIdx = salesHistory.findIndex(s => s.id === sale.id);
@@ -8782,6 +8852,7 @@ logout = function(skipConfirmation = false) {
             salesHistory[origIdx].items[itemIdx].retourne = true;
             salesHistory[origIdx].items[itemIdx].retourDate = new Date().toISOString();
             salesHistory[origIdx].items[itemIdx].retourMontant = lineTotal;
+            salesHistory[origIdx].items[itemIdx].retourCondition = condition;
             // Recalculer le total ajusté après retours
             const totalRetours = salesHistory[origIdx].items
                 .filter(i => i.retourne)
@@ -8799,7 +8870,8 @@ logout = function(skipConfirmation = false) {
             total: -lineTotal,
             cashier: currentUser.username,
             cashierId: currentUser.id || null,
-            method: sale.method
+            method: sale.method,
+            condition: condition
         };
         salesHistory.push(retourSale);
         localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory));
@@ -8829,16 +8901,17 @@ logout = function(skipConfirmation = false) {
                 ticket: '#' + sale.id,
                 qty: item.quantity,
                 montant: lineTotal,
-                motif: 'Retour article client',
+                motif: condInfo.motif,
+                condition: condition,
                 remboursement: sale.method === 'cb' ? 'Remboursement carte bancaire' : 'Remboursement espèces',
                 statut: 'pending',
-                comment: 'Retour article · Ticket #' + sale.id + ' · ' + item.name + ' · ' + lineTotal.toFixed(2) + '€ · ' + methodLabel
+                comment: condInfo.badge + ' ' + condInfo.label + ' · Ticket #' + sale.id + ' · ' + item.name + ' · ' + lineTotal.toFixed(2) + '€ · ' + methodLabel
             });
             localStorage.setItem('covo_retours', JSON.stringify(retoursList));
 
             // Historique retours
             const hist = JSON.parse(localStorage.getItem('covo_hist')) || [];
-            hist.unshift({ id: 'H-' + Date.now(), date: new Date().toISOString().split('T')[0], type: 'retour', action: 'created', titre: retourId + ' — retour article', desc: 'Ticket #' + sale.id + ' · ' + item.name + ' · -' + lineTotal.toFixed(2) + '€' });
+            hist.unshift({ id: 'H-' + Date.now(), date: new Date().toISOString().split('T')[0], type: 'retour', action: 'created', titre: retourId + ' — ' + condInfo.label, desc: 'Ticket #' + sale.id + ' · ' + item.name + ' · -' + lineTotal.toFixed(2) + '€ · ' + condInfo.motif });
             localStorage.setItem('covo_hist', JSON.stringify(hist));
         } catch(e) {}
 
@@ -8851,10 +8924,10 @@ logout = function(skipConfirmation = false) {
         _rcSelectedItem = null;
         document.getElementById('rc-step-articles').style.display = 'none';
         document.getElementById('rc-step-done').style.display = 'block';
-        document.getElementById('rc-done-msg').textContent = 'Retour enregistré : -' + lineTotal.toFixed(2) + ' €';
-        document.getElementById('rc-done-sub').textContent = item.name + ' (ticket #' + sale.id + ') · Stock remis à jour · Stats du jour mises à jour';
+        document.getElementById('rc-done-msg').textContent = condInfo.badge + ' ' + condInfo.label + ' : -' + lineTotal.toFixed(2) + ' €';
+        document.getElementById('rc-done-sub').textContent = item.name + ' (ticket #' + sale.id + ') · Motif : ' + condInfo.motif + ' · Stock remis à jour';
         playBeep();
-        showScanToast('↩️ Retour client : -' + lineTotal.toFixed(2) + '€ déduit des ventes du jour', 'success');
+        showScanToast(condInfo.badge + ' Retour ' + condInfo.label.toLowerCase() + ' : -' + lineTotal.toFixed(2) + '€', 'success');
     }
 
     // Scan un autre article (revenir à l'état saisie)
@@ -9406,6 +9479,26 @@ logout = function(skipConfirmation = false) {
                 </div>
                 <div class="rm-form-group"><label>Quantité</label><input type="number" id="r-qty" value="1" min="1"></div>
                 <div class="rm-form-group"><label>Montant (€)</label><input type="number" id="r-montant" step="0.01" placeholder="0.00"></div>
+
+                <!-- Boutons état article rapides -->
+                <div class="rm-form-group full">
+                    <label>État de l'article</label>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                        <button type="button" onclick="setRetourCondition('normal', this)"
+                            style="flex:1; min-width:110px; padding:10px 8px; border:2px solid #27ae60; border-radius:10px; background:rgba(39,174,96,0.08); color:#27ae60; font-weight:700; font-size:0.82rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.15s;">
+                            <span style="font-size:1.2rem;">↩️</span> Retour normal
+                        </button>
+                        <button type="button" onclick="setRetourCondition('defectueux', this)"
+                            style="flex:1; min-width:110px; padding:10px 8px; border:2px solid #e74c3c; border-radius:10px; background:rgba(231,76,60,0.08); color:#e74c3c; font-weight:700; font-size:0.82rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.15s;">
+                            <span style="font-size:1.2rem;">⚠️</span> Défectueux
+                        </button>
+                        <button type="button" onclick="setRetourCondition('abime', this)"
+                            style="flex:1; min-width:110px; padding:10px 8px; border:2px solid #f39c12; border-radius:10px; background:rgba(243,156,18,0.08); color:#f39c12; font-weight:700; font-size:0.82rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px; transition:all 0.15s;">
+                            <span style="font-size:1.2rem;">🔨</span> Abîmé
+                        </button>
+                    </div>
+                </div>
+
                 <div class="rm-form-group"><label>Motif</label>
                     <select id="r-motif"><option value="">-- Sélectionner --</option><option>Produit défectueux</option><option>Erreur de commande</option><option>Produit non conforme</option><option>Produit endommagé à la livraison</option><option>Retrait volontaire</option><option>Délai de rétractation</option><option>Autre</option></select>
                 </div>
@@ -10592,6 +10685,32 @@ function openRetourModal(id) {
         const qty = document.getElementById('r-qty'); if(qty) qty.value = 1;
         const motif = document.getElementById('r-motif'); if(motif) motif.value = '';
         const remb = document.getElementById('r-remboursement'); if(remb) remb.value = '';
+        // Reset condition buttons
+        document.querySelectorAll('#rm-retour button[onclick^="setRetourCondition"]').forEach(b => {
+            b.style.opacity = '1'; b.style.transform = 'scale(1)'; b.style.boxShadow = 'none';
+        });
+    }
+}
+
+function setRetourCondition(cond, btnEl) {
+    // Reset tous les boutons état
+    const allBtns = document.querySelectorAll('#rm-retour button[onclick^="setRetourCondition"]');
+    allBtns.forEach(b => { b.style.opacity = '0.5'; b.style.transform = 'scale(1)'; b.style.boxShadow = 'none'; });
+    // Activer le bouton cliqué
+    btnEl.style.opacity = '1';
+    btnEl.style.transform = 'scale(1.04)';
+    btnEl.style.boxShadow = '0 0 0 3px currentColor';
+
+    // Mettre à jour le select motif automatiquement
+    const motifSel = document.getElementById('r-motif');
+    const rembSel  = document.getElementById('r-remboursement');
+    if (cond === 'defectueux') {
+        if (motifSel) motifSel.value = 'Produit défectueux';
+    } else if (cond === 'abime') {
+        if (motifSel) motifSel.value = 'Produit endommagé à la livraison';
+    } else {
+        // Retour normal : laisser l'utilisateur choisir ou reset
+        if (motifSel && !motifSel.value) motifSel.value = '';
     }
 }
 function closeRetourModal(id) {
