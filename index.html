@@ -784,6 +784,28 @@
             margin-bottom: 30px;
         }
         
+        /* Boutons de période statistiques */
+        .stats-period-btn {
+            padding: 7px 16px;
+            border: 2px solid var(--border-color, #e0e0e0);
+            border-radius: 20px;
+            background: var(--bg-card, #fff);
+            color: var(--text-secondary, #666);
+            font-size: 0.83rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.18s;
+        }
+        .stats-period-btn:hover { border-color: var(--primary,#3498db); color: var(--primary,#3498db); }
+        .stats-period-btn.active {
+            background: var(--primary,#3498db);
+            border-color: var(--primary,#3498db);
+            color: white;
+            box-shadow: 0 2px 10px rgba(52,152,219,0.35);
+        }
+        body.dark-mode .stats-period-btn { background: #1e1e1e; border-color:#333; color:#aaa; }
+        body.dark-mode .stats-period-btn.active { background:var(--primary,#3498db); color:white; }
+
         .stat-card {
             background: var(--bg-card);
             padding: 20px;
@@ -2688,25 +2710,42 @@
         </div>
         
         <div class="tab-content" id="tab-stats">
+
+            <!-- Sélecteur de période -->
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+                <span style="font-weight:700;font-size:0.88rem;color:var(--text-secondary,#666);">📅 Période :</span>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;" id="stats-period-btns">
+                    <button class="stats-period-btn active" data-period="week"  onclick="setStatsPeriod('week')">📆 Semaine</button>
+                    <button class="stats-period-btn"        data-period="month" onclick="setStatsPeriod('month')">📅 Mois</button>
+                    <button class="stats-period-btn"        data-period="year"  onclick="setStatsPeriod('year')">📊 Année</button>
+                    <!-- Sélecteur de mois — visible quand période = month -->
+                    <select id="stats-month-select" onchange="setStatsMonth(this.value)"
+                        style="display:none;padding:6px 12px;border:2px solid #27ae60;border-radius:20px;font-size:0.83rem;font-weight:700;color:#27ae60;background:var(--bg-card,#fff);cursor:pointer;">
+                    </select>
+                    <!-- Sélecteur d'année — visible quand période = year ou month -->
+                    <select id="stats-year-select" onchange="setStatsYear(this.value)"
+                        style="display:none;padding:6px 12px;border:2px solid var(--primary,#3498db);border-radius:20px;font-size:0.83rem;font-weight:700;color:var(--primary,#3498db);background:var(--bg-card,#fff);cursor:pointer;">
+                    </select>
+                </div>
+                <span id="stats-period-label" style="font-size:0.8rem;color:var(--gray,#7f8c8d);margin-left:4px;"></span>
+            </div>
+
             <div class="stats-grid">
+                <div class="stat-card">
+                    <h3 id="stat-period-title-main">📊 CA de la semaine</h3>
+                    <div class="stat-value" id="stat-period-sales">0€</div>
+                    <span class="stat-change positive" id="stat-period-change"></span>
+                </div>
                 <div class="stat-card">
                     <h3>💰 Ventes du jour</h3>
                     <div class="stat-value" id="stat-today-sales">0€</div>
                     <span class="stat-change positive" id="stat-today-change">+0%</span>
                 </div>
-                
-                <div class="stat-card">
-                    <h3>📈 Ventes du mois</h3>
-                    <div class="stat-value" id="stat-month-sales">0€</div>
-                    <span class="stat-change positive" id="stat-month-change">+0%</span>
-                </div>
-                
                 <div class="stat-card">
                     <h3>🛍️ Transactions</h3>
                     <div class="stat-value" id="stat-transactions">0</div>
-                    <span class="stat-change" id="stat-trans-change">Aujourd'hui</span>
+                    <span class="stat-change" id="stat-trans-change">Période</span>
                 </div>
-                
                 <div class="stat-card">
                     <h3>💳 Mode de Paiement</h3>
                     <div style="font-size:0.9rem; text-align:left; padding:0 20px;">
@@ -2714,10 +2753,15 @@
                         <div style="margin-top:5px;">💳 Carte: <strong id="stat-card-total">0€</strong></div>
                     </div>
                 </div>
+                <div class="stat-card">
+                    <h3 id="stat-month-title">📈 Ventes du mois</h3>
+                    <div class="stat-value" id="stat-month-sales">0€</div>
+                    <span class="stat-change positive" id="stat-month-change">+0%</span>
+                </div>
             </div>
             
             <div class="chart-container">
-                <h3>📊 Ventes des 7 derniers jours</h3>
+                <h3 id="sales-chart-title">📊 CA — 7 derniers jours</h3>
                 <div class="bar-chart" id="sales-chart"></div>
             </div>
             
@@ -4314,15 +4358,83 @@
 <script>
 
     // ===== FORWARD DECLARATIONS — accessibles immédiatement depuis l'HTML =====
+    // openProductDetail est définie plus tard dans le script.
+    // On expose une version qui charge dynamiquement l'implémentation réelle.
     window.openProductDetail = function(pid) {
-        if (window._openProductDetailImpl) window._openProductDetailImpl(pid);
+        // Cherche le produit dans window._covoProducts (exposé par renderProducts)
+        const prods = window._covoProducts || [];
+        const p = prods.find(x => x.id == pid);
+        if (!p) return;
+        const modal = document.getElementById('product-detail-modal');
+        if (!modal) return;
+        // Remplir la modal manuellement (copie allégée de openProductDetail)
+        const settings = window._covoNightSettings || {};
+        const nightActive = typeof window._covoIsNightActive === 'function' ? window._covoIsNightActive() : false;
+        const isKg = p.unitType === 'kg';
+        const baseP = isKg ? (p.pricePerKg || 0) : (p.price || 0);
+        const disc = p.promo || 0;
+        const promoP = baseP * (1 - disc / 100);
+        const nightPct = nightActive && p.nightTariff ? (p.nightTariffPercent || settings.defaultPercent || 30) : 0;
+        const finalP = nightPct ? promoP * (1 + nightPct / 100) : promoP;
+        const unit = isKg ? ' €/kg' : ' €';
+
+        document.getElementById('pd-img').src = p.img || 'https://placehold.co/520x260?text=' + encodeURIComponent(p.name);
+        document.getElementById('pd-name').textContent = p.name;
+        document.getElementById('pd-cat').textContent = '📁 ' + (p.category || 'Sans catégorie') + (p.barcode ? '  ·  🔖 ' + p.barcode : '');
+
+        const priceEl = document.getElementById('pd-price');
+        priceEl.textContent = (disc > 0 ? '-' + disc + '%  ' : '') + finalP.toFixed(2) + unit;
+        priceEl.style.color = nightPct ? '#a78bfa' : disc > 0 ? '#e67e22' : 'var(--success,#2ecc71)';
+
+        const oldEl = document.getElementById('pd-old-price');
+        if (disc > 0) { oldEl.textContent = baseP.toFixed(2) + unit; oldEl.style.display = ''; }
+        else oldEl.style.display = 'none';
+
+        const nightEl = document.getElementById('pd-night-price');
+        if (nightPct) { nightEl.textContent = '🌙 Tarif nuit +' + nightPct + '%'; nightEl.style.display = ''; }
+        else nightEl.style.display = 'none';
+
+        const stockEl = document.getElementById('pd-stock');
+        const stockVal = isKg ? (p.stock||0).toFixed(2) + ' kg' : (p.stock||0) + ' unité(s)';
+        stockEl.textContent = stockVal;
+        stockEl.style.color = p.stock <= 0 ? '#e74c3c' : p.stock < 5 ? '#e67e22' : '#27ae60';
+
+        document.getElementById('pd-promo').textContent = disc > 0 ? '-' + disc + '%' : 'Aucune';
+
+        const dlcBlock = document.getElementById('pd-dlc-block');
+        if (p.expiryDate) {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const exp = new Date(p.expiryDate); exp.setHours(0,0,0,0);
+            const dLeft = Math.ceil((exp - today) / 86400000);
+            const dlcEl = document.getElementById('pd-dlc');
+            dlcEl.textContent = exp.toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})
+                + (dLeft < 0 ? ' — ❌ EXPIRÉE' : dLeft === 0 ? ' — Expire aujourd\'hui !' : ' — ' + dLeft + 'j restant(s)');
+            dlcEl.className = 'pd-stat-val ' + (dLeft < 0 ? 'pd-dlc-expired' : dLeft <= 3 ? 'pd-dlc-urgent' : 'pd-dlc-ok');
+            dlcBlock.style.display = '';
+        } else {
+            dlcBlock.style.display = 'none';
+        }
+
+        const btn = document.getElementById('pd-add-btn');
+        if (p.stock <= 0 || p.active === false) {
+            btn.disabled = true;
+            btn.textContent = p.stock <= 0 ? '❌ ÉPUISÉ' : '⛔ Désactivé';
+        } else {
+            btn.disabled = false;
+            btn.textContent = '🛒 Ajouter au panier';
+        }
+        window._pdCurrentProductId = p.id;
+        modal.classList.add('active');
     };
     window.closeProductDetail = function() {
         const m = document.getElementById('product-detail-modal');
         if (m) m.classList.remove('active');
     };
     window.pdAddToCart = function() {
-        if (window._pdAddToCartImpl) window._pdAddToCartImpl();
+        const pid = window._pdCurrentProductId;
+        if (!pid) return;
+        window.closeProductDetail();
+        if (typeof addToCart === 'function') addToCart(pid);
     };
 
     // ===== HOVER PREVIEW PRODUIT (3 secondes) =====
@@ -7300,32 +7412,250 @@ logout = function(skipConfirmation = false) {
     }
 
     // ===== STATISTIQUES =====
+    // Période active : 'week' | 'month' | 'year'
+    let _statsPeriod = 'week';
+    let _statsYear   = new Date().getFullYear();
+    let _statsMonth  = new Date().getMonth(); // 0-11
+
+    const _MONTH_NAMES = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+    const _MONTH_SHORT = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+
+    function _populateYearSelect() {
+        const sel = document.getElementById('stats-year-select');
+        if (!sel) return;
+        const years = new Set([new Date().getFullYear()]);
+        salesHistory.forEach(s => { if (s.date) years.add(new Date(s.date).getFullYear()); });
+        const sorted = [...years].sort((a,b) => b - a);
+        sel.innerHTML = sorted.map(y => `<option value="${y}"${y === _statsYear ? ' selected' : ''}>${y}</option>`).join('');
+    }
+
+    function _populateMonthSelect() {
+        const sel = document.getElementById('stats-month-select');
+        if (!sel) return;
+        sel.innerHTML = _MONTH_NAMES.map((m, i) => `<option value="${i}"${i === _statsMonth ? ' selected' : ''}>${m}</option>`).join('');
+    }
+
+    function setStatsPeriod(period) {
+        _statsPeriod = period;
+        document.querySelectorAll('.stats-period-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.period === period);
+        });
+        const yearSel  = document.getElementById('stats-year-select');
+        const monthSel = document.getElementById('stats-month-select');
+        if (period === 'year') {
+            _populateYearSelect();
+            if (yearSel)  yearSel.style.display  = '';
+            if (monthSel) monthSel.style.display = 'none';
+        } else if (period === 'month') {
+            _populateYearSelect();
+            _populateMonthSelect();
+            if (yearSel)  yearSel.style.display  = '';
+            if (monthSel) monthSel.style.display = '';
+        } else {
+            if (yearSel)  yearSel.style.display  = 'none';
+            if (monthSel) monthSel.style.display = 'none';
+        }
+        renderStatistics();
+    }
+    window.setStatsPeriod = setStatsPeriod;
+
+    function setStatsYear(year) {
+        _statsYear = parseInt(year);
+        renderStatistics();
+    }
+    window.setStatsYear = setStatsYear;
+
+    function setStatsMonth(month) {
+        _statsMonth = parseInt(month);
+        renderStatistics();
+    }
+    window.setStatsMonth = setStatsMonth;
+
     function renderStatistics() {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const todaySales = salesHistory.filter(s => { if (s.cancelled) return false; const saleDate = new Date(s.date); saleDate.setHours(0, 0, 0, 0); return saleDate.getTime() === today.getTime(); });
-        const todayNormalSales = todaySales.filter(s => s.type !== 'retour_article');
+        const now  = new Date();
+        const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
+
+        // ---- Calcul des bornes selon la période ----
+        let periodStart, periodLabel, chartTitle, periodTitleMain;
+        if (_statsPeriod === 'week') {
+            periodStart = new Date(now); periodStart.setDate(now.getDate() - 6); periodStart.setHours(0,0,0,0);
+            periodLabel = '7 derniers jours';
+            chartTitle  = '📊 CA — 7 derniers jours';
+            periodTitleMain = '📆 CA de la semaine';
+        } else if (_statsPeriod === 'month') {
+            const mo = _statsMonth;
+            const yr = _statsYear;
+            periodStart = new Date(yr, mo, 1);
+            window._statsPeriodEnd = new Date(yr, mo + 1, 0, 23, 59, 59);
+            const mName = new Date(yr, mo, 1).toLocaleDateString('fr-FR', {month:'long', year:'numeric'});
+            periodLabel = mName;
+            chartTitle  = '📊 CA — ' + mName;
+            periodTitleMain = '📅 CA ' + mName;
+        } else {
+            periodStart = new Date(_statsYear, 0, 1);
+            const periodEnd = new Date(_statsYear, 11, 31, 23, 59, 59);
+            periodLabel = 'Année ' + _statsYear;
+            chartTitle  = '📊 CA — ' + _statsYear;
+            periodTitleMain = '📊 CA ' + _statsYear;
+            // Pour l'année on stocke aussi la fin
+            window._statsPeriodEnd = periodEnd;
+        }
+        if (_statsPeriod === 'week') window._statsPeriodEnd = null;
+
+        // Toutes les ventes de la période
+        const periodSales = salesHistory.filter(s => {
+            if (s.cancelled) return false;
+            const d = new Date(s.date);
+            if (d < periodStart) return false;
+            if (window._statsPeriodEnd && d > window._statsPeriodEnd) return false;
+            return true;
+        });
+        const periodTotal = periodSales.reduce((sum, s) => sum + (s.total || 0), 0);
+
+        // Ventes du jour (inchangé)
+        const todaySales = salesHistory.filter(s => {
+            if (s.cancelled) return false;
+            const d = new Date(s.date); d.setHours(0,0,0,0);
+            return d.getTime() === todayStart.getTime();
+        });
+        const todayNormal = todaySales.filter(s => s.type !== 'retour_article');
         const todayRetours = todaySales.filter(s => s.type === 'retour_article');
-        const todayTotal = todaySales.reduce((sum, s) => sum + s.total, 0);
-        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        const todayTotal = todaySales.reduce((sum, s) => sum + (s.total || 0), 0);
+
+        // Ventes du mois courant (pour la 5e carte)
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
         const monthSales = salesHistory.filter(s => !s.cancelled && new Date(s.date) >= monthStart);
-        const monthTotal = monthSales.reduce((sum, s) => sum + s.total, 0);
-        const cashTotal = todayNormalSales.reduce((sum, s) => sum + (s.receivedCash || (s.method === 'cash' ? s.total : 0)), 0)
-            + todayRetours.filter(s => s.method === 'cash' || s.method === 'mixed').reduce((sum, s) => sum + s.total, 0);
-        const cardTotal = todayNormalSales.reduce((sum, s) => sum + (s.receivedCB || (s.method === 'cb' ? s.total : 0)), 0)
-            + todayRetours.filter(s => s.method === 'cb').reduce((sum, s) => sum + s.total, 0);
-        
+        const monthTotal = monthSales.reduce((sum, s) => sum + (s.total || 0), 0);
+
+        // Paiements sur la période
+        const cashTotal = periodSales
+            .filter(s => s.type !== 'retour_article')
+            .reduce((sum, s) => sum + (s.receivedCash || (s.method === 'cash' ? s.total : 0)), 0);
+        const cardTotal = periodSales
+            .filter(s => s.type !== 'retour_article')
+            .reduce((sum, s) => sum + (s.receivedCB || (s.method === 'cb' ? s.total : 0)), 0);
+
+        // Mise à jour des éléments
+        const ptEl = document.getElementById('stat-period-title-main');
+        if (ptEl) ptEl.textContent = periodTitleMain;
+        const ctEl = document.getElementById('sales-chart-title');
+        if (ctEl) ctEl.textContent = chartTitle;
+        const plEl = document.getElementById('stats-period-label');
+        if (plEl) plEl.textContent = periodLabel;
+
+        document.getElementById('stat-period-sales').textContent = periodTotal.toFixed(2) + '€';
+        document.getElementById('stat-period-change').textContent = periodSales.filter(s => s.type !== 'retour_article').length + ' transaction(s)';
         document.getElementById('stat-today-sales').textContent = todayTotal.toFixed(2) + '€';
         document.getElementById('stat-month-sales').textContent = monthTotal.toFixed(2) + '€';
-        document.getElementById('stat-transactions').textContent = todayNormalSales.length + (todayRetours.length ? ' (-' + todayRetours.length + ' retour' + (todayRetours.length > 1 ? 's' : '') + ')' : '');
+        document.getElementById('stat-transactions').textContent = periodSales.filter(s => s.type !== 'retour_article').length + (periodSales.filter(s => s.type === 'retour_article').length ? ' (-' + periodSales.filter(s => s.type === 'retour_article').length + ' retour(s))' : '');
+        document.getElementById('stat-trans-change').textContent = periodLabel;
         document.getElementById('stat-cash-total').textContent = cashTotal.toFixed(2) + '€';
         document.getElementById('stat-card-total').textContent = cardTotal.toFixed(2) + '€';
-        
+
         renderSalesChart();
         renderTopProducts();
         renderStatsHistory();
     }
 
-    // ===== AUTOCOMPLETE ARTICLES =====
+    function renderSalesChart() {
+        const chart = document.getElementById('sales-chart');
+        const now   = new Date();
+        let bars = [];
+
+        if (_statsPeriod === 'week') {
+            // 7 barres — jours
+            const dayDates = {};
+            const days = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0,0,0,0);
+                const key = d.toLocaleDateString('fr-FR', { weekday: 'short' });
+                days.push(key);
+                dayDates[key] = d.toDateString();
+            }
+            const salesByDay = {};
+            days.forEach(k => salesByDay[k] = 0);
+            salesHistory.forEach(sale => {
+                if (sale.cancelled) return;
+                const sd = new Date(sale.date);
+                const diff = Math.floor((now - sd) / 86400000);
+                if (diff < 7) {
+                    const k = sd.toLocaleDateString('fr-FR', { weekday: 'short' });
+                    salesByDay[k] = (salesByDay[k] || 0) + (sale.total || 0);
+                }
+            });
+            const max = Math.max(...Object.values(salesByDay), 1);
+            bars = days.map(day => ({
+                label: day,
+                amount: salesByDay[day] || 0,
+                max,
+                clickArg: `'${dayDates[day]}','${day}'`,
+                clickFn: 'openDayTickets'
+            }));
+
+        } else if (_statsPeriod === 'month') {
+            // Barres par semaine du mois sélectionné
+            const yr = _statsYear, mo = _statsMonth;
+            const firstDay = new Date(yr, mo, 1);
+            const lastDay  = new Date(yr, mo + 1, 0);
+            const weeks = [];
+            let cur = new Date(firstDay);
+            while (cur <= lastDay) {
+                const wStart = new Date(cur);
+                const wEnd   = new Date(cur); wEnd.setDate(wEnd.getDate() + 6);
+                if (wEnd > lastDay) wEnd.setTime(lastDay.getTime());
+                weeks.push({ start: new Date(wStart), end: new Date(wEnd), total: 0 });
+                cur.setDate(cur.getDate() + 7);
+            }
+            salesHistory.forEach(sale => {
+                if (sale.cancelled) return;
+                const sd = new Date(sale.date);
+                if (sd.getFullYear() !== yr || sd.getMonth() !== mo) return;
+                weeks.forEach(w => { if (sd >= w.start && sd <= w.end) w.total += (sale.total || 0); });
+            });
+            const max = Math.max(...weeks.map(w => w.total), 1);
+            bars = weeks.map((w, i) => ({
+                label: 'S' + (i + 1),
+                sublabel: w.start.getDate() + '/' + (w.start.getMonth()+1),
+                amount: w.total,
+                max,
+                clickArg: `'${w.start.toISOString()}','${w.end.toISOString()}'`,
+                clickFn: 'openWeekTickets'
+            }));
+
+        } else {
+            // Barres par mois de l'année sélectionnée
+            const yr = _statsYear;
+            const months = [];
+            for (let m = 0; m < 12; m++) {
+                months.push({ m, start: new Date(yr, m, 1), end: new Date(yr, m+1, 0), total: 0 });
+            }
+            salesHistory.forEach(sale => {
+                if (sale.cancelled) return;
+                const sd = new Date(sale.date);
+                if (sd.getFullYear() !== yr) return;
+                const m = sd.getMonth();
+                months[m].total += (sale.total || 0);
+            });
+            const max = Math.max(...months.map(m => m.total), 1);
+            const monthNames = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+            bars = months.map((mo) => ({
+                label: monthNames[mo.m],
+                amount: mo.total,
+                max,
+                clickArg: `'${mo.start.toISOString()}','${mo.end.toISOString()}'`,
+                clickFn: 'openWeekTickets'
+            }));
+        }
+
+        chart.innerHTML = bars.map(b => {
+            const h = (b.amount / b.max) * 100;
+            const sub = b.sublabel ? `<div style="font-size:0.6rem;opacity:0.6;">${b.sublabel}</div>` : '';
+            return `<div class="bar" style="height:${Math.max(h,2)}%;" onclick="${b.clickFn}(${b.clickArg})" title="${b.label} : ${b.amount.toFixed(2)}€">
+                <div class="bar-value">${b.amount > 0 ? b.amount.toFixed(0) + '€' : ''}</div>
+                <div class="bar-label">${b.label}${sub}</div>
+            </div>`;
+        }).join('');
+    }
     window.showArticleSuggestions = function(value) {
         const suggestionsEl = document.getElementById('article-suggestions');
         if (!suggestionsEl) return;
@@ -7492,37 +7822,58 @@ logout = function(skipConfirmation = false) {
         if (sale) showReceipt(sale);
     };
 
-    function renderSalesChart() {
-        const chart = document.getElementById('sales-chart');
-        const days = []; const salesByDay = {};
-        for (let i = 6; i >= 0; i--) {
-            const date = new Date(); date.setDate(date.getDate() - i); date.setHours(0, 0, 0, 0);
-            const key = date.toLocaleDateString('fr-FR', { weekday: 'short' });
-            days.push(key); salesByDay[key] = 0;
-        }
-        salesHistory.forEach(sale => {
-            if (sale.cancelled) return;
-            const saleDate = new Date(sale.date);
-            const daysDiff = Math.floor((new Date() - saleDate) / (1000 * 60 * 60 * 24));
-            if (daysDiff < 7) {
-                const key = saleDate.toLocaleDateString('fr-FR', { weekday: 'short' });
-                salesByDay[key] = (salesByDay[key] || 0) + sale.total;
-            }
+
+    // Clic sur barre semaine/mois → modale tickets de la période
+    window.openWeekTickets = function(startIso, endIso) {
+        const modal = document.getElementById('day-tickets-modal');
+        if (!modal) return;
+        const start = new Date(startIso); start.setHours(0,0,0,0);
+        const end   = new Date(endIso);   end.setHours(23,59,59,999);
+        const dateStr = start.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})
+            + ' → ' + end.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+        document.getElementById('dt-title').textContent = '🧾 ' + dateStr;
+        const tickets = salesHistory.filter(s => {
+            const d = new Date(s.date);
+            return d >= start && d <= end;
         });
-        const maxSale = Math.max(...Object.values(salesByDay), 1);
-        // Stocker les dates ISO pour le clic
-        const dayDates = {};
-        for (let i = 6; i >= 0; i--) {
-            const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0,0,0,0);
-            dayDates[d.toLocaleDateString('fr-FR', { weekday: 'short' })] = d.toDateString();
+        const valid = tickets.filter(s => !s.cancelled);
+        const cancelled = tickets.filter(s => s.cancelled);
+        const ca = valid.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
+        document.getElementById('dt-summary').innerHTML = `
+            <div style="background:rgba(46,204,113,0.1);border:1px solid rgba(46,204,113,0.3);border-radius:8px;padding:8px 12px;text-align:center;flex:1;">
+                <div style="font-size:1.1rem;font-weight:800;color:#27ae60;">${valid.length}</div>
+                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">✅ Validés</div>
+            </div>
+            <div style="background:rgba(231,76,60,0.1);border:1px solid rgba(231,76,60,0.3);border-radius:8px;padding:8px 12px;text-align:center;flex:1;">
+                <div style="font-size:1.1rem;font-weight:800;color:#e74c3c;">${cancelled.length}</div>
+                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">🚫 Annulés</div>
+            </div>
+            <div style="background:rgba(52,152,219,0.1);border:1px solid rgba(52,152,219,0.3);border-radius:8px;padding:8px 12px;text-align:center;flex:1;">
+                <div style="font-size:1.1rem;font-weight:800;color:var(--primary,#3498db);">${ca.toFixed(2)} €</div>
+                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">💰 CA période</div>
+            </div>`;
+        const listEl = document.getElementById('dt-list');
+        if (!tickets.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#7f8c8d);">Aucun ticket sur cette période</div>';
+        } else {
+            window._dtDayTickets = [...tickets].reverse();
+            listEl.innerHTML = window._dtDayTickets.map((s, i) => {
+                const isCancelled = s.cancelled === true;
+                const dateStr2 = new Date(s.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' ' + new Date(s.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+                const items = (s.items||[]).map(it=>it.name||it.nom||'?').join(' · ');
+                return `<div style="padding:11px 14px;background:var(--bg-card,#fff);border:1.5px solid ${isCancelled?'#e74c3c44':'var(--border-color,#e0e0e0)'};border-radius:10px;cursor:pointer;transition:box-shadow 0.15s;"
+                    onclick="dtShowTicket(${i})" onmouseover="this.style.boxShadow='0 2px 10px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+                        <span style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);">🧾 #${s.id}${isCancelled?' <span style="background:#e74c3c;color:white;font-size:0.62rem;padding:1px 5px;border-radius:6px;">ANNULÉ</span>':''}</span>
+                        <span style="font-weight:800;color:${isCancelled?'#e74c3c':'var(--success,#2ecc71)'};">${parseFloat(s.total||0).toFixed(2)} €</span>
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">📅 ${dateStr2} · 👤 ${s.cashier||'-'} · 🛒 ${(s.items||[]).length} art.</div>
+                    ${items?`<div style="font-size:0.7rem;color:var(--gray,#7f8c8d);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🏷️ ${items}</div>`:''}
+                </div>`;
+            }).join('');
         }
-        chart.innerHTML = days.map(day => {
-            const amount  = salesByDay[day] || 0;
-            const height  = (amount / maxSale) * 100;
-            const isoDate = dayDates[day] || '';
-            return `<div class="bar" style="height:${height}%;" onclick="openDayTickets('${isoDate}','${day}')" title="Voir les tickets de ${day}"><div class="bar-value">${amount.toFixed(0)}€</div><div class="bar-label">${day}</div></div>`;
-        }).join('');
-    }
+        modal.classList.add('active');
+    };
 
     // ===== MODAL DÉTAIL PRODUIT =====
     let _pdCurrentId = null;
