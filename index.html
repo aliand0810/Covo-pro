@@ -785,6 +785,22 @@
         }
         
         /* Boutons de période statistiques */
+        /* Boutons période modale articles */
+        .ast-period-btn {
+            padding: 4px 11px;
+            border: 1.5px solid rgba(255,255,255,0.4);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.12);
+            color: rgba(255,255,255,0.85);
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            white-space: nowrap;
+        }
+        .ast-period-btn:hover { background: rgba(255,255,255,0.25); color: white; }
+        .ast-period-btn.active { background: rgba(255,255,255,0.95); color: #8e44ad; border-color: white; }
+
         .stats-period-btn {
             padding: 7px 16px;
             border: 2px solid var(--border-color, #e0e0e0);
@@ -8276,21 +8292,216 @@ logout = function(skipConfirmation = false) {
     };
 
     // ===== MODALE DÉTAIL PAR ARTICLE =====
-    function _astGetFilteredSales(filter) {
-        const now = new Date();
+    let _astPeriod = 'day';
+    let _astYear   = new Date().getFullYear();
+    let _astMonth  = new Date().getMonth();
+    let _astWeek   = 0;
+    let _astDay    = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    let _astCalYear  = new Date().getFullYear();
+    let _astCalMonth = new Date().getMonth();
+
+    // Calcule les CA par date/semaine/mois/année depuis salesHistory
+    function _astSalesMap(granularity) {
+        const map = {};
+        salesHistory.forEach(s => {
+            if (s.cancelled) return;
+            const d = new Date(s.date);
+            let key;
+            if (granularity === 'day')   key = d.toISOString().split('T')[0];
+            else if (granularity === 'week') key = d.getFullYear() + '-' + d.getMonth() + '-W' + _astWeekIdx(d);
+            else if (granularity === 'month') key = d.getFullYear() + '-' + d.getMonth();
+            else if (granularity === 'year')  key = String(d.getFullYear());
+            if (!key) return;
+            map[key] = (map[key] || 0) + (s.total || 0);
+        });
+        return map;
+    }
+    function _astWeekIdx(d) {
+        const firstDay = new Date(d.getFullYear(), d.getMonth(), 1);
+        return Math.floor((d.getDate() + firstDay.getDay() - 1) / 7);
+    }
+
+    // ---- Calendrier custom ----
+    function _astBuildCalendar() {
+        const popup = document.getElementById('ast-calendar-popup'); if (!popup) return;
+        const salesMap = _astSalesMap('day');
+        const yr = _astCalYear, mo = _astCalMonth;
+        const firstDay = new Date(yr, mo, 1).getDay(); // 0=dim
+        const daysInMonth = new Date(yr, mo + 1, 0).getDate();
+        const mn = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+        const days = ['Lu','Ma','Me','Je','Ve','Sa','Di'];
+
+        let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+            <button onclick="astCalPrev()" style="background:none;border:none;cursor:pointer;font-size:1rem;color:#8e44ad;padding:2px 6px;">‹</button>
+            <span style="font-weight:800;font-size:0.9rem;color:#2c3e50;">${mn[mo]} ${yr}</span>
+            <button onclick="astCalNext()" style="background:none;border:none;cursor:pointer;font-size:1rem;color:#8e44ad;padding:2px 6px;">›</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center;">`;
+
+        days.forEach(d => { html += `<div style="font-size:0.65rem;font-weight:700;color:#7f8c8d;padding:2px;">${d}</div>`; });
+
+        const startOffset = (firstDay === 0 ? 6 : firstDay - 1); // Monday first
+        for (let i = 0; i < startOffset; i++) html += '<div></div>';
+
+        const today = new Date().toISOString().split('T')[0];
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dateStr = yr + '-' + String(mo+1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+            const ca = salesMap[dateStr] || 0;
+            const isSelected = dateStr === _astDay;
+            const isToday    = dateStr === today;
+            const bgColor = ca > 0 ? '#d5f5e3' : '#f0f0f0';
+            const textColor = ca > 0 ? '#1e8449' : '#999';
+            const border = isSelected ? '2px solid #8e44ad' : isToday ? '2px solid #3498db' : '2px solid transparent';
+            const fontW = isSelected || isToday ? '800' : '500';
+            html += `<div onclick="astSelectDay('${dateStr}')" 
+                style="padding:5px 2px;border-radius:6px;cursor:pointer;font-size:0.78rem;
+                background:${bgColor};color:${textColor};border:${border};font-weight:${fontW};
+                transition:transform 0.1s;" 
+                title="${ca > 0 ? ca.toFixed(2)+'€' : 'Pas de vente'}"
+                onmouseover="this.style.transform='scale(1.15)'" 
+                onmouseout="this.style.transform='scale(1)'">
+                ${d}${ca > 0 ? '<div style="font-size:0.5rem;color:#27ae60;font-weight:700;">✓</div>' : ''}
+            </div>`;
+        }
+        html += '</div>';
+        // Légende
+        html += `<div style="display:flex;gap:10px;margin-top:8px;font-size:0.68rem;color:#7f8c8d;">
+            <span style="display:flex;align-items:center;gap:3px;"><span style="width:10px;height:10px;background:#d5f5e3;border-radius:2px;display:inline-block;"></span> Ventes</span>
+            <span style="display:flex;align-items:center;gap:3px;"><span style="width:10px;height:10px;background:#f0f0f0;border-radius:2px;display:inline-block;"></span> Aucune</span>
+            <span style="display:flex;align-items:center;gap:3px;"><span style="width:10px;height:10px;border:2px solid #8e44ad;border-radius:2px;display:inline-block;"></span> Sélectionné</span>
+        </div>`;
+        popup.innerHTML = html;
+    }
+
+    window.toggleAstCalendar = function() {
+        const popup = document.getElementById('ast-calendar-popup'); if (!popup) return;
+        if (popup.style.display === 'none' || !popup.style.display) {
+            _astBuildCalendar();
+            popup.style.display = 'block';
+            // Fermer au clic extérieur
+            setTimeout(() => {
+                document.addEventListener('click', function closer(e) {
+                    if (!popup.contains(e.target) && !document.getElementById('ast-day-btn')?.contains(e.target)) {
+                        popup.style.display = 'none';
+                        document.removeEventListener('click', closer);
+                    }
+                });
+            }, 50);
+        } else {
+            popup.style.display = 'none';
+        }
+    };
+
+    window.astCalPrev = function() { if (_astCalMonth === 0) { _astCalMonth=11; _astCalYear--; } else _astCalMonth--; _astBuildCalendar(); };
+    window.astCalNext = function() { if (_astCalMonth === 11) { _astCalMonth=0; _astCalYear++; } else _astCalMonth++; _astBuildCalendar(); };
+
+    window.astSelectDay = function(dateStr) {
+        _astDay = dateStr;
+        const popup = document.getElementById('ast-calendar-popup');
+        const btn   = document.getElementById('ast-day-label');
+        const d = new Date(dateStr);
+        if (btn) btn.textContent = d.toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'});
+        if (popup) popup.style.display = 'none';
+        _astBuildCalendar();
+        renderArticlesStats();
+    };
+
+    // ---- Populate selects avec couleurs ----
+    function _astPopulateYearSelect() {
+        const sel = document.getElementById('ast-year-select'); if (!sel) return;
+        const years = new Set([new Date().getFullYear()]);
+        salesHistory.forEach(s => { if (s.date) years.add(new Date(s.date).getFullYear()); });
+        const salesByYear = _astSalesMap('year');
+        sel.innerHTML = [...years].sort((a,b)=>b-a).map(y => {
+            const hasS = (salesByYear[String(y)] || 0) > 0;
+            return `<option value="${y}"${y===_astYear?' selected':''}
+                style="background:${hasS?'#d5f5e3':'#f5f5f5'};color:${hasS?'#1e8449':'#999'};"
+                >${y}${hasS?'':' —'}</option>`;
+        }).join('');
+    }
+
+    function _astPopulateMonthSelect() {
+        const sel = document.getElementById('ast-month-select'); if (!sel) return;
+        const mn = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+        const salesByMonth = _astSalesMap('month');
+        sel.innerHTML = mn.map((m,i) => {
+            const key = _astYear + '-' + i;
+            const hasS = (salesByMonth[key] || 0) > 0;
+            return `<option value="${i}"${i===_astMonth?' selected':''}
+                style="background:${hasS?'#d5f5e3':'#f5f5f5'};color:${hasS?'#1e8449':'#999'};"
+                >${m}${hasS?'':' —'}</option>`;
+        }).join('');
+    }
+
+    function _astPopulateWeekSelect() {
+        const sel = document.getElementById('ast-week-select'); if (!sel) return;
+        const weeks = _getWeeksOfMonth(_astYear, _astMonth);
+        const salesByDay = _astSalesMap('day');
+        sel.innerHTML = weeks.map((w,i) => {
+            const s = w.start.getDate()+'/'+(w.start.getMonth()+1);
+            const e = w.end.getDate()+'/'+(w.end.getMonth()+1);
+            // Calcul CA de la semaine
+            let wCA = 0;
+            for (let d = new Date(w.start); d <= w.end; d.setDate(d.getDate()+1)) {
+                const dk = d.toISOString().split('T')[0];
+                wCA += salesByDay[dk] || 0;
+            }
+            const hasS = wCA > 0;
+            return `<option value="${i}"${i===_astWeek?' selected':''}
+                style="background:${hasS?'#d5f5e3':'#f5f5f5'};color:${hasS?'#1e8449':'#999'};"
+                >${'S'+(i+1)} (${s}→${e})${hasS?'':' —'}</option>`;
+        }).join('');
+        if (_astWeek >= weeks.length) { _astWeek = 0; sel.value = '0'; }
+    }
+
+    window.setAstPeriod = function(period) {
+        _astPeriod = period;
+        document.querySelectorAll('.ast-period-btn').forEach(b => b.classList.toggle('active', b.dataset.period === period));
+        const dayBtn  = document.getElementById('ast-day-btn');
+        const weekEl  = document.getElementById('ast-week-select');
+        const monthEl = document.getElementById('ast-month-select');
+        const yearEl  = document.getElementById('ast-year-select');
+        const popup   = document.getElementById('ast-calendar-popup');
+        [dayBtn, weekEl, monthEl, yearEl].forEach(el => { if (el) el.style.display = 'none'; });
+        if (popup) popup.style.display = 'none';
+        if (period === 'day') {
+            if (dayBtn) dayBtn.style.display = '';
+        } else if (period === 'week') {
+            _astPopulateYearSelect(); _astPopulateMonthSelect(); _astPopulateWeekSelect();
+            if (yearEl)  yearEl.style.display  = '';
+            if (monthEl) monthEl.style.display = '';
+            if (weekEl)  weekEl.style.display  = '';
+        } else if (period === 'month') {
+            _astPopulateYearSelect(); _astPopulateMonthSelect();
+            if (yearEl)  yearEl.style.display  = '';
+            if (monthEl) monthEl.style.display = '';
+        } else if (period === 'year') {
+            _astPopulateYearSelect();
+            if (yearEl) yearEl.style.display = '';
+        }
+        renderArticlesStats();
+    };
+    window.setAstYear  = function(y) { _astYear  = parseInt(y); if (_astPeriod==='week') { _astPopulateMonthSelect(); _astPopulateWeekSelect(); } else if (_astPeriod==='month') _astPopulateMonthSelect(); renderArticlesStats(); };
+    window.setAstMonth = function(m) { _astMonth = parseInt(m); if (_astPeriod==='week') { _astWeek=0; _astPopulateWeekSelect(); } renderArticlesStats(); };
+
+    function _astGetFilteredSales() {
         return salesHistory.filter(s => {
             if (s.cancelled) return false;
             const d = new Date(s.date);
-            if (filter === 'today') {
-                const t = new Date(); t.setHours(0,0,0,0);
-                return d >= t;
-            } else if (filter === 'week') {
-                const w = new Date(); w.setDate(w.getDate() - 6); w.setHours(0,0,0,0);
-                return d >= w;
-            } else if (filter === 'month') {
-                return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-            } else if (filter === 'year') {
-                return d.getFullYear() === now.getFullYear();
+            if (_astPeriod === 'day') {
+                const sel = new Date(_astDay); sel.setHours(0,0,0,0);
+                const next = new Date(sel); next.setDate(next.getDate()+1);
+                return d >= sel && d < next;
+            } else if (_astPeriod === 'week') {
+                const weeks = _getWeeksOfMonth(_astYear, _astMonth);
+                const w = weeks[_astWeek] || weeks[0];
+                const ws=new Date(w.start); ws.setHours(0,0,0,0);
+                const we=new Date(w.end);   we.setHours(23,59,59,999);
+                return d >= ws && d <= we;
+            } else if (_astPeriod === 'month') {
+                return d.getFullYear()===_astYear && d.getMonth()===_astMonth;
+            } else if (_astPeriod === 'year') {
+                return d.getFullYear()===_astYear;
             }
             return true;
         });
@@ -8300,6 +8511,16 @@ logout = function(skipConfirmation = false) {
         const modal = document.getElementById('articles-stats-modal');
         if (!modal) return;
         modal.style.display = 'flex';
+        // Init jour = aujourd'hui
+        _astDay = new Date().toISOString().split('T')[0];
+        _astCalYear  = new Date().getFullYear();
+        _astCalMonth = new Date().getMonth();
+        const btn = document.getElementById('ast-day-btn');
+        const lbl = document.getElementById('ast-day-label');
+        if (btn)  btn.style.display = '';
+        if (lbl)  lbl.textContent = new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+        document.querySelectorAll('.ast-period-btn').forEach(b => b.classList.toggle('active', b.dataset.period === 'day'));
+        _astPeriod = 'day';
         renderArticlesStats();
     };
 
@@ -8309,120 +8530,106 @@ logout = function(skipConfirmation = false) {
     };
 
     window.renderArticlesStats = function() {
-        const filter  = document.getElementById('ast-filter')?.value  || 'month';
-        const sort    = document.getElementById('ast-sort')?.value    || 'ca';
-        const search  = (document.getElementById('ast-search')?.value || '').toLowerCase().trim();
-
-        const filteredSales = _astGetFilteredSales(filter);
-
-        // Agréger par article
+        const sort   = document.getElementById('ast-sort')?.value   || 'ca';
+        const search = (document.getElementById('ast-search')?.value || '').toLowerCase().trim();
+        const filteredSales = _astGetFilteredSales();
         const map = {};
         filteredSales.forEach(s => {
             (s.items || []).forEach(it => {
                 const key = it.id || it.name;
                 if (!map[key]) {
-                    map[key] = {
-                        id: it.id,
-                        name: it.name || '?',
-                        unitType: it.unitType || 'unit',
-                        qty: 0,
-                        ca: 0,
-                        img: null,
-                        discount: it.discount || 0
-                    };
-                    // Chercher l'image dans les produits
                     const prod = products.find(p => p.id == it.id || p.name === it.name);
-                    if (prod) { map[key].img = prod.img; map[key].unitType = prod.unitType || 'unit'; }
+                    map[key] = { id:it.id, name:it.name||'?', unitType:it.unitType||(prod?.unitType)||'unit', qty:0, ca:0, img:prod?.img||null };
                 }
                 const qty = parseFloat(it.quantity || 1);
                 map[key].qty += qty;
-                map[key].ca  += it.lineTotal != null ? parseFloat(it.lineTotal) : parseFloat(it.price || 0) * qty;
+                map[key].ca  += parseFloat(it.price || 0) * qty;
             });
         });
-
         let rows = Object.values(map);
-
-        // Recherche
         if (search) rows = rows.filter(r => r.name.toLowerCase().includes(search));
+        if (sort==='ca')   rows.sort((a,b)=>b.ca-a.ca);
+        if (sort==='qty')  rows.sort((a,b)=>b.qty-a.qty);
+        if (sort==='name') rows.sort((a,b)=>a.name.localeCompare(b.name));
 
-        // Tri
-        if (sort === 'ca')   rows.sort((a,b) => b.ca  - a.ca);
-        if (sort === 'qty')  rows.sort((a,b) => b.qty - a.qty);
-        if (sort === 'name') rows.sort((a,b) => a.name.localeCompare(b.name));
-
-        // Totaux globaux
-        const totalCA  = rows.reduce((s, r) => s + r.ca,  0);
-        const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-        const filterLabels = {all:'Tout l\'historique', today:'Aujourd\'hui', week:'7 derniers jours', month:'Ce mois', year:'Cette année'};
+        let periodDetail = '';
+        if (_astPeriod==='day') {
+            periodDetail = new Date(_astDay + 'T12:00:00').toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+        } else if (_astPeriod==='week') {
+            const weeks=_getWeeksOfMonth(_astYear,_astMonth);
+            const w=weeks[_astWeek]||weeks[0];
+            const mn=['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+            periodDetail='S'+(_astWeek+1)+' '+mn[_astMonth]+' '+_astYear+' · '+w.start.getDate()+'/'+(w.start.getMonth()+1)+' → '+w.end.getDate()+'/'+(w.end.getMonth()+1);
+        } else if (_astPeriod==='month') {
+            const mn=['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+            periodDetail = mn[_astMonth]+' '+_astYear;
+        } else if (_astPeriod==='year') {
+            periodDetail = 'Année '+_astYear;
+        } else {
+            periodDetail = "Tout l\'historique";
+        }
         const lbl = document.getElementById('ast-period-label');
-        if (lbl) lbl.textContent = filterLabels[filter] || '';
+        if (lbl) lbl.textContent = periodDetail;
 
+        const totalCA = rows.reduce((s,r)=>s+r.ca, 0);
         document.getElementById('ast-summary').innerHTML = `
-            <div style="background:rgba(52,152,219,0.1);border:1px solid rgba(52,152,219,0.25);border-radius:8px;padding:8px 14px;flex:1;min-width:120px;">
-                <div style="font-size:1.1rem;font-weight:800;color:var(--primary,#3498db);">${rows.length}</div>
-                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">📦 Articles distincts</div>
+            <div style="background:rgba(255,255,255,0.15);border-radius:8px;padding:8px 14px;flex:1;min-width:100px;">
+                <div style="font-size:1.05rem;font-weight:800;color:white;">${rows.length}</div>
+                <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);">📦 Articles</div>
             </div>
-            <div style="background:rgba(46,204,113,0.1);border:1px solid rgba(46,204,113,0.25);border-radius:8px;padding:8px 14px;flex:1;min-width:120px;">
-                <div style="font-size:1.1rem;font-weight:800;color:#27ae60;">${totalCA.toFixed(2)} €</div>
-                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">💰 CA total encaissé</div>
+            <div style="background:rgba(255,255,255,0.15);border-radius:8px;padding:8px 14px;flex:1;min-width:100px;">
+                <div style="font-size:1.05rem;font-weight:800;color:white;">${totalCA.toFixed(2)} €</div>
+                <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);">💰 CA encaissé</div>
             </div>
-            <div style="background:rgba(155,89,182,0.1);border:1px solid rgba(155,89,182,0.25);border-radius:8px;padding:8px 14px;flex:1;min-width:120px;">
-                <div style="font-size:1.1rem;font-weight:800;color:#9b59b6;">${filteredSales.length}</div>
-                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">🧾 Tickets concernés</div>
+            <div style="background:rgba(255,255,255,0.15);border-radius:8px;padding:8px 14px;flex:1;min-width:100px;">
+                <div style="font-size:1.05rem;font-weight:800;color:white;">${filteredSales.length}</div>
+                <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);">🧾 Tickets</div>
             </div>`;
 
         const listEl = document.getElementById('ast-list');
         if (!rows.length) {
-            listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#7f8c8d);"><div style="font-size:2.5rem;">📦</div><p>Aucun article trouvé</p></div>';
-            return;
+            listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#7f8c8d);"><div style="font-size:2.5rem;">📦</div><p>Aucun article sur cette période</p></div>';
+            window._astRows = []; return;
         }
-
         const maxCA = rows[0]?.ca || 1;
-        listEl.innerHTML = rows.map((r, i) => {
-            const isKg  = r.unitType === 'kg';
-            const qtyDisplay = isKg ? r.qty.toFixed(2) + ' kg' : Math.round(r.qty) + ' u.';
-            const pct   = Math.round((r.ca / maxCA) * 100);
-            const rank  = i + 1;
-            const rankColor = rank === 1 ? '#f39c12' : rank === 2 ? '#95a5a6' : rank === 3 ? '#cd7f32' : 'var(--border-color,#ddd)';
-            const imgHtml = r.img
-                ? `<img src="${r.img}" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8f8f8;flex-shrink:0;">`
-                : `<div style="width:44px;height:44px;background:var(--input-bg,#f0f0f0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">📦</div>`;
+        listEl.innerHTML = rows.map((r,i) => {
+            const isKg = r.unitType==='kg';
+            const qtyD = isKg ? r.qty.toFixed(2)+' kg' : Math.round(r.qty)+' unité(s)';
+            const pct  = Math.round((r.ca/maxCA)*100);
+            const rank = i+1;
+            const rc   = rank===1?'#f39c12':rank===2?'#95a5a6':rank===3?'#cd7f32':'var(--border-color,#ddd)';
+            const img  = r.img ? `<img src="${r.img}" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8f8f8;flex-shrink:0;">`
+                                : `<div style="width:44px;height:44px;background:var(--input-bg,#f0f0f0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">📦</div>`;
             return `<div style="padding:10px 12px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;display:flex;align-items:center;gap:12px;">
-                <div style="width:28px;text-align:center;font-weight:800;font-size:0.85rem;color:${rankColor};flex-shrink:0;">#${rank}</div>
-                ${imgHtml}
+                <div style="width:28px;text-align:center;font-weight:800;font-size:0.85rem;color:${rc};flex-shrink:0;">#${rank}</div>
+                ${img}
                 <div style="flex:1;min-width:0;">
                     <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
-                    <div style="margin-top:4px;height:5px;background:var(--input-bg,#eee);border-radius:3px;overflow:hidden;">
-                        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#9b59b6,#3498db);border-radius:3px;"></div>
-                    </div>
+                    <div style="margin-top:4px;height:5px;background:var(--input-bg,#eee);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#9b59b6,#3498db);border-radius:3px;"></div></div>
                 </div>
                 <div style="text-align:right;flex-shrink:0;">
                     <div style="font-weight:800;font-size:0.95rem;color:#27ae60;">${r.ca.toFixed(2)} €</div>
-                    <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${isKg ? '⚖️' : '🛒'} ${qtyDisplay}</div>
+                    <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${isKg?'⚖️':'🛒'} ${qtyD}</div>
                 </div>
             </div>`;
         }).join('');
-        // Stocker pour export
         window._astRows = rows;
-        window._astFilter = filter;
     };
 
     window.exportArticlesStatsCSV = function() {
         const rows = window._astRows || [];
-        const filter = window._astFilter || 'all';
-        const labels = {all:'Tout', today:'Aujourd_hui', week:'7_jours', month:'Mois', year:'Annee'};
         const date = new Date().toISOString().split('T')[0];
         let csv = 'Rang,Article,Type,Quantite,CA_Encaisse\n';
-        rows.forEach((r, i) => {
-            const isKg = r.unitType === 'kg';
-            const qty = isKg ? r.qty.toFixed(2) + ' kg' : Math.round(r.qty) + ' u.';
+        rows.forEach((r,i) => {
+            const isKg = r.unitType==='kg';
+            const qty = isKg ? r.qty.toFixed(2)+' kg' : Math.round(r.qty)+' u.';
             csv += `${i+1},"${r.name.replace(/"/g,'""')}",${isKg?'kg':'unité'},${qty},${r.ca.toFixed(2)} €\n`;
         });
-        const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8;'});
+        const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = `articles_ventes_${labels[filter]}_${date}.csv`; a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        a.href=url; a.download=`articles_${date}.csv`; a.click();
+        setTimeout(()=>URL.revokeObjectURL(url), 1000);
     };
 
     function renderTopProducts() {
@@ -10954,26 +11161,37 @@ logout = function(skipConfirmation = false) {
 <!-- ===== MODALE DÉTAIL PAR ARTICLE ===== -->
 <div id="articles-stats-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:9000;justify-content:center;align-items:center;">
     <div style="background:var(--bg-card,#fff);border-radius:18px;width:94%;max-width:720px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.35);animation:adminWelcomeIn 0.3s ease;">
-        <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-            <div>
-                <h3 style="margin:0;color:white;font-size:1rem;font-weight:700;">📦 Détail des ventes par article</h3>
-                <div id="ast-period-label" style="font-size:0.75rem;color:rgba(255,255,255,0.75);margin-top:2px;"></div>
+        <!-- Header fixe -->
+        <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:14px 18px;flex-shrink:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                <div>
+                    <h3 style="margin:0;color:white;font-size:1rem;font-weight:700;">📦 Détail des ventes par article</h3>
+                    <div id="ast-period-label" style="font-size:0.72rem;color:rgba(255,255,255,0.8);margin-top:2px;"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <select id="ast-sort" onchange="renderArticlesStats()" style="padding:5px 8px;border:none;border-radius:7px;font-size:0.78rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;">
+                        <option value="ca" style="color:#2c3e50;background:#fff;">CA ↓</option>
+                        <option value="qty" style="color:#2c3e50;background:#fff;">Qté ↓</option>
+                        <option value="name" style="color:#2c3e50;background:#fff;">Nom A-Z</option>
+                    </select>
+                    <button onclick="exportArticlesStatsCSV()" style="background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.4);color:white;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;" title="Exporter CSV">⬇️ CSV</button>
+                    <button onclick="closeArticlesStatsModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.95rem;">✕</button>
+                </div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;">
-                <select id="ast-filter" onchange="renderArticlesStats()" style="padding:6px 10px;border:none;border-radius:8px;font-size:0.8rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;">
-                    <option value="all" style="color:#2c3e50;background:#fff;">Tout</option>
-                    <option value="today" style="color:#2c3e50;background:#fff;">Aujourd'hui</option>
-                    <option value="week" style="color:#2c3e50;background:#fff;">7 derniers jours</option>
-                    <option value="month" selected style="color:#2c3e50;background:#fff;">Ce mois</option>
-                    <option value="year" style="color:#2c3e50;background:#fff;">Cette année</option>
-                </select>
-                <select id="ast-sort" onchange="renderArticlesStats()" style="padding:6px 10px;border:none;border-radius:8px;font-size:0.8rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;">
-                    <option value="ca" style="color:#2c3e50;background:#fff;">CA ↓</option>
-                    <option value="qty" style="color:#2c3e50;background:#fff;">Qté ↓</option>
-                    <option value="name" style="color:#2c3e50;background:#fff;">Nom A-Z</option>
-                </select>
-                <button onclick="exportArticlesStatsCSV()" style="background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.4);color:white;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:600;" title="Exporter CSV">⬇️ CSV</button>
-                <button onclick="closeArticlesStatsModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+            <!-- Sélecteurs de période -->
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;position:relative;">
+                <button class="ast-period-btn active" data-period="day"   onclick="setAstPeriod('day')">📅 Jour</button>
+                <button class="ast-period-btn"        data-period="week"  onclick="setAstPeriod('week')">📆 Semaine</button>
+                <button class="ast-period-btn"        data-period="month" onclick="setAstPeriod('month')">🗓️ Mois</button>
+                <button class="ast-period-btn"        data-period="year"  onclick="setAstPeriod('year')">📊 Année</button>
+                <button class="ast-period-btn"        data-period="all"   onclick="setAstPeriod('all')">🗂️ Tout</button>
+                <!-- Sélecteurs dynamiques -->
+                <button id="ast-day-btn" onclick="toggleAstCalendar()" style="display:none;padding:4px 10px;border:none;border-radius:7px;font-size:0.78rem;background:rgba(255,255,255,0.95);color:#8e44ad;cursor:pointer;font-weight:700;position:relative;">📅 <span id="ast-day-label">Aujourd'hui</span></button>
+                <select id="ast-week-select"  onchange="renderArticlesStats()" style="display:none;padding:4px 8px;border:none;border-radius:7px;font-size:0.78rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;"></select>
+                <select id="ast-month-select" onchange="setAstMonth(this.value)"  style="display:none;padding:4px 8px;border:none;border-radius:7px;font-size:0.78rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;"></select>
+                <select id="ast-year-select"  onchange="setAstYear(this.value)"   style="display:none;padding:4px 8px;border:none;border-radius:7px;font-size:0.78rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;"></select>
+                <!-- Calendrier custom -->
+                <div id="ast-calendar-popup" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.25);padding:12px;min-width:280px;margin-top:6px;"></div>
             </div>
         </div>
         <div id="ast-summary" style="display:flex;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-color,#e0e0e0);flex-shrink:0;flex-wrap:wrap;background:var(--input-bg,#f8f9fa);"></div>
