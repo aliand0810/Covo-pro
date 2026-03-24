@@ -2726,11 +2726,15 @@
                     <button class="stats-period-btn active" data-period="week"  onclick="setStatsPeriod('week')">📆 Semaine</button>
                     <button class="stats-period-btn"        data-period="month" onclick="setStatsPeriod('month')">📅 Mois</button>
                     <button class="stats-period-btn"        data-period="year"  onclick="setStatsPeriod('year')">📊 Année</button>
-                    <!-- Sélecteur de mois — visible quand période = month -->
+                    <!-- Sélecteur de semaine — visible quand période = week -->
+                    <select id="stats-week-select" onchange="setStatsWeek(this.value)"
+                        style="display:none;padding:6px 12px;border:2px solid #e67e22;border-radius:20px;font-size:0.83rem;font-weight:700;color:#e67e22;background:var(--bg-card,#fff);cursor:pointer;">
+                    </select>
+                    <!-- Sélecteur de mois — visible quand période = month ou week -->
                     <select id="stats-month-select" onchange="setStatsMonth(this.value)"
                         style="display:none;padding:6px 12px;border:2px solid #27ae60;border-radius:20px;font-size:0.83rem;font-weight:700;color:#27ae60;background:var(--bg-card,#fff);cursor:pointer;">
                     </select>
-                    <!-- Sélecteur d'année — visible quand période = year ou month -->
+                    <!-- Sélecteur d'année — visible quand période = year ou month ou week -->
                     <select id="stats-year-select" onchange="setStatsYear(this.value)"
                         style="display:none;padding:6px 12px;border:2px solid var(--primary,#3498db);border-radius:20px;font-size:0.83rem;font-weight:700;color:var(--primary,#3498db);background:var(--bg-card,#fff);cursor:pointer;">
                     </select>
@@ -7466,9 +7470,26 @@ logout = function(skipConfirmation = false) {
     let _statsPeriod = 'week';
     let _statsYear   = new Date().getFullYear();
     let _statsMonth  = new Date().getMonth(); // 0-11
+    let _statsWeek   = 0; // index de semaine dans le mois (0 = S1)
 
     const _MONTH_NAMES = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
     const _MONTH_SHORT = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+
+    // Calcule les semaines d'un mois donné
+    function _getWeeksOfMonth(yr, mo) {
+        const firstDay = new Date(yr, mo, 1);
+        const lastDay  = new Date(yr, mo + 1, 0);
+        const weeks = [];
+        let cur = new Date(firstDay);
+        while (cur <= lastDay) {
+            const wStart = new Date(cur);
+            const wEnd   = new Date(cur); wEnd.setDate(wEnd.getDate() + 6);
+            if (wEnd > lastDay) wEnd.setTime(lastDay.getTime());
+            weeks.push({ start: new Date(wStart), end: new Date(wEnd) });
+            cur.setDate(cur.getDate() + 7);
+        }
+        return weeks;
+    }
 
     function _populateYearSelect() {
         const sel = document.getElementById('stats-year-select');
@@ -7485,6 +7506,19 @@ logout = function(skipConfirmation = false) {
         sel.innerHTML = _MONTH_NAMES.map((m, i) => `<option value="${i}"${i === _statsMonth ? ' selected' : ''}>${m}</option>`).join('');
     }
 
+    function _populateWeekSelect() {
+        const sel = document.getElementById('stats-week-select');
+        if (!sel) return;
+        const weeks = _getWeeksOfMonth(_statsYear, _statsMonth);
+        sel.innerHTML = weeks.map((w, i) => {
+            const s = w.start.getDate() + '/' + (w.start.getMonth()+1);
+            const e = w.end.getDate()   + '/' + (w.end.getMonth()+1);
+            return `<option value="${i}"${i === _statsWeek ? ' selected' : ''}>S${i+1} (${s}→${e})</option>`;
+        }).join('');
+        // Corriger si _statsWeek dépasse le nombre de semaines
+        if (_statsWeek >= weeks.length) { _statsWeek = 0; sel.value = '0'; }
+    }
+
     function setStatsPeriod(period) {
         _statsPeriod = period;
         document.querySelectorAll('.stats-period-btn').forEach(b => {
@@ -7492,18 +7526,26 @@ logout = function(skipConfirmation = false) {
         });
         const yearSel  = document.getElementById('stats-year-select');
         const monthSel = document.getElementById('stats-month-select');
+        const weekSel  = document.getElementById('stats-week-select');
         if (period === 'year') {
             _populateYearSelect();
             if (yearSel)  yearSel.style.display  = '';
             if (monthSel) monthSel.style.display = 'none';
+            if (weekSel)  weekSel.style.display  = 'none';
         } else if (period === 'month') {
             _populateYearSelect();
             _populateMonthSelect();
             if (yearSel)  yearSel.style.display  = '';
             if (monthSel) monthSel.style.display = '';
+            if (weekSel)  weekSel.style.display  = 'none';
         } else {
-            if (yearSel)  yearSel.style.display  = 'none';
-            if (monthSel) monthSel.style.display = 'none';
+            // week
+            _populateYearSelect();
+            _populateMonthSelect();
+            _populateWeekSelect();
+            if (yearSel)  yearSel.style.display  = '';
+            if (monthSel) monthSel.style.display = '';
+            if (weekSel)  weekSel.style.display  = '';
         }
         renderStatistics();
     }
@@ -7511,15 +7553,25 @@ logout = function(skipConfirmation = false) {
 
     function setStatsYear(year) {
         _statsYear = parseInt(year);
+        // Repeupler semaine et mois si nécessaire
+        if (_statsPeriod === 'month' || _statsPeriod === 'week') _populateMonthSelect();
+        if (_statsPeriod === 'week') _populateWeekSelect();
         renderStatistics();
     }
     window.setStatsYear = setStatsYear;
 
     function setStatsMonth(month) {
         _statsMonth = parseInt(month);
+        if (_statsPeriod === 'week') { _statsWeek = 0; _populateWeekSelect(); }
         renderStatistics();
     }
     window.setStatsMonth = setStatsMonth;
+
+    function setStatsWeek(week) {
+        _statsWeek = parseInt(week);
+        renderStatistics();
+    }
+    window.setStatsWeek = setStatsWeek;
 
     function renderStatistics() {
         const now  = new Date();
@@ -7528,10 +7580,14 @@ logout = function(skipConfirmation = false) {
         // ---- Calcul des bornes selon la période ----
         let periodStart, periodLabel, chartTitle, periodTitleMain;
         if (_statsPeriod === 'week') {
-            periodStart = new Date(now); periodStart.setDate(now.getDate() - 6); periodStart.setHours(0,0,0,0);
-            periodLabel = '7 derniers jours';
-            chartTitle  = '📊 CA — 7 derniers jours';
-            periodTitleMain = '📆 CA de la semaine';
+            const weeks = _getWeeksOfMonth(_statsYear, _statsMonth);
+            const w = weeks[_statsWeek] || weeks[0];
+            periodStart = new Date(w.start); periodStart.setHours(0,0,0,0);
+            window._statsPeriodEnd = new Date(w.end); window._statsPeriodEnd.setHours(23,59,59,999);
+            const sLabel = 'S' + (_statsWeek + 1) + ' — ' + w.start.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' → ' + w.end.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+            periodLabel = sLabel;
+            chartTitle  = '📊 CA — ' + sLabel;
+            periodTitleMain = '📆 CA ' + sLabel;
         } else if (_statsPeriod === 'month') {
             const mo = _statsMonth;
             const yr = _statsYear;
@@ -7550,7 +7606,7 @@ logout = function(skipConfirmation = false) {
             // Pour l'année on stocke aussi la fin
             window._statsPeriodEnd = periodEnd;
         }
-        if (_statsPeriod === 'week') window._statsPeriodEnd = null;
+        // _statsPeriodEnd est toujours défini pour toutes les périodes
 
         // Toutes les ventes de la période
         const periodSales = salesHistory.filter(s => {
@@ -7613,32 +7669,32 @@ logout = function(skipConfirmation = false) {
         let bars = [];
 
         if (_statsPeriod === 'week') {
-            // 7 barres — jours
-            const dayDates = {};
+            // Jours de la semaine sélectionnée
+            const weeks = _getWeeksOfMonth(_statsYear, _statsMonth);
+            const w = weeks[_statsWeek] || weeks[0];
+            const wStart = new Date(w.start); wStart.setHours(0,0,0,0);
+            const wEnd   = new Date(w.end);   wEnd.setHours(23,59,59,999);
             const days = [];
-            for (let i = 6; i >= 0; i--) {
-                const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0,0,0,0);
-                const key = d.toLocaleDateString('fr-FR', { weekday: 'short' });
-                days.push(key);
-                dayDates[key] = d.toDateString();
+            for (let d = new Date(wStart); d <= wEnd; d.setDate(d.getDate() + 1)) {
+                days.push(new Date(d));
             }
             const salesByDay = {};
-            days.forEach(k => salesByDay[k] = 0);
+            days.forEach(d => { salesByDay[d.toDateString()] = 0; });
             salesHistory.forEach(sale => {
                 if (sale.cancelled) return;
-                const sd = new Date(sale.date);
-                const diff = Math.floor((now - sd) / 86400000);
-                if (diff < 7) {
-                    const k = sd.toLocaleDateString('fr-FR', { weekday: 'short' });
+                const sd = new Date(sale.date); sd.setHours(0,0,0,0);
+                if (sd >= wStart && sd <= wEnd) {
+                    const k = sd.toDateString();
                     salesByDay[k] = (salesByDay[k] || 0) + (sale.total || 0);
                 }
             });
             const max = Math.max(...Object.values(salesByDay), 1);
-            bars = days.map(day => ({
-                label: day,
-                amount: salesByDay[day] || 0,
+            bars = days.map(d => ({
+                label: d.toLocaleDateString('fr-FR', { weekday: 'short' }),
+                sublabel: d.getDate() + '/' + (d.getMonth()+1),
+                amount: salesByDay[d.toDateString()] || 0,
                 max,
-                clickArg: `'${dayDates[day]}','${day}'`,
+                clickArg: `'${d.toDateString()}','${d.toLocaleDateString('fr-FR',{weekday:'short'})}'`,
                 clickFn: 'openDayTickets'
             }));
 
