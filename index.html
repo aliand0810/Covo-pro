@@ -1211,6 +1211,39 @@
             font-weight: bold;
         }
 
+        /* ===== HOVER PREVIEW PRODUIT ===== */
+        #product-hover-preview {
+            display: none;
+            position: fixed;
+            z-index: 9500;
+            background: var(--bg-card, #fff);
+            border-radius: 16px;
+            box-shadow: 0 16px 50px rgba(0,0,0,0.35);
+            width: 260px;
+            overflow: hidden;
+            pointer-events: none;
+            animation: phpIn 0.2s ease;
+            border: 1.5px solid var(--border-color, #e0e0e0);
+        }
+        @keyframes phpIn {
+            from { opacity: 0; transform: scale(0.92) translateY(8px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        #product-hover-preview img {
+            width: 100%; height: 160px; object-fit: cover; display: block; background: #f8f8f8;
+        }
+        .php-body { padding: 12px 14px; }
+        .php-name { font-weight: 800; font-size: 0.95rem; color: var(--text-main,#2c3e50); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .php-price { font-size: 1.35rem; font-weight: 900; color: var(--success,#2ecc71); margin-bottom: 8px; }
+        .php-night { font-size: 0.78rem; color: #a78bfa; font-weight: 700; }
+        .php-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; padding: 5px 0; border-top: 1px solid var(--border-color,#f0f0f0); color: var(--gray,#7f8c8d); }
+        .php-row strong { color: var(--text-main,#2c3e50); }
+        .php-dlc-ok      { color: #27ae60 !important; font-weight: 700; }
+        .php-dlc-urgent  { color: #e67e22 !important; font-weight: 700; }
+        .php-dlc-expired { color: #e74c3c !important; font-weight: 700; }
+        body.dark-mode #product-hover-preview { background: #1e1e1e; border-color: #333; box-shadow: 0 16px 50px rgba(0,0,0,0.6); }
+        body.dark-mode .php-row { border-color: #333; }
+
         /* ===== MODAL DÉTAIL PRODUIT ===== */
         #product-detail-modal {
             display: none;
@@ -3068,6 +3101,33 @@
         </button>
     </div>
 </div>
+            <!-- Aperçu produit au survol -->
+            <div style="margin-top:15px; padding:15px; border-top:1px solid #ddd; background:#f0f4ff; border-radius:8px; border-left:4px solid #3498db;">
+                <h4 style="margin:0 0 12px; color:var(--dark,#2c3e50); display:flex; align-items:center; gap:8px;">🖼️ Aperçu produit au survol</h4>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+                    <div>
+                        <label style="display:block; font-size:0.82rem; font-weight:700; color:var(--gray,#7f8c8d); margin-bottom:5px; text-transform:uppercase;">Taille (largeur en px)</label>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="range" id="settings-hover-size" min="200" max="520" step="20" value="320"
+                                oninput="document.getElementById('hover-size-val').textContent = this.value + 'px'; applyHoverPreviewSettings();"
+                                style="flex:1; accent-color:#3498db;">
+                            <span id="hover-size-val" style="font-weight:700; color:#3498db; min-width:50px; text-align:right;">320px</span>
+                        </div>
+                        <div style="font-size:0.72rem; color:var(--gray,#999); margin-top:3px;">Petit (200px) ↔ Grand (520px)</div>
+                    </div>
+                    <div>
+                        <label style="display:block; font-size:0.82rem; font-weight:700; color:var(--gray,#7f8c8d); margin-bottom:5px; text-transform:uppercase;">Délai avant affichage</label>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="range" id="settings-hover-delay" min="0.5" max="5" step="0.5" value="3"
+                                oninput="document.getElementById('hover-delay-val').textContent = this.value + 's'; applyHoverPreviewSettings();"
+                                style="flex:1; accent-color:#9b59b6;">
+                            <span id="hover-delay-val" style="font-weight:700; color:#9b59b6; min-width:40px; text-align:right;">3s</span>
+                        </div>
+                        <div style="font-size:0.72rem; color:var(--gray,#999); margin-top:3px;">Rapide (0.5s) ↔ Long (5s)</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Plein écran automatique à la connexion -->
             <div style="margin-top:15px; padding-top:15px; border-top:1px solid #ddd;">
                 <label style="display:flex; align-items:center; gap:12px; cursor:pointer; background:#f4f0ff; border-radius:8px; padding:12px 15px; border:2px solid #9b59b6;">
@@ -4265,6 +4325,116 @@
         if (window._pdAddToCartImpl) window._pdAddToCartImpl();
     };
 
+    // ===== HOVER PREVIEW PRODUIT (3 secondes) =====
+    let _phpTimer = null;
+    const _phpDelay = 3000;
+
+    function _phpShow(productId, anchorEl) {
+        // Récupérer le produit depuis window.products (exposé globalement)
+        const prods = window._covoProducts || [];
+        const p = prods.find(x => x.id == productId);
+        if (!p) return;
+
+        const preview = document.getElementById('product-hover-preview');
+        if (!preview) return;
+
+        // Image
+        document.getElementById('php-img').src = p.img || 'https://placehold.co/260x160?text=' + encodeURIComponent(p.name);
+
+        // Nom
+        document.getElementById('php-name').textContent = p.name;
+
+        // Prix
+        const nightSettings = window._covoNightSettings || {};
+        const nightActive = typeof window._covoIsNightActive === 'function' ? window._covoIsNightActive() : false;
+        const isKg = p.unitType === 'kg';
+        const baseP = isKg ? (p.pricePerKg || 0) : (p.price || 0);
+        const disc = p.promo || 0;
+        const promoP = baseP * (1 - disc / 100);
+        const nightPct = nightActive && p.nightTariff ? (p.nightTariffPercent || nightSettings.defaultPercent || 30) : 0;
+        const finalP = nightPct ? promoP * (1 + nightPct / 100) : promoP;
+        const unit = isKg ? ' €/kg' : ' €';
+
+        const priceEl = document.getElementById('php-price');
+        priceEl.textContent = finalP.toFixed(2) + unit;
+        priceEl.style.color = nightPct ? '#a78bfa' : (disc > 0 ? '#e67e22' : 'var(--success,#2ecc71)');
+        if (disc > 0) priceEl.textContent = '-' + disc + '%  ' + finalP.toFixed(2) + unit;
+
+        const nightEl = document.getElementById('php-night');
+        if (nightPct) { nightEl.textContent = '🌙 Tarif nuit +' + nightPct + '%'; nightEl.style.display = ''; }
+        else nightEl.style.display = 'none';
+
+        // Stock
+        const stockEl = document.getElementById('php-stock');
+        const stockVal = isKg ? (p.stock || 0).toFixed(2) + ' kg' : (p.stock || 0) + ' u.';
+        stockEl.textContent = stockVal;
+        stockEl.style.color = p.stock <= 0 ? '#e74c3c' : p.stock < 5 ? '#e67e22' : '#27ae60';
+
+        // DLC
+        const dlcRow = document.getElementById('php-dlc-row');
+        if (p.expiryDate) {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const exp = new Date(p.expiryDate); exp.setHours(0,0,0,0);
+            const dLeft = Math.ceil((exp - today) / 86400000);
+            const dlcEl = document.getElementById('php-dlc');
+            dlcEl.textContent = exp.toLocaleDateString('fr-FR', {day:'2-digit',month:'short',year:'numeric'})
+                + (dLeft < 0 ? ' ❌' : dLeft === 0 ? ' (auj.)' : ' (' + dLeft + 'j)');
+            dlcEl.className = 'php-dlc-' + (dLeft < 0 ? 'expired' : dLeft <= 3 ? 'urgent' : 'ok');
+            dlcRow.style.display = '';
+        } else {
+            dlcRow.style.display = 'none';
+        }
+
+        // Catégorie
+        document.getElementById('php-cat').textContent = p.category || '—';
+
+        // Taille dynamique depuis les settings
+        const W = (window._covoHoverSize) || 320;
+        const imgH = Math.round(W * 0.55);
+        preview.style.width = W + 'px';
+        const phpImg = document.getElementById('php-img');
+        if (phpImg) phpImg.style.height = imgH + 'px';
+
+        // Position — centré sur l'écran
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const estimatedH = imgH + 160;
+        const left = Math.max(8, Math.round((vw - W) / 2));
+        const top  = Math.max(8, Math.round((vh - estimatedH) / 2));
+
+        preview.style.left = left + 'px';
+        preview.style.top  = top  + 'px';
+        preview.style.display = 'block';
+    }
+
+    function _phpHide() {
+        clearTimeout(_phpTimer);
+        _phpTimer = null;
+        const preview = document.getElementById('product-hover-preview');
+        if (preview) preview.style.display = 'none';
+    }
+
+    // Délégation hover sur #product-list
+    document.addEventListener('mouseover', function(e) {
+        const card = e.target.closest('#product-list .card');
+        if (!card) return;
+        const img = card.querySelector('img[data-pid]') || card.querySelector('[data-pid]');
+        if (!img) return;
+        const pid = img.getAttribute('data-pid');
+        if (!pid) return;
+        clearTimeout(_phpTimer);
+        _phpTimer = setTimeout(() => _phpShow(pid, card), window._covoHoverDelay || 3000);
+    });
+
+    document.addEventListener('mouseout', function(e) {
+        const card = e.target.closest('#product-list .card');
+        if (card && !card.contains(e.relatedTarget)) {
+            _phpHide();
+        }
+        if (!e.target.closest('#product-list')) {
+            _phpHide();
+        }
+    });
+
     // ===== MODALE DE CONFIRMATION CUSTOM =====
     let _confirmResolve = null;
 
@@ -4347,6 +4517,8 @@
 // Assurer une valeur par défaut si l'objet existe mais sans la clé
 if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
 if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false;
+if (!appSettings.hoverPreviewSize)  appSettings.hoverPreviewSize  = 320;
+if (!appSettings.hoverPreviewDelay) appSettings.hoverPreviewDelay = 3;
 
 // ===== TARIF DE NUIT =====
 let nightTariffSettings = JSON.parse(localStorage.getItem('covo_night_tariff')) || {
@@ -6946,6 +7118,10 @@ logout = function(skipConfirmation = false) {
         const list = document.getElementById('product-list');
         const search = document.getElementById('search-bar').value.toLowerCase();
         const cat = document.getElementById('filter-category').value;
+        // Exposer globalement pour le hover preview
+        window._covoProducts = products;
+        window._covoNightSettings = nightTariffSettings;
+        window._covoIsNightActive = isNightTariffCurrentlyActive;
         
         const filteredResults = products.filter(p => {
             const hasBarcode = p.barcode && p.barcode.trim().length >= 6;
@@ -7682,6 +7858,7 @@ logout = function(skipConfirmation = false) {
             loadNightTariffAdminUI();
             // Charger les états des options
             applyAutoFullscreenSetting();
+            loadHoverPreviewSettings();
         } else {
             // Fermer la modale et remettre le panneau à sa place d'origine
             modal.classList.remove('active');
@@ -7694,6 +7871,33 @@ logout = function(skipConfirmation = false) {
     function toggleAdminPanel() {
         toggleAdminModal();
     }
+
+    function loadHoverPreviewSettings() {
+        const size  = appSettings.hoverPreviewSize  || 320;
+        const delay = appSettings.hoverPreviewDelay || 3;
+        const sizeEl  = document.getElementById('settings-hover-size');
+        const delayEl = document.getElementById('settings-hover-delay');
+        const sizeVal  = document.getElementById('hover-size-val');
+        const delayVal = document.getElementById('hover-delay-val');
+        if (sizeEl)  { sizeEl.value  = size;  if (sizeVal)  sizeVal.textContent  = size  + 'px'; }
+        if (delayEl) { delayEl.value = delay; if (delayVal) delayVal.textContent = delay + 's';  }
+        window._covoHoverSize  = size;
+        window._covoHoverDelay = delay * 1000;
+    }
+
+    function applyHoverPreviewSettings() {
+        const size  = parseFloat(document.getElementById('settings-hover-size')?.value  || 320);
+        const delay = parseFloat(document.getElementById('settings-hover-delay')?.value || 3);
+        appSettings.hoverPreviewSize  = size;
+        appSettings.hoverPreviewDelay = delay;
+        window._covoHoverSize  = size;
+        window._covoHoverDelay = delay * 1000;
+        localStorage.setItem('covo_settings', JSON.stringify(appSettings));
+    }
+
+    // Appliquer au chargement
+    window._covoHoverSize  = appSettings.hoverPreviewSize  || 320;
+    window._covoHoverDelay = (appSettings.hoverPreviewDelay || 3) * 1000;
 
     function renderCategoryManager() {
         // Source unique : catégories ECH
@@ -9991,6 +10195,29 @@ logout = function(skipConfirmation = false) {
         </div>
     </div>
 </div>
+
+<!-- ===== HOVER PREVIEW PRODUIT ===== -->
+<div id="product-hover-preview">
+    <img id="php-img" src="" alt="">
+    <div class="php-body">
+        <div class="php-name"  id="php-name"></div>
+        <div class="php-price" id="php-price"></div>
+        <div class="php-night" id="php-night" style="display:none;margin-bottom:6px;"></div>
+        <div class="php-row">
+            <span>📦 Stock</span>
+            <strong id="php-stock"></strong>
+        </div>
+        <div class="php-row" id="php-dlc-row" style="display:none;">
+            <span>📅 DLC</span>
+            <strong id="php-dlc" class="php-dlc-ok"></strong>
+        </div>
+        <div class="php-row" id="php-cat-row">
+            <span>📁 Catégorie</span>
+            <strong id="php-cat"></strong>
+        </div>
+    </div>
+</div>
+
 </body>
 <div id="session-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:6000; justify-content:center; align-items:center;">
     <div class="modal-classic-content" style="border: 2px solid var(--warning);">
