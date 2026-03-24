@@ -2792,7 +2792,12 @@
             <!-- HISTORIQUE DES VENTES DANS STATISTIQUES -->
             <div class="chart-container" style="height:auto; margin-top:20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:15px;">
-                    <h3 style="margin:0;">📜 Historique des ventes</h3>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <h3 style="margin:0;">📜 Historique des ventes</h3>
+                        <button onclick="openArticlesStatsModal()" style="display:flex;align-items:center;gap:6px;padding:7px 14px;background:linear-gradient(135deg,#9b59b6,#8e44ad);color:white;border:none;border-radius:20px;font-size:0.8rem;font-weight:700;cursor:pointer;white-space:nowrap;box-shadow:0 2px 8px rgba(155,89,182,0.3);" title="Voir le détail par article">
+                            📦 Détail par article
+                        </button>
+                    </div>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                         <select id="stats-history-filter" onchange="renderStatsHistory()" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; cursor:pointer;">
                             <option value="today">Aujourd'hui</option>
@@ -2803,6 +2808,7 @@
                         <div style="position:relative;">
                             <input type="text" id="stats-history-search" oninput="renderStatsHistory(); showArticleSuggestions(this.value)" onfocus="showArticleSuggestions(this.value)" onblur="setTimeout(()=>hideArticleSuggestions(),200)" placeholder="🔍 Article, ticket, caissier..." style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; width:220px;">
                             <div id="article-suggestions" style="display:none; position:absolute; top:100%; left:0; right:0; background:var(--bg-card); border:1px solid var(--border-color); border-radius:6px; box-shadow:0 4px 16px rgba(0,0,0,0.15); z-index:999; max-height:200px; overflow-y:auto; margin-top:3px;"></div>
+                        </div>
                         </div>
                     </div>
                 </div>
@@ -3182,6 +3188,22 @@
                         <div style="font-size:0.72rem; color:var(--gray,#999); margin-top:3px;">Rapide (0.5s) ↔ Long (5s)</div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Statistiques ventes sur fiche produit -->
+            <div style="margin-top:15px; padding:15px; border-top:1px solid #ddd; background:#fff8f0; border-radius:8px; border-left:4px solid #e67e22;">
+                <h4 style="margin:0 0 10px; color:var(--dark,#2c3e50); display:flex; align-items:center; gap:8px;">📊 Stats ventes sur la fiche produit</h4>
+                <label style="display:flex; align-items:center; gap:12px; cursor:pointer; background:#fff3e0; border-radius:8px; padding:11px 14px; border:2px solid #e67e22;">
+                    <input type="checkbox" id="settings-product-stats-cashier"
+                        style="width:20px; height:20px; cursor:pointer; accent-color:#e67e22;"
+                        onchange="saveProductStatsSetting(this.checked)">
+                    <span style="flex:1;">
+                        <strong style="color:#c0392b;">🛒 Autoriser les caissiers à voir les stats de vente</strong>
+                        <span style="display:block; font-size:0.8rem; color:#7f8c8d; margin-top:2px;">
+                            Par défaut, seuls les admins voient le nombre d'articles vendus et le CA sur la fiche produit.
+                        </span>
+                    </span>
+                </label>
             </div>
 
             <!-- Plein écran automatique à la connexion -->
@@ -4446,6 +4468,36 @@
         }
         window._pdCurrentProductId = p.id;
         modal.classList.add('active');
+
+        // Stats de vente (admin toujours, caissier si autorisé)
+        const canSeeSalesStats = (typeof isAdmin !== 'undefined' && isAdmin) ||
+            (typeof appSettings !== 'undefined' && appSettings.productStatsCashier);
+        const salesStatsEl = document.getElementById('pd-sales-stats');
+        if (salesStatsEl) {
+            if (canSeeSalesStats) {
+                const allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
+                let totalQty = 0, totalCA = 0;
+                allSales.forEach(s => {
+                    if (s.cancelled) return;
+                    (s.items || []).forEach(it => {
+                        if (it.id == p.id || it.name === p.name) {
+                            const qty = parseFloat(it.quantity || 1);
+                            totalQty += qty;
+                            // it.price = prix réel encaissé au moment de la vente (promo + nuit inclus)
+                            totalCA  += it.lineTotal != null ? parseFloat(it.lineTotal) : parseFloat(it.price || 0) * qty;
+                        }
+                    });
+                });
+                const isKgP = p.unitType === 'kg';
+                const qtyLabel = isKgP ? (totalQty.toFixed(2) + ' kg') : (Math.round(totalQty) + ' unité(s)');
+                document.getElementById('pd-sold-qty').textContent = totalQty > 0 ? qtyLabel : '—';
+                const lbl1 = document.getElementById('pd-sold-qty-lbl'); if (lbl1) lbl1.textContent = isKgP ? '⚖️ Kg vendus' : '🛒 Unités vendues';
+                document.getElementById('pd-sold-ca').textContent  = totalCA  > 0 ? totalCA.toFixed(2) + ' €' : '—';
+                salesStatsEl.style.display = '';
+            } else {
+                salesStatsEl.style.display = 'none';
+            }
+        }
     };
     window.closeProductDetail = function() {
         const m = document.getElementById('product-detail-modal');
@@ -4685,6 +4737,7 @@ if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
 if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false;
 if (!appSettings.hoverPreviewSize)  appSettings.hoverPreviewSize  = 320;
 if (!appSettings.hoverPreviewDelay) appSettings.hoverPreviewDelay = 3;
+if (appSettings.productStatsCashier === undefined) appSettings.productStatsCashier = false;
 
 // ===== TARIF DE NUIT =====
 let nightTariffSettings = JSON.parse(localStorage.getItem('covo_night_tariff')) || {
@@ -8069,6 +8122,34 @@ logout = function(skipConfirmation = false) {
         }
 
         modal.classList.add('active');
+
+        // Stats vente
+        const salesStatsEl2 = document.getElementById('pd-sales-stats');
+        if (salesStatsEl2) {
+            const canSee = isAdmin || appSettings.productStatsCashier;
+            if (canSee) {
+                let totalQty = 0, totalCA = 0;
+                salesHistory.forEach(s => {
+                    if (s.cancelled) return;
+                    (s.items || []).forEach(it => {
+                        if (it.id == p.id || it.name === p.name) {
+                            const qty = parseFloat(it.quantity || 1);
+                            totalQty += qty;
+                            // it.price = prix réel encaissé au moment de la vente (promo + nuit inclus)
+                            totalCA  += it.lineTotal != null ? parseFloat(it.lineTotal) : parseFloat(it.price || 0) * qty;
+                        }
+                    });
+                });
+                const isKgProd = p.unitType === 'kg';
+                const qtyLbl = isKgProd ? (totalQty.toFixed(2) + ' kg') : (Math.round(totalQty) + ' unité(s)');
+                document.getElementById('pd-sold-qty').textContent = totalQty > 0 ? qtyLbl : '—';
+                const lbl2 = document.getElementById('pd-sold-qty-lbl'); if (lbl2) lbl2.textContent = isKgProd ? '⚖️ Kg vendus' : '🛒 Unités vendues';
+                document.getElementById('pd-sold-ca').textContent  = totalCA  > 0 ? totalCA.toFixed(2) + ' €' : '—';
+                salesStatsEl2.style.display = '';
+            } else {
+                salesStatsEl2.style.display = 'none';
+            }
+        }
     }
 
     function closeProductDetail() {
@@ -8194,26 +8275,189 @@ logout = function(skipConfirmation = false) {
         setTimeout(() => showReceipt(sale), 150);
     };
 
+    // ===== MODALE DÉTAIL PAR ARTICLE =====
+    function _astGetFilteredSales(filter) {
+        const now = new Date();
+        return salesHistory.filter(s => {
+            if (s.cancelled) return false;
+            const d = new Date(s.date);
+            if (filter === 'today') {
+                const t = new Date(); t.setHours(0,0,0,0);
+                return d >= t;
+            } else if (filter === 'week') {
+                const w = new Date(); w.setDate(w.getDate() - 6); w.setHours(0,0,0,0);
+                return d >= w;
+            } else if (filter === 'month') {
+                return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+            } else if (filter === 'year') {
+                return d.getFullYear() === now.getFullYear();
+            }
+            return true;
+        });
+    }
+
+    window.openArticlesStatsModal = function() {
+        const modal = document.getElementById('articles-stats-modal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        renderArticlesStats();
+    };
+
+    window.closeArticlesStatsModal = function() {
+        const modal = document.getElementById('articles-stats-modal');
+        if (modal) modal.style.display = 'none';
+    };
+
+    window.renderArticlesStats = function() {
+        const filter  = document.getElementById('ast-filter')?.value  || 'month';
+        const sort    = document.getElementById('ast-sort')?.value    || 'ca';
+        const search  = (document.getElementById('ast-search')?.value || '').toLowerCase().trim();
+
+        const filteredSales = _astGetFilteredSales(filter);
+
+        // Agréger par article
+        const map = {};
+        filteredSales.forEach(s => {
+            (s.items || []).forEach(it => {
+                const key = it.id || it.name;
+                if (!map[key]) {
+                    map[key] = {
+                        id: it.id,
+                        name: it.name || '?',
+                        unitType: it.unitType || 'unit',
+                        qty: 0,
+                        ca: 0,
+                        img: null,
+                        discount: it.discount || 0
+                    };
+                    // Chercher l'image dans les produits
+                    const prod = products.find(p => p.id == it.id || p.name === it.name);
+                    if (prod) { map[key].img = prod.img; map[key].unitType = prod.unitType || 'unit'; }
+                }
+                const qty = parseFloat(it.quantity || 1);
+                map[key].qty += qty;
+                map[key].ca  += it.lineTotal != null ? parseFloat(it.lineTotal) : parseFloat(it.price || 0) * qty;
+            });
+        });
+
+        let rows = Object.values(map);
+
+        // Recherche
+        if (search) rows = rows.filter(r => r.name.toLowerCase().includes(search));
+
+        // Tri
+        if (sort === 'ca')   rows.sort((a,b) => b.ca  - a.ca);
+        if (sort === 'qty')  rows.sort((a,b) => b.qty - a.qty);
+        if (sort === 'name') rows.sort((a,b) => a.name.localeCompare(b.name));
+
+        // Totaux globaux
+        const totalCA  = rows.reduce((s, r) => s + r.ca,  0);
+        const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+        const filterLabels = {all:'Tout l\'historique', today:'Aujourd\'hui', week:'7 derniers jours', month:'Ce mois', year:'Cette année'};
+        const lbl = document.getElementById('ast-period-label');
+        if (lbl) lbl.textContent = filterLabels[filter] || '';
+
+        document.getElementById('ast-summary').innerHTML = `
+            <div style="background:rgba(52,152,219,0.1);border:1px solid rgba(52,152,219,0.25);border-radius:8px;padding:8px 14px;flex:1;min-width:120px;">
+                <div style="font-size:1.1rem;font-weight:800;color:var(--primary,#3498db);">${rows.length}</div>
+                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">📦 Articles distincts</div>
+            </div>
+            <div style="background:rgba(46,204,113,0.1);border:1px solid rgba(46,204,113,0.25);border-radius:8px;padding:8px 14px;flex:1;min-width:120px;">
+                <div style="font-size:1.1rem;font-weight:800;color:#27ae60;">${totalCA.toFixed(2)} €</div>
+                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">💰 CA total encaissé</div>
+            </div>
+            <div style="background:rgba(155,89,182,0.1);border:1px solid rgba(155,89,182,0.25);border-radius:8px;padding:8px 14px;flex:1;min-width:120px;">
+                <div style="font-size:1.1rem;font-weight:800;color:#9b59b6;">${filteredSales.length}</div>
+                <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">🧾 Tickets concernés</div>
+            </div>`;
+
+        const listEl = document.getElementById('ast-list');
+        if (!rows.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#7f8c8d);"><div style="font-size:2.5rem;">📦</div><p>Aucun article trouvé</p></div>';
+            return;
+        }
+
+        const maxCA = rows[0]?.ca || 1;
+        listEl.innerHTML = rows.map((r, i) => {
+            const isKg  = r.unitType === 'kg';
+            const qtyDisplay = isKg ? r.qty.toFixed(2) + ' kg' : Math.round(r.qty) + ' u.';
+            const pct   = Math.round((r.ca / maxCA) * 100);
+            const rank  = i + 1;
+            const rankColor = rank === 1 ? '#f39c12' : rank === 2 ? '#95a5a6' : rank === 3 ? '#cd7f32' : 'var(--border-color,#ddd)';
+            const imgHtml = r.img
+                ? `<img src="${r.img}" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8f8f8;flex-shrink:0;">`
+                : `<div style="width:44px;height:44px;background:var(--input-bg,#f0f0f0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">📦</div>`;
+            return `<div style="padding:10px 12px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;display:flex;align-items:center;gap:12px;">
+                <div style="width:28px;text-align:center;font-weight:800;font-size:0.85rem;color:${rankColor};flex-shrink:0;">#${rank}</div>
+                ${imgHtml}
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
+                    <div style="margin-top:4px;height:5px;background:var(--input-bg,#eee);border-radius:3px;overflow:hidden;">
+                        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#9b59b6,#3498db);border-radius:3px;"></div>
+                    </div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-weight:800;font-size:0.95rem;color:#27ae60;">${r.ca.toFixed(2)} €</div>
+                    <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${isKg ? '⚖️' : '🛒'} ${qtyDisplay}</div>
+                </div>
+            </div>`;
+        }).join('');
+        // Stocker pour export
+        window._astRows = rows;
+        window._astFilter = filter;
+    };
+
+    window.exportArticlesStatsCSV = function() {
+        const rows = window._astRows || [];
+        const filter = window._astFilter || 'all';
+        const labels = {all:'Tout', today:'Aujourd_hui', week:'7_jours', month:'Mois', year:'Annee'};
+        const date = new Date().toISOString().split('T')[0];
+        let csv = 'Rang,Article,Type,Quantite,CA_Encaisse\n';
+        rows.forEach((r, i) => {
+            const isKg = r.unitType === 'kg';
+            const qty = isKg ? r.qty.toFixed(2) + ' kg' : Math.round(r.qty) + ' u.';
+            csv += `${i+1},"${r.name.replace(/"/g,'""')}",${isKg?'kg':'unité'},${qty},${r.ca.toFixed(2)} €\n`;
+        });
+        const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `articles_ventes_${labels[filter]}_${date}.csv`; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
     function renderTopProducts() {
         const productSales = {};
         salesHistory.forEach(sale => {
             if (sale.cancelled) return;
             sale.items.forEach(item => {
-                if (!productSales[item.id]) productSales[item.id] = { name: item.name, quantity: 0, revenue: 0 };
+                if (!productSales[item.id]) {
+                    const prod = products.find(p => p.id == item.id || p.name === item.name);
+                    productSales[item.id] = {
+                        name: item.name,
+                        quantity: 0,
+                        revenue: 0,
+                        unitType: item.unitType || (prod ? prod.unitType : 'unit') || 'unit'
+                    };
+                }
                 productSales[item.id].quantity += item.quantity;
-                productSales[item.id].revenue += item.price * item.quantity;
+                productSales[item.id].revenue  += item.price * item.quantity;
             });
         });
+
         const sorted = Object.values(productSales).sort((a, b) => b.revenue - a.revenue);
         const top5 = sorted.slice(0, 5);
         const low5 = sorted.slice(-5).reverse();
-        
+
+        const fmtQty = p => p.unitType === 'kg'
+            ? p.quantity.toFixed(2) + ' kg'
+            : Math.round(p.quantity) + ' unité(s)';
+
         document.getElementById('top-products').innerHTML = top5.length > 0 ? top5.map((p, i) => `
-            <div class="top-product-item"><div class="top-product-rank">#${i + 1}</div><div class="top-product-info"><div class="top-product-name">${p.name}</div><div class="top-product-stats">${p.quantity} ventes</div></div><div class="top-product-revenue">${p.revenue.toFixed(2)}€</div></div>
+            <div class="top-product-item"><div class="top-product-rank">#${i + 1}</div><div class="top-product-info"><div class="top-product-name">${p.name}</div><div class="top-product-stats">${fmtQty(p)}</div></div><div class="top-product-revenue">${p.revenue.toFixed(2)}€</div></div>
         `).join('') : '<p style="text-align:center; color:var(--gray);">Aucune vente</p>';
-        
+
         document.getElementById('low-rotation').innerHTML = low5.length > 0 ? low5.map(p => `
-            <div class="top-product-item"><div class="top-product-info"><div class="top-product-name">${p.name}</div><div class="top-product-stats">${p.quantity} ventes</div></div><div class="top-product-revenue">${p.revenue.toFixed(2)}€</div></div>
+            <div class="top-product-item"><div class="top-product-info"><div class="top-product-name">${p.name}</div><div class="top-product-stats">${fmtQty(p)}</div></div><div class="top-product-revenue">${p.revenue.toFixed(2)}€</div></div>
         `).join('') : '<p style="text-align:center; color:var(--gray);">Pas de données</p>';
     }
 
@@ -8349,7 +8593,16 @@ logout = function(skipConfirmation = false) {
         if (delayEl) { delayEl.value = delay; if (delayVal) delayVal.textContent = delay + 's';  }
         window._covoHoverSize  = size;
         window._covoHoverDelay = delay * 1000;
+        // Charger le réglage stats caissier
+        const statsCbx = document.getElementById('settings-product-stats-cashier');
+        if (statsCbx) statsCbx.checked = !!appSettings.productStatsCashier;
     }
+
+    function saveProductStatsSetting(val) {
+        appSettings.productStatsCashier = !!val;
+        localStorage.setItem('covo_settings', JSON.stringify(appSettings));
+    }
+    window.saveProductStatsSetting = saveProductStatsSetting;
 
     function applyHoverPreviewSettings() {
         const size  = parseFloat(document.getElementById('settings-hover-size')?.value  || 320);
@@ -10534,6 +10787,20 @@ logout = function(skipConfirmation = false) {
                     <div class="pd-stat-lbl">📅 Date limite (DLC/DLUO)</div>
                 </div>
             </div>
+            <!-- Bloc stats ventes — visible selon permissions -->
+            <div id="pd-sales-stats" style="display:none;background:linear-gradient(135deg,rgba(52,152,219,0.08),rgba(46,204,113,0.08));border:1.5px solid rgba(52,152,219,0.2);border-radius:10px;padding:12px 14px;margin-bottom:12px;">
+                <div style="font-size:0.7rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;letter-spacing:0.04em;">📊 Statistiques de vente</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div>
+                        <div style="font-size:1.15rem;font-weight:900;color:var(--primary,#3498db);" id="pd-sold-qty">—</div>
+                        <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);" id="pd-sold-qty-lbl">🛒 Quantité vendue</div>
+                    </div>
+                    <div>
+                        <div style="font-size:1.15rem;font-weight:900;color:var(--success,#2ecc71);" id="pd-sold-ca">—</div>
+                        <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">💰 CA encaissé</div>
+                    </div>
+                </div>
+            </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:14px;display:none;"></div>
             <button class="pd-add-btn" id="pd-add-btn" onclick="pdAddToCart()">🛒 Ajouter au panier</button>
         </div>
@@ -10681,6 +10948,39 @@ logout = function(skipConfirmation = false) {
             <span>📁 Catégorie</span>
             <strong id="php-cat"></strong>
         </div>
+    </div>
+</div>
+
+<!-- ===== MODALE DÉTAIL PAR ARTICLE ===== -->
+<div id="articles-stats-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:9000;justify-content:center;align-items:center;">
+    <div style="background:var(--bg-card,#fff);border-radius:18px;width:94%;max-width:720px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.35);animation:adminWelcomeIn 0.3s ease;">
+        <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+            <div>
+                <h3 style="margin:0;color:white;font-size:1rem;font-weight:700;">📦 Détail des ventes par article</h3>
+                <div id="ast-period-label" style="font-size:0.75rem;color:rgba(255,255,255,0.75);margin-top:2px;"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <select id="ast-filter" onchange="renderArticlesStats()" style="padding:6px 10px;border:none;border-radius:8px;font-size:0.8rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;">
+                    <option value="all" style="color:#2c3e50;background:#fff;">Tout</option>
+                    <option value="today" style="color:#2c3e50;background:#fff;">Aujourd'hui</option>
+                    <option value="week" style="color:#2c3e50;background:#fff;">7 derniers jours</option>
+                    <option value="month" selected style="color:#2c3e50;background:#fff;">Ce mois</option>
+                    <option value="year" style="color:#2c3e50;background:#fff;">Cette année</option>
+                </select>
+                <select id="ast-sort" onchange="renderArticlesStats()" style="padding:6px 10px;border:none;border-radius:8px;font-size:0.8rem;background:rgba(255,255,255,0.95);color:#2c3e50;cursor:pointer;font-weight:600;">
+                    <option value="ca" style="color:#2c3e50;background:#fff;">CA ↓</option>
+                    <option value="qty" style="color:#2c3e50;background:#fff;">Qté ↓</option>
+                    <option value="name" style="color:#2c3e50;background:#fff;">Nom A-Z</option>
+                </select>
+                <button onclick="exportArticlesStatsCSV()" style="background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.4);color:white;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:600;" title="Exporter CSV">⬇️ CSV</button>
+                <button onclick="closeArticlesStatsModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+            </div>
+        </div>
+        <div id="ast-summary" style="display:flex;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-color,#e0e0e0);flex-shrink:0;flex-wrap:wrap;background:var(--input-bg,#f8f9fa);"></div>
+        <div style="padding:10px 16px;border-bottom:1px solid var(--border-color,#e0e0e0);flex-shrink:0;">
+            <input id="ast-search" type="text" placeholder="🔍 Rechercher un article..." oninput="renderArticlesStats()" style="width:100%;padding:8px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;">
+        </div>
+        <div id="ast-list" style="flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:6px;"></div>
     </div>
 </div>
 
