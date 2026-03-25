@@ -1528,7 +1528,7 @@
         /* MODALES & FAB */
         #receipt-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9000; justify-content: center; align-items: center; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
         #login-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9500; justify-content: center; align-items: center; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-        #login-modal { display: flex; z-index: 9500; } 
+        #login-modal.active { display: flex; }
         .modal-classic-content { background: white; padding: 25px; border-radius: 15px; width: 90%; max-width: 450px; text-align: center; max-height: 90vh; overflow-y: auto; }
 
         /* ===== ADMIN WELCOME MODAL ===== */
@@ -2959,7 +2959,7 @@
                             <select class="retours-filter-sel" onchange="filterRetourHistoriqueByType(this.value)">
                                 <option value="">Tous types</option><option value="retour">Retours clients</option><option value="marchandise">Retours fournisseur</option><option value="echeance">Échéances</option>
                             </select>
-                            <button class="retours-btn" style="background:var(--danger,#e74c3c);color:white;" onclick="clearRetourHistorique()">🗑️ Vider</button>
+                            <button id="hist-vider-btn" class="retours-btn" style="display:none;background:var(--danger,#e74c3c);color:white;" onclick="clearRetourHistorique()">🗑️ Vider</button>
                         </div>
                     </div>
                     <div id="rhistorique-list"></div>
@@ -3217,6 +3217,33 @@
                         <strong style="color:#c0392b;">🛒 Autoriser les caissiers à voir les stats de vente</strong>
                         <span style="display:block; font-size:0.8rem; color:#7f8c8d; margin-top:2px;">
                             Par défaut, seuls les admins voient le nombre d'articles vendus et le CA sur la fiche produit.
+                        </span>
+                    </span>
+                </label>
+            </div>
+
+            <!-- Bouton Vider historique -->
+            <div style="margin-top:15px; padding:15px; border-top:1px solid #ddd; background:#fdf2f8; border-radius:8px; border-left:4px solid #e74c3c;">
+                <h4 style="margin:0 0 10px; color:var(--dark,#2c3e50); display:flex; align-items:center; gap:8px;">🗑️ Historique des retours</h4>
+                <label style="display:flex; align-items:center; gap:12px; cursor:pointer; background:#fde8e8; border-radius:8px; padding:11px 14px; border:2px solid #e74c3c;">
+                    <input type="checkbox" id="settings-show-hist-vider"
+                        style="width:20px; height:20px; cursor:pointer; accent-color:#e74c3c;"
+                        onchange="saveHistViderSetting(this.checked)">
+                    <span style="flex:1;">
+                        <strong style="color:#c0392b;">🗑️ Afficher le bouton "Vider" dans l'historique</strong>
+                        <span style="display:block; font-size:0.8rem; color:#7f8c8d; margin-top:2px;">
+                            Masqué par défaut pour éviter les suppressions accidentelles.
+                        </span>
+                    </span>
+                </label>
+                <label style="display:flex; align-items:center; gap:12px; cursor:pointer; background:#fde8e8; border-radius:8px; padding:11px 14px; border:2px solid #e74c3c; margin-top:8px;">
+                    <input type="checkbox" id="settings-show-retour-delete"
+                        style="width:20px; height:20px; cursor:pointer; accent-color:#e74c3c;"
+                        onchange="saveRetourDeleteSetting(this.checked)">
+                    <span style="flex:1;">
+                        <strong style="color:#c0392b;">🗑️ Afficher le bouton "Supprimer" dans les retours clients</strong>
+                        <span style="display:block; font-size:0.8rem; color:#7f8c8d; margin-top:2px;">
+                            Masqué par défaut pour éviter les suppressions accidentelles.
                         </span>
                     </span>
                 </label>
@@ -4228,7 +4255,8 @@
         <div class="modal-classic-content">
             <h2>🔐 Connexion COVO Pro</h2>
             <p style="color:var(--gray); margin-bottom:20px;">Entrez votre code PIN pour accéder au système</p>
-            <input type="password" id="login-pin" placeholder="Code PIN" style="width:100%; padding:12px; margin-bottom:15px; border:2px solid #e0e0e0; border-radius:6px; font-size:1.1rem; box-sizing:border-box;">
+            <input type="password" id="login-pin" placeholder="Code PIN" style="width:100%; padding:12px; margin-bottom:10px; border:2px solid #e0e0e0; border-radius:6px; font-size:1.1rem; box-sizing:border-box;">
+            <div id="login-error" style="display:none;background:#fde8e8;color:#c0392b;border:1.5px solid #e74c3c;border-radius:8px;padding:9px 14px;font-size:0.88rem;font-weight:700;margin-bottom:12px;text-align:center;">❌ Code PIN incorrect</div>
             <button onclick="attemptLogin()" style="background:var(--success); color:white; width:100%; padding:12px; font-size:1.1rem;">
                 🔓 SE CONNECTER
             </button>
@@ -4461,7 +4489,7 @@
         document.getElementById('pd-promo').textContent = disc > 0 ? '-' + disc + '%' : 'Aucune';
 
         const dlcBlock = document.getElementById('pd-dlc-block');
-        if (p.expiryDate) {
+        if (p.expiryDate && p.active !== false) {
             const today = new Date(); today.setHours(0,0,0,0);
             const exp = new Date(p.expiryDate); exp.setHours(0,0,0,0);
             const dLeft = Math.ceil((exp - today) / 86400000);
@@ -4606,7 +4634,7 @@
 
         // DLC
         const dlcRow = document.getElementById('php-dlc-row');
-        if (p.expiryDate) {
+        if (p.expiryDate && p.active !== false) {
             const today = new Date(); today.setHours(0,0,0,0);
             const exp = new Date(p.expiryDate); exp.setHours(0,0,0,0);
             const dLeft = Math.ceil((exp - today) / 86400000);
@@ -4754,6 +4782,9 @@ if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenO
 if (!appSettings.hoverPreviewSize)  appSettings.hoverPreviewSize  = 320;
 if (!appSettings.hoverPreviewDelay) appSettings.hoverPreviewDelay = 3;
 if (appSettings.productStatsCashier === undefined) appSettings.productStatsCashier = false;
+if (appSettings.showHistVider === undefined) appSettings.showHistVider = false;
+if (appSettings.showRetourDelete === undefined) appSettings.showRetourDelete = false;
+window._appSettings = appSettings;
 
 // ===== TARIF DE NUIT =====
 let nightTariffSettings = JSON.parse(localStorage.getItem('covo_night_tariff')) || {
@@ -5285,8 +5316,18 @@ function toggleInfoSection(headerElement) {
                 openAdminWelcomeModal();
             }
         } else {
-            showScanToast("❌ Code PIN incorrect");
-            document.getElementById('login-pin').value = "";
+            const errEl = document.getElementById('login-error');
+            if (errEl) {
+                errEl.style.display = '';
+                setTimeout(() => { errEl.style.display = 'none'; }, 3000);
+            }
+            const pinInput = document.getElementById('login-pin');
+            if (pinInput) {
+                pinInput.value = '';
+                pinInput.style.borderColor = '#e74c3c';
+                pinInput.focus();
+                setTimeout(() => { pinInput.style.borderColor = '#e0e0e0'; }, 2000);
+            }
         }
     }
 
@@ -7403,11 +7444,11 @@ logout = function(skipConfirmation = false) {
                 ? `${basePrice.toFixed(2)}€/kg`
                 : `${basePrice.toFixed(2)}€`;
             
-            // Vérifier la date limite
+            // Vérifier la date limite — ignorer si article désactivé
             let isExpiringSoon = false;
             let isExpired = false;
             let daysUntilExpiry = 0;
-            if (p.expiryDate) {
+            if (p.expiryDate && p.active !== false) {
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
                 const expiryDate = new Date(p.expiryDate);
@@ -8115,7 +8156,7 @@ logout = function(skipConfirmation = false) {
 
         // DLC
         const dlcBlock = document.getElementById('pd-dlc-block');
-        if (p.expiryDate) {
+        if (p.expiryDate && p.active !== false) {
             const today   = new Date(); today.setHours(0,0,0,0);
             const expDate = new Date(p.expiryDate); expDate.setHours(0,0,0,0);
             const daysLeft = Math.ceil((expDate - today) / 86400000);
@@ -8805,6 +8846,11 @@ logout = function(skipConfirmation = false) {
         // Charger le réglage stats caissier
         const statsCbx = document.getElementById('settings-product-stats-cashier');
         if (statsCbx) statsCbx.checked = !!appSettings.productStatsCashier;
+        // Charger le réglage bouton Vider
+        const viderCbx = document.getElementById('settings-show-hist-vider');
+        if (viderCbx) viderCbx.checked = !!appSettings.showHistVider;
+        const retourDelCbx = document.getElementById('settings-show-retour-delete');
+        if (retourDelCbx) retourDelCbx.checked = !!appSettings.showRetourDelete;
     }
 
     function saveProductStatsSetting(val) {
@@ -8812,6 +8858,29 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_settings', JSON.stringify(appSettings));
     }
     window.saveProductStatsSetting = saveProductStatsSetting;
+
+    function saveHistViderSetting(val) {
+        appSettings.showHistVider = !!val;
+        localStorage.setItem('covo_settings', JSON.stringify(appSettings));
+        window._appSettings = appSettings;
+        _applyHistVider();
+    }
+    window.saveHistViderSetting = saveHistViderSetting;
+
+    function saveRetourDeleteSetting(val) {
+        appSettings.showRetourDelete = !!val;
+        localStorage.setItem('covo_settings', JSON.stringify(appSettings));
+        window._appSettings = appSettings;
+        if (typeof refreshRetours === 'function') refreshRetours();
+    }
+    window.saveRetourDeleteSetting = saveRetourDeleteSetting;
+
+    function _applyHistVider() {
+        const btn = document.getElementById('hist-vider-btn');
+        if (btn) btn.style.display = appSettings.showHistVider ? '' : 'none';
+    }
+    // Appliquer au chargement
+    document.addEventListener('DOMContentLoaded', () => _applyHistVider());
 
     function applyHoverPreviewSettings() {
         const size  = parseFloat(document.getElementById('settings-hover-size')?.value  || 320);
@@ -9431,6 +9500,7 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_users',                JSON.stringify(users));
         localStorage.setItem('covo_sales_history',        JSON.stringify(salesHistory));
         localStorage.setItem('covo_settings',             JSON.stringify(appSettings));
+        window._appSettings = appSettings;
         localStorage.setItem('covo_night_tariff',         JSON.stringify(nightTariffSettings));
         localStorage.setItem('covo_pending_sync',         JSON.stringify(pendingSync));
         localStorage.setItem('covo_cashier_permissions',  JSON.stringify(cashierPermissions));
@@ -13305,7 +13375,7 @@ function renderRetours(data) {
                 ${r.statut!=='refused'&&r.statut!=='approved'?`<button class="retours-btn retours-btn-sm" style="background:#e74c3c;color:white;" onclick="setRetourStatus('${r.id}','refused')">❌</button>`:''}
                 ${r.statut==='approved'&&isAutoCancel?`<button class="retours-btn retours-btn-sm" style="background:#e67e22;color:white;font-size:0.65rem;" onclick="setRetourStatus('${r.id}','pending')" title="Revenir en attente (le stock sera retiré)">↩️ Annuler</button>`:''}
                 <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="openEditRetour('${r.id}')">✏️</button>
-                <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="delRetour('${r.id}')">🗑️</button>
+                ${window._appSettings?.showRetourDelete ? `<button class="retours-btn retours-btn-sm retours-btn-outline" style="color:#e74c3c;" onclick="delRetour('${r.id}')">🗑️</button>` : ''}
             </div></td>
         </tr>`;
     }).join('');
