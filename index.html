@@ -3786,7 +3786,18 @@
                 🧹 Nettoyer cache images
             </button>
         
-            </div></div>
+            </div>
+
+            <!-- ===== SECTION ARTICLES DÉSACTIVÉS ===== -->
+            <div class="admin-section-header" onclick="toggleAdminSection('admin-sec-disabled')" style="margin-top:10px;">
+                <h3>🚫 Articles désactivés <span id="disabled-count-badge" style="background:#e74c3c;color:white;font-size:0.65rem;padding:2px 7px;border-radius:12px;margin-left:6px;vertical-align:middle;">0</span></h3>
+                <button class="deploy-toggle-btn" id="btn-admin-sec-disabled" onclick="event.stopPropagation();toggleAdminSection('admin-sec-disabled')"><span class="arrow">&#9660;</span> <span class="btn-label">D&eacute;ployer</span></button>
+            </div>
+            <div class="admin-section-body" id="admin-sec-disabled">
+                <div id="disabled-products-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+            </div>
+
+        </div></div>
     </div>
 
     <div id="cart-modal">
@@ -7408,14 +7419,20 @@ logout = function(skipConfirmation = false) {
                     ? !hasBarcode
                     : p.category === cat;
             const searchMatch = p.name.toLowerCase().includes(search) || (p.barcode && p.barcode.includes(search));
-            return catMatch && searchMatch && (isAdmin || p.active);
+            // En mode admin : séparer actifs et désactivés. En mode caissier : uniquement actifs
+            return catMatch && searchMatch && (isAdmin ? true : p.active !== false);
         });
-        
-        document.getElementById('search-results-count').innerHTML = `<strong>${filteredResults.length}</strong> produit(s) affiché(s) <span style="color:var(--gray);font-size:0.8rem;">/ ${products.filter(x => isAdmin || x.active).length} total</span>`;
+
+        const activeResults   = filteredResults.filter(p => p.active !== false);
+        const disabledResults = isAdmin ? filteredResults.filter(p => p.active === false) : [];
+
+        document.getElementById('search-results-count').innerHTML = `<strong>${activeResults.length}</strong> produit(s) affiché(s)${disabledResults.length ? ` <span style="color:#e74c3c;font-size:0.8rem;">· ${disabledResults.length} masqué(s)</span>` : ''} <span style="color:var(--gray);font-size:0.8rem;">/ ${products.length} total</span>`;
         
         const nightActive = isNightTariffCurrentlyActive();
-        
-        list.innerHTML = filteredResults.map((p, _idx) => {
+
+        // Fonction de rendu d'une carte produit (partagée actifs + désactivés)
+        const renderCard = (p) => {
+            const _permanentNum = products.indexOf(p) + 1; // numéro fixe permanent
             const disc = p.promo || 0;
             const isKg = p.unitType === 'kg';
             const basePrice = isKg ? p.pricePerKg : p.price;
@@ -7459,8 +7476,8 @@ logout = function(skipConfirmation = false) {
             }
 
             return `
-                <div class="card has-number ${isOut ? 'out-of-stock' : ''}" style="opacity:${p.active ? 1 : 0.5}">
-                    <div class="card-number"><span class="cn-num">${_idx + 1}</span><span class="cn-label">N°</span></div>
+                <div class="card has-number ${isOut ? 'out-of-stock' : ''}" style="opacity:${p.active !== false ? 1 : 0.6}">
+                    <div class="card-number" style="${p.active === false ? 'background:linear-gradient(180deg,#7f8c8d,#5d6d7e);' : ''}"><span class="cn-num">${_permanentNum}</span><span class="cn-label">N°</span></div>
                     <!-- Badges gauche empilés verticalement -->
                     <div class="card-badges-left">
                         ${isNew ? `<div class="new-badge">🆕 Nouveau</div>` : ''}
@@ -7475,6 +7492,7 @@ logout = function(skipConfirmation = false) {
                     </div>
                     ${isOut ? `<div class="out-badge">RUPTURE</div>` : ''}
                     ${isExpired ? `<div class="out-badge" style="background:var(--danger);">❌ EXPIRÉ</div>` : ''}
+                    ${p.active === false && isAdmin ? `<div class="out-badge" style="background:#7f8c8d;font-size:0.75rem;">👁️ MASQUÉ</div>` : ''}
                     <img src="${p.img || 'https://placehold.co/150x150?text=Produit'}" loading="lazy" alt="${p.name}"
                         data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail">
                     ${!isAdmin ? `<h3 data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail">${p.name}</h3>` : ''}
@@ -7538,8 +7556,46 @@ logout = function(skipConfirmation = false) {
                     `}
                 </div>
             `;
-        }).join('');
+        };
+
+        // Groupe actifs (numéros permanents)
+        list.innerHTML = activeResults.map(renderCard).join('');
+
+        // Groupe articles masqués (admin seulement)
+        if (isAdmin && disabledResults.length > 0) {
+            const isOpen = window._disabledGroupOpen !== false;
+            const disabledCards = disabledResults.map(renderCard).join('');
+            list.innerHTML += `
+            <div id="disabled-products-group" style="width:100%;grid-column:1/-1;margin-top:18px;">
+                <div onclick="toggleDisabledGroup()" style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:rgba(231,76,60,0.08);border:2px dashed #e74c3c;border-radius:12px;cursor:pointer;user-select:none;">
+                    <span id="disabled-group-arrow" style="font-size:1rem;transition:transform 0.2s;transform:${isOpen ? 'rotate(90deg)' : 'rotate(0deg)'};">&#9658;</span>
+                    <span style="font-weight:700;color:#c0392b;font-size:0.95rem;">👁️ Articles masqués</span>
+                    <span style="background:#e74c3c;color:white;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;">${disabledResults.length}</span>
+                    <span style="margin-left:auto;font-size:0.78rem;color:#7f8c8d;">${isOpen ? 'Masquer' : 'Afficher'}</span>
+                </div>
+                <div id="disabled-products-cards" style="display:${isOpen ? 'grid' : 'none'};grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:15px;margin-top:12px;animation:fadeIn 0.3s;">
+                    ${disabledCards}
+                </div>
+            </div>`;
+        }
     }
+
+
+
+
+    // ===== TOGGLE GROUPE ARTICLES DÉSACTIVÉS =====
+    window.toggleDisabledGroup = function() {
+        window._disabledGroupOpen = window._disabledGroupOpen === false ? true : false;
+        const cards = document.getElementById('disabled-products-cards');
+        const arrow = document.getElementById('disabled-group-arrow');
+        const hint  = arrow?.parentElement?.querySelector('span:last-child');
+        if (cards) {
+            const open = window._disabledGroupOpen !== false;
+            cards.style.display = open ? 'grid' : 'none';
+            if (arrow) arrow.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
+            if (hint)  hint.textContent = open ? 'Masquer' : 'Afficher';
+        }
+    };
 
     function updateProductInfo(id) {
         const p = products.find(x => x.id === id);
@@ -7569,7 +7625,40 @@ logout = function(skipConfirmation = false) {
 
     function toggleProductActive(id) {
         const p = products.find(x => x.id === id);
-        if (p) { p.active = !p.active; saveAll(); renderProducts(); showScanToast(p.active ? '✅ Article activé' : '👁️ Article masqué'); }
+        if (p) { p.active = !p.active; saveAll(); renderProducts(); renderDisabledProducts(); showScanToast(p.active ? '✅ Article activé' : '👁️ Article masqué'); }
+    }
+
+    function renderDisabledProducts() {
+        const list = document.getElementById('disabled-products-list');
+        const badge = document.getElementById('disabled-count-badge');
+        if (!list) return;
+
+        const disabled = products.filter(p => p.active === false);
+        if (badge) badge.textContent = disabled.length;
+
+        if (!disabled.length) {
+            list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--gray,#7f8c8d);">
+                <div style="font-size:2rem;margin-bottom:6px;">✅</div>
+                <p style="font-size:0.85rem;">Aucun article désactivé</p>
+            </div>`;
+            return;
+        }
+
+        list.innerHTML = disabled.map(p => {
+            const isKg = p.unitType === 'kg';
+            const price = isKg ? (p.pricePerKg||0).toFixed(2) + ' €/kg' : (p.price||0).toFixed(2) + ' €';
+            const stock = isKg ? (p.stock||0).toFixed(2) + ' kg' : (p.stock||0) + ' u.';
+            return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-card,#fff);border:1.5px solid #fcc;border-radius:10px;opacity:0.85;">
+                <img src="${p.img||'https://placehold.co/44x44?text=?'}" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8f8f8;flex-shrink:0;">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</div>
+                    <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">📁 ${p.category||'—'} · 💰 ${price} · 📦 ${stock}</div>
+                </div>
+                <button onclick="toggleProductActive(${p.id})" style="background:linear-gradient(135deg,#27ae60,#2ecc71);color:white;border:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:700;white-space:nowrap;flex-shrink:0;" title="Réactiver cet article">
+                    ✅ Réactiver
+                </button>
+            </div>`;
+        }).join('');
     }
 
     function deleteProduct(id) {
@@ -9727,20 +9816,17 @@ logout = function(skipConfirmation = false) {
     function renderAll() {
         renderCategoryManager(); renderPromoManager(); renderProducts(); updateCartUI();
         renderUserList(); renderHistory(); updateConnectionStatus(); updateProgress(); renderLogo();
-        loadGradientSettings(); // Charger les paramètres du dégradé
-        loadPermissionsUI(); // Load permissions UI if admin
-        updateAdminButton(); // Update button based on role
+        loadGradientSettings();
+        loadPermissionsUI();
+        updateAdminButton();
         if (typeof applyTabsVisibility === 'function') applyTabsVisibility();
         if (isAdmin && typeof loadTabVisibilityUI === 'function') loadTabVisibilityUI();
-        // Bouton retour client : visible pour admin toujours, et pour caissier si permission accordée
         updateRetourClientBtn();
-        // Tarif de nuit
         updateNightTariffButton();
-        // Scanner settings
         applyScannerSettings();
         if (isAdmin) loadScannerSettingsUI();
-        // Badge articles sans code-barre
         _updateNbsBadge();
+        renderDisabledProducts();
         
         // MODIFICATION: Masquer le bouton admin si pas admin
         const adminBtn = document.getElementById('admin-btn');
