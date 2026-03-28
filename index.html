@@ -2874,7 +2874,7 @@
                 <div class="retour-stat-card retour-success"><div class="retour-stat-icon">✅</div><div class="retour-stat-info"><h3 id="rs-approved">0</h3><p>Approuvés (30j)</p></div></div>
                 <div class="retour-stat-card retour-urgent"><div class="retour-stat-icon">📅</div><div class="retour-stat-info"><h3 id="rs-urgent">0</h3><p>Échéances urgentes</p></div></div>
                 <div class="retour-stat-card retour-info"><div class="retour-stat-icon">💰</div><div class="retour-stat-info"><h3 id="rs-montant">0,00 €</h3><p>Valeur retours (mois)</p></div></div>
-                <div class="retour-stat-card" style="border-left-color:#e74c3c;cursor:pointer;" onclick="switchRetourTab({currentTarget:document.querySelector('[data-panel=rt-marchandise]')},'rt-marchandise')" title="Voir les retours défectueux">
+                <div class="retour-stat-card" style="border-left-color:#e74c3c;cursor:pointer;" onclick="switchRetourTab({currentTarget:document.querySelector('[data-panel=rt-marchandise]')},'rt-marchandise')" title="CA perdu sur défauts déclarés">
                     <div class="retour-stat-icon">📉</div>
                     <div class="retour-stat-info"><h3 id="rs-lost-ca">0,00 €</h3><p>CA perdu (défauts)</p></div>
                 </div>
@@ -2924,19 +2924,12 @@
                             </select>
                             <button class="retours-btn retours-btn-orange" onclick="openRetourModal('rm-marchandise')">📦 Déclarer retour</button>
                             <button class="retours-btn retours-btn-outline" onclick="exportMarchandise()">⬇️ CSV</button>
-                            <select id="marc-pdf-filter" style="padding:5px 8px;border:2px solid #e74c3c;border-radius:7px;font-size:0.78rem;background:#fff;color:#2c3e50;cursor:pointer;font-weight:600;">
-                                <option value="unresolved" style="color:#2c3e50;background:#fff;">🔴 Non résolus</option>
-                                <option value="archived"   style="color:#2c3e50;background:#fff;">📁 Archivés</option>
-                                <option value="defect"     style="color:#2c3e50;background:#fff;">🔴 Défectueux</option>
-                                <option value="damaged"    style="color:#2c3e50;background:#fff;">🟠 Endommagés</option>
-                                <option value="transport"  style="color:#2c3e50;background:#fff;">🚚 Transport</option>
-                                <option value="all"        style="color:#2c3e50;background:#fff;">📋 Tous</option>
-                            </select>
-                            <button class="retours-btn" style="background:#e74c3c;color:white;font-weight:700;" onclick="exportMarcPDF(document.getElementById('marc-pdf-filter').value)">🖨️ Exporter PDF</button>
+                            <button class="retours-btn" style="background:#e74c3c;color:white;" onclick="exportMarcPDF('unresolved')">🔴 PDF Non résolus</button>
+                            <button class="retours-btn" style="background:#7f8c8d;color:white;" onclick="exportMarcPDF('archived')">📁 PDF Archivés</button>
                         </div>
                     </div>
                     <div class="retours-table-wrap"><table class="retours-table">
-                        <thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>BL</th><th>Statut</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>BL</th><th>Statut</th></tr></thead>
                         <tbody id="marchandise-tbody"></tbody>
                     </table></div>
                 </div>
@@ -7505,7 +7498,7 @@ logout = function(skipConfirmation = false) {
                     </div>
                     ${isOut ? `<div class="out-badge">RUPTURE</div>` : ''}
                     ${isExpired ? `<div class="out-badge" style="background:var(--danger);">❌ EXPIRÉ</div>` : ''}
-                    ${p.active === false && isAdmin ? `` : ''}
+                    
                     <img src="${p.img || 'https://placehold.co/150x150?text=Produit'}" loading="lazy" alt="${p.name}"
                         data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail">
                     ${!isAdmin ? `<h3 data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail">${p.name}</h3>` : ''}
@@ -7572,7 +7565,7 @@ logout = function(skipConfirmation = false) {
             `;
         };
 
-        // Groupe articles masqués EN PREMIER (admin seulement) — fermé par défaut
+        // Groupe articles masqués EN PREMIER (admin seulement)
         let disabledGroupHTML = '';
         if (isAdmin && disabledResults.length > 0) {
             const isOpen = window._disabledGroupOpen === true; // fermé par défaut
@@ -11185,6 +11178,7 @@ logout = function(skipConfirmation = false) {
             </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:14px;display:none;"></div>
             <button class="pd-add-btn" id="pd-add-btn" onclick="pdAddToCart()">🛒 Ajouter au panier</button>
+            <button id="pd-defect-btn" onclick="pdDeclareDefect()" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;font-size:0.9rem;font-weight:800;cursor:pointer;">⚠️ Déclarer un défaut</button>
         </div>
     </div>
 </div>
@@ -11203,24 +11197,29 @@ logout = function(skipConfirmation = false) {
 
 <!-- ===== MODALE MODIFICATION INVESTISSEMENT ===== -->
 <div id="inv-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10002;justify-content:center;align-items:center;">
-    <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:480px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.35);animation:adminWelcomeIn 0.25s ease;">
-        <!-- Header -->
-        <div style="background:linear-gradient(135deg,#3498db,#2980b9);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;">
-            <h3 style="margin:0;color:white;font-size:1rem;font-weight:700;">✏️ Modifier l'achat</h3>
-            <button onclick="invCloseEdit()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+    <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:480px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.35);animation:adminWelcomeIn 0.25s ease;">
+        <div style="background:linear-gradient(135deg,#3498db,#2980b9);padding:16px 20px;display:flex;align-items:flex-start;justify-content:space-between;flex-shrink:0;">
+            <div>
+                <h3 style="margin:0;color:white;font-size:1rem;font-weight:700;">✏️ Détail de l'achat</h3>
+                <div id="inv-edit-summary" style="font-size:0.74rem;color:rgba(255,255,255,0.82);margin-top:3px;"></div>
+            </div>
+            <button onclick="invCloseEdit()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;flex-shrink:0;">✕</button>
         </div>
         <input type="hidden" id="inv-edit-id">
-        <!-- Body -->
-        <div style="padding:20px;display:flex;flex-direction:column;gap:12px;">
+        <div style="padding:18px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;">
+            <!-- Note/commentaire en avant -->
+            <div style="background:var(--input-bg,#f0f8ff);border:2px solid #3498db;border-radius:10px;padding:12px 14px;">
+                <label style="font-size:0.75rem;font-weight:700;color:#2980b9;text-transform:uppercase;display:block;margin-bottom:5px;">💬 Commentaire / Note</label>
+                <textarea id="inv-edit-note" rows="3" placeholder="Fournisseur, référence, détails..." style="width:100%;padding:8px 10px;border:1.5px solid #bde0f7;border-radius:8px;font-size:0.88rem;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;resize:vertical;font-family:inherit;"></textarea>
+            </div>
             <div>
                 <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Description</label>
-                <input id="inv-edit-desc" placeholder="Description de l'achat..." style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;"
-                    onkeydown="if(event.key==='Enter')invSaveEdit();">
+                <input id="inv-edit-desc" placeholder="Description de l'achat..." style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;" onkeydown="if(event.key==='Enter')invSaveEdit();">
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div>
                     <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Montant (€)</label>
-                    <input id="inv-edit-montant" type="number" step="0.01" min="0" placeholder="0.00" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;">
+                    <input id="inv-edit-montant" type="number" step="0.01" min="0" placeholder="0.00" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;" onkeydown="if(event.key==='Enter')invSaveEdit();">
                 </div>
                 <div>
                     <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Date</label>
@@ -11231,15 +11230,11 @@ logout = function(skipConfirmation = false) {
                 <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Catégorie</label>
                 <select id="inv-edit-cat" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;"></select>
             </div>
-            <div>
-                <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Note (optionnel)</label>
-                <input id="inv-edit-note" placeholder="Fournisseur, référence..." style="width:100%;padding:8px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.84rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;">
-            </div>
         </div>
-        <!-- Footer -->
-        <div style="padding:14px 20px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:10px;background:var(--input-bg,#f8f9fa);">
-            <button onclick="invCloseEdit()" style="flex:1;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);color:var(--text-main,#2c3e50);padding:10px;border-radius:8px;cursor:pointer;font-weight:600;font-size:0.88rem;">✖ Annuler</button>
-            <button onclick="invSaveEdit()" style="flex:2;background:linear-gradient(135deg,#3498db,#2980b9);color:white;border:none;padding:10px;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.9rem;">💾 Enregistrer</button>
+        <div style="padding:12px 18px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:8px;background:var(--input-bg,#f8f9fa);flex-shrink:0;">
+            <button onclick="invDeleteFromEdit()" style="flex:0 0 auto;background:none;border:1.5px solid #e74c3c;color:#e74c3c;padding:9px 12px;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.88rem;" onmouseover="this.style.background='#e74c3c';this.style.color='white'" onmouseout="this.style.background='none';this.style.color='#e74c3c'">🗑️</button>
+            <button onclick="invCloseEdit()" style="flex:1;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);color:var(--text-main,#2c3e50);padding:9px;border-radius:8px;cursor:pointer;font-weight:600;font-size:0.85rem;">✖ Annuler</button>
+            <button onclick="invSaveEdit()" style="flex:2;background:linear-gradient(135deg,#3498db,#2980b9);color:white;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.9rem;">💾 Enregistrer</button>
         </div>
     </div>
 </div>
@@ -11459,95 +11454,116 @@ logout = function(skipConfirmation = false) {
   </div>
 </div>
 
-<!-- ===== MODALE DÉCLARATION DÉFAUT ARTICLE ===== -->
-<div id="defect-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10500;justify-content:center;align-items:center;">
-  <div style="background:var(--bg-card,#fff);border-radius:18px;width:92%;max-width:480px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
-    <!-- Header -->
-    <div style="background:linear-gradient(135deg,#e67e22,#d35400);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;">
-      <div>
-        <h3 style="margin:0;color:white;font-size:1rem;font-weight:800;">⚠️ Déclarer un défaut</h3>
-        <div id="defect-product-name" style="font-size:0.78rem;color:rgba(255,255,255,0.85);margin-top:3px;"></div>
-      </div>
-      <button onclick="closeDefectModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+<!-- ===== MODALE DÉCLARATION DÉFAUT ===== -->
+<div id="defect-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.68);backdrop-filter:blur(8px);z-index:10500;justify-content:center;align-items:center;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:92%;max-width:480px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
+    <div id="defect-header" style="background:linear-gradient(135deg,#e67e22,#d35400);padding:16px 20px;display:flex;align-items:flex-start;justify-content:space-between;flex-shrink:0;">
+      <div><h3 style="margin:0;color:white;font-size:1rem;font-weight:800;">⚠️ Déclarer un défaut</h3>
+      <div id="defect-product-name" style="font-size:0.78rem;color:rgba(255,255,255,0.85);margin-top:3px;"></div></div>
+      <button onclick="closeDefectModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;">✕</button>
     </div>
     <input type="hidden" id="defect-product-id">
-    <!-- Body -->
-    <div style="padding:20px;display:flex;flex-direction:column;gap:14px;">
-
-      <!-- Type de défaut -->
+    <div style="padding:18px;overflow-y:auto;display:flex;flex-direction:column;gap:14px;">
       <div>
         <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">Type de défaut</label>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;" id="defect-type-btns">
-          <button class="defect-type-btn" data-type="Produit défectueux" onclick="selectDefectType(this)"
-            style="padding:10px 6px;border:2px solid #e74c3c;border-radius:10px;background:rgba(231,76,60,0.08);color:#c0392b;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;transition:all 0.15s;">
-            🔴<br>Défectueux
-          </button>
-          <button class="defect-type-btn" data-type="Produit endommagé" onclick="selectDefectType(this)"
-            style="padding:10px 6px;border:2px solid #e67e22;border-radius:10px;background:rgba(230,126,34,0.08);color:#d35400;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;transition:all 0.15s;">
-            🟠<br>Endommagé
-          </button>
-          <button class="defect-type-btn" data-type="Produit endommagé (transport)" onclick="selectDefectType(this)"
-            style="padding:10px 6px;border:2px solid #f39c12;border-radius:10px;background:rgba(243,156,18,0.08);color:#b7770d;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;transition:all 0.15s;">
-            🚚<br>Transport
-          </button>
+          <button class="defect-type-btn" data-type="Produit défectueux" onclick="selectDefectType(this)" style="padding:10px 6px;border:2px solid #e74c3c;border-radius:10px;background:rgba(231,76,60,0.08);color:#c0392b;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;">🔴<br>Défectueux</button>
+          <button class="defect-type-btn" data-type="Produit endommagé" onclick="selectDefectType(this)" style="padding:10px 6px;border:2px solid #e67e22;border-radius:10px;background:rgba(230,126,34,0.08);color:#d35400;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;">🟠<br>Endommagé</button>
+          <button class="defect-type-btn" data-type="Produit endommagé (transport)" onclick="selectDefectType(this)" style="padding:10px 6px;border:2px solid #f39c12;border-radius:10px;background:rgba(243,156,18,0.08);color:#b7770d;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;">🚚<br>Transport</button>
         </div>
         <input type="hidden" id="defect-type-value">
       </div>
-
-      <!-- Quantité -->
       <div>
         <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:5px;">Quantité concernée</label>
         <div style="display:flex;align-items:center;gap:10px;">
           <button onclick="defectQtyChange(-1)" style="width:36px;height:36px;border:2px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card);cursor:pointer;font-size:1.2rem;font-weight:700;color:var(--text-main);">−</button>
           <input id="defect-qty" type="number" min="1" value="1" style="flex:1;padding:8px;border:2px solid var(--primary,#3498db);border-radius:8px;font-size:1.1rem;font-weight:700;text-align:center;background:var(--bg-card);color:var(--text-main);">
           <button onclick="defectQtyChange(1)" style="width:36px;height:36px;border:2px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card);cursor:pointer;font-size:1.2rem;font-weight:700;color:var(--text-main);">+</button>
-          <span id="defect-qty-unit" style="font-size:0.8rem;color:var(--gray,#7f8c8d);white-space:nowrap;"></span>
+          <span id="defect-qty-unit" style="font-size:0.8rem;color:var(--gray);white-space:nowrap;"></span>
         </div>
         <div id="defect-stock-info" style="font-size:0.75rem;color:var(--gray,#7f8c8d);margin-top:4px;"></div>
       </div>
-
-      <!-- Commentaire optionnel -->
       <div>
         <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:5px;">Commentaire (optionnel)</label>
-        <textarea id="defect-comment" rows="2" placeholder="Précisions sur le défaut constaté..." style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;background:var(--bg-card);color:var(--text-main);resize:vertical;box-sizing:border-box;"></textarea>
+        <textarea id="defect-comment" rows="2" placeholder="Précisions sur le défaut..." style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;background:var(--bg-card);color:var(--text-main);resize:vertical;box-sizing:border-box;"></textarea>
       </div>
-
+      <div>
+        <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:6px;">📷 Photo du défaut (optionnel)</label>
+        <input type="file" id="defect-photo-input" accept="image/*" capture="environment" style="display:none;" onchange="defectPhotoSelected(this)">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" onclick="document.getElementById('defect-photo-input').click()" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:2px dashed var(--border-color,#ccc);border-radius:10px;background:var(--bg-card);color:var(--gray,#7f8c8d);cursor:pointer;font-size:0.83rem;font-weight:600;" onmouseover="this.style.borderColor='#e67e22';this.style.color='#e67e22';" onmouseout="this.style.borderColor='';this.style.color='';">📷 Choisir une photo</button>
+          <button type="button" id="defect-photo-clear" onclick="defectPhotoClear()" style="display:none;padding:7px 12px;border:1.5px solid #e74c3c;border-radius:8px;background:none;color:#e74c3c;cursor:pointer;font-size:0.8rem;font-weight:600;">✕ Supprimer</button>
+        </div>
+        <div id="defect-photo-preview" style="display:none;margin-top:10px;position:relative;">
+          <img id="defect-photo-img" src="" style="width:100%;max-height:160px;object-fit:cover;border-radius:10px;border:2px solid var(--border-color,#e0e0e0);">
+        </div>
+      </div>
     </div>
-    <!-- Footer -->
-    <div style="padding:12px 20px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:10px;background:var(--input-bg,#f8f9fa);">
+    <div style="padding:12px 20px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:10px;background:var(--input-bg,#f8f9fa);flex-shrink:0;">
       <button onclick="closeDefectModal()" style="flex:1;padding:10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card);color:var(--text-main);cursor:pointer;font-weight:600;">✖ Annuler</button>
       <button onclick="submitDefect()" style="flex:2;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;cursor:pointer;font-weight:700;font-size:0.95rem;">📦 Créer le retour fournisseur</button>
     </div>
   </div>
 </div>
 
-<!-- ===== MODALE CONFIRMATION SUPPRESSION RETOUR FOURNISSEUR ===== -->
-<div id="del-marc-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10600;justify-content:center;align-items:center;">
+<!-- ===== MODALE DÉTAIL RETOUR FOURNISSEUR ===== -->
+<div id="marc-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.68);backdrop-filter:blur(8px);z-index:10400;justify-content:center;align-items:center;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:92%;max-width:520px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
+    <div id="marc-detail-header" style="background:linear-gradient(135deg,#e67e22,#d35400);padding:16px 20px;display:flex;align-items:flex-start;justify-content:space-between;flex-shrink:0;">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span id="marc-detail-id" style="background:rgba(255,255,255,0.2);color:white;font-size:0.78rem;font-weight:700;padding:2px 8px;border-radius:20px;"></span>
+          <span id="marc-detail-badge" style="font-size:0.78rem;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(255,255,255,0.22);color:white;"></span>
+        </div>
+        <h3 id="marc-detail-article" style="margin:6px 0 2px;color:white;font-size:1.05rem;font-weight:800;"></h3>
+        <div id="marc-detail-fournisseur" style="font-size:0.78rem;color:rgba(255,255,255,0.8);"></div>
+      </div>
+      <button onclick="closeMarcDetail()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;flex-shrink:0;">✕</button>
+    </div>
+    <div style="overflow-y:auto;flex:1;">
+      <div id="marc-detail-photo-wrap" style="display:none;">
+        <img id="marc-detail-photo" src="" style="width:100%;max-height:200px;object-fit:cover;cursor:zoom-in;" onclick="marcPhotoZoom(document.getElementById('marc-detail-id').textContent.trim())">
+      </div>
+      <div style="padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="background:var(--input-bg,#f8f9fa);border-radius:10px;padding:12px;"><div style="font-size:0.68rem;text-transform:uppercase;color:var(--gray,#7f8c8d);font-weight:700;margin-bottom:4px;">📅 Date</div><div id="marc-detail-date" style="font-weight:700;font-size:0.9rem;"></div></div>
+        <div style="background:var(--input-bg,#f8f9fa);border-radius:10px;padding:12px;"><div style="font-size:0.68rem;text-transform:uppercase;color:var(--gray,#7f8c8d);font-weight:700;margin-bottom:4px;">📦 Quantité</div><div id="marc-detail-qty" style="font-weight:700;font-size:0.9rem;"></div></div>
+        <div style="background:#fde8e8;border-radius:10px;padding:12px;"><div style="font-size:0.68rem;text-transform:uppercase;color:#c0392b;font-weight:700;margin-bottom:4px;">💸 Montant</div><div id="marc-detail-montant" style="font-weight:800;font-size:1.1rem;color:#e74c3c;"></div></div>
+        <div style="background:var(--input-bg,#f8f9fa);border-radius:10px;padding:12px;"><div style="font-size:0.68rem;text-transform:uppercase;color:var(--gray,#7f8c8d);font-weight:700;margin-bottom:4px;">⚠️ Motif</div><div id="marc-detail-motif" style="font-weight:700;font-size:0.85rem;"></div></div>
+        <div style="background:var(--input-bg,#f8f9fa);border-radius:10px;padding:12px;"><div style="font-size:0.68rem;text-transform:uppercase;color:var(--gray,#7f8c8d);font-weight:700;margin-bottom:4px;">📄 N° BL</div><div id="marc-detail-bl" style="font-size:0.85rem;"></div></div>
+        <div style="background:var(--input-bg,#f8f9fa);border-radius:10px;padding:12px;"><div style="font-size:0.68rem;text-transform:uppercase;color:var(--gray,#7f8c8d);font-weight:700;margin-bottom:4px;">📋 N° BR</div><div id="marc-detail-br" style="font-size:0.85rem;"></div></div>
+      </div>
+      <div id="marc-detail-comment-wrap" style="padding:0 20px 16px;display:none;">
+        <div style="background:var(--input-bg,#f0f8ff);border:1.5px solid #bde0f7;border-radius:10px;padding:12px 14px;">
+          <div style="font-size:0.68rem;text-transform:uppercase;color:#2980b9;font-weight:700;margin-bottom:6px;">💬 Commentaire</div>
+          <div id="marc-detail-comment" style="font-size:0.88rem;color:var(--text-main);line-height:1.5;white-space:pre-wrap;"></div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 16px;border-top:1px solid var(--border-color,#e0e0e0);background:var(--input-bg,#f8f9fa);flex-shrink:0;">
+      <div id="marc-detail-status-btns" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;"></div>
+      <div style="display:flex;gap:8px;">
+        <button id="marc-detail-archive-btn" onclick="marcDetailArchive()" style="flex:0 0 auto;padding:9px 12px;border:1.5px solid #7f8c8d;border-radius:8px;background:none;color:#7f8c8d;cursor:pointer;font-weight:700;font-size:0.82rem;">📁 Archiver</button>
+        <button onclick="marcDetailEdit()" style="flex:1;padding:9px;border:1.5px solid #3498db;border-radius:8px;background:none;color:#3498db;cursor:pointer;font-weight:700;font-size:0.85rem;">✏️ Modifier</button>
+        <button onclick="marcDetailDelete()" style="flex:1;padding:9px;border:none;border-radius:8px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;cursor:pointer;font-weight:700;font-size:0.85rem;">🗑️ Supprimer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODALE SUPPRESSION RETOUR FOURNISSEUR ===== -->
+<div id="del-marc-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(8px);z-index:10600;justify-content:center;align-items:center;">
   <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:460px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
     <div style="background:linear-gradient(135deg,#e74c3c,#c0392b);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;">
-      <h3 style="margin:0;color:white;font-size:1rem;font-weight:800;">🗑️ Supprimer ce retour fournisseur</h3>
+      <h3 style="margin:0;color:white;font-size:1rem;font-weight:800;">🗑️ Supprimer ce retour</h3>
       <button onclick="closeDelMarcModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;">✕</button>
     </div>
     <input type="hidden" id="del-marc-id">
     <div style="padding:20px;display:flex;flex-direction:column;gap:14px;">
-      <div style="background:#fff3cd;border:1.5px solid #f39c12;border-radius:10px;padding:12px 14px;font-size:0.85rem;color:#856404;">
-        ⚠️ <strong>Article concerné :</strong><br>
-        <span id="del-marc-name" style="font-size:0.82rem;"></span>
-      </div>
-      <p style="margin:0;font-size:0.88rem;color:var(--text-main,#2c3e50);">Comment souhaitez-vous procéder ?</p>
+      <div style="background:#fff3cd;border:1.5px solid #f39c12;border-radius:10px;padding:12px 14px;font-size:0.85rem;color:#856404;">⚠️ <strong>Article :</strong> <span id="del-marc-name"></span></div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <button id="del-marc-restock-btn" onclick="confirmDelMarc(true)"
-          style="padding:12px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;cursor:pointer;font-weight:700;font-size:0.9rem;text-align:left;">
-          ↩️ Supprimer + Réapprovisionner le stock
-        </button>
-        <button onclick="confirmDelMarc(false)"
-          style="padding:12px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;cursor:pointer;font-weight:700;font-size:0.9rem;text-align:left;">
-          🗑️ Supprimer définitivement (sans restaurer le stock)
-        </button>
-        <button onclick="closeDelMarcModal()"
-          style="padding:10px 16px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;background:var(--bg-card,#fff);color:var(--text-main);cursor:pointer;font-weight:600;font-size:0.88rem;">
-          ✖ Annuler
-        </button>
+        <button id="del-marc-restock-btn" onclick="confirmDelMarc(true)" style="padding:12px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;cursor:pointer;font-weight:700;font-size:0.9rem;text-align:left;">↩️ Supprimer + Réapprovisionner le stock</button>
+        <button onclick="confirmDelMarc(false)" style="padding:12px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;cursor:pointer;font-weight:700;font-size:0.9rem;text-align:left;">🗑️ Supprimer définitivement (sans restaurer)</button>
+        <button onclick="closeDelMarcModal()" style="padding:10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;background:var(--bg-card);color:var(--text-main);cursor:pointer;font-weight:600;">✖ Annuler</button>
       </div>
     </div>
   </div>
@@ -11886,13 +11902,12 @@ function invRender() {
         const safeId   = e.id.replace(/'/g, "\\'");
         return `<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
             <div style="font-size:1.2rem;flex-shrink:0;">${catIcon}</div>
-            <div style="flex:1;min-width:0;">
+            <div style="flex:1;min-width:0;cursor:pointer;" onclick="invOpenEdit('${safeId}')" title="Cliquer pour modifier / ajouter un commentaire">
                 <div style="font-weight:600;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.desc}</div>
-                <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${catLabel} · ${dateStr}${e.note ? ' · ' + e.note : ''}</div>
+                <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${catLabel} · ${dateStr}${e.note ? ` · <span style="color:var(--primary,#3498db);font-style:italic;">${e.note}</span>` : '<span style="color:#ccc;font-style:italic;">Ajouter un commentaire…</span>'}</div>
             </div>
             <div style="font-weight:800;font-size:1rem;color:#e74c3c;white-space:nowrap;flex-shrink:0;">-${e.montant.toFixed(2)} €</div>
-            <button onclick="invOpenEdit('${safeId}')" title="Modifier" style="background:none;border:none;color:var(--primary,#3498db);cursor:pointer;font-size:1rem;padding:4px 6px;border-radius:6px;transition:color 0.15s;flex-shrink:0;">✏️</button>
-            <button onclick="invDelete('${safeId}')" title="Supprimer" style="background:none;border:none;color:var(--gray,#bbb);cursor:pointer;font-size:1rem;padding:4px 6px;border-radius:6px;transition:color 0.15s;flex-shrink:0;" onmouseover="this.style.color='#e74c3c'" onmouseout="this.style.color=''">🗑️</button>
+            <button onclick="invOpenEdit('${safeId}')" title="Modifier" style="background:none;border:none;color:var(--primary,#3498db);cursor:pointer;font-size:1rem;padding:4px 6px;border-radius:6px;flex-shrink:0;">✏️</button>
         </div>`;
     }).join('');
 
@@ -12027,25 +12042,37 @@ function invOpenEdit(id) {
     const modal = document.getElementById('inv-edit-modal');
     if (!modal) return;
 
-    // Pré-remplir les champs
     document.getElementById('inv-edit-id').value       = id;
     document.getElementById('inv-edit-desc').value     = entry.desc || '';
     document.getElementById('inv-edit-montant').value  = entry.montant || '';
     document.getElementById('inv-edit-date').value     = entry.date || '';
     document.getElementById('inv-edit-note').value     = entry.note || '';
 
-    // Remplir le select catégorie
+    // Résumé dans le header
+    const summary = document.getElementById('inv-edit-summary');
+    if (summary) {
+        const dateStr = new Date(entry.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
+        summary.textContent = `${entry.desc} · ${entry.montant.toFixed(2)} € · ${dateStr}`;
+    }
+
     const catSel = document.getElementById('inv-edit-cat');
     const cats = invLoadCats();
     catSel.innerHTML = cats.map(c => `<option value="${c.id}"${c.id === entry.cat ? ' selected' : ''}>${c.icon} ${c.label}</option>`).join('');
 
     modal.style.display = 'flex';
-    setTimeout(() => document.getElementById('inv-edit-desc')?.focus(), 80);
+    setTimeout(() => document.getElementById('inv-edit-note')?.focus(), 80);
 }
 
 function invCloseEdit() {
     const modal = document.getElementById('inv-edit-modal');
     if (modal) modal.style.display = 'none';
+}
+
+function invDeleteFromEdit() {
+    const id = document.getElementById('inv-edit-id')?.value;
+    if (!id) return;
+    invCloseEdit();
+    invDelete(id);
 }
 
 function invSaveEdit() {
@@ -13519,7 +13546,6 @@ function updateRetourStats() {
     const urgent = ech.filter(e => { const d=new Date(e.date); d.setHours(0,0,0,0); return Math.ceil((d-today)/86400000)<=3; }).length;
     const month = new Date().toISOString().slice(0,7);
     const montant = ret.filter(r=>r.date.startsWith(month)&&r.statut!=='refused').reduce((a,r)=>a+parseFloat(r.montant||0),0);
-    // CA perdu sur défauts (tous les retours marchandise _defect, pas seulement ce mois)
     const lostCA = marc.filter(m=>m._defect).reduce((a,m)=>a+parseFloat(m._lostCA||m.montant||0),0);
     document.getElementById('rs-pending').textContent = pending;
     document.getElementById('rs-processing').textContent = processing;
@@ -13531,7 +13557,6 @@ function updateRetourStats() {
     document.getElementById('rbadge-retours').textContent = pending;
     document.getElementById('rbadge-marchandise').textContent = marc.filter(m=>m.statut==='pending').length;
     document.getElementById('rbadge-echeances').textContent = urgent;
-    // Badge on tab button
     const badge = document.getElementById('retours-badge');
     if (badge) { badge.textContent = pending+urgent; badge.style.display = (pending+urgent)>0?'':'none'; }
 }
@@ -13583,27 +13608,20 @@ function renderRetours(data) {
 // ===== RENDER MARCHANDISE =====
 function renderMarchandise(data) {
     const tb = document.getElementById('marchandise-tbody');
-    if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📦</div><h3 style="margin:8px 0 4px;">Aucun retour fournisseur</h3><p style="font-size:0.82rem;">Cliquez sur "Déclarer retour" pour commencer.</p></div></td></tr>`; return; }
+    if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="9"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📦</div><h3 style="margin:8px 0 4px;">Aucun retour fournisseur</h3><p style="font-size:0.82rem;">Cliquez sur "Déclarer retour" pour commencer.</p></div></td></tr>`; return; }
     tb.innerHTML = data.map(m => {
         const s = RSL.marc[m.statut] || RSL.marc.pending;
-        return `<tr style="${m.statut==='archived'?'opacity:0.6;':''}">
+        const sid = m.id.replace(/'/g,"\\'");
+        return `<tr style="cursor:pointer;${m.statut==='archived'?'opacity:0.65;':''}" onclick="openMarcDetail('${sid}')" title="Cliquer pour gérer">
             <td><strong style="color:${m.statut==='archived'?'#7f8c8d':'#e67e22'}">${m.id}</strong>${m._defect?`<span style="background:#e67e22;color:white;font-size:0.6rem;padding:1px 5px;border-radius:6px;margin-left:3px;vertical-align:middle;">⚠️</span>`:''}</td>
             <td>${m.date}</td>
             <td><strong>${m.fournisseur}</strong></td>
-            <td>${m.article}</td>
-            <td>${m.qty}</td>
+            <td>${m.article}${m._photo?`<br><img src="${m._photo}" onclick="event.stopPropagation();marcPhotoZoom('${sid}')" style="width:40px;height:30px;object-fit:cover;border-radius:4px;margin-top:3px;cursor:pointer;border:1px solid #e0e0e0;" title="Voir la photo">`:''}</td>
+            <td>${m.qty}${m._unitKg?' kg':' u.'}</td>
             <td><strong>${parseFloat(m.montant||0).toFixed(2)} €</strong></td>
             <td style="font-size:0.77rem">${m.motif}</td>
             <td><code style="font-size:0.74rem;color:#7f8c8d">${m.bl||'-'}</code></td>
             <td><span class="retours-badge-st ${s.c}">${s.i} ${s.l}</span></td>
-            <td><div style="display:flex;gap:4px;flex-wrap:wrap;">
-                ${m.statut==='pending'?`<button class="retours-btn retours-btn-sm retours-btn-primary" onclick="setMarcStatus('${m.id}','sent')">📤 Envoyé</button>`:''}
-                ${m.statut==='sent'?`<button class="retours-btn retours-btn-sm retours-btn-success" onclick="setMarcStatus('${m.id}','credited')">💳 Avoir</button>`:''}
-                ${m.statut!=='archived'?`<button class="retours-btn retours-btn-sm" style="background:#7f8c8d;color:white;" onclick="setMarcStatus('${m.id}','archived')" title="Archiver — problème résolu">📁</button>`:
-                `<button class="retours-btn retours-btn-sm" style="background:#e67e22;color:white;" onclick="setMarcStatus('${m.id}','pending')" title="Désarchiver">↩️</button>`}
-                <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="openEditMarc('${m.id}')">✏️</button>
-                <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="delMarc('${m.id}')">🗑️</button>
-            </div></td>
         </tr>`;
     }).join('');
 }
@@ -13784,91 +13802,6 @@ function setMarcStatus(id, status) {
     rToast(status==='archived'?'📁 Archivé — problème résolu':'Statut mis à jour','success');
 }
 
-function exportMarcPDF(type) {
-    const all = rLoad('marchandise');
-    let items, title, accentColor;
-
-    if (type === 'archived') {
-        items = all.filter(m => m.statut === 'archived');
-        title = 'Retours Fournisseurs — Archivés (Résolus)';
-        accentColor = '#7f8c8d';
-    } else if (type === 'defect') {
-        items = all.filter(m => m.statut !== 'archived' && m.motif === 'Produit défectueux');
-        title = 'Retours Fournisseurs — Produits Défectueux';
-        accentColor = '#e74c3c';
-    } else if (type === 'damaged') {
-        items = all.filter(m => m.statut !== 'archived' && m.motif === 'Produit endommagé');
-        title = 'Retours Fournisseurs — Produits Endommagés';
-        accentColor = '#e67e22';
-    } else if (type === 'transport') {
-        items = all.filter(m => m.statut !== 'archived' && m.motif === 'Produit endommagé (transport)');
-        title = 'Retours Fournisseurs — Endommagés (Transport)';
-        accentColor = '#f39c12';
-    } else if (type === 'all') {
-        items = all;
-        title = 'Retours Fournisseurs — Tous';
-        accentColor = '#3498db';
-    } else {
-        items = all.filter(m => m.statut !== 'archived');
-        title = 'Retours Fournisseurs — Non Résolus';
-        accentColor = '#e74c3c';
-    }
-
-    const date = new Date().toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'});
-    if (!items.length) { rToast('Aucun élément à exporter dans cette catégorie', 'info'); return; }
-
-    const statusLabels = {pending:'En attente',sent:'Envoyé',credited:'Avoir reçu',archived:'Archivé',confirmed:'Confirmé'};
-    const totalMontant = items.reduce((s,m)=>s+parseFloat(m.montant||0),0);
-
-    const rows = items.map((m,i) => `
-        <tr style="background:${i%2===0?'#f9f9f9':'white'}">
-            <td>${m.id}</td><td>${m.date}</td><td>${m.fournisseur}</td><td>${m.article}</td>
-            <td style="text-align:center">${m.qty}</td>
-            <td style="text-align:right;font-weight:700">${parseFloat(m.montant||0).toFixed(2)} €</td>
-            <td>${m.motif}</td><td>${statusLabels[m.statut]||m.statut}</td>
-            <td style="font-size:11px;color:#666">${m.comment||''}</td>
-        </tr>`).join('');
-
-    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-    <title>${title}</title>
-    <style>
-        body{font-family:Arial,sans-serif;margin:20px;color:#2c3e50;}
-        h1{font-size:18px;margin-bottom:4px;color:${accentColor};}
-        .subtitle{font-size:12px;color:#7f8c8d;margin-bottom:16px;}
-        .summary{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
-        .sum-box{background:#f8f9fa;border-radius:6px;padding:10px 16px;border-left:3px solid ${accentColor};}
-        .sum-box h3{margin:0;font-size:18px;color:${accentColor};}
-        .sum-box p{margin:2px 0 0;font-size:11px;color:#7f8c8d;}
-        table{width:100%;border-collapse:collapse;font-size:12px;}
-        th{background:${accentColor};color:white;padding:8px 10px;text-align:left;}
-        td{padding:7px 10px;border-bottom:1px solid #eee;}
-        .footer{margin-top:20px;font-size:11px;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:8px;}
-        @media print{body{margin:10px;}button{display:none;}}
-    </style></head><body>
-    <h1>${title}</h1>
-    <div class="subtitle">Généré le ${date}</div>
-    <div class="summary">
-        <div class="sum-box"><h3>${items.length}</h3><p>Retours</p></div>
-        <div class="sum-box"><h3>${totalMontant.toFixed(2)} €</h3><p>Montant total</p></div>
-        <div class="sum-box"><h3>${items.filter(m=>m._defect).length}</h3><p>Défauts déclarés</p></div>
-        <div class="sum-box"><h3>${items.filter(m=>m.statut==='pending').length}</h3><p>En attente</p></div>
-    </div>
-    <table>
-        <thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>Statut</th><th>Commentaire</th></tr></thead>
-        <tbody>${rows}</tbody>
-    </table>
-    <div class="footer">COVO Pro — Export retours fournisseurs — ${date}</div>
-    <script>window.onload=function(){window.print();};<\/script>
-    </body></html>`;
-
-    const blob = new Blob([html], {type:'text/html;charset=utf-8'});
-    const url = URL.createObjectURL(blob);
-    const win = window.open(url, '_blank');
-    if (!win) { rToast('Veuillez autoriser les popups pour le PDF', 'info'); }
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-}
-
-
 // ===== DELETE =====
 function delRetour(id) {
     const r = rLoad('retours').find(x=>x.id===id);
@@ -13878,56 +13811,10 @@ function delRetour(id) {
 }
 function delMarc(id) {
     const m = rLoad('marchandise').find(x=>x.id===id);
-    if (!m) return;
-
-    // Remplir la modale de confirmation
-    document.getElementById('del-marc-id').value = id;
-    const nameEl = document.getElementById('del-marc-name');
-    if (nameEl) nameEl.textContent = `${m.article} — ${m.fournisseur} (${m.qty} u. · ${parseFloat(m.montant||0).toFixed(2)} €)`;
-
-    // Afficher/masquer le bouton "Réapprovisionner" selon si c'est un défaut avec stock déduit
-    const restockBtn = document.getElementById('del-marc-restock-btn');
-    if (restockBtn) {
-        const hasProduct = m._fromProduct && m._defect;
-        restockBtn.style.display = hasProduct ? '' : 'none';
-        const qty = m.qty || 0;
-        const isKg = typeof qty === 'number' && String(qty).includes('.');
-        restockBtn.textContent = `↩️ Supprimer + Réapprovisionner le stock (+${qty} ${m._unitKg ? 'kg' : 'u.'})`;
-    }
-    document.getElementById('del-marc-modal').style.display = 'flex';
+    rSave('marchandise',rLoad('marchandise').filter(m=>m.id!==id));
+    if (m) addRetourHist('deleted','marchandise',`🗑️ Retour fournisseur supprimé: ${id}`,`${m.fournisseur||'-'} · ${m.article||'-'}`);
+    refreshRetours(); rToast('🗑️ Retour fournisseur supprimé','success');
 }
-function closeDelMarcModal() {
-    document.getElementById('del-marc-modal').style.display = 'none';
-}
-
-function confirmDelMarc(withRestock) {
-    const id = document.getElementById('del-marc-id').value;
-    const m = rLoad('marchandise').find(x=>x.id===id);
-    if (!m) { closeDelMarcModal(); return; }
-
-    // Réapprovisionner le stock si demandé et si c'est un défaut
-    if (withRestock && m._defect && m._fromProduct) {
-        const allProducts = typeof products !== 'undefined' ? products : (window._covoProducts || []);
-        const prod = allProducts.find(x => x.id == m._fromProduct);
-        if (prod) {
-            prod.stock = parseFloat((prod.stock + parseFloat(m.qty || 0)).toFixed(3));
-            localStorage.setItem('covo_products', JSON.stringify(allProducts));
-            if (typeof saveAll === 'function') saveAll();
-            if (typeof renderProducts === 'function') renderProducts();
-            rToast(`↩️ Stock réapprovisionné : +${m.qty} → ${prod.name}`, 'success');
-        }
-    }
-
-    // Supprimer le retour
-    rSave('marchandise', rLoad('marchandise').filter(x=>x.id!==id));
-    addRetourHist('deleted','marchandise',
-        `🗑️ Retour fournisseur supprimé: ${id}${withRestock?' + stock restauré':''}`,
-        `${m.fournisseur||'-'} · ${m.article||'-'}`);
-    closeDelMarcModal();
-    refreshRetours();
-    if (!withRestock) rToast('🗑️ Retour supprimé définitivement','success');
-}
-
 function delEch(id) {
     const e = rLoad('echeances').find(x=>x.id===id);
     rSave('echeances',rLoad('echeances').filter(e=>e.id!==id));
@@ -13960,133 +13847,6 @@ function clearRetourHistorique() {
     
     rSave('hist', []);
     renderRetourHistorique([]);
-}
-
-// ===== DÉCLARATION DÉFAUT ARTICLE =====
-function openDefectModal(productId) {
-    const modal = document.getElementById('defect-modal');
-    if (!modal) return;
-
-    // Chercher le produit
-    const p = (typeof products !== 'undefined' ? products : window._covoProducts || []).find(x => x.id == productId);
-    if (!p) return;
-
-    // Reset
-    document.getElementById('defect-product-id').value = productId;
-    document.getElementById('defect-product-name').textContent = p.name || '';
-    document.getElementById('defect-type-value').value = '';
-    document.getElementById('defect-qty').value = 1;
-    document.getElementById('defect-qty').max = p.stock || 999;
-    document.getElementById('defect-comment').value = '';
-
-    // Info stock
-    const isKg = p.unitType === 'kg';
-    document.getElementById('defect-qty-unit').textContent = isKg ? 'kg' : 'unité(s)';
-    document.getElementById('defect-qty').step = isKg ? '0.1' : '1';
-    document.getElementById('defect-stock-info').textContent = 'Stock disponible : ' + (isKg ? (p.stock||0).toFixed(2) + ' kg' : (p.stock||0) + ' unité(s)');
-
-    // Reset boutons type
-    document.querySelectorAll('.defect-type-btn').forEach(b => {
-        b.style.fontWeight = '700';
-        b.style.opacity = '1';
-    });
-
-    modal.style.display = 'flex';
-}
-
-function closeDefectModal() {
-    const modal = document.getElementById('defect-modal');
-    if (modal) modal.style.display = 'none';
-}
-
-function selectDefectType(btn) {
-    document.querySelectorAll('.defect-type-btn').forEach(b => {
-        b.style.opacity = '0.45';
-        b.style.transform = 'scale(0.97)';
-    });
-    btn.style.opacity = '1';
-    btn.style.transform = 'scale(1.06)';
-    document.getElementById('defect-type-value').value = btn.dataset.type;
-}
-
-function defectQtyChange(delta) {
-    const input = document.getElementById('defect-qty');
-    const isKg = (document.getElementById('defect-qty-unit').textContent || '').includes('kg');
-    const step = isKg ? 0.1 : 1;
-    const val = parseFloat(input.value || 1) + delta * step;
-    const max = parseFloat(input.max) || 999;
-    input.value = Math.max(isKg ? 0.1 : 1, Math.min(max, parseFloat(val.toFixed(3))));
-}
-
-function submitDefect() {
-    const productId = document.getElementById('defect-product-id').value;
-    const defectType = document.getElementById('defect-type-value').value;
-    const qty = parseFloat(document.getElementById('defect-qty').value) || 1;
-    const comment = document.getElementById('defect-comment').value.trim();
-
-    if (!defectType) {
-        if (typeof rToast === 'function') rToast('Veuillez choisir un type de défaut', 'error');
-        else alert('Veuillez choisir un type de défaut');
-        return;
-    }
-
-    const allProducts = (typeof products !== 'undefined' ? products : window._covoProducts || []);
-    const p = allProducts.find(x => x.id == productId);
-    if (!p) return;
-
-    const isKg = p.unitType === 'kg';
-    const qtyDisplay = isKg ? qty.toFixed(2) + ' kg' : qty + ' u.';
-    const date = new Date().toISOString().split('T')[0];
-
-    // Créer l'entrée retour marchandise
-    const list = rLoad('marchandise');
-    const id = 'RF-' + String(list.length + 1).padStart(3, '0');
-    const unitPrice = p.price || p.pricePerKg || 0;
-    const lostCA = parseFloat((unitPrice * qty).toFixed(2));
-    list.push({
-        id,
-        date,
-        fournisseur: '— À renseigner —',
-        article: p.name,
-        qty,
-        montant: lostCA,
-        motif: defectType,
-        bl: '',
-        br: '',
-        statut: 'pending',
-        comment: comment || '',
-        _fromProduct: productId,
-        _defect: true,
-        _lostCA: lostCA,
-        _unitKg: isKg
-    });
-    rSave('marchandise', list);
-
-    // Décompter le stock (réutilise allProducts déjà déclaré)
-    const prod = allProducts.find(x => x.id == productId);
-    if (prod) {
-        const newStock = Math.max(0, parseFloat((prod.stock - qty).toFixed(3)));
-        prod.stock = newStock;
-        localStorage.setItem('covo_products', JSON.stringify(allProducts));
-        if (typeof saveAll === 'function') saveAll();
-        if (typeof renderProducts === 'function') renderProducts();
-    }
-
-    addRetourHist('created', 'marchandise',
-        `⚠️ Défaut déclaré: ${p.name}`,
-        `Type: ${defectType} · Qté: ${qtyDisplay} · -${lostCA.toFixed(2)} €`
-    );
-
-    closeDefectModal();
-    refreshRetours();
-
-    // Aller sur l'onglet Retours fournisseur
-    if (typeof switchRetourTab === 'function') {
-        const btn = document.querySelector('[data-panel="rt-marchandise"]');
-        if (btn) switchRetourTab({ currentTarget: btn }, 'rt-marchandise');
-    }
-
-    rToast(`✅ Retour fournisseur créé — ${p.name} · ${qtyDisplay} · ${defectType}`, 'success');
 }
 
 // ===== EDIT RETOUR CLIENT =====
@@ -14172,6 +13932,199 @@ function saveEditMarc() {
     refreshRetours();
     rToast('✅ Retour fournisseur mis à jour','success');
 }
+
+// ===== MODALE DETAIL RETOUR FOURNISSEUR =====
+let _marcDetailId = null;
+
+function openMarcDetail(id) {
+    const m = rLoad('marchandise').find(x => x.id === id);
+    if (!m) return;
+    _marcDetailId = id;
+    const statusLabels = {pending:'⏳ En attente',sent:'📤 Envoyé',credited:'💳 Avoir reçu',archived:'📁 Archivé',confirmed:'✓ Confirmé'};
+    document.getElementById('marc-detail-id').textContent = m.id;
+    document.getElementById('marc-detail-article').textContent = m.article;
+    document.getElementById('marc-detail-fournisseur').textContent = '🏭 '+(m.fournisseur||'—');
+    document.getElementById('marc-detail-date').textContent = m.date ? new Date(m.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'}) : '—';
+    document.getElementById('marc-detail-qty').textContent = m.qty+(m._unitKg?' kg':' u.');
+    document.getElementById('marc-detail-montant').textContent = parseFloat(m.montant||0).toFixed(2)+' €';
+    document.getElementById('marc-detail-motif').textContent = m.motif||'—';
+    document.getElementById('marc-detail-bl').textContent = m.bl||'—';
+    document.getElementById('marc-detail-br').textContent = m.br||'—';
+    // Badge
+    const badge = document.getElementById('marc-detail-badge');
+    badge.textContent = statusLabels[m.statut]||m.statut;
+    // Header couleur
+    document.getElementById('marc-detail-header').style.background = m.statut==='archived'
+        ? 'linear-gradient(135deg,#7f8c8d,#5d6d7e)' : 'linear-gradient(135deg,#e67e22,#d35400)';
+    // Commentaire
+    const cw = document.getElementById('marc-detail-comment-wrap');
+    if (m.comment && m.comment.trim()) { document.getElementById('marc-detail-comment').textContent = m.comment; cw.style.display=''; }
+    else cw.style.display='none';
+    // Photo
+    const pw = document.getElementById('marc-detail-photo-wrap');
+    if (m._photo) { document.getElementById('marc-detail-photo').src = m._photo; pw.style.display=''; }
+    else pw.style.display='none';
+    // Boutons statut
+    const sb = document.getElementById('marc-detail-status-btns');
+    let btns='';
+    if (m.statut==='pending') btns+=`<button onclick="marcDetailSetStatus('sent')" style="flex:1;padding:8px;border:none;border-radius:8px;background:#3498db;color:white;cursor:pointer;font-weight:700;font-size:0.82rem;">📤 Marquer Envoyé</button>`;
+    if (m.statut==='sent') btns+=`<button onclick="marcDetailSetStatus('credited')" style="flex:1;padding:8px;border:none;border-radius:8px;background:#27ae60;color:white;cursor:pointer;font-weight:700;font-size:0.82rem;">💳 Avoir reçu</button>`;
+    if (m.statut!=='pending'&&m.statut!=='archived') btns+=`<button onclick="marcDetailSetStatus('pending')" style="flex:0 0 auto;padding:8px 10px;border:1.5px solid #f39c12;border-radius:8px;background:none;color:#f39c12;cursor:pointer;font-weight:700;font-size:0.78rem;">↩️ Remettre en attente</button>`;
+    sb.innerHTML = btns;
+    sb.style.display = btns ? '' : 'none';
+    // Bouton archive
+    const ab = document.getElementById('marc-detail-archive-btn');
+    if (ab) ab.textContent = m.statut==='archived' ? '↩️ Désarchiver' : '📁 Archiver';
+    document.getElementById('marc-detail-modal').style.display = 'flex';
+}
+function closeMarcDetail() { document.getElementById('marc-detail-modal').style.display='none'; _marcDetailId=null; }
+function marcDetailEdit()   { const id=_marcDetailId; closeMarcDetail(); openEditMarc(id); }
+function marcDetailDelete() { const id=_marcDetailId; closeMarcDetail(); delMarc(id); }
+function marcDetailArchive() {
+    const m=rLoad('marchandise').find(x=>x.id===_marcDetailId); if (!m) return;
+    setMarcStatus(_marcDetailId, m.statut==='archived'?'pending':'archived'); closeMarcDetail();
+}
+function marcDetailSetStatus(status) { setMarcStatus(_marcDetailId, status); closeMarcDetail(); }
+
+function marcPhotoZoom(marcId) {
+    const m = rLoad('marchandise').find(x=>x.id===marcId);
+    if (!m||!m._photo) return;
+    let lb=document.getElementById('marc-photo-lightbox');
+    if (!lb) {
+        lb=document.createElement('div'); lb.id='marc-photo-lightbox';
+        lb.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:20000;justify-content:center;align-items:center;cursor:zoom-out;';
+        lb.innerHTML='<img id="marc-lb-img" style="max-width:90%;max-height:88vh;border-radius:12px;">';
+        lb.onclick=()=>lb.style.display='none'; document.body.appendChild(lb);
+    }
+    document.getElementById('marc-lb-img').src=m._photo; lb.style.display='flex';
+}
+
+// ===== SUPPRESSION RETOUR FOURNISSEUR =====
+function delMarc(id) {
+    const m=rLoad('marchandise').find(x=>x.id===id); if (!m) return;
+    document.getElementById('del-marc-id').value=id;
+    document.getElementById('del-marc-name').textContent=`${m.article} — ${m.fournisseur} (${m.qty} · ${parseFloat(m.montant||0).toFixed(2)} €)`;
+    const rb=document.getElementById('del-marc-restock-btn');
+    if (rb) { rb.style.display=(m._defect&&m._fromProduct)?'':'none'; rb.textContent=`↩️ Supprimer + Réapprovisionner (+${m.qty} ${m._unitKg?'kg':'u.'})`;  }
+    document.getElementById('del-marc-modal').style.display='flex';
+}
+function closeDelMarcModal() { document.getElementById('del-marc-modal').style.display='none'; }
+function confirmDelMarc(withRestock) {
+    const id=document.getElementById('del-marc-id').value;
+    const m=rLoad('marchandise').find(x=>x.id===id); if (!m) { closeDelMarcModal(); return; }
+    if (withRestock&&m._defect&&m._fromProduct) {
+        const ap=typeof products!=='undefined'?products:(window._covoProducts||[]);
+        const prod=ap.find(x=>x.id==m._fromProduct);
+        if (prod) { prod.stock=parseFloat((prod.stock+parseFloat(m.qty||0)).toFixed(3)); localStorage.setItem('covo_products',JSON.stringify(ap)); if (typeof saveAll==='function') saveAll(); if (typeof renderProducts==='function') renderProducts(); rToast(`↩️ Stock réapprovisionné : +${m.qty} → ${prod.name}`,'success'); }
+    }
+    rSave('marchandise',rLoad('marchandise').filter(x=>x.id!==id));
+    addRetourHist('deleted','marchandise',`🗑️ Retour supprimé: ${id}${withRestock?' + stock restauré':''}`,`${m.fournisseur||'-'} · ${m.article||'-'}`);
+    closeDelMarcModal(); refreshRetours();
+    if (!withRestock) rToast('🗑️ Retour supprimé définitivement','success');
+}
+
+// ===== DÉCLARATION DÉFAUT ARTICLE =====
+window._defectPhotoBase64 = null;
+function openDefectModal(productId) {
+    const modal=document.getElementById('defect-modal'); if (!modal) return;
+    const p=(typeof products!=='undefined'?products:(window._covoProducts||[])).find(x=>x.id==productId); if (!p) return;
+    document.getElementById('defect-product-id').value=productId;
+    document.getElementById('defect-product-name').textContent=p.name||'';
+    document.getElementById('defect-type-value').value='';
+    document.getElementById('defect-qty').value=1; document.getElementById('defect-qty').max=p.stock||999;
+    document.getElementById('defect-comment').value='';
+    window._defectPhotoBase64=null;
+    document.getElementById('defect-photo-input').value='';
+    document.getElementById('defect-photo-preview').style.display='none';
+    document.getElementById('defect-photo-clear').style.display='none';
+    const isKg=p.unitType==='kg';
+    document.getElementById('defect-qty-unit').textContent=isKg?'kg':'unité(s)';
+    document.getElementById('defect-qty').step=isKg?'0.1':'1';
+    document.getElementById('defect-stock-info').textContent='Stock disponible : '+(isKg?(p.stock||0).toFixed(2)+' kg':(p.stock||0)+' unité(s)');
+    document.querySelectorAll('.defect-type-btn').forEach(b=>{b.style.opacity='1';b.style.transform='';});
+    modal.style.display='flex';
+}
+window.openDefectModal=openDefectModal;
+function closeDefectModal() { const m=document.getElementById('defect-modal'); if(m) m.style.display='none'; }
+function selectDefectType(btn) {
+    document.querySelectorAll('.defect-type-btn').forEach(b=>{b.style.opacity='0.45';b.style.transform='scale(0.97)';});
+    btn.style.opacity='1'; btn.style.transform='scale(1.06)';
+    document.getElementById('defect-type-value').value=btn.dataset.type;
+    const e=document.getElementById('defect-type-error'); if(e) e.style.display='none';
+    const bc=document.getElementById('defect-type-btns'); if(bc) bc.style.outline='';
+}
+function defectQtyChange(delta) {
+    const inp=document.getElementById('defect-qty');
+    const isKg=(document.getElementById('defect-qty-unit').textContent||'').includes('kg');
+    const v=parseFloat(inp.value||1)+delta*(isKg?0.1:1);
+    inp.value=Math.max(isKg?0.1:1,Math.min(parseFloat(inp.max)||999,parseFloat(v.toFixed(3))));
+}
+window.defectPhotoSelected=function(input){
+    const file=input.files[0]; if(!file) return;
+    const r=new FileReader(); r.onload=function(e){window._defectPhotoBase64=e.target.result;document.getElementById('defect-photo-img').src=e.target.result;document.getElementById('defect-photo-preview').style.display='';document.getElementById('defect-photo-clear').style.display='';};
+    r.readAsDataURL(file);
+};
+window.defectPhotoClear=function(){window._defectPhotoBase64=null;document.getElementById('defect-photo-input').value='';document.getElementById('defect-photo-preview').style.display='none';document.getElementById('defect-photo-clear').style.display='none';};
+function submitDefect() {
+    const productId=document.getElementById('defect-product-id').value;
+    const defectType=document.getElementById('defect-type-value').value;
+    const qty=parseFloat(document.getElementById('defect-qty').value)||1;
+    const comment=document.getElementById('defect-comment').value.trim();
+    if (!defectType) {
+        const bc=document.getElementById('defect-type-btns');
+        if(bc){bc.style.outline='2px solid #e74c3c';bc.style.borderRadius='10px';let n=0;const sh=setInterval(()=>{bc.style.transform=n%2===0?'translateX(-5px)':'translateX(5px)';n++;if(n>=6){clearInterval(sh);bc.style.transform='translateX(0)';setTimeout(()=>{bc.style.outline='';},1500);}},60);}
+        let e=document.getElementById('defect-type-error');
+        if(!e){e=document.createElement('div');e.id='defect-type-error';e.style.cssText='background:#fde8e8;color:#c0392b;border:1.5px solid #e74c3c;border-radius:8px;padding:8px 12px;font-size:0.83rem;font-weight:700;text-align:center;margin-top:6px;';bc&&bc.parentNode.insertBefore(e,bc.nextSibling);}
+        e.textContent='⚠️ Veuillez choisir un type de défaut avant de continuer'; e.style.display='';
+        setTimeout(()=>{if(e)e.style.display='none';},3500); return;
+    }
+    const allProducts=typeof products!=='undefined'?products:(window._covoProducts||[]);
+    const p=allProducts.find(x=>x.id==productId); if(!p) return;
+    const isKg=p.unitType==='kg';
+    const qtyDisplay=isKg?qty.toFixed(2)+' kg':qty+' u.';
+    const date=new Date().toISOString().split('T')[0];
+    const list=rLoad('marchandise');
+    const id='RF-'+String(list.length+1).padStart(3,'0');
+    const unitPrice=p.price||p.pricePerKg||0;
+    const lostCA=parseFloat((unitPrice*qty).toFixed(2));
+    list.push({id,date,fournisseur:'— À renseigner —',article:p.name,qty,montant:lostCA,motif:defectType,bl:'',br:'',statut:'pending',comment:comment||'',_fromProduct:productId,_defect:true,_lostCA:lostCA,_unitKg:isKg,_photo:window._defectPhotoBase64||null});
+    rSave('marchandise',list);
+    const prod=allProducts.find(x=>x.id==productId);
+    if(prod){prod.stock=Math.max(0,parseFloat((prod.stock-qty).toFixed(3)));localStorage.setItem('covo_products',JSON.stringify(allProducts));if(typeof saveAll==='function')saveAll();if(typeof renderProducts==='function')renderProducts();}
+    addRetourHist('created','marchandise',`⚠️ Défaut déclaré: ${p.name}`,`Type: ${defectType} · Qté: ${qtyDisplay} · -${lostCA.toFixed(2)} €`);
+    closeDefectModal(); refreshRetours();
+    const btn=document.querySelector('[data-panel="rt-marchandise"]');
+    if(btn&&typeof switchRetourTab==='function') switchRetourTab({currentTarget:btn},'rt-marchandise');
+    rToast(`✅ Retour créé — ${p.name} · ${qtyDisplay} · ${defectType}`,'success');
+}
+
+// ===== EXPORT PDF RETOURS FOURNISSEUR =====
+function exportMarcPDF(type) {
+    const all=rLoad('marchandise');
+    const items=type==='archived'?all.filter(m=>m.statut==='archived'):all.filter(m=>m.statut!=='archived');
+    const title=type==='archived'?'📁 Retours — Archivés':'🔴 Retours — Non résolus';
+    const date=new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
+    if(!items.length){rToast('Aucun élément à exporter','info');return;}
+    const sl={pending:'En attente',sent:'Envoyé',credited:'Avoir reçu',archived:'Archivé'};
+    const total=items.reduce((s,m)=>s+parseFloat(m.montant||0),0);
+    const rows=items.map((m,i)=>`<tr style="background:${i%2===0?'#f9f9f9':'white'}"><td>${m.id}</td><td>${m.date}</td><td>${m.fournisseur}</td><td>${m.article}</td><td style="text-align:center">${m.qty}</td><td style="text-align:right;font-weight:700">${parseFloat(m.montant||0).toFixed(2)} €</td><td>${m.motif}</td><td>${sl[m.statut]||m.statut}</td><td style="font-size:11px;color:#666">${m.comment||''}</td></tr>`).join('');
+    const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;margin:20px;color:#2c3e50;}h1{font-size:18px;color:${type==='archived'?'#7f8c8d':'#e74c3c'};}table{width:100%;border-collapse:collapse;font-size:12px;}th{background:${type==='archived'?'#7f8c8d':'#e74c3c'};color:white;padding:8px 10px;text-align:left;}td{padding:7px 10px;border-bottom:1px solid #eee;}.footer{margin-top:20px;font-size:11px;color:#aaa;text-align:right;}@media print{button{display:none;}}</style></head><body><h1>${title}</h1><p style="color:#7f8c8d;font-size:12px;">Généré le ${date} — ${items.length} retours — Total: ${total.toFixed(2)} €</p><table><thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>Statut</th><th>Commentaire</th></tr></thead><tbody>${rows}</tbody></table><div class="footer">COVO Pro — ${date}</div><script>window.onload=function(){window.print();};<\/script></body></html>`;
+    const blob=new Blob([html],{type:'text/html;charset=utf-8'});
+    const url=URL.createObjectURL(blob);
+    window.open(url,'_blank');
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+
+// Stat CA perdu (défauts) dans updateRetourStats
+const _origUpdateRetourStats = typeof updateRetourStats === 'function' ? updateRetourStats : null;
+
+// ===== BOUTON DÉFAUT DANS FICHE PRODUIT =====
+window.pdDeclareDefect = function() {
+    const pid=window._pdCurrentProductId||window._pdCurrentId;
+    if(!pid) return;
+    if(typeof closeProductDetail==='function') closeProductDetail();
+    if(typeof openDefectModal==='function') openDefectModal(pid);
+};
 
 // ===== FILTERS =====
 let rft='', rfs='';
