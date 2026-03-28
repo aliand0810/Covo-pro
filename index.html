@@ -2874,6 +2874,10 @@
                 <div class="retour-stat-card retour-success"><div class="retour-stat-icon">✅</div><div class="retour-stat-info"><h3 id="rs-approved">0</h3><p>Approuvés (30j)</p></div></div>
                 <div class="retour-stat-card retour-urgent"><div class="retour-stat-icon">📅</div><div class="retour-stat-info"><h3 id="rs-urgent">0</h3><p>Échéances urgentes</p></div></div>
                 <div class="retour-stat-card retour-info"><div class="retour-stat-icon">💰</div><div class="retour-stat-info"><h3 id="rs-montant">0,00 €</h3><p>Valeur retours (mois)</p></div></div>
+                <div class="retour-stat-card" style="border-left-color:#e74c3c;cursor:pointer;" onclick="switchRetourTab({currentTarget:document.querySelector('[data-panel=rt-marchandise]')},'rt-marchandise')" title="Voir les retours défectueux">
+                    <div class="retour-stat-icon">📉</div>
+                    <div class="retour-stat-info"><h3 id="rs-lost-ca">0,00 €</h3><p>CA perdu (défauts)</p></div>
+                </div>
                 <div class="retour-stat-card" style="border-left-color:#9b59b6;cursor:pointer;" onclick="switchRetourTab({currentTarget:document.querySelector('[data-panel=rt-investissements]')},'rt-investissements')" title="Voir les investissements du mois">
                     <div class="retour-stat-icon">💼</div>
                     <div class="retour-stat-info"><h3 id="rs-investissements">0,00 €</h3><p>Investissements (mois)</p></div>
@@ -13474,11 +13478,15 @@ function updateRetourStats() {
     const urgent = ech.filter(e => { const d=new Date(e.date); d.setHours(0,0,0,0); return Math.ceil((d-today)/86400000)<=3; }).length;
     const month = new Date().toISOString().slice(0,7);
     const montant = ret.filter(r=>r.date.startsWith(month)&&r.statut!=='refused').reduce((a,r)=>a+parseFloat(r.montant||0),0);
+    // CA perdu sur défauts (tous les retours marchandise _defect, pas seulement ce mois)
+    const lostCA = marc.filter(m=>m._defect).reduce((a,m)=>a+parseFloat(m._lostCA||m.montant||0),0);
     document.getElementById('rs-pending').textContent = pending;
     document.getElementById('rs-processing').textContent = processing;
     document.getElementById('rs-approved').textContent = approved;
     document.getElementById('rs-urgent').textContent = urgent;
     document.getElementById('rs-montant').textContent = montant.toFixed(2).replace('.',',')+' €';
+    const lcaEl = document.getElementById('rs-lost-ca');
+    if (lcaEl) lcaEl.textContent = lostCA.toFixed(2).replace('.',',')+' €';
     document.getElementById('rbadge-retours').textContent = pending;
     document.getElementById('rbadge-marchandise').textContent = marc.filter(m=>m.statut==='pending').length;
     document.getElementById('rbadge-echeances').textContent = urgent;
@@ -13856,24 +13864,39 @@ function submitDefect() {
     // Créer l'entrée retour marchandise
     const list = rLoad('marchandise');
     const id = 'RF-' + String(list.length + 1).padStart(3, '0');
+    const unitPrice = p.price || p.pricePerKg || 0;
+    const lostCA = parseFloat((unitPrice * qty).toFixed(2));
     list.push({
         id,
         date,
         fournisseur: '— À renseigner —',
         article: p.name,
         qty,
-        montant: parseFloat(((p.price || p.pricePerKg || 0) * qty).toFixed(2)),
+        montant: lostCA,
         motif: defectType,
         bl: '',
         br: '',
         statut: 'pending',
         comment: comment || '',
-        _fromProduct: productId
+        _fromProduct: productId,
+        _defect: true,
+        _lostCA: lostCA
     });
     rSave('marchandise', list);
+
+    // Décompter le stock (réutilise allProducts déjà déclaré)
+    const prod = allProducts.find(x => x.id == productId);
+    if (prod) {
+        const newStock = Math.max(0, parseFloat((prod.stock - qty).toFixed(3)));
+        prod.stock = newStock;
+        localStorage.setItem('covo_products', JSON.stringify(allProducts));
+        if (typeof saveAll === 'function') saveAll();
+        if (typeof renderProducts === 'function') renderProducts();
+    }
+
     addRetourHist('created', 'marchandise',
         `⚠️ Défaut déclaré: ${p.name}`,
-        `Type: ${defectType} · Qté: ${qtyDisplay}`
+        `Type: ${defectType} · Qté: ${qtyDisplay} · -${lostCA.toFixed(2)} €`
     );
 
     closeDefectModal();
