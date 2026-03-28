@@ -7541,6 +7541,7 @@ logout = function(skipConfirmation = false) {
                             <span style="font-size:0.8rem; color:#6d28d9; white-space:nowrap;">% majoration</span>
                         </div>
                         <button onclick="updateProductInfo(${p.id})" style="background:var(--primary);color:white;width:100%;margin-top:10px;padding:8px;border-radius:5px;">💾 SAUVEGARDER</button>
+                        <button onclick="openDefectModal(${p.id})" style="background:linear-gradient(135deg,#e67e22,#d35400);color:white;width:100%;margin-top:6px;padding:8px;border-radius:5px;border:none;cursor:pointer;font-size:0.85rem;font-weight:700;">⚠️ Déclarer un défaut</button>
                         <div style="display:flex; gap:5px; margin-top:5px;">
                             <button onclick="toggleProductActive(${p.id})" style="flex:1; background:var(--gray); color:white; font-size:0.7rem;">${p.active ? '👁️ Désactiver' : '✅ Activer'}</button>
                             <button onclick="deleteProduct(${p.id})" style="flex:1; background:var(--danger); color:white; font-size:0.7rem;">🗑️ Supprimer</button>
@@ -11445,6 +11446,68 @@ logout = function(skipConfirmation = false) {
   </div>
 </div>
 
+<!-- ===== MODALE DÉCLARATION DÉFAUT ARTICLE ===== -->
+<div id="defect-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10500;justify-content:center;align-items:center;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:92%;max-width:480px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#e67e22,#d35400);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <h3 style="margin:0;color:white;font-size:1rem;font-weight:800;">⚠️ Déclarer un défaut</h3>
+        <div id="defect-product-name" style="font-size:0.78rem;color:rgba(255,255,255,0.85);margin-top:3px;"></div>
+      </div>
+      <button onclick="closeDefectModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+    </div>
+    <input type="hidden" id="defect-product-id">
+    <!-- Body -->
+    <div style="padding:20px;display:flex;flex-direction:column;gap:14px;">
+
+      <!-- Type de défaut -->
+      <div>
+        <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">Type de défaut</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;" id="defect-type-btns">
+          <button class="defect-type-btn" data-type="Produit défectueux" onclick="selectDefectType(this)"
+            style="padding:10px 6px;border:2px solid #e74c3c;border-radius:10px;background:rgba(231,76,60,0.08);color:#c0392b;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;transition:all 0.15s;">
+            🔴<br>Défectueux
+          </button>
+          <button class="defect-type-btn" data-type="Produit endommagé" onclick="selectDefectType(this)"
+            style="padding:10px 6px;border:2px solid #e67e22;border-radius:10px;background:rgba(230,126,34,0.08);color:#d35400;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;transition:all 0.15s;">
+            🟠<br>Endommagé
+          </button>
+          <button class="defect-type-btn" data-type="Produit endommagé (transport)" onclick="selectDefectType(this)"
+            style="padding:10px 6px;border:2px solid #f39c12;border-radius:10px;background:rgba(243,156,18,0.08);color:#b7770d;cursor:pointer;font-size:0.78rem;font-weight:700;text-align:center;transition:all 0.15s;">
+            🚚<br>Transport
+          </button>
+        </div>
+        <input type="hidden" id="defect-type-value">
+      </div>
+
+      <!-- Quantité -->
+      <div>
+        <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:5px;">Quantité concernée</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button onclick="defectQtyChange(-1)" style="width:36px;height:36px;border:2px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card);cursor:pointer;font-size:1.2rem;font-weight:700;color:var(--text-main);">−</button>
+          <input id="defect-qty" type="number" min="1" value="1" style="flex:1;padding:8px;border:2px solid var(--primary,#3498db);border-radius:8px;font-size:1.1rem;font-weight:700;text-align:center;background:var(--bg-card);color:var(--text-main);">
+          <button onclick="defectQtyChange(1)" style="width:36px;height:36px;border:2px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card);cursor:pointer;font-size:1.2rem;font-weight:700;color:var(--text-main);">+</button>
+          <span id="defect-qty-unit" style="font-size:0.8rem;color:var(--gray,#7f8c8d);white-space:nowrap;"></span>
+        </div>
+        <div id="defect-stock-info" style="font-size:0.75rem;color:var(--gray,#7f8c8d);margin-top:4px;"></div>
+      </div>
+
+      <!-- Commentaire optionnel -->
+      <div>
+        <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:5px;">Commentaire (optionnel)</label>
+        <textarea id="defect-comment" rows="2" placeholder="Précisions sur le défaut constaté..." style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;background:var(--bg-card);color:var(--text-main);resize:vertical;box-sizing:border-box;"></textarea>
+      </div>
+
+    </div>
+    <!-- Footer -->
+    <div style="padding:12px 20px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:10px;background:var(--input-bg,#f8f9fa);">
+      <button onclick="closeDefectModal()" style="flex:1;padding:10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card);color:var(--text-main);cursor:pointer;font-weight:600;">✖ Annuler</button>
+      <button onclick="submitDefect()" style="flex:2;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;cursor:pointer;font-weight:700;font-size:0.95rem;">📦 Créer le retour fournisseur</button>
+    </div>
+  </div>
+</div>
+
 </body>
 <div id="session-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:6000; justify-content:center; align-items:center;">
     <div class="modal-classic-content" style="border: 2px solid var(--warning);">
@@ -13712,6 +13775,117 @@ function clearRetourHistorique() {
     
     rSave('hist', []);
     renderRetourHistorique([]);
+}
+
+// ===== DÉCLARATION DÉFAUT ARTICLE =====
+function openDefectModal(productId) {
+    const modal = document.getElementById('defect-modal');
+    if (!modal) return;
+
+    // Chercher le produit
+    const p = (typeof products !== 'undefined' ? products : window._covoProducts || []).find(x => x.id == productId);
+    if (!p) return;
+
+    // Reset
+    document.getElementById('defect-product-id').value = productId;
+    document.getElementById('defect-product-name').textContent = p.name || '';
+    document.getElementById('defect-type-value').value = '';
+    document.getElementById('defect-qty').value = 1;
+    document.getElementById('defect-qty').max = p.stock || 999;
+    document.getElementById('defect-comment').value = '';
+
+    // Info stock
+    const isKg = p.unitType === 'kg';
+    document.getElementById('defect-qty-unit').textContent = isKg ? 'kg' : 'unité(s)';
+    document.getElementById('defect-qty').step = isKg ? '0.1' : '1';
+    document.getElementById('defect-stock-info').textContent = 'Stock disponible : ' + (isKg ? (p.stock||0).toFixed(2) + ' kg' : (p.stock||0) + ' unité(s)');
+
+    // Reset boutons type
+    document.querySelectorAll('.defect-type-btn').forEach(b => {
+        b.style.fontWeight = '700';
+        b.style.opacity = '1';
+    });
+
+    modal.style.display = 'flex';
+}
+
+function closeDefectModal() {
+    const modal = document.getElementById('defect-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function selectDefectType(btn) {
+    document.querySelectorAll('.defect-type-btn').forEach(b => {
+        b.style.opacity = '0.45';
+        b.style.transform = 'scale(0.97)';
+    });
+    btn.style.opacity = '1';
+    btn.style.transform = 'scale(1.06)';
+    document.getElementById('defect-type-value').value = btn.dataset.type;
+}
+
+function defectQtyChange(delta) {
+    const input = document.getElementById('defect-qty');
+    const isKg = (document.getElementById('defect-qty-unit').textContent || '').includes('kg');
+    const step = isKg ? 0.1 : 1;
+    const val = parseFloat(input.value || 1) + delta * step;
+    const max = parseFloat(input.max) || 999;
+    input.value = Math.max(isKg ? 0.1 : 1, Math.min(max, parseFloat(val.toFixed(3))));
+}
+
+function submitDefect() {
+    const productId = document.getElementById('defect-product-id').value;
+    const defectType = document.getElementById('defect-type-value').value;
+    const qty = parseFloat(document.getElementById('defect-qty').value) || 1;
+    const comment = document.getElementById('defect-comment').value.trim();
+
+    if (!defectType) {
+        if (typeof rToast === 'function') rToast('Veuillez choisir un type de défaut', 'error');
+        else alert('Veuillez choisir un type de défaut');
+        return;
+    }
+
+    const allProducts = (typeof products !== 'undefined' ? products : window._covoProducts || []);
+    const p = allProducts.find(x => x.id == productId);
+    if (!p) return;
+
+    const isKg = p.unitType === 'kg';
+    const qtyDisplay = isKg ? qty.toFixed(2) + ' kg' : qty + ' u.';
+    const date = new Date().toISOString().split('T')[0];
+
+    // Créer l'entrée retour marchandise
+    const list = rLoad('marchandise');
+    const id = 'RF-' + String(list.length + 1).padStart(3, '0');
+    list.push({
+        id,
+        date,
+        fournisseur: '— À renseigner —',
+        article: p.name,
+        qty,
+        montant: parseFloat(((p.price || p.pricePerKg || 0) * qty).toFixed(2)),
+        motif: defectType,
+        bl: '',
+        br: '',
+        statut: 'pending',
+        comment: comment || '',
+        _fromProduct: productId
+    });
+    rSave('marchandise', list);
+    addRetourHist('created', 'marchandise',
+        `⚠️ Défaut déclaré: ${p.name}`,
+        `Type: ${defectType} · Qté: ${qtyDisplay}`
+    );
+
+    closeDefectModal();
+    refreshRetours();
+
+    // Aller sur l'onglet Retours fournisseur
+    if (typeof switchRetourTab === 'function') {
+        const btn = document.querySelector('[data-panel="rt-marchandise"]');
+        if (btn) switchRetourTab({ currentTarget: btn }, 'rt-marchandise');
+    }
+
+    rToast(`✅ Retour fournisseur créé — ${p.name} · ${qtyDisplay} · ${defectType}`, 'success');
 }
 
 // ===== EDIT RETOUR CLIENT =====
