@@ -2924,8 +2924,15 @@
                             </select>
                             <button class="retours-btn retours-btn-orange" onclick="openRetourModal('rm-marchandise')">📦 Déclarer retour</button>
                             <button class="retours-btn retours-btn-outline" onclick="exportMarchandise()">⬇️ CSV</button>
-                            <button class="retours-btn" style="background:#e74c3c;color:white;" onclick="exportMarcPDF('unresolved')">🔴 PDF Non résolus</button>
-                            <button class="retours-btn" style="background:#7f8c8d;color:white;" onclick="exportMarcPDF('archived')">📁 PDF Archivés</button>
+                            <select id="marc-pdf-filter" style="padding:6px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--card-bg,#fff);color:var(--text-main);">
+                                <option value="unresolved">🔴 Non résolus</option>
+                                <option value="archived">📁 Archivés</option>
+                                <option value="defect">🔴 Défectueux</option>
+                                <option value="damaged">🟠 Endommagés</option>
+                                <option value="transport">🚚 Transport</option>
+                                <option value="all">📋 Tous</option>
+                            </select>
+                            <button class="retours-btn" style="background:#2c3e50;color:white;" onclick="exportMarcPDF(document.getElementById('marc-pdf-filter').value)">🖨️ PDF</button>
                         </div>
                     </div>
                     <div class="retours-table-wrap"><table class="retours-table">
@@ -3480,6 +3487,15 @@
                             <div>
                                 <span>↩️ Autoriser le retour client</span>
                                 <div style="font-size:0.78rem;font-weight:400;color:#8a6000;margin-top:2px;">Accès au bouton "Retour client" dans la barre d'outils</div>
+                            </div>
+                        </label>
+                    </div>
+                    <div style="background:#fff0e6;padding:12px 15px;border-radius:8px;margin-bottom:12px;border-left:4px solid #d35400;">
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:1rem;font-weight:600;">
+                            <input type="checkbox" id="perm-declare-defect" onchange="saveUserPermissions()" style="width:22px;height:22px;cursor:pointer;accent-color:#d35400;">
+                            <div>
+                                <span>⚠️ Autoriser la déclaration de défaut</span>
+                                <div style="font-size:0.78rem;font-weight:400;color:#8a4000;margin-top:2px;">Accès au bouton "Déclarer un défaut" sur les fiches articles</div>
                             </div>
                         </label>
                     </div>
@@ -4527,6 +4543,14 @@
             btn.disabled = false;
             btn.textContent = '🛒 Ajouter au panier';
         }
+        // Bouton Déclarer un défaut — admin OU caissier avec permission
+        const defectBtnPd = document.getElementById('pd-defect-btn');
+        if (defectBtnPd) {
+            const canDefect = (typeof isAdmin !== 'undefined' && isAdmin) ||
+                (currentUser && currentUser.permissions && currentUser.permissions.canDeclareDefect) ||
+                (typeof cashierPermissions !== 'undefined' && cashierPermissions.canDeclareDefect);
+            defectBtnPd.style.display = canDefect ? '' : 'none';
+        }
         window._pdCurrentProductId = p.id;
         modal.classList.add('active');
 
@@ -5318,6 +5342,8 @@ function toggleInfoSection(headerElement) {
                 const userPerms = user.permissions || DEFAULT_USER_PERMS();
                 cashierPermissions.editEnabled = userPerms.editEnabled;
                 cashierPermissions.permissions = { ...userPerms.fields };
+                cashierPermissions.canRetourClient = userPerms.canRetourClient || false;
+                cashierPermissions.canDeclareDefect = userPerms.canDeclareDefect || false;
             }
 
             document.getElementById('login-modal').style.display = 'none';
@@ -5682,6 +5708,8 @@ function toggleInfoSection(headerElement) {
         const userPerms = user.permissions || DEFAULT_USER_PERMS();
         cashierPermissions.editEnabled = userPerms.editEnabled;
         cashierPermissions.permissions = { ...userPerms.fields };
+        cashierPermissions.canRetourClient = userPerms.canRetourClient || false;
+        cashierPermissions.canDeclareDefect = userPerms.canDeclareDefect || false;
 
         document.getElementById('user-display').innerText = `👤 ${user.username}`;
         updateAdminButton();
@@ -5883,7 +5911,8 @@ function toggleInfoSection(headerElement) {
         editEnabled: false,
         fields: { name:false, image:false, category:false, barcode:false, stock:false, price:false, dlc:false, promo:false },
         tabVisibility: { stats:true, predictions:true, retours:true, historique:true },
-        canRetourClient: false
+        canRetourClient: false,
+        canDeclareDefect: false
     });
 
     function getUserPerms(userId) {
@@ -5981,6 +6010,8 @@ function toggleInfoSection(headerElement) {
         // Retour client permission
         const rcCb = document.getElementById('perm-retour-client');
         if (rcCb) rcCb.checked = perms.canRetourClient === true;
+        const ddCb = document.getElementById('perm-declare-defect');
+        if (ddCb) ddCb.checked = perms.canDeclareDefect === true;
 
         // Re-render list (to show selection)
         renderPermUserList();
@@ -6000,6 +6031,7 @@ function toggleInfoSection(headerElement) {
             tabVisibility[k] = document.getElementById('uvis-'+k)?.checked !== false;
         });
         const canRetourClient = document.getElementById('perm-retour-client')?.checked || false;
+        const canDeclareDefect = document.getElementById('perm-declare-defect')?.checked || false;
 
         // Update fields-wrap opacity live
         const fw = document.getElementById('perm-fields-wrap');
@@ -6014,7 +6046,7 @@ function toggleInfoSection(headerElement) {
             if (card) card.classList.toggle('disabled-tab', !tabVisibility[k]);
         });
 
-        users[idx].permissions = { editEnabled, fields, tabVisibility, canRetourClient };
+        users[idx].permissions = { editEnabled, fields, tabVisibility, canRetourClient, canDeclareDefect };
         localStorage.setItem('covo_users', JSON.stringify(users));
 
         // If current user is this cashier, apply immediately
@@ -7560,6 +7592,9 @@ logout = function(skipConfirmation = false) {
                         ✏️ Éditer cet article
                     </button>
                     ` : ''}
+                    ${currentUser && currentUser.role === 'caissier' && (cashierPermissions.permissions?.declareDefect || cashierPermissions.canDeclareDefect || (currentUser.permissions && currentUser.permissions.canDeclareDefect)) ? `
+                    <button onclick="openDefectModal(${p.id})" style="background:linear-gradient(135deg,#e67e22,#d35400);color:white;width:100%;margin-top:6px;padding:7px;border-radius:5px;border:none;cursor:pointer;font-size:0.82rem;font-weight:700;">⚠️ Déclarer un défaut</button>
+                    ` : ''}
                     `}
                 </div>
             `;
@@ -8274,6 +8309,14 @@ logout = function(skipConfirmation = false) {
         } else {
             btn.disabled = false;
             btn.textContent = '🛒 Ajouter au panier';
+        }
+        // Bouton Déclarer un défaut — admin OU caissier avec permission
+        const defectBtnPd2 = document.getElementById('pd-defect-btn');
+        if (defectBtnPd2) {
+            const canDefect2 = isAdmin ||
+                (currentUser && currentUser.permissions && currentUser.permissions.canDeclareDefect) ||
+                (typeof cashierPermissions !== 'undefined' && cashierPermissions.canDeclareDefect);
+            defectBtnPd2.style.display = canDefect2 ? '' : 'none';
         }
 
         modal.classList.add('active');
@@ -9871,6 +9914,18 @@ logout = function(skipConfirmation = false) {
         const _lsTs = localStorage.getItem('covo_last_save');
         if (_lsTs) { _updateLastSaveDisplay(new Date(_lsTs)); }
         await restoreCovoFileHandle();
+        // Si session caissier existante, restaurer les permissions depuis le user stocké
+        if (currentUser && currentUser.role === 'caissier') {
+            const savedUser = users.find(u => u.id === currentUser.id);
+            if (savedUser && savedUser.permissions) {
+                cashierPermissions.editEnabled = savedUser.permissions.editEnabled || false;
+                cashierPermissions.permissions = { ...(savedUser.permissions.fields || {}) };
+                cashierPermissions.canRetourClient = savedUser.permissions.canRetourClient || false;
+                cashierPermissions.canDeclareDefect = savedUser.permissions.canDeclareDefect || false;
+                // Mettre à jour currentUser avec les permissions à jour
+                currentUser.permissions = savedUser.permissions;
+            }
+        }
         if (currentUser) renderAll();
 
         // Ajouter l'événement Enter sur la barre de recherche
@@ -14100,19 +14155,89 @@ function submitDefect() {
 
 // ===== EXPORT PDF RETOURS FOURNISSEUR =====
 function exportMarcPDF(type) {
-    const all=rLoad('marchandise');
-    const items=type==='archived'?all.filter(m=>m.statut==='archived'):all.filter(m=>m.statut!=='archived');
-    const title=type==='archived'?'📁 Retours — Archivés':'🔴 Retours — Non résolus';
-    const date=new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
-    if(!items.length){rToast('Aucun élément à exporter','info');return;}
-    const sl={pending:'En attente',sent:'Envoyé',credited:'Avoir reçu',archived:'Archivé'};
-    const total=items.reduce((s,m)=>s+parseFloat(m.montant||0),0);
-    const rows=items.map((m,i)=>`<tr style="background:${i%2===0?'#f9f9f9':'white'}"><td>${m.id}</td><td>${m.date}</td><td>${m.fournisseur}</td><td>${m.article}</td><td style="text-align:center">${m.qty}</td><td style="text-align:right;font-weight:700">${parseFloat(m.montant||0).toFixed(2)} €</td><td>${m.motif}</td><td>${sl[m.statut]||m.statut}</td><td style="font-size:11px;color:#666">${m.comment||''}</td></tr>`).join('');
-    const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;margin:20px;color:#2c3e50;}h1{font-size:18px;color:${type==='archived'?'#7f8c8d':'#e74c3c'};}table{width:100%;border-collapse:collapse;font-size:12px;}th{background:${type==='archived'?'#7f8c8d':'#e74c3c'};color:white;padding:8px 10px;text-align:left;}td{padding:7px 10px;border-bottom:1px solid #eee;}.footer{margin-top:20px;font-size:11px;color:#aaa;text-align:right;}@media print{button{display:none;}}</style></head><body><h1>${title}</h1><p style="color:#7f8c8d;font-size:12px;">Généré le ${date} — ${items.length} retours — Total: ${total.toFixed(2)} €</p><table><thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>Statut</th><th>Commentaire</th></tr></thead><tbody>${rows}</tbody></table><div class="footer">COVO Pro — ${date}</div><script>window.onload=function(){window.print();};<\/script></body></html>`;
-    const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-    const url=URL.createObjectURL(blob);
-    window.open(url,'_blank');
-    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    const all = rLoad('marchandise');
+    let items, title, accentColor;
+
+    if (type === 'archived') {
+        items = all.filter(m => m.statut === 'archived');
+        title = 'Retours Fournisseurs — Archivés (Résolus)';
+        accentColor = '#7f8c8d';
+    } else if (type === 'defect') {
+        items = all.filter(m => m.statut !== 'archived' && m.motif === 'Produit défectueux');
+        title = 'Retours Fournisseurs — Produits Défectueux';
+        accentColor = '#e74c3c';
+    } else if (type === 'damaged') {
+        items = all.filter(m => m.statut !== 'archived' && m.motif === 'Produit endommagé');
+        title = 'Retours Fournisseurs — Produits Endommagés';
+        accentColor = '#e67e22';
+    } else if (type === 'transport') {
+        items = all.filter(m => m.statut !== 'archived' && m.motif === 'Produit endommagé (transport)');
+        title = 'Retours Fournisseurs — Endommagés (Transport)';
+        accentColor = '#f39c12';
+    } else if (type === 'all') {
+        items = all;
+        title = 'Retours Fournisseurs — Tous';
+        accentColor = '#3498db';
+    } else {
+        // unresolved (default)
+        items = all.filter(m => m.statut !== 'archived');
+        title = 'Retours Fournisseurs — Non Résolus';
+        accentColor = '#e74c3c';
+    }
+
+    const date = new Date().toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'});
+    if (!items.length) { rToast('Aucun élément à exporter dans cette catégorie', 'info'); return; }
+
+    const sl = {pending:'En attente',sent:'Envoyé',credited:'Avoir reçu',archived:'Archivé',confirmed:'Confirmé'};
+    const total = items.reduce((s,m)=>s+parseFloat(m.montant||0),0);
+
+    const rows = items.map((m,i) => `
+        <tr style="background:${i%2===0?'#f9f9f9':'white'}">
+            <td>${m.id}${m._defect?'⚠️':''}</td><td>${m.date}</td><td>${m.fournisseur}</td><td>${m.article}</td>
+            <td style="text-align:center">${m.qty}${m._unitKg?' kg':' u.'}</td>
+            <td style="text-align:right;font-weight:700">${parseFloat(m.montant||0).toFixed(2)} €</td>
+            <td>${m.motif}</td><td>${sl[m.statut]||m.statut}</td>
+            <td style="font-size:11px;color:#666">${m.comment||''}</td>
+            <td style="text-align:center">${m._photo?'📷':''}</td>
+        </tr>`).join('');
+
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${title}</title>
+    <style>
+        body{font-family:Arial,sans-serif;margin:20px;color:#2c3e50;}
+        h1{font-size:18px;margin-bottom:4px;color:${accentColor};}
+        .subtitle{font-size:12px;color:#7f8c8d;margin-bottom:16px;}
+        .summary{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
+        .sum-box{background:#f8f9fa;border-radius:6px;padding:10px 16px;border-left:3px solid ${accentColor};}
+        .sum-box h3{margin:0;font-size:18px;color:${accentColor};}
+        .sum-box p{margin:2px 0 0;font-size:11px;color:#7f8c8d;}
+        table{width:100%;border-collapse:collapse;font-size:11px;}
+        th{background:${accentColor};color:white;padding:7px 8px;text-align:left;}
+        td{padding:6px 8px;border-bottom:1px solid #eee;}
+        .footer{margin-top:20px;font-size:11px;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:8px;}
+        @media print{body{margin:10px;}button{display:none;}}
+    </style></head><body>
+    <h1>${title}</h1>
+    <div class="subtitle">Généré le ${date}</div>
+    <div class="summary">
+        <div class="sum-box"><h3>${items.length}</h3><p>Retours</p></div>
+        <div class="sum-box"><h3>${total.toFixed(2)} €</h3><p>Montant total</p></div>
+        <div class="sum-box"><h3>${items.filter(m=>m._defect).length}</h3><p>Défauts déclarés</p></div>
+        <div class="sum-box"><h3>${items.filter(m=>m.statut==='pending').length}</h3><p>En attente</p></div>
+    </div>
+    <table>
+        <thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>Statut</th><th>Commentaire</th><th>Photo</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>
+    <div class="footer">COVO Pro — Export retours fournisseurs — ${date}</div>
+    <script>window.onload=function(){window.print();};<\/script>
+    </body></html>`;
+
+    const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) { rToast('Veuillez autoriser les popups pour le PDF', 'info'); }
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
 // Stat CA perdu (défauts) dans updateRetourStats
