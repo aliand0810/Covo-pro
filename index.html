@@ -2920,10 +2920,19 @@
                         </div>
                         <div class="retours-toolbar-row">
                             <select class="retours-filter-sel" onchange="filterMarchandiseByStatus(this.value)">
-                                <option value="">Tous statuts</option><option value="pending">En attente</option><option value="sent">Envoyé</option><option value="confirmed">Confirmé</option><option value="credited">Avoir reçu</option>
+                                <option value="">Tous statuts</option><option value="pending">En attente</option><option value="sent">Envoyé</option><option value="confirmed">Confirmé</option><option value="credited">Avoir reçu</option><option value="archived">Archivé</option>
                             </select>
                             <button class="retours-btn retours-btn-orange" onclick="openRetourModal('rm-marchandise')">📦 Déclarer retour</button>
                             <button class="retours-btn retours-btn-outline" onclick="exportMarchandise()">⬇️ CSV</button>
+                            <select id="marc-pdf-filter" style="padding:5px 8px;border:2px solid #e74c3c;border-radius:7px;font-size:0.78rem;background:#fff;color:#2c3e50;cursor:pointer;font-weight:600;">
+                                <option value="unresolved" style="color:#2c3e50;background:#fff;">🔴 Non résolus</option>
+                                <option value="archived"   style="color:#2c3e50;background:#fff;">📁 Archivés</option>
+                                <option value="defect"     style="color:#2c3e50;background:#fff;">🔴 Défectueux</option>
+                                <option value="damaged"    style="color:#2c3e50;background:#fff;">🟠 Endommagés</option>
+                                <option value="transport"  style="color:#2c3e50;background:#fff;">🚚 Transport</option>
+                                <option value="all"        style="color:#2c3e50;background:#fff;">📋 Tous</option>
+                            </select>
+                            <button class="retours-btn" style="background:#e74c3c;color:white;font-weight:700;" onclick="exportMarcPDF(document.getElementById('marc-pdf-filter').value)">🖨️ Exporter PDF</button>
                         </div>
                     </div>
                     <div class="retours-table-wrap"><table class="retours-table">
@@ -7563,10 +7572,10 @@ logout = function(skipConfirmation = false) {
             `;
         };
 
-        // Groupe articles masqués EN PREMIER (admin seulement)
+        // Groupe articles masqués EN PREMIER (admin seulement) — fermé par défaut
         let disabledGroupHTML = '';
         if (isAdmin && disabledResults.length > 0) {
-            const isOpen = window._disabledGroupOpen !== false;
+            const isOpen = window._disabledGroupOpen === true; // fermé par défaut
             const disabledCards = disabledResults.map(renderCard).join('');
             disabledGroupHTML = `
             <div id="disabled-products-group" style="width:100%;grid-column:1/-1;margin-bottom:18px;">
@@ -7591,7 +7600,7 @@ logout = function(skipConfirmation = false) {
 
     // ===== TOGGLE GROUPE ARTICLES DÉSACTIVÉS =====
     window.toggleDisabledGroup = function() {
-        window._disabledGroupOpen = window._disabledGroupOpen === false ? true : false;
+        window._disabledGroupOpen = window._disabledGroupOpen === true ? false : true;
         const cards = document.getElementById('disabled-products-cards');
         const arrow = document.getElementById('disabled-group-arrow');
         const hint  = arrow?.parentElement?.querySelector('span:last-child');
@@ -13498,7 +13507,7 @@ function updateRetourStats() {
 // ===== STATUS LABELS =====
 const RSL = {
     retour: { pending:{l:'En attente',c:'rbadge-pending',i:'⏳'}, processing:{l:'En traitement',c:'rbadge-processing',i:'⚙️'}, approved:{l:'Approuvé',c:'rbadge-approved',i:'✅'}, refused:{l:'Refusé',c:'rbadge-refused',i:'❌'} },
-    marc: { pending:{l:'En attente',c:'rbadge-pending',i:'⏳'}, sent:{l:'Envoyé',c:'rbadge-sent',i:'📤'}, confirmed:{l:'Confirmé',c:'rbadge-ok',i:'✓'}, credited:{l:'Avoir reçu',c:'rbadge-approved',i:'💳'} }
+    marc: { pending:{l:'En attente',c:'rbadge-pending',i:'⏳'}, sent:{l:'Envoyé',c:'rbadge-sent',i:'📤'}, confirmed:{l:'Confirmé',c:'rbadge-ok',i:'✓'}, credited:{l:'Avoir reçu',c:'rbadge-approved',i:'💳'}, archived:{l:'Archivé',c:'rbadge-ok',i:'📁'} }
 };
 
 // ===== RENDER RETOURS =====
@@ -13545,8 +13554,8 @@ function renderMarchandise(data) {
     if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📦</div><h3 style="margin:8px 0 4px;">Aucun retour fournisseur</h3><p style="font-size:0.82rem;">Cliquez sur "Déclarer retour" pour commencer.</p></div></td></tr>`; return; }
     tb.innerHTML = data.map(m => {
         const s = RSL.marc[m.statut] || RSL.marc.pending;
-        return `<tr>
-            <td><strong style="color:#e67e22">${m.id}</strong></td>
+        return `<tr style="${m.statut==='archived'?'opacity:0.6;':''}">
+            <td><strong style="color:${m.statut==='archived'?'#7f8c8d':'#e67e22'}">${m.id}</strong>${m._defect?`<span style="background:#e67e22;color:white;font-size:0.6rem;padding:1px 5px;border-radius:6px;margin-left:3px;vertical-align:middle;">⚠️</span>`:''}</td>
             <td>${m.date}</td>
             <td><strong>${m.fournisseur}</strong></td>
             <td>${m.article}</td>
@@ -13555,9 +13564,11 @@ function renderMarchandise(data) {
             <td style="font-size:0.77rem">${m.motif}</td>
             <td><code style="font-size:0.74rem;color:#7f8c8d">${m.bl||'-'}</code></td>
             <td><span class="retours-badge-st ${s.c}">${s.i} ${s.l}</span></td>
-            <td><div style="display:flex;gap:4px;">
+            <td><div style="display:flex;gap:4px;flex-wrap:wrap;">
                 ${m.statut==='pending'?`<button class="retours-btn retours-btn-sm retours-btn-primary" onclick="setMarcStatus('${m.id}','sent')">📤 Envoyé</button>`:''}
                 ${m.statut==='sent'?`<button class="retours-btn retours-btn-sm retours-btn-success" onclick="setMarcStatus('${m.id}','credited')">💳 Avoir</button>`:''}
+                ${m.statut!=='archived'?`<button class="retours-btn retours-btn-sm" style="background:#7f8c8d;color:white;" onclick="setMarcStatus('${m.id}','archived')" title="Archiver — problème résolu">📁</button>`:
+                `<button class="retours-btn retours-btn-sm" style="background:#e67e22;color:white;" onclick="setMarcStatus('${m.id}','pending')" title="Désarchiver">↩️</button>`}
                 <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="openEditMarc('${m.id}')">✏️</button>
                 <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="delMarc('${m.id}')">🗑️</button>
             </div></td>
@@ -13733,9 +13744,108 @@ function setRetourStatus(id, status) {
 function setMarcStatus(id, status) {
     const list = rLoad('marchandise'); const m = list.find(x=>x.id===id);
     if (!m) return; m.statut = status; rSave('marchandise', list);
-    addRetourHist(status,'marchandise',`Retour ${id}: ${status}`,`${m.fournisseur}`);
+    const labels = {pending:'En attente',sent:'Envoyé',credited:'Avoir reçu',archived:'Archivé',confirmed:'Confirmé'};
+    addRetourHist(status==='archived'?'modified':status,'marchandise',
+        `${status==='archived'?'📁 Archivé':'Retour'} ${id}: ${labels[status]||status}`,
+        `${m.fournisseur} · ${m.article}`);
     refreshRetours();
-    rToast('Statut mis à jour','success');
+    rToast(status==='archived'?'📁 Archivé — problème résolu':'Statut mis à jour','success');
+}
+
+function exportMarcPDF(type) {
+    const all = rLoad('marchandise');
+    let items, title, accentColor;
+    switch(type) {
+        case 'archived':
+            items = all.filter(m => m.statut === 'archived');
+            title = '📁 Retours Fournisseurs — Archivés';
+            accentColor = '#7f8c8d';
+            break;
+        case 'defect':
+            items = all.filter(m => m.motif === 'Produit défectueux');
+            title = '🔴 Retours Fournisseurs — Défectueux';
+            accentColor = '#e74c3c';
+            break;
+        case 'damaged':
+            items = all.filter(m => m.motif === 'Produit endommagé');
+            title = '🟠 Retours Fournisseurs — Endommagés';
+            accentColor = '#e67e22';
+            break;
+        case 'transport':
+            items = all.filter(m => m.motif === 'Produit endommagé (transport)');
+            title = '🚚 Retours Fournisseurs — Endommagés (Transport)';
+            accentColor = '#f39c12';
+            break;
+        case 'all':
+            items = all;
+            title = '📋 Retours Fournisseurs — Tous';
+            accentColor = '#2c3e50';
+            break;
+        default: // unresolved
+            items = all.filter(m => m.statut !== 'archived');
+            title = '🔴 Retours Fournisseurs — Non résolus';
+            accentColor = '#e74c3c';
+    }
+
+    const date = new Date().toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'});
+
+    if (!items.length) { rToast('Aucun élément à exporter pour ce filtre', 'info'); return; }
+
+    const statusLabels = {pending:'En attente',sent:'Envoyé',credited:'Avoir reçu',archived:'Archivé',confirmed:'Confirmé'};
+    const totalMontant = items.reduce((s,m)=>s+parseFloat(m.montant||0),0);
+    const defectCount  = items.filter(m=>m._defect).length;
+
+    const rows = items.map((m,i) => `
+        <tr style="background:${i%2===0?'#f9f9f9':'white'}">
+            <td>${m.id}</td>
+            <td>${m.date}</td>
+            <td>${m.fournisseur}</td>
+            <td>${m.article}</td>
+            <td style="text-align:center">${m.qty}</td>
+            <td style="text-align:right;font-weight:700">${parseFloat(m.montant||0).toFixed(2)} €</td>
+            <td>${m.motif}</td>
+            <td style="color:${m.statut==='archived'?'#7f8c8d':'inherit'}">${statusLabels[m.statut]||m.statut}</td>
+            <td style="font-size:11px;color:#666">${m.comment||''}</td>
+        </tr>`).join('');
+
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+    <title>${title}</title>
+    <style>
+        body{font-family:Arial,sans-serif;margin:20px;color:#2c3e50;}
+        h1{font-size:18px;margin-bottom:4px;color:${accentColor};}
+        .subtitle{font-size:12px;color:#7f8c8d;margin-bottom:16px;}
+        .summary{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;}
+        .sum-box{background:#f8f9fa;border-radius:6px;padding:10px 16px;border-left:3px solid ${accentColor};}
+        .sum-box h3{margin:0;font-size:18px;color:${accentColor};}
+        .sum-box p{margin:2px 0 0;font-size:11px;color:#7f8c8d;}
+        table{width:100%;border-collapse:collapse;font-size:12px;}
+        th{background:${accentColor};color:white;padding:8px 10px;text-align:left;}
+        td{padding:7px 10px;border-bottom:1px solid #eee;}
+        .footer{margin-top:20px;font-size:11px;color:#aaa;text-align:right;border-top:1px solid #eee;padding-top:8px;}
+        @media print{body{margin:8px;}button{display:none;}}
+    </style></head><body>
+    <h1>${title}</h1>
+    <div class="subtitle">Généré le ${date}</div>
+    <div class="summary">
+        <div class="sum-box"><h3>${items.length}</h3><p>Retours</p></div>
+        <div class="sum-box"><h3>${totalMontant.toFixed(2)} €</h3><p>Montant total</p></div>
+        ${defectCount>0?`<div class="sum-box"><h3>${defectCount}</h3><p>Via déclaration défaut</p></div>`:''}
+        <div class="sum-box"><h3>${items.filter(m=>m.statut==='archived').length}</h3><p>Archivés</p></div>
+        <div class="sum-box"><h3>${items.filter(m=>m.statut!=='archived').length}</h3><p>Non résolus</p></div>
+    </div>
+    <table>
+        <thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>Statut</th><th>Commentaire</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>
+    <div class="footer">COVO Pro — Export retours fournisseurs — ${date}</div>
+    <script>window.onload=function(){window.print();};<\/script>
+    </body></html>`;
+
+    const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    const win  = window.open(url, '_blank');
+    if (!win) rToast('Veuillez autoriser les popups pour le PDF', 'info');
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
 // ===== DELETE =====
