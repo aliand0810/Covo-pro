@@ -2993,8 +2993,42 @@
                             <button class="retours-btn" style="background:#2c3e50;color:white;" onclick="exportMarcPDF(document.getElementById('marc-pdf-filter').value)">🖨️ PDF</button>
                         </div>
                     </div>
+
+                    <!-- Barre d'actions groupées (visible seulement quand sélection active) -->
+                    <div id="marc-bulk-bar" style="display:none;align-items:center;gap:10px;padding:10px 14px;background:linear-gradient(135deg,#1a252f,#2c3e50);border-radius:10px;margin-bottom:8px;flex-wrap:wrap;">
+                        <span id="marc-bulk-count" style="color:white;font-weight:700;font-size:0.88rem;white-space:nowrap;">0 sélectionné(s)</span>
+                        <div style="flex:1;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <select id="marc-bulk-status" style="padding:6px 10px;border-radius:7px;border:none;font-size:0.82rem;background:#34495e;color:white;">
+                                <option value="">— Changer le statut —</option>
+                                <option value="pending">⏳ En attente</option>
+                                <option value="sent">📤 Envoyé</option>
+                                <option value="confirmed">✓ Confirmé</option>
+                                <option value="credited">💳 Avoir reçu</option>
+                                <option value="archived">📁 Archivé</option>
+                            </select>
+                            <button onclick="marcBulkSetStatus()" style="padding:7px 14px;background:#27ae60;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;">✅ Appliquer statut</button>
+                            <input id="marc-bulk-fournisseur" placeholder="Changer fournisseur…" style="padding:6px 10px;border-radius:7px;border:none;font-size:0.82rem;background:#34495e;color:white;min-width:160px;" />
+                            <button onclick="marcBulkSetFournisseur()" style="padding:7px 14px;background:#3498db;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;">✏️ Appliquer</button>
+                            <select id="marc-bulk-motif" style="padding:6px 10px;border-radius:7px;border:none;font-size:0.82rem;background:#34495e;color:white;min-width:160px;">
+                                <option value="">— Changer le motif —</option>
+                                <option value="Produit défectueux">⚠️ Produit défectueux</option>
+                                <option value="Produit endommagé">📦 Produit endommagé</option>
+                                <option value="Erreur de livraison">🚚 Erreur de livraison</option>
+                                <option value="Date de péremption dépassée">📅 DLC dépassée</option>
+                                <option value="Produit non conforme">❌ Non conforme</option>
+                                <option value="Autre">🔸 Autre</option>
+                            </select>
+                            <button onclick="marcBulkSetMotif()" style="padding:7px 14px;background:#9b59b6;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;">✏️ Appliquer</button>
+                            <button onclick="marcBulkDelete()" style="padding:7px 14px;background:#e74c3c;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;">🗑️ Supprimer</button>
+                        </div>
+                        <button onclick="marcClearSelection()" style="background:rgba(255,255,255,0.12);border:none;color:white;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:0.8rem;">✕ Désélectionner</button>
+                    </div>
+
                     <div class="retours-table-wrap"><table class="retours-table">
-                        <thead><tr><th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>BL</th><th>Statut</th></tr></thead>
+                        <thead><tr>
+                            <th style="width:32px;"><input type="checkbox" id="marc-select-all" title="Tout sélectionner" onchange="marcToggleSelectAll(this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#e67e22;"></th>
+                            <th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>BL</th><th>Statut</th>
+                        </tr></thead>
                         <tbody id="marchandise-tbody"></tbody>
                     </table></div>
                 </div>
@@ -4589,9 +4623,12 @@
         const imgSrc = p.img || 'https://placehold.co/520x260?text=' + encodeURIComponent(p.name);
         if (imgEl) {
             imgEl.style.opacity = '0';
-            imgEl.onload = function() { imgEl.style.opacity = '1'; };
-            imgEl.onerror = function() { imgEl.style.opacity = '1'; };
-            imgEl.crossOrigin = 'anonymous';
+            imgEl.onload  = function() { imgEl.style.opacity = '1'; };
+            imgEl.onerror = function() {
+                imgEl.src = 'https://placehold.co/520x260?text=' + encodeURIComponent(p.name);
+                imgEl.style.opacity = '1';
+            };
+            imgEl.removeAttribute('crossorigin');
             imgEl.src = imgSrc;
         }
         document.getElementById('pd-name').textContent = p.name;
@@ -4737,7 +4774,11 @@
         if (!preview) return;
 
         // Image
-        document.getElementById('php-img').src = p.img || 'https://placehold.co/260x160?text=' + encodeURIComponent(p.name);
+        const phpImgEl = document.getElementById('php-img');
+        if (phpImgEl) {
+            phpImgEl.onerror = function() { this.src = 'https://placehold.co/260x160?text=' + encodeURIComponent(p.name); };
+            phpImgEl.src = p.img || 'https://placehold.co/260x160?text=' + encodeURIComponent(p.name);
+        }
 
         // Nom
         document.getElementById('php-name').textContent = p.name;
@@ -7691,7 +7732,8 @@ logout = function(skipConfirmation = false) {
                     ${isExpired ? `<div class="out-badge" style="background:var(--danger);">❌ EXPIRÉ</div>` : ''}
                     
                     <img src="${p.img || 'https://placehold.co/150x150?text=Produit'}" loading="lazy" alt="${p.name}"
-                        data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail">
+                        data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail"
+                        onerror="this.src='https://placehold.co/150x150?text=${encodeURIComponent(p.name.substring(0,12))}'">
                     ${!isAdmin ? `<h3 data-pid="${p.id}" style="cursor:pointer;" onclick="window.openProductDetail(${p.id})" title="Voir le détail">${p.name}</h3>` : ''}
                     <p>
                         ${disc > 0 ? `<span class="old-price">${oldPriceDisplay}</span>` : ''}
@@ -8401,9 +8443,12 @@ logout = function(skipConfirmation = false) {
         const pdImgSrc = p.img || 'https://placehold.co/520x260?text=' + encodeURIComponent(p.name);
         if (pdImgEl) {
             pdImgEl.style.opacity = '0';
-            pdImgEl.onload = function() { pdImgEl.style.opacity = '1'; };
-            pdImgEl.onerror = function() { pdImgEl.style.opacity = '1'; };
-            pdImgEl.crossOrigin = 'anonymous';
+            pdImgEl.onload  = function() { pdImgEl.style.opacity = '1'; };
+            pdImgEl.onerror = function() {
+                pdImgEl.src = 'https://placehold.co/520x260?text=' + encodeURIComponent(p.name);
+                pdImgEl.style.opacity = '1';
+            };
+            pdImgEl.removeAttribute('crossorigin');
             pdImgEl.src = pdImgSrc;
         }
 
@@ -11804,6 +11849,10 @@ logout = function(skipConfirmation = false) {
     </div>
     <div style="padding:12px 16px;border-top:1px solid var(--border-color,#e0e0e0);background:var(--input-bg,#f8f9fa);flex-shrink:0;">
       <div id="marc-detail-status-btns" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;"></div>
+      <!-- Bouton article source (affiché seulement si _defect + _fromProduct) -->
+      <div id="marc-detail-product-link" style="display:none;margin-bottom:8px;">
+        <button onclick="_marcGoToProduct()" style="width:100%;padding:9px;border:2px solid #e67e22;border-radius:8px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;cursor:pointer;font-weight:700;font-size:0.85rem;">🔍 Voir l'article</button>
+      </div>
       <div style="display:flex;gap:8px;">
         <button id="marc-detail-archive-btn" onclick="marcDetailArchive()" style="flex:0 0 auto;padding:9px 12px;border:1.5px solid #7f8c8d;border-radius:8px;background:none;color:#7f8c8d;cursor:pointer;font-weight:700;font-size:0.82rem;">📁 Archiver</button>
         <button onclick="marcDetailEdit()" style="flex:1;padding:9px;border:1.5px solid #3498db;border-radius:8px;background:none;color:#3498db;cursor:pointer;font-weight:700;font-size:0.85rem;">✏️ Modifier</button>
@@ -13917,25 +13966,130 @@ function renderRetours(data) {
 // ===== RENDER MARCHANDISE =====
 function renderMarchandise(data) {
     const tb = document.getElementById('marchandise-tbody');
-    if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="9"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📦</div><h3 style="margin:8px 0 4px;">Aucun retour fournisseur</h3><p style="font-size:0.82rem;">Cliquez sur "Déclarer retour" pour commencer.</p></div></td></tr>`; return; }
+    if (!data || !data.length) {
+        tb.innerHTML=`<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📦</div><h3 style="margin:8px 0 4px;">Aucun retour fournisseur</h3><p style="font-size:0.82rem;">Cliquez sur "Déclarer retour" pour commencer.</p></div></td></tr>`;
+        return;
+    }
     tb.innerHTML = data.map(m => {
         const s = RSL.marc[m.statut] || RSL.marc.pending;
         const sid = m.id.replace(/'/g,"\\'");
-        return `<tr style="cursor:pointer;${m.statut==='archived'?'opacity:0.65;':''}" onclick="openMarcDetail('${sid}')" title="Cliquer pour gérer">
-            <td><strong style="color:${m.statut==='archived'?'#7f8c8d':'#e67e22'}">${m.id}</strong>${m._defect?`<span style="background:#e67e22;color:white;font-size:0.6rem;padding:1px 5px;border-radius:6px;margin-left:3px;vertical-align:middle;">⚠️</span>`:''}</td>
-            <td>${m.date}</td>
-            <td><strong>${m.fournisseur}</strong></td>
-            <td>${m.article}${m._photo?`<br><img src="${m._photo}" onclick="event.stopPropagation();marcPhotoZoom('${sid}')" style="width:40px;height:30px;object-fit:cover;border-radius:4px;margin-top:3px;cursor:pointer;border:1px solid #e0e0e0;" title="Voir la photo">`:''}</td>
-            <td>${m.qty}${m._unitKg?' kg':' u.'}</td>
-            <td><strong>${parseFloat(m.montant||0).toFixed(2)} €</strong></td>
-            <td style="font-size:0.77rem">${m.motif}</td>
-            <td><code style="font-size:0.74rem;color:#7f8c8d">${m.bl||'-'}</code></td>
-            <td><span class="retours-badge-st ${s.c}">${s.i} ${s.l}</span></td>
+        return `<tr style="${m.statut==='archived'?'opacity:0.65;':''}" data-marc-id="${m.id}">
+            <td onclick="event.stopPropagation()" style="width:32px;text-align:center;">
+                <input type="checkbox" class="marc-row-cb" value="${m.id}"
+                    style="width:16px;height:16px;cursor:pointer;accent-color:#e67e22;"
+                    onchange="marcOnCheck()">
+            </td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')"><strong style="color:${m.statut==='archived'?'#7f8c8d':'#e67e22'}">${m.id}</strong>${m._defect?`<span style="background:#e67e22;color:white;font-size:0.6rem;padding:1px 5px;border-radius:6px;margin-left:3px;vertical-align:middle;">⚠️</span>`:''}</td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')">${m.date}</td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')"><strong>${m.fournisseur}</strong></td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')">${m.article}${m._photo?`<br><img src="${m._photo}" onclick="event.stopPropagation();marcPhotoZoom('${sid}')" style="width:40px;height:30px;object-fit:cover;border-radius:4px;margin-top:3px;cursor:pointer;border:1px solid #e0e0e0;" title="Voir la photo">`:''}</td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')">${m.qty}${m._unitKg?' kg':' u.'}</td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')"><strong>${parseFloat(m.montant||0).toFixed(2)} €</strong></td>
+            <td style="cursor:pointer;font-size:0.77rem" onclick="openMarcDetail('${sid}')">${m.motif}</td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')"><code style="font-size:0.74rem;color:#7f8c8d">${m.bl||'-'}</code></td>
+            <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')"><span class="retours-badge-st ${s.c}">${s.i} ${s.l}</span></td>
         </tr>`;
     }).join('');
+    // Reset sélection
+    marcClearSelection();
 }
 
-// ===== RENDER ÉCHEANCES =====
+// ===== SÉLECTION GROUPÉE RETOURS FOURNISSEUR =====
+function _marcGetSelected() {
+    return [...document.querySelectorAll('.marc-row-cb:checked')].map(cb => cb.value);
+}
+
+function marcOnCheck() {
+    const ids = _marcGetSelected();
+    const total = document.querySelectorAll('.marc-row-cb').length;
+    // Mettre à jour la checkbox "tout sélectionner"
+    const selAll = document.getElementById('marc-select-all');
+    if (selAll) {
+        selAll.checked = ids.length === total && total > 0;
+        selAll.indeterminate = ids.length > 0 && ids.length < total;
+    }
+    // Afficher/masquer la barre d'actions
+    const bar = document.getElementById('marc-bulk-bar');
+    if (bar) bar.style.display = ids.length > 0 ? 'flex' : 'none';
+    const cnt = document.getElementById('marc-bulk-count');
+    if (cnt) cnt.textContent = ids.length + ' sélectionné(s)';
+}
+
+function marcToggleSelectAll(checked) {
+    document.querySelectorAll('.marc-row-cb').forEach(cb => cb.checked = checked);
+    marcOnCheck();
+}
+
+function marcClearSelection() {
+    document.querySelectorAll('.marc-row-cb').forEach(cb => cb.checked = false);
+    const selAll = document.getElementById('marc-select-all');
+    if (selAll) { selAll.checked = false; selAll.indeterminate = false; }
+    const bar = document.getElementById('marc-bulk-bar');
+    if (bar) bar.style.display = 'none';
+}
+
+function marcBulkSetStatus() {
+    const ids = _marcGetSelected();
+    if (!ids.length) return;
+    const status = document.getElementById('marc-bulk-status').value;
+    if (!status) { rToast('Choisissez un statut','error'); return; }
+    const labels = {pending:'En attente',sent:'Envoyé',confirmed:'Confirmé',credited:'Avoir reçu',archived:'Archivé'};
+    const list = rLoad('marchandise');
+    ids.forEach(id => {
+        const m = list.find(x => x.id === id);
+        if (m) {
+            m.statut = status;
+            addRetourHist(status, 'marchandise', `Statut groupé → ${labels[status]}`, `${m.fournisseur} · ${m.article}`);
+        }
+    });
+    rSave('marchandise', list);
+    refreshRetours();
+    rToast(`✅ ${ids.length} retour(s) → ${labels[status]}`, 'success');
+    document.getElementById('marc-bulk-status').value = '';
+}
+
+function marcBulkSetFournisseur() {
+    const ids = _marcGetSelected();
+    if (!ids.length) return;
+    const val = (document.getElementById('marc-bulk-fournisseur').value || '').trim();
+    if (!val) { rToast('Saisissez un nom de fournisseur','error'); return; }
+    const list = rLoad('marchandise');
+    ids.forEach(id => {
+        const m = list.find(x => x.id === id);
+        if (m) { m.fournisseur = val; }
+    });
+    rSave('marchandise', list);
+    refreshRetours();
+    document.getElementById('marc-bulk-fournisseur').value = '';
+    rToast(`✅ ${ids.length} retour(s) → Fournisseur : ${val}`, 'success');
+}
+
+function marcBulkDelete() {
+    const ids = _marcGetSelected();
+    if (!ids.length) return;
+    if (!confirm(`🗑️ Supprimer ${ids.length} retour(s) fournisseur ?\nCette action est irréversible.`)) return;
+    let list = rLoad('marchandise');
+    ids.forEach(id => {
+        const m = list.find(x => x.id === id);
+        if (m) addRetourHist('deleted', 'marchandise', `🗑️ Suppression groupée: ${id}`, `${m.fournisseur} · ${m.article}`);
+    });
+    rSave('marchandise', list.filter(m => !ids.includes(m.id)));
+    refreshRetours();
+    rToast(`🗑️ ${ids.length} retour(s) supprimé(s)`, 'success');
+}
+
+function marcBulkSetMotif() {
+    const ids = _marcGetSelected();
+    if (!ids.length) return;
+    const val = document.getElementById('marc-bulk-motif').value;
+    if (!val) { rToast('Choisissez un motif', 'error'); return; }
+    const list = rLoad('marchandise');
+    ids.forEach(id => { const m = list.find(x => x.id === id); if (m) m.motif = val; });
+    rSave('marchandise', list);
+    refreshRetours();
+    document.getElementById('marc-bulk-motif').value = '';
+    rToast(`✅ ${ids.length} retour(s) → Motif : ${val}`, 'success');
+}
 function renderEcheances(data) {
     const tb = document.getElementById('echeances-tbody');
     if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="9"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📅</div><h3 style="margin:8px 0 4px;">Aucune échéance enregistrée</h3><p style="font-size:0.82rem;">Cliquez sur "Ajouter article" pour commencer.</p></div></td></tr>`; return; }
@@ -14297,6 +14451,9 @@ function openMarcDetail(id) {
     // Bouton archive
     const ab = document.getElementById('marc-detail-archive-btn');
     if (ab) ab.textContent = m.statut==='archived' ? '↩️ Désarchiver' : '📁 Archiver';
+    // Bouton "Voir l'article" : visible uniquement si défaut lié à un article du catalogue
+    const prodLink = document.getElementById('marc-detail-product-link');
+    if (prodLink) prodLink.style.display = (m._defect && m._fromProduct) ? '' : 'none';
     document.getElementById('marc-detail-modal').style.display = 'flex';
 }
 function closeMarcDetail() { document.getElementById('marc-detail-modal').style.display='none'; _marcDetailId=null; }
@@ -14307,6 +14464,19 @@ function marcDetailArchive() {
     setMarcStatus(_marcDetailId, m.statut==='archived'?'pending':'archived'); closeMarcDetail();
 }
 function marcDetailSetStatus(status) { setMarcStatus(_marcDetailId, status); closeMarcDetail(); }
+
+function _marcGoToProduct() {
+    const m = rLoad('marchandise').find(x => x.id === _marcDetailId);
+    if (!m || !m._fromProduct) return;
+    closeMarcDetail();
+    // Ouvrir la fiche produit sans quitter l'onglet Retours
+    setTimeout(() => {
+        if (typeof window.openProductDetail === 'function') {
+            window.openProductDetail(Number(m._fromProduct));
+        }
+    }, 150);
+}
+window._marcGoToProduct = _marcGoToProduct;
 
 function _marcOpenAvoirForm() {
     const m = rLoad('marchandise').find(x=>x.id===_marcDetailId); if (!m) return;
