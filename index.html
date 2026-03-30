@@ -14433,25 +14433,53 @@ function saveEditMarc() {
     const list = rLoad('marchandise');
     const idx = list.findIndex(x => x.id === id);
     if (idx === -1) { rToast('Retour introuvable','error'); return; }
+
+    const oldQty = parseFloat(list[idx].qty) || 0;
+    const isKg   = !!list[idx]._unitKg;
+
     list[idx] = {
         ...list[idx],
         fournisseur: document.getElementById('em-fournisseur').value.trim(),
         article:     document.getElementById('em-article').value.trim(),
         date:        document.getElementById('em-date').value,
-        qty:         parseInt(document.getElementById('em-qty').value) || 1,
+        qty:         isKg
+                       ? (parseFloat(document.getElementById('em-qty').value) || 0)
+                       : (parseInt(document.getElementById('em-qty').value) || 1),
         montant:     parseFloat(document.getElementById('em-montant').value) || 0,
         motif:       document.getElementById('em-motif').value || '-',
         bl:          document.getElementById('em-bl').value.trim(),
         br:          document.getElementById('em-br').value.trim(),
         comment:     document.getElementById('em-comment').value.trim()
     };
-    // Si c'est un défaut déclaré, montant = total direct → synchro _lostCA
+    // Si défaut déclaré, synchro _lostCA
     if (list[idx]._defect) list[idx]._lostCA = list[idx].montant;
     rSave('marchandise', list);
+
+    // ── Ajustement stock si défaut lié à un article ───────────────────────
+    if (list[idx]._defect && list[idx]._fromProduct) {
+        const newQty = parseFloat(list[idx].qty) || 0;
+        const diff = newQty - oldQty; // positif = plus de défauts → déduire du stock
+        if (diff !== 0) {
+            const allP = typeof products !== 'undefined' ? products : (window._covoProducts || []);
+            const prod = allP.find(x => x.id == list[idx]._fromProduct);
+            if (prod) {
+                prod.stock = Math.max(0, parseFloat((prod.stock - diff).toFixed(3)));
+                localStorage.setItem('covo_products', JSON.stringify(allP));
+                if (typeof saveAll === 'function') saveAll();
+                if (typeof renderProducts === 'function') renderProducts();
+                const signe = diff > 0 ? '-' : '+';
+                const label = isKg ? Math.abs(diff).toFixed(3)+' kg' : Math.abs(diff)+' u.';
+                addRetourHist('modified','marchandise',
+                    `✏️ Stock ajusté: ${prod.name}`,
+                    `${signe}${label} → stock : ${prod.stock}${isKg?' kg':' u.'}`);
+            }
+        }
+    }
+
     addRetourHist('modified','marchandise',`✏️ Retour fournisseur modifié: ${id}`,`${list[idx].fournisseur} · ${list[idx].article}`);
     closeEditMarc();
     refreshRetours();
-    rToast('✅ Retour fournisseur mis à jour','success');
+    rToast('✅ Retour mis à jour' + (list[idx]._defect && list[idx]._fromProduct ? ' · Stock ajusté' : ''), 'success');
 }
 
 // ===== MODALE DETAIL RETOUR FOURNISSEUR =====
