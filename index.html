@@ -3842,6 +3842,15 @@
                     </button>
                 </div>
 
+                <!-- Email préenregistré pour connexion automatique -->
+                <div style="margin-bottom:10px; padding:10px 12px; background:#e8f4fd; border:1.5px solid #90caf9; border-radius:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <span style="font-size:0.82rem; font-weight:700; color:#1565c0; white-space:nowrap;">📧 Compte Google préféré :</span>
+                    <input type="email" id="gdrive-hint-email" placeholder="votre@gmail.com"
+                        style="flex:1; min-width:180px; padding:6px 10px; border:1.5px solid #90caf9; border-radius:6px; font-size:0.82rem; background:white;"
+                        oninput="_gdSaveHintEmail(this.value)">
+                    <span style="font-size:0.75rem; color:#1976d2;">Pré-sélectionné automatiquement à la reconnexion.</span>
+                </div>
+
                 <!-- ===== SÉLECTEUR DE DOSSIER GOOGLE DRIVE ===== -->
                 <div id="gdrive-folder-section" style="display:none; margin-bottom:10px; padding:10px; background:#f1f8e9; border:1.5px solid #aed581; border-radius:8px;">
                     <div style="font-weight:600; font-size:0.84rem; color:#33691e; margin-bottom:8px;">📂 Dossier de sauvegarde sur Google Drive</div>
@@ -15399,6 +15408,7 @@ function initAdminSections() {
             _gdTokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: clientId,
                 scope: GD_SCOPE,
+                login_hint: localStorage.getItem('gdrive_hint_email') || _gdUserEmail || '',
                 callback: async (resp) => {
                     if (resp.error) {
                         console.error('GDrive auth error:', resp);
@@ -15417,6 +15427,12 @@ function initAdminSections() {
                         }).then(r => r.json());
                         _gdUserEmail = info.email || '';
                         localStorage.setItem('gdrive_email', _gdUserEmail);
+                        // Mémoriser comme compte préféré pour les prochaines connexions
+                        if (_gdUserEmail) {
+                            localStorage.setItem('gdrive_hint_email', _gdUserEmail);
+                            const hintInput = document.getElementById('gdrive-hint-email');
+                            if (hintInput) hintInput.value = _gdUserEmail;
+                        }
                     } catch(e) {}
 
                     _gdUpdateUI(true);
@@ -16032,12 +16048,20 @@ function initAdminSections() {
     setTimeout(() => clearInterval(__patchUpdateLastSave), 10000);
 
     // ---- Auto-reconnect on page load + periodic token refresh ----
+    function _gdSaveHintEmail(val) {
+        const email = (val || '').trim();
+        if (email) localStorage.setItem('gdrive_hint_email', email);
+        else localStorage.removeItem('gdrive_hint_email');
+    }
+    window._gdSaveHintEmail = _gdSaveHintEmail;
+
     async function _gdSilentConnect(clientId) {
         try {
             await _gdLoadGIS();
             _gdTokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: clientId,
                 scope: GD_SCOPE,
+                login_hint: localStorage.getItem('gdrive_hint_email') || _gdUserEmail || '',
                 callback: async (resp) => {
                     if (resp.error) {
                         _gdUpdateStatusBar(false, '', null);
@@ -16084,6 +16108,10 @@ function initAdminSections() {
         const savedClientId = localStorage.getItem('gdrive_client_id') || '';
         const clientInput = document.getElementById('gdrive-client-id');
         if (clientInput && savedClientId) clientInput.value = savedClientId;
+        // Charger l'email préenregistré
+        const hintEmail = localStorage.getItem('gdrive_hint_email') || localStorage.getItem('gdrive_email') || '';
+        const hintInput = document.getElementById('gdrive-hint-email');
+        if (hintInput && hintEmail) hintInput.value = hintEmail;
         const lastSave = localStorage.getItem('gdrive_last_save');
         const wasConnected = localStorage.getItem('gdrive_connected') === '1';
         _gdUserEmail = localStorage.getItem('gdrive_email') || '';
