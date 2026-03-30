@@ -3021,6 +3021,9 @@
                             <button onclick="marcBulkSetMotif()" style="padding:7px 14px;background:#9b59b6;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;">✏️ Appliquer</button>
                             <button onclick="marcBulkDelete()" style="padding:7px 14px;background:#e74c3c;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;">🗑️ Supprimer</button>
                         </div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;width:100%;">
+                            <input id="marc-bulk-comment" placeholder="💬 Ajouter un commentaire commun…" style="flex:1;padding:6px 10px;border-radius:7px;border:none;font-size:0.82rem;background:#34495e;color:white;min-width:200px;" />
+                            <button onclick="marcBulkSetComment()" style="padding:7px 14px;background:#16a085;color:white;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:0.82rem;white-space:nowrap;">💬 Appliquer</button>
                         <button onclick="marcClearSelection()" style="background:rgba(255,255,255,0.12);border:none;color:white;border-radius:7px;padding:6px 10px;cursor:pointer;font-size:0.8rem;">✕ Désélectionner</button>
                     </div>
 
@@ -11715,9 +11718,12 @@ logout = function(skipConfirmation = false) {
         <input id="em-article" style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;box-sizing:border-box;background:var(--bg-card);color:var(--text-main);"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
         <div><label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);display:block;margin-bottom:3px;">Qté</label>
-          <input id="em-qty" type="number" min="1" style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;box-sizing:border-box;background:var(--bg-card);color:var(--text-main);"></div>
+          <input id="em-qty" type="number" min="0.001" step="any" oninput="_emQtyCalc(this)"
+            style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;box-sizing:border-box;background:var(--bg-card);color:var(--text-main);"></div>
         <div><label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);display:block;margin-bottom:3px;">Montant (€)</label>
-          <input id="em-montant" type="number" step="0.01" style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;box-sizing:border-box;background:var(--bg-card);color:var(--text-main);"></div>
+          <input id="em-montant" type="number" step="0.01"
+            style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;box-sizing:border-box;background:var(--bg-card);color:var(--text-main);">
+          <span id="em-montant-hint" style="display:none;font-size:0.72rem;color:#27ae60;margin-top:3px;display:block;"></span></div>
         <div><label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);display:block;margin-bottom:3px;">N° BL</label>
           <input id="em-bl" style="width:100%;padding:8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;box-sizing:border-box;background:var(--bg-card);color:var(--text-main);"></div>
       </div>
@@ -14090,6 +14096,19 @@ function marcBulkSetMotif() {
     document.getElementById('marc-bulk-motif').value = '';
     rToast(`✅ ${ids.length} retour(s) → Motif : ${val}`, 'success');
 }
+
+function marcBulkSetComment() {
+    const ids = _marcGetSelected();
+    if (!ids.length) return;
+    const val = (document.getElementById('marc-bulk-comment').value || '').trim();
+    if (!val) { rToast('Saisissez un commentaire', 'error'); return; }
+    const list = rLoad('marchandise');
+    ids.forEach(id => { const m = list.find(x => x.id === id); if (m) m.comment = val; });
+    rSave('marchandise', list);
+    refreshRetours();
+    document.getElementById('marc-bulk-comment').value = '';
+    rToast(`💬 Commentaire ajouté sur ${ids.length} retour(s)`, 'success');
+}
 function renderEcheances(data) {
     const tb = document.getElementById('echeances-tbody');
     if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="9"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📅</div><h3 style="margin:8px 0 4px;">Aucune échéance enregistrée</h3><p style="font-size:0.82rem;">Cliquez sur "Ajouter article" pour commencer.</p></div></td></tr>`; return; }
@@ -14367,10 +14386,46 @@ function openEditMarc(id) {
     document.getElementById('em-bl').value          = m.bl || '';
     document.getElementById('em-br').value          = m.br || '';
     document.getElementById('em-comment').value     = m.comment || '';
+
+    // Si défaut lié à un article → stocker le prix unitaire pour le calcul auto
+    const qtyEl = document.getElementById('em-qty');
+    const montantEl = document.getElementById('em-montant');
+    const hintEl = document.getElementById('em-montant-hint');
+
+    if (m._defect && m._fromProduct) {
+        const allP = typeof products !== 'undefined' ? products : (window._covoProducts || []);
+        const prod = allP.find(x => x.id == m._fromProduct);
+        const unitPrice = prod ? (prod.price || prod.pricePerKg || 0) : 0;
+        qtyEl.dataset.unitPrice = unitPrice;
+        qtyEl.dataset.isKg = m._unitKg ? '1' : '0';
+        // Afficher le prix unitaire comme indication
+        if (hintEl) {
+            hintEl.textContent = unitPrice > 0
+                ? `Prix unitaire : ${unitPrice.toFixed(2)} € — Le montant se recalcule automatiquement.`
+                : '';
+            hintEl.style.display = unitPrice > 0 ? '' : 'none';
+        }
+        montantEl.style.background = 'var(--input-bg,#f0fff4)';
+        montantEl.title = 'Recalculé automatiquement selon la quantité';
+    } else {
+        qtyEl.dataset.unitPrice = '';
+        if (hintEl) hintEl.style.display = 'none';
+        montantEl.style.background = '';
+        montantEl.title = '';
+    }
+
     document.getElementById('edit-marc-modal').style.display = 'flex';
 }
 function closeEditMarc() {
     document.getElementById('edit-marc-modal').style.display = 'none';
+}
+
+function _emQtyCalc(qtyEl) {
+    const unitPrice = parseFloat(qtyEl.dataset.unitPrice);
+    if (!unitPrice) return; // pas un défaut lié → pas de calcul auto
+    const qty = parseFloat(qtyEl.value) || 0;
+    const montantEl = document.getElementById('em-montant');
+    if (montantEl) montantEl.value = (unitPrice * qty).toFixed(2);
 }
 function saveEditMarc() {
     const id = document.getElementById('em-id').value;
