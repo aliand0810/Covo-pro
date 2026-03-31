@@ -4702,6 +4702,30 @@
 
         document.getElementById('pd-promo').textContent = disc > 0 ? '-' + disc + '%' : 'Aucune';
 
+        // Bloc bénéfice — admin uniquement
+        const benefBlockA = document.getElementById('pd-benef-block');
+        if (benefBlockA) {
+            const prixVenteA = parseFloat(p.price || p.pricePerKg || 0);
+            const prixAchatA = p.costPrice != null ? parseFloat(p.costPrice) : null;
+            const isAdminA = typeof isAdmin !== 'undefined' && isAdmin;
+            if (isAdminA && prixAchatA !== null && prixVenteA > 0) {
+                const benefA = prixVenteA - prixAchatA;
+                const margeA = ((benefA / prixVenteA) * 100).toFixed(1);
+                const stockA = parseFloat(p.stock || 0);
+                const colA   = benefA >= 0 ? '#27ae60' : '#e74c3c';
+                document.getElementById('pd-benef-val').textContent   = (benefA >= 0 ? '+' : '') + benefA.toFixed(2) + ' €';
+                document.getElementById('pd-benef-val').style.color   = colA;
+                document.getElementById('pd-benef-marge').textContent = margeA + '%';
+                document.getElementById('pd-benef-marge').style.color = colA;
+                document.getElementById('pd-benef-cost').textContent  = prixAchatA.toFixed(2) + ' €';
+                document.getElementById('pd-benef-stock').textContent = (benefA * stockA >= 0 ? '+' : '') + (benefA * stockA).toFixed(2) + ' €';
+                document.getElementById('pd-benef-stock').style.color = colA;
+                benefBlockA.style.display = '';
+            } else {
+                benefBlockA.style.display = 'none';
+            }
+        }
+
         const dlcBlock = document.getElementById('pd-dlc-block');
         if (p.expiryDate && p.active !== false) {
             const today = new Date(); today.setHours(0,0,0,0);
@@ -7830,7 +7854,12 @@ logout = function(skipConfirmation = false) {
                         </div>
                         <div id="product-search-result-${p.id}" style="margin-top:5px; padding:8px; border-radius:5px; font-size:0.85rem; display:none;"></div>
                         <div class="grid-2">
-                            <div><label>Prix${p.unitType === 'kg' ? ' /kg (€)' : ' (€)'}</label><input type="number" step="0.01" id="edit-price-${p.id}" value="${p.unitType === 'kg' ? (p.pricePerKg || '') : (p.price || '')}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
+                            <div><label>Prix${p.unitType === 'kg' ? ' /kg (€)' : ' (€)'}</label><input type="number" step="0.01" id="edit-price-${p.id}" value="${p.unitType === 'kg' ? (p.pricePerKg || '') : (p.price || '')}" oninput="cardBenefPreview(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
+                            <div><label>💰 Prix d'achat (€)</label><input type="number" step="0.01" id="edit-cost-${p.id}" value="${p.costPrice != null ? p.costPrice : ''}" placeholder="0.00" oninput="cardBenefPreview(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
+                        </div>
+                        <!-- Aperçu bénéfice inline produit -->
+                        <div id="card-benef-${p.id}" style="display:${(p.costPrice != null && (p.price || p.pricePerKg)) ? '' : 'none'};background:#eafaf1;border:1.5px solid #27ae60;border-radius:7px;padding:8px 10px;font-size:0.78rem;margin-bottom:4px;"></div>
+                        <div class="grid-2" style="margin-top:0;">
                             <div><label>Stock${p.unitType === 'kg' ? ' (kg)' : ''}</label><input type="number" step="${p.unitType === 'kg' ? '0.001' : '1'}" id="edit-stock-${p.id}" value="${p.stock}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
                         </div>
                         <label>Date limite de consommation</label>
@@ -7931,6 +7960,10 @@ logout = function(skipConfirmation = false) {
             p.nightTariff = document.getElementById(`edit-night-${id}`).checked;
             const nightPctVal = document.getElementById(`edit-night-pct-${id}`).value;
             p.nightTariffPercent = nightPctVal !== '' ? parseFloat(nightPctVal) : undefined;
+            // Prix d'achat
+            const costRawP = parseFloat(document.getElementById(`edit-cost-${id}`)?.value);
+            if (!isNaN(costRawP) && costRawP >= 0) p.costPrice = costRawP;
+            else delete p.costPrice;
             saveAll();
             showScanToast('✅ Produit modifié');
         }
@@ -8559,6 +8592,29 @@ logout = function(skipConfirmation = false) {
         // Promo
         document.getElementById('pd-promo').textContent = p.promo > 0 ? '-' + p.promo + '%' : 'Aucune';
 
+        // Bloc bénéfice — visible si prix d'achat renseigné et admin
+        const benefBlock = document.getElementById('pd-benef-block');
+        if (benefBlock) {
+            const prixVente = parseFloat(p.price || p.pricePerKg || 0);
+            const prixAchat = p.costPrice != null ? parseFloat(p.costPrice) : null;
+            if (isAdmin && prixAchat !== null && prixVente > 0) {
+                const benef  = prixVente - prixAchat;
+                const marge  = ((benef / prixVente) * 100).toFixed(1);
+                const stock  = parseFloat(p.stock || 0);
+                const colB   = benef >= 0 ? '#27ae60' : '#e74c3c';
+                document.getElementById('pd-benef-val').textContent   = (benef >= 0 ? '+' : '') + benef.toFixed(2) + ' €';
+                document.getElementById('pd-benef-val').style.color   = colB;
+                document.getElementById('pd-benef-marge').textContent = marge + '%';
+                document.getElementById('pd-benef-marge').style.color = colB;
+                document.getElementById('pd-benef-cost').textContent  = prixAchat.toFixed(2) + ' €';
+                document.getElementById('pd-benef-stock').textContent = (benef * stock >= 0 ? '+' : '') + (benef * stock).toFixed(2) + ' €';
+                document.getElementById('pd-benef-stock').style.color = colB;
+                benefBlock.style.display = '';
+            } else {
+                benefBlock.style.display = 'none';
+            }
+        }
+
         // DLC
         const dlcBlock = document.getElementById('pd-dlc-block');
         if (p.expiryDate && p.active !== false) {
@@ -9049,27 +9105,69 @@ logout = function(skipConfirmation = false) {
         }
         const maxCA = rows[0]?.ca || 1;
         listEl.innerHTML = rows.map((r,i) => {
-            const isKg = r.unitType==='kg';
-            const qtyD = isKg ? r.qty.toFixed(2)+' kg' : Math.round(r.qty)+' unité(s)';
-            const pct  = Math.round((r.ca/maxCA)*100);
-            const rank = i+1;
-            const rc   = rank===1?'#f39c12':rank===2?'#95a5a6':rank===3?'#cd7f32':'var(--border-color,#ddd)';
-            const img  = r.img ? `<img src="${r.img}" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8f8f8;flex-shrink:0;">`
+            const isKg  = r.unitType==='kg';
+            const qtyD  = isKg ? r.qty.toFixed(2)+' kg' : Math.round(r.qty)+' unité(s)';
+            const pct   = Math.round((r.ca/maxCA)*100);
+            const rank  = i+1;
+            const rc    = rank===1?'#f39c12':rank===2?'#95a5a6':rank===3?'#cd7f32':'var(--border-color,#ddd)';
+            const img   = r.img ? `<img src="${r.img}" style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#f8f8f8;flex-shrink:0;">`
                                 : `<div style="width:44px;height:44px;background:var(--input-bg,#f0f0f0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">📦</div>`;
-            return `<div style="padding:10px 12px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;display:flex;align-items:center;gap:12px;">
-                <div style="width:28px;text-align:center;font-weight:800;font-size:0.85rem;color:${rc};flex-shrink:0;">#${rank}</div>
-                ${img}
-                <div style="flex:1;min-width:0;">
-                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
-                    <div style="margin-top:4px;height:5px;background:var(--input-bg,#eee);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#9b59b6,#3498db);border-radius:3px;"></div></div>
+            // Bénéfice
+            const prod      = products.find(p => p.id == r.id || p.name === r.name);
+            const prixAchat = prod?.costPrice != null ? parseFloat(prod.costPrice) : null;
+            const prixVente = parseFloat(prod?.price || prod?.pricePerKg || 0);
+            const benefUnit = prixAchat !== null && prixVente > 0 ? (prixVente - prixAchat) : null;
+            const benefTotal= benefUnit !== null ? benefUnit * r.qty : null;
+            const marge     = benefUnit !== null && prixVente > 0 ? ((benefUnit/prixVente)*100).toFixed(1) : null;
+            const benefBadge = benefUnit !== null
+                ? `<div style="font-size:0.7rem;margin-top:3px;color:${benefUnit>=0?'#27ae60':'#e74c3c'};font-weight:700;">${benefUnit>=0?'📈':'📉'} ${benefUnit>=0?'+':''}${benefUnit.toFixed(2)} €/u.</div>`
+                : '';
+            return `<div style="padding:10px 12px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;display:flex;flex-direction:column;gap:0;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:28px;text-align:center;font-weight:800;font-size:0.85rem;color:${rc};flex-shrink:0;">#${rank}</div>
+                    ${img}
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.name}</div>
+                        <div style="margin-top:4px;height:5px;background:var(--input-bg,#eee);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#9b59b6,#3498db);border-radius:3px;"></div></div>
+                    </div>
+                    <div style="text-align:right;flex-shrink:0;">
+                        <div style="font-weight:800;font-size:0.95rem;color:#27ae60;">${r.ca.toFixed(2)} €</div>
+                        <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${isKg?'⚖️':'🛒'} ${qtyD}</div>
+                        ${benefBadge}
+                    </div>
+                    <button onclick="_astApercu('${(r.id||'').toString().replace(/'/g,"\\'")}','${r.name.replace(/'/g,"\\'")}')"
+                        title="Aperçu bénéfice"
+                        style="flex-shrink:0;padding:6px 10px;background:linear-gradient(135deg,#8e44ad,#9b59b6);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:700;white-space:nowrap;">
+                        🔍 Aperçu
+                    </button>
                 </div>
-                <div style="text-align:right;flex-shrink:0;">
-                    <div style="font-weight:800;font-size:0.95rem;color:#27ae60;">${r.ca.toFixed(2)} €</div>
-                    <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">${isKg?'⚖️':'🛒'} ${qtyD}</div>
+                <!-- Panneau aperçu bénéfice (caché par défaut) -->
+                <div id="ast-ap-${rank}" style="display:none;margin-top:10px;padding:10px 12px;background:${benefUnit!==null?(benefUnit>=0?'#eafaf1':'#fde8e8'):'#f8f9fa'};border:1.5px solid ${benefUnit!==null?(benefUnit>=0?'#27ae60':'#e74c3c'):'#ddd'};border-radius:8px;">
+                    ${benefUnit !== null ? `
+                    <div style="font-weight:700;color:${benefUnit>=0?'#1e8449':'#c0392b'};margin-bottom:6px;font-size:0.82rem;">${benefUnit>=0?'📈':'📉'} Analyse bénéfice — ${r.name}</div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;">
+                        <div><div style="font-size:1rem;font-weight:800;color:${benefUnit>=0?'#27ae60':'#e74c3c'};">${benefUnit>=0?'+':''}${benefUnit.toFixed(2)} €</div><div style="font-size:0.68rem;color:#7f8c8d;">💰 Bénéf./unité</div></div>
+                        <div><div style="font-size:1rem;font-weight:800;color:#2980b9;">${marge}%</div><div style="font-size:0.68rem;color:#7f8c8d;">📊 Marge</div></div>
+                        <div><div style="font-size:1rem;font-weight:800;color:${benefTotal>=0?'#27ae60':'#e74c3c'};">${benefTotal>=0?'+':''}${benefTotal.toFixed(2)} €</div><div style="font-size:0.68rem;color:#7f8c8d;">💼 Bénéf. total</div></div>
+                        <div><div style="font-size:1rem;font-weight:800;color:#7f8c8d;">${prixAchat.toFixed(2)} €</div><div style="font-size:0.68rem;color:#7f8c8d;">💸 Prix achat</div></div>
+                    </div>` : `<div style="font-size:0.82rem;color:#7f8c8d;text-align:center;">⚠️ Pas de prix d'achat renseigné pour cet article.<br><span style="font-size:0.75rem;">Renseignez-le dans la fiche article pour voir le bénéfice.</span></div>`}
                 </div>
             </div>`;
         }).join('');
         window._astRows = rows;
+
+        // Associer les rangs pour la fonction d'aperçu
+        window._astRankMap = {};
+        rows.forEach((r,i) => { window._astRankMap[`${r.id||''}_${r.name}`] = i+1; });
+    };
+
+    window._astApercu = function(id, name) {
+        const rank = window._astRankMap?.[`${id}_${name}`];
+        if (!rank) return;
+        const panel = document.getElementById(`ast-ap-${rank}`);
+        if (!panel) return;
+        const isOpen = panel.style.display !== 'none';
+        panel.style.display = isOpen ? 'none' : '';
     };
 
     window.exportArticlesStatsCSV = function() {
@@ -11526,11 +11624,19 @@ logout = function(skipConfirmation = false) {
                 </div>
                 <div class="rm-form-group" id="cat-f-price-wrap">
                     <label>Prix unitaire (€) *</label>
-                    <input type="number" step="0.01" id="cat-f-price" placeholder="0.00">
+                    <input type="number" step="0.01" id="cat-f-price" placeholder="0.00" oninput="catUpdateBenefPreview()">
                 </div>
                 <div class="rm-form-group" id="cat-f-pricekg-wrap" style="display:none;">
                     <label>Prix au kg (€/kg) *</label>
-                    <input type="number" step="0.01" id="cat-f-pricekg" placeholder="0.00">
+                    <input type="number" step="0.01" id="cat-f-pricekg" placeholder="0.00" oninput="catUpdateBenefPreview()">
+                </div>
+                <div class="rm-form-group">
+                    <label>💰 Prix d'achat (€) <span style="font-size:0.72rem;color:#7f8c8d;font-weight:400;">pour calcul bénéfice</span></label>
+                    <input type="number" step="0.01" id="cat-f-cost" placeholder="0.00" oninput="catUpdateBenefPreview()">
+                </div>
+                <!-- Aperçu bénéfice dynamique -->
+                <div class="rm-form-group" id="cat-benef-preview" style="display:none;">
+                    <div id="cat-benef-box" style="background:#eafaf1;border:2px solid #27ae60;border-radius:8px;padding:10px 14px;font-size:0.82rem;"></div>
                 </div>
                 <div class="rm-form-group">
                     <label>Stock initial</label>
@@ -11675,6 +11781,16 @@ logout = function(skipConfirmation = false) {
                         <div style="font-size:1.15rem;font-weight:900;color:var(--success,#2ecc71);" id="pd-sold-ca">—</div>
                         <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);">💰 CA encaissé</div>
                     </div>
+                </div>
+            </div>
+            <!-- Bloc bénéfice — visible si prix d'achat renseigné et admin -->
+            <div id="pd-benef-block" style="display:none;background:linear-gradient(135deg,rgba(39,174,96,0.1),rgba(46,204,113,0.08));border:1.5px solid rgba(39,174,96,0.3);border-radius:10px;padding:11px 14px;margin-bottom:12px;">
+                <div style="font-size:0.7rem;font-weight:700;color:#1e8449;text-transform:uppercase;margin-bottom:6px;letter-spacing:0.04em;">💰 Analyse bénéfice</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                    <div><div style="font-size:1rem;font-weight:800;color:#27ae60;" id="pd-benef-val">—</div><div style="font-size:0.7rem;color:#7f8c8d;">💰 Bénéfice / unité</div></div>
+                    <div><div style="font-size:1rem;font-weight:800;color:#2980b9;" id="pd-benef-marge">—</div><div style="font-size:0.7rem;color:#7f8c8d;">📊 Marge</div></div>
+                    <div><div style="font-size:0.9rem;font-weight:700;color:#7f8c8d;" id="pd-benef-cost">—</div><div style="font-size:0.7rem;color:#7f8c8d;">💸 Prix d'achat</div></div>
+                    <div><div style="font-size:0.9rem;font-weight:700;color:#27ae60;" id="pd-benef-stock">—</div><div style="font-size:0.7rem;color:#7f8c8d;">📦 Bénéf. sur stock</div></div>
                 </div>
             </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:14px;display:none;"></div>
@@ -13032,8 +13148,11 @@ function renderCatalogueTab() {
                 <div class="cat-inline-form">
                     <div class="cat-inline-grid">
                         <div><label>Nom *</label><input type="text" id="cie-name-${p.id}" value="${p.name.replace(/"/g,'&quot;')}"></div>
-                        <div><label>Prix${isKg?' /kg':''} (€)</label><input type="number" step="0.01" id="cie-price-${p.id}" value="${isKg?p.pricePerKg:p.price}"></div>
+                        <div><label>Prix${isKg?' /kg':''} (€)</label><input type="number" step="0.01" id="cie-price-${p.id}" value="${isKg?p.pricePerKg:p.price}" oninput="cieBenefPreview(${p.id})"></div>
+                        <div><label>💰 Prix d'achat (€)</label><input type="number" step="0.01" id="cie-cost-${p.id}" value="${p.costPrice != null ? p.costPrice : ''}" placeholder="0.00" oninput="cieBenefPreview(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();catSaveInlineEdit(${p.id});}"></div>
                         <div><label>Stock${isKg?' (kg)':''}</label><input type="number" step="${isKg?'0.001':'1'}" id="cie-stock-${p.id}" value="${p.stock}"></div>
+                        <!-- Aperçu bénéfice catalogue inline -->
+                        <div id="cie-benef-${p.id}" style="display:${(p.costPrice != null && (p.price || p.pricePerKg)) ? '' : 'none'};grid-column:1/-1;background:#eafaf1;border:1.5px solid #27ae60;border-radius:7px;padding:8px 12px;font-size:0.8rem;"></div>
                         <div><label>Catégorie</label><select id="cie-cat-${p.id}">${(typeof getEchCategories==='function'?getEchCategories():(categories||[])).map(c=>`<option value="${c}"${c===p.category?' selected':''}>${c}</option>`).join('')}</select></div>
                         <div style="grid-column:1/-1;">
                             <label>Code-barres</label>
@@ -13326,6 +13445,10 @@ function catSaveInlineEdit(id) {
     p.nightTariff = document.getElementById(`cie-night-${id}`)?.checked || false;
     const nightPctVal = document.getElementById(`cie-night-pct-${id}`)?.value;
     p.nightTariffPercent = (nightPctVal !== '' && nightPctVal !== undefined) ? parseFloat(nightPctVal) : undefined;
+    // Prix d'achat
+    const costRawC = parseFloat(document.getElementById(`cie-cost-${id}`)?.value);
+    if (!isNaN(costRawC) && costRawC >= 0) p.costPrice = costRawC;
+    else delete p.costPrice;
     saveAll();
     renderCatalogueTab();
     if (typeof addRetourHist === 'function') {
@@ -13448,6 +13571,10 @@ function openCatalogueAddModal() {
     document.getElementById('cat-f-img').value = '';
     document.getElementById('cat-f-imgfile').value = '';
     document.getElementById('cat-f-active').value = '1';
+    const costEl = document.getElementById('cat-f-cost');
+    if (costEl) costEl.value = '';
+    const bp = document.getElementById('cat-benef-preview');
+    if (bp) bp.style.display = 'none';
     const res = document.getElementById('cat-barcode-result');
     if (res) res.style.display = 'none';
     const prev = document.getElementById('cat-img-preview');
@@ -13470,6 +13597,9 @@ function catOpenEditModal(id) {
     document.getElementById('cat-f-expiry').value = p.expiryDate || '';
     document.getElementById('cat-f-img').value = (!p.img||p.img.startsWith('data:')) ? '' : p.img;
     document.getElementById('cat-f-active').value = p.active !== false ? '1' : '0';
+    const costEl2 = document.getElementById('cat-f-cost');
+    if (costEl2) costEl2.value = p.costPrice != null ? p.costPrice : '';
+    catUpdateBenefPreview();
     const catSel = document.getElementById('cat-f-cat');
     if (catSel) { catSel.value = p.category || ''; }
     const promoSel = document.getElementById('cat-f-promo');
@@ -13484,6 +13614,61 @@ function catToggleUnit() {
     const pkw = document.getElementById('cat-f-pricekg-wrap');
     if (pw) pw.style.display = isKg ? 'none' : '';
     if (pkw) pkw.style.display = isKg ? '' : 'none';
+    catUpdateBenefPreview();
+}
+
+function _renderBenefBox(price, cost, boxEl) {
+    if (!boxEl) return;
+    if (isNaN(price) || isNaN(cost) || price <= 0) { boxEl.style.display = 'none'; return; }
+    const b    = price - cost;
+    const m    = ((b / price) * 100).toFixed(1);
+    const col  = b >= 0 ? '#1e8449' : '#c0392b';
+    const bg   = b >= 0 ? '#eafaf1' : '#fde8e8';
+    const bord = b >= 0 ? '#27ae60' : '#e74c3c';
+    boxEl.style.background   = bg;
+    boxEl.style.borderColor  = bord;
+    boxEl.style.display      = '';
+    boxEl.innerHTML = `<span style="font-weight:700;color:${col};">💰 Bénéfice : ${b >= 0 ? '+' : ''}${b.toFixed(2)} € / unité &nbsp;·&nbsp; 📊 Marge : ${m}%</span>`
+        + ` <span style="color:#7f8c8d;"> (achat : ${cost.toFixed(2)} €)</span>`;
+}
+
+function cardBenefPreview(id) {
+    const price = parseFloat(document.getElementById(`edit-price-${id}`)?.value);
+    const cost  = parseFloat(document.getElementById(`edit-cost-${id}`)?.value);
+    _renderBenefBox(price, cost, document.getElementById(`card-benef-${id}`));
+}
+window.cardBenefPreview = cardBenefPreview;
+
+function cieBenefPreview(id) {
+    const price = parseFloat(document.getElementById(`cie-price-${id}`)?.value);
+    const cost  = parseFloat(document.getElementById(`cie-cost-${id}`)?.value);
+    _renderBenefBox(price, cost, document.getElementById(`cie-benef-${id}`));
+}
+window.cieBenefPreview = cieBenefPreview;
+
+function catUpdateBenefPreview() {
+    const isKg   = document.getElementById('cat-f-unit')?.value === 'kg';
+    const priceV = parseFloat(document.getElementById(isKg ? 'cat-f-pricekg' : 'cat-f-price')?.value);
+    const costV  = parseFloat(document.getElementById('cat-f-cost')?.value);
+    const box    = document.getElementById('cat-benef-box');
+    const wrap   = document.getElementById('cat-benef-preview');
+    if (!box || !wrap) return;
+    if (isNaN(priceV) || isNaN(costV) || priceV <= 0) { wrap.style.display = 'none'; return; }
+    const benef = priceV - costV;
+    const marge = ((benef / priceV) * 100).toFixed(1);
+    const col   = benef >= 0 ? '#27ae60' : '#e74c3c';
+    const ico   = benef >= 0 ? '📈' : '📉';
+    box.style.borderColor = col;
+    box.style.background  = benef >= 0 ? '#eafaf1' : '#fde8e8';
+    box.innerHTML = `
+        <div style="font-weight:700;color:${col};font-size:0.88rem;margin-bottom:4px;">${ico} Aperçu bénéfice par unité</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <span>🏷️ Prix vente : <strong>${priceV.toFixed(2)} €</strong></span>
+            <span>💸 Prix achat : <strong>${costV.toFixed(2)} €</strong></span>
+            <span style="color:${col};font-weight:700;">💰 Bénéfice : ${benef >= 0 ? '+' : ''}${benef.toFixed(2)} € / unité</span>
+            <span style="color:${col};font-weight:700;">📊 Marge : ${marge}%</span>
+        </div>`;
+    wrap.style.display = '';
 }
 
 function catPreviewImg() {
@@ -13593,6 +13778,8 @@ async function saveCatalogueProduct() {
     const catVal = document.getElementById('cat-f-cat').value;
     const promo = parseInt(document.getElementById('cat-f-promo').value) || 0;
     const active = document.getElementById('cat-f-active').value === '1';
+    const costRaw = parseFloat(document.getElementById('cat-f-cost')?.value);
+    const costPrice = !isNaN(costRaw) && costRaw >= 0 ? costRaw : null;
     const imgUrl = document.getElementById('cat-f-img').value.trim();
     const imgFile = document.getElementById('cat-f-imgfile').files[0];
 
@@ -13616,6 +13803,7 @@ async function saveCatalogueProduct() {
         p.category = catVal;
         p.promo = promo;
         p.active = active;
+        if (costPrice !== null) p.costPrice = costPrice; else delete p.costPrice;
         if (finalImg) p.img = finalImg;
         showScanToast('✅ Produit modifié');
     } else {
@@ -13633,7 +13821,8 @@ async function saveCatalogueProduct() {
             img: finalImg || '',
             active,
             dateCreated: new Date().toISOString(),
-            expiryDate
+            expiryDate,
+            ...(costPrice !== null ? { costPrice } : {})
         };
         products.push(newProd);
         showScanToast('✅ Produit ajouté');
