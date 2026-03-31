@@ -543,6 +543,19 @@
         body.dark-mode #gdrive-status-bar {
             background: #0a0a12;
         }
+
+        body.dark-mode #gdrive-hint-email {
+            background: #2c2c3e !important;
+            color: #e0e0e0 !important;
+            border-color: #4a6fa5 !important;
+        }
+        body.dark-mode #gdrive-hint-email::placeholder {
+            color: #7f8c9d !important;
+        }
+        body.dark-mode #gdrive-hint-email:focus {
+            border-color: #3498db !important;
+            outline: none;
+        }
         
         @keyframes pulse {
             0%, 100% { opacity: 1; }
@@ -2642,6 +2655,11 @@
             <span id="gd-main-label" style="font-size:0.7rem;white-space:nowrap;">Hors ligne</span>
             <span class="gd-saving" id="gdrive-saving-indicator">⏳ Sauvegarde…</span>
             <span class="gd-time" id="gdrive-last-save-time" style="margin-left:4px;"></span>
+            <!-- Dernier fichier Drive détecté — cliquable pour restaurer -->
+            <span id="gd-last-file-chip" onclick="_gdChipClick()" title="Cliquer pour restaurer cette sauvegarde"
+                style="display:none;margin-left:6px;padding:1px 8px;background:rgba(46,204,113,0.18);border:1px solid rgba(46,204,113,0.35);border-radius:10px;font-size:0.65rem;color:#52be80;cursor:pointer;white-space:nowrap;transition:background 0.2s;"
+                onmouseover="this.style.background='rgba(46,204,113,0.32)'" onmouseout="this.style.background='rgba(46,204,113,0.18)'">
+            </span>
         </div>
         <!-- Zone DLC : marquee roulant OU affichage un par un avec nav -->
         <div id="expiry-zone" style="display:flex;align-items:center;flex:1;min-width:0;gap:4px;">
@@ -9893,6 +9911,8 @@ logout = function(skipConfirmation = false) {
         _updateLastSaveDisplay(_now);
         // Auto-sauvegarde vers le fichier FSA lié (si disponible)
         writeToCovoFile();
+        // Google Drive : déclencher avec debounce
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
         renderProducts(); updateProgress(); renderLogo();
     }
 
@@ -9912,6 +9932,8 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_last_save', _now.toISOString());
         _updateLastSaveDisplay(_now);
         writeToCovoFile(); // FSA silencieux
+        // Google Drive : déclencher avec debounce
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
     }
 
     // Expose autoSave globally so external modules (retours, marchandise, echeances) can trigger a background save
@@ -12049,9 +12071,13 @@ const RSK = { retours:'covo_retours', marchandise:'covo_marchandise', echeances:
 const rLoad = k => { try { return JSON.parse(localStorage.getItem(RSK[k])) || []; } catch { return []; } };
 const rSave = (k, d) => {
     localStorage.setItem(RSK[k], JSON.stringify(d));
-    // Déclenche la sauvegarde en arrière-plan vers le fichier FSA (si disponible)
+    // FSA silencieux
     if (typeof window._covoAutoSave === 'function') {
         setTimeout(() => window._covoAutoSave(), 0);
+    }
+    // Google Drive : déclencher la sauvegarde avec debounce
+    if (typeof window._gdTriggerAutoSave === 'function') {
+        window._gdTriggerAutoSave();
     }
 };
 
@@ -15444,6 +15470,7 @@ function initAdminSections() {
 
                     // Start auto-save
                     _gdStartAutoSave();
+                    _gdStartPolling();
 
                     // Pas de sauvegarde immédiate à la connexion — sera déclenchée lors d'une vraie modification
                     showScanToast('✅ Google Drive connecté — sauvegarde automatique activée', 'success');
@@ -15734,6 +15761,89 @@ function initAdminSections() {
         } catch(e) {}
     }
 
+    // ===== POLLING DERNIER FICHIER DRIVE → CHIP DANS LA STATUS BAR =================
+    let _gdLastDetectedFileId   = null;
+    let _gdLastDetectedFileName = '';
+    let _gdLastDetectedFileData = null; // données préchargées pour restauration rapide
+    let _gdPollInterval = null;
+
+    async function _gdPollLatestFile() {
+        if (!_gdConnected || !_gdFolderId || !_gdAccessToken) return;
+        try {
+            const q = encodeURIComponent(
+                `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
+            );
+            const resp = await _gdFetch(
+                'https://www.googleapis.com/drive/v3/files?q=' + q +
+                '&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)'
+            );
+            const data = await resp.json();
+            const files = data.files || [];
+            if (!files.length) return;
+
+            const latest = files[0];
+            const chip = document.getElementById('gd-last-file-chip');
+            if (!chip) return;
+
+            // Mettre à jour le chip
+            const modDate = new Date(latest.modifiedTime);
+            const isToday = modDate.toDateString() === new Date().toDateString();
+            const dateLabel = isToday
+                ? modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'})
+                : modDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' +
+                  modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+
+            chip.textContent = '☁️ ' + dateLabel + ' ↩';
+            chip.style.display = '';
+
+            // Nouveau fichier détecté depuis la dernière vérification → flash
+            if (latest.id !== _gdLastDetectedFileId) {
+                _gdLastDetectedFileId   = latest.id;
+                _gdLastDetectedFileName = latest.name;
+                _gdLastDetectedFileData = null; // réinitialiser les données préchargées
+                chip.style.borderColor = '#f39c12';
+                chip.style.color = '#f39c12';
+                setTimeout(() => {
+                    chip.style.borderColor = 'rgba(46,204,113,0.35)';
+                    chip.style.color = '#52be80';
+                }, 3000);
+            }
+        } catch(e) { /* silencieux */ }
+    }
+
+    function _gdStartPolling() {
+        _gdPollLatestFile(); // première vérification immédiate
+        if (_gdPollInterval) clearInterval(_gdPollInterval);
+        _gdPollInterval = setInterval(_gdPollLatestFile, 2 * 60 * 1000); // toutes les 2 min
+    }
+
+    function _gdStopPolling() {
+        if (_gdPollInterval) { clearInterval(_gdPollInterval); _gdPollInterval = null; }
+        const chip = document.getElementById('gd-last-file-chip');
+        if (chip) chip.style.display = 'none';
+    }
+
+    // Clic sur le chip → mini-modale de confirmation restauration
+    window._gdChipClick = async function() {
+        if (!_gdLastDetectedFileId) return;
+        const modDate = _gdLastDetectedFileName.replace('covo_backup_','').replace('.json','').replace(/_/g,' ');
+        const ok = confirm(`↩️ Restaurer la sauvegarde :\n« ${_gdLastDetectedFileName} »\n\nToutes les données actuelles seront remplacées.\nContinuer ?`);
+        if (!ok) return;
+
+        // Charger les données si pas encore préchargées
+        if (!_gdLastDetectedFileData) {
+            try {
+                showScanToast('⏳ Chargement de la sauvegarde…');
+                const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + _gdLastDetectedFileId + '?alt=media');
+                _gdLastDetectedFileData = await resp.json();
+            } catch(e) {
+                showScanToast('❌ Impossible de charger la sauvegarde', 'error');
+                return;
+            }
+        }
+        await _gdApplyRestore(_gdLastDetectedFileData, _gdLastDetectedFileName);
+    };
+
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
     async function _gdDoSave() {
         if (!_gdConnected || !_gdAccessToken || _gdSaving) return;
@@ -15803,8 +15913,9 @@ function initAdminSections() {
                 setTimeout(() => { bar.style.borderBottom = '1px solid rgba(255,255,255,0.06)'; }, 1200);
             }
 
-            // Mettre à jour le compteur
+            // Mettre à jour le compteur + chip status bar
             _gdUpdateFileCount();
+            setTimeout(_gdPollLatestFile, 1000); // mise à jour du chip après 1s
 
         } catch(err) {
             console.error('GDrive save error:', err);
@@ -15966,6 +16077,7 @@ function initAdminSections() {
         }
         _gdUpdateUI(false);
         _gdUpdateStatusBar(false, 'Google Drive — Déconnecté');
+        _gdStopPolling();
         showScanToast('☁️ Google Drive déconnecté', 'info');
     };
 
@@ -15983,11 +16095,14 @@ function initAdminSections() {
         showScanToast('✅ Sauvegarde Google Drive effectuée · 📁 ' + _gdFolderName, 'success');
     };
 
-    // ---- Plus besoin d'intervalle — sauvegarde déclenchée à chaque modification ----
-    window.gdriveSetInterval = function() {}; // compatibilité
-
+    // ---- Sauvegarde périodique de secours toutes les 10 min (fallback si debounce raté) ----
     function _gdStartAutoSave() {
-        // Plus d'intervalle — tout passe par le debounce sur modification
+        if (window._gdAutoSaveInterval) clearInterval(window._gdAutoSaveInterval);
+        window._gdAutoSaveInterval = setInterval(() => {
+            if (_gdConnected && _gdFolderId && !_gdSaving && !_gdRestoring) {
+                _gdDoSave();
+            }
+        }, 10 * 60 * 1000); // toutes les 10 minutes
     }
 
     // ---- UI update ----
@@ -16027,12 +16142,6 @@ function initAdminSections() {
     }
     // Exposer pour les modules externes (investissements, catégories…)
     window._gdTriggerAutoSave = _gdDebouncedSave;
-
-    window.addEventListener('storage', function(e) {
-        if (e.key && e.key.startsWith('covo_') && _gdConnected) {
-            _gdDebouncedSave();
-        }
-    });
 
     const __patchUpdateLastSave = setInterval(() => {
         if (typeof _updateLastSaveDisplay === 'function' && !_updateLastSaveDisplay.__gdPatched) {
@@ -16087,6 +16196,7 @@ function initAdminSections() {
                     await _gdLoadFolders();
                     await _gdRestoreSavedFolder();
                     _gdStartAutoSave();
+                    _gdStartPolling();
                 }
             });
             _gdTokenClient.requestAccessToken({ prompt: '' });
