@@ -490,6 +490,14 @@
             box-shadow: 0 0 6px #2ecc7188;
             animation: gdPulse 3s infinite;
         }
+        /* Voyant réseau : 4 états */
+        @keyframes netPulseGreen  { 0%,100%{box-shadow:0 0 4px #2ecc7188} 50%{box-shadow:0 0 10px #2ecc71cc} }
+        @keyframes netPulseOrange { 0%,100%{box-shadow:0 0 4px #f39c1288} 50%{box-shadow:0 0 8px  #f39c12cc} }
+        @keyframes netBlink       { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        #net-quality-dot[data-q="excellent"] { background:#2ecc71!important; box-shadow:0 0 6px #2ecc7188!important; animation:netPulseGreen 2.5s infinite; }
+        #net-quality-dot[data-q="good"]      { background:#27ae60!important; box-shadow:0 0 5px #27ae6088!important; animation:netPulseGreen 3s infinite; }
+        #net-quality-dot[data-q="slow"]      { background:#f39c12!important; box-shadow:0 0 5px #f39c1288!important; animation:netPulseOrange 2s infinite; }
+        #net-quality-dot[data-q="offline"]   { background:#e74c3c!important; box-shadow:0 0 4px #e74c3c88!important; animation:netBlink 1.2s infinite; }
         #gdrive-status-bar .gd-time { color: #5d7a8c; font-family: monospace; font-size: 0.68rem; }
         #gdrive-status-bar.connected .gd-time { color: #52be80; }
         #gdrive-status-bar .gd-saving {
@@ -2650,7 +2658,11 @@
     <!-- ===== BARRE STATUS UNIFIÉE ===== -->
     <div id="gdrive-status-bar">
         <div class="gd-info">
-            <!-- Point statut réseau + Drive fusionnés -->
+            <!-- Voyant qualité réseau -->
+            <span id="net-quality-dot" title="Qualité de la connexion internet"
+                style="width:8px;height:8px;border-radius:50%;background:#e74c3c;box-shadow:0 0 4px #e74c3c88;flex-shrink:0;cursor:default;transition:background 0.5s,box-shadow 0.5s;margin-right:2px;"></span>
+            <span id="net-quality-label" style="font-size:0.68rem;color:#e74c3c;white-space:nowrap;margin-right:6px;cursor:default;"></span>
+            <!-- Point statut Drive -->
             <span class="gd-dot" id="gd-main-dot"></span>
             <span id="gd-main-label" style="font-size:0.7rem;white-space:nowrap;">Hors ligne</span>
             <span class="gd-saving" id="gdrive-saving-indicator">⏳ Sauvegarde…</span>
@@ -15399,6 +15411,58 @@ function initAdminSections() {
     window.addEventListener('online',  _gdUpdateNetworkStatus);
     window.addEventListener('offline', _gdUpdateNetworkStatus);
 
+    // ===== VOYANT QUALITÉ RÉSEAU ================================================
+    async function _netMeasureQuality() {
+        const dot   = document.getElementById('net-quality-dot');
+        const label = document.getElementById('net-quality-label');
+        if (!dot || !label) return;
+
+        if (!navigator.onLine) {
+            dot.dataset.q    = 'offline';
+            dot.title        = 'Hors ligne';
+            label.textContent = 'Hors ligne';
+            label.style.color = '#e74c3c';
+            return;
+        }
+
+        // Mesure de latence via fetch d'une URL légère (favicon Google ~1Ko)
+        const url = 'https://www.gstatic.com/generate_204?' + Date.now();
+        const t0  = performance.now();
+        let ms    = 9999;
+        try {
+            await fetch(url, { method:'HEAD', mode:'no-cors', cache:'no-store' });
+            ms = Math.round(performance.now() - t0);
+        } catch(e) {
+            // fetch bloqué → on tente navigator.connection
+        }
+
+        // Fallback : navigator.connection (Chrome/Android)
+        const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        const eff  = conn ? conn.effectiveType : null; // '4g','3g','2g','slow-2g'
+
+        let quality, txt, color;
+        if (ms < 120 || eff === '4g') {
+            quality = 'excellent'; txt = '▲ Excellente'; color = '#2ecc71';
+        } else if (ms < 400 || eff === '3g') {
+            quality = 'good';     txt = '● Bonne';      color = '#27ae60';
+        } else if (ms < 1500 || eff === '2g') {
+            quality = 'slow';     txt = '▼ Lente';      color = '#f39c12';
+        } else {
+            quality = 'offline';  txt = '✕ Hors ligne'; color = '#e74c3c';
+        }
+
+        dot.dataset.q       = quality;
+        dot.title           = `Connexion : ${txt}${ms < 9999 ? ' · ' + ms + ' ms' : ''}`;
+        label.textContent   = txt;
+        label.style.color   = color;
+    }
+
+    // Mesure initiale + toutes les 30s
+    _netMeasureQuality();
+    setInterval(_netMeasureQuality, 30000);
+    window.addEventListener('online',  _netMeasureQuality);
+    window.addEventListener('offline', _netMeasureQuality);
+
     function _gdShowSaving(show) {
         const el = document.getElementById('gdrive-saving-indicator');
         if (el) el.style.display = show ? 'inline' : 'none';
@@ -15912,18 +15976,22 @@ function initAdminSections() {
         const clr = {
             bg:         isDark ? '#1e2233' : '#ffffff',
             bgAlt:      isDark ? '#252840' : '#f4f6f9',
-            bgDrive:    isDark ? '#1a2a40' : '#e8f4fd',
+            bgDrive:    isDark ? '#0d2137' : '#dff0ff',
             bgWarn:     isDark ? '#3d2c00' : '#fff8e1',
             text:       isDark ? '#e8eaf0' : '#1a1a2e',
             textSub:    isDark ? '#9fafc0' : '#5d6d7e',
-            textDrive:  isDark ? '#7eb8f7' : '#1565c0',
+            textDrive:  isDark ? '#7eb8f7' : '#0a4a8a',
             textWarn:   isDark ? '#ffd54f' : '#7a5500',
             border:     isDark ? '#2d3550' : '#dde3ee',
-            borderDrive:isDark ? '#2a5080' : '#90caf9',
+            borderDrive:isDark ? '#1e5a90' : '#5aabf5',
             rowEven:    isDark ? '#1e2233' : '#ffffff',
             rowOdd:     isDark ? '#252840' : '#f8fafc',
             cancelBg:   isDark ? '#2a2d3e' : '#f0f0f0',
             cancelClr:  isDark ? '#9fafc0' : '#5d6d7e',
+            curBorder:  isDark ? '#556' : '#b0bec5',
+            curBg:      isDark ? '#1c2030' : '#f0f2f5',
+            curText:    isDark ? '#c0cad8' : '#37474f',
+            curLabel:   isDark ? '#7a8898' : '#78909c',
         };
 
         const html = `
@@ -15940,18 +16008,22 @@ function initAdminSections() {
             <!-- Body -->
             <div style="overflow-y:auto;flex:1;padding:16px 20px;background:${clr.bg};">
               <!-- Cartes fichiers -->
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-                <div style="background:${clr.bgAlt};border-radius:8px;padding:10px 12px;border-left:4px solid #7f8c8d;">
-                  <div style="font-size:0.68rem;text-transform:uppercase;color:${clr.textSub};font-weight:700;margin-bottom:4px;">💾 Sauvegarde actuelle</div>
-                  <div style="font-size:0.82rem;font-weight:700;color:${clr.text};">Données locales</div>
-                  <div style="font-size:0.75rem;color:${clr.textSub};margin-top:4px;">${fmtDate(cur.savedAt)}</div>
-                  <div style="font-size:0.72rem;color:${clr.textSub};margin-top:2px;opacity:0.8;">${_gdFormatSize(currentRaw)}</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;">
+                <!-- Carte Actuel : neutre / grisée -->
+                <div style="background:${clr.curBg};border-radius:10px;padding:12px 14px;border:2px solid ${clr.curBorder};position:relative;overflow:hidden;">
+                  <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#78909c,#b0bec5);border-radius:10px 10px 0 0;"></div>
+                  <div style="font-size:0.68rem;text-transform:uppercase;color:${clr.curLabel};font-weight:700;letter-spacing:0.04em;margin-bottom:6px;">💾 Sauvegarde actuelle</div>
+                  <div style="font-size:0.9rem;font-weight:700;color:${clr.curText};">Données locales</div>
+                  <div style="font-size:0.76rem;color:${clr.curLabel};margin-top:5px;">🕐 ${fmtDate(cur.savedAt)}</div>
+                  <div style="display:inline-block;margin-top:6px;padding:2px 8px;background:${isDark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.06)'};border-radius:20px;font-size:0.72rem;color:${clr.curLabel};">${_gdFormatSize(currentRaw)}</div>
                 </div>
-                <div style="background:${clr.bgDrive};border-radius:8px;padding:10px 12px;border-left:4px solid #1565c0;">
-                  <div style="font-size:0.68rem;text-transform:uppercase;color:${clr.textDrive};font-weight:700;margin-bottom:4px;">☁️ Sauvegarde Drive</div>
-                  <div style="font-size:0.78rem;font-weight:700;color:${clr.text};word-break:break-all;">${newFileName}</div>
-                  <div style="font-size:0.75rem;color:${clr.textDrive};margin-top:4px;">${fmtDate(nw.savedAt)}</div>
-                  <div style="font-size:0.72rem;color:${clr.textDrive};margin-top:2px;opacity:0.8;">${_gdFormatSize(newRaw)}</div>
+                <!-- Carte Drive : bleue / accent -->
+                <div style="background:${clr.bgDrive};border-radius:10px;padding:12px 14px;border:2px solid ${clr.borderDrive};position:relative;overflow:hidden;">
+                  <div style="position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#1565c0,#42a5f5);border-radius:10px 10px 0 0;"></div>
+                  <div style="font-size:0.68rem;text-transform:uppercase;color:${clr.textDrive};font-weight:700;letter-spacing:0.04em;margin-bottom:6px;">☁️ Sauvegarde Drive</div>
+                  <div style="font-size:0.8rem;font-weight:700;color:${clr.text};word-break:break-all;line-height:1.3;">${newFileName}</div>
+                  <div style="font-size:0.76rem;color:${clr.textDrive};margin-top:5px;">🕐 ${fmtDate(nw.savedAt)}</div>
+                  <div style="display:inline-block;margin-top:6px;padding:2px 8px;background:${isDark?'rgba(100,180,255,0.12)':'rgba(21,101,192,0.1)'};border-radius:20px;font-size:0.72rem;color:${clr.textDrive};font-weight:600;">${_gdFormatSize(newRaw)}</div>
                 </div>
               </div>
               <!-- Tableau comparatif -->
