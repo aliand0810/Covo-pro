@@ -15916,25 +15916,120 @@ function initAdminSections() {
         if (chip) chip.style.display = 'none';
     }
 
-    // Clic sur le chip → modale comparative sauvegarde actuelle vs nouvelle
+    // Clic sur le chip → liste des sauvegardes disponibles
     window._gdChipClick = async function() {
-        if (!_gdLastDetectedFileId) return;
+        if (!_gdConnected || !_gdFolderId) return;
+        const chip = document.getElementById('gd-last-file-chip');
+        const origText = chip ? chip.textContent : '';
+        if (chip) { chip.textContent = '⏳…'; chip.style.pointerEvents = 'none'; }
 
-        // Charger les données du fichier Drive si pas encore fait
-        if (!_gdLastDetectedFileData) {
-            try {
-                const chip = document.getElementById('gd-last-file-chip');
-                if (chip) { chip.textContent = '⏳ Chargement…'; chip.style.pointerEvents = 'none'; }
-                const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + _gdLastDetectedFileId + '?alt=media');
-                _gdLastDetectedFileData = await resp.json();
-                if (chip) { chip.textContent = '☁️ ' + chip.textContent.replace('⏳ Chargement…','') + ' ↩'; chip.style.pointerEvents = ''; }
-            } catch(e) {
-                showScanToast('❌ Impossible de charger la sauvegarde', 'error');
-                return;
-            }
+        try {
+            const q = encodeURIComponent(
+                `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
+            );
+            const resp = await _gdFetch(
+                'https://www.googleapis.com/drive/v3/files?q=' + q +
+                '&orderBy=modifiedTime+desc&pageSize=30&fields=files(id,name,modifiedTime,size)'
+            );
+            const data = await resp.json();
+            const files = (data.files || []).filter(f => f.name.startsWith('covo_backup'));
+            if (chip) { chip.textContent = origText; chip.style.pointerEvents = ''; }
+            if (!files.length) { showScanToast('Aucune sauvegarde trouvée dans le dossier', 'info'); return; }
+            _gdShowPickerModal(files);
+        } catch(e) {
+            if (chip) { chip.textContent = origText; chip.style.pointerEvents = ''; }
+            showScanToast('❌ Impossible de charger la liste des sauvegardes', 'error');
         }
+    };
 
-        _gdShowCompareModal(_gdLastDetectedFileData, _gdLastDetectedFileName);
+    function _gdFmtFileDate(iso) {
+        const d = new Date(iso);
+        const isToday = d.toDateString() === new Date().toDateString();
+        return isToday
+            ? 'Aujourd\'hui ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'})
+            : d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) + ' ' +
+              d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    }
+
+    function _gdFmtFileSize(bytes) {
+        if (!bytes) return '—';
+        const b = parseInt(bytes);
+        return b >= 1048576 ? (b/1048576).toFixed(2)+' Mo' : (b/1024).toFixed(1)+' Ko';
+    }
+
+    function _gdShowPickerModal(files) {
+        const isDark = document.body.classList.contains('dark-mode');
+        const bg     = isDark ? '#1e2233' : '#ffffff';
+        const bgRow  = isDark ? '#252840' : '#f8fafc';
+        const bgHov  = isDark ? '#2d3455' : '#eef4ff';
+        const text   = isDark ? '#e8eaf0' : '#1a1a2e';
+        const textSub= isDark ? '#9fafc0' : '#5d6d7e';
+        const border = isDark ? '#2d3550' : '#dde3ee';
+
+        const rows = files.map((f, i) => {
+            const isLatest = i === 0;
+            const badge = isLatest
+                ? `<span style="background:#1565c0;color:white;font-size:0.62rem;padding:1px 6px;border-radius:8px;font-weight:700;margin-left:6px;">Dernière</span>`
+                : '';
+            return `<div onclick="_gdPickerSelect('${f.id}','${f.name.replace(/'/g,"\\'")}','${f.modifiedTime}')"
+                style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;
+                       border-bottom:1px solid ${border};cursor:pointer;transition:background 0.15s;background:${i%2===0?bg:bgRow};"
+                onmouseover="this.style.background='${bgHov}'" onmouseout="this.style.background='${i%2===0?bg:bgRow}'">
+                <div style="min-width:0;">
+                    <div style="font-size:0.82rem;font-weight:700;color:${text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        ☁️ ${_gdFmtFileDate(f.modifiedTime)}${badge}
+                    </div>
+                    <div style="font-size:0.72rem;color:${textSub};margin-top:2px;">${f.name}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;margin-left:12px;">
+                    <div style="font-size:0.75rem;color:${textSub};">${_gdFmtFileSize(f.size)}</div>
+                    <div style="font-size:0.7rem;color:#1565c0;margin-top:2px;font-weight:600;">↩ Sélectionner</div>
+                </div>
+            </div>`;
+        }).join('');
+
+        const html = `
+        <div id="gdrive-picker-modal" onclick="if(event.target===this)this.remove()"
+            style="position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);z-index:20000;display:flex;justify-content:center;align-items:center;">
+          <div style="background:${bg};border-radius:16px;width:92%;max-width:520px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.5);">
+            <div style="background:linear-gradient(135deg,#1565c0,#0d47a1);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+              <div>
+                <div style="color:white;font-weight:800;font-size:0.95rem;">☁️ Choisir une sauvegarde</div>
+                <div style="color:rgba(255,255,255,0.75);font-size:0.72rem;margin-top:1px;">${files.length} sauvegarde(s) · 📁 ${_gdFolderName}</div>
+              </div>
+              <button onclick="document.getElementById('gdrive-picker-modal').remove()"
+                style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+            </div>
+            <div style="overflow-y:auto;flex:1;">${rows}</div>
+            <div style="padding:10px 14px;border-top:1px solid ${border};text-align:center;background:${bg};flex-shrink:0;">
+              <span style="font-size:0.75rem;color:${textSub};">Cliquez sur une sauvegarde pour la comparer et restaurer</span>
+            </div>
+          </div>
+        </div>`;
+
+        const old = document.getElementById('gdrive-picker-modal');
+        if (old) old.remove();
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    window._gdPickerSelect = async function(fileId, fileName, modifiedTime) {
+        const picker = document.getElementById('gdrive-picker-modal');
+        if (picker) picker.remove();
+
+        // Charger les données du fichier sélectionné
+        const chip = document.getElementById('gd-last-file-chip');
+        if (chip) { chip.textContent = '⏳…'; chip.style.pointerEvents = 'none'; }
+        try {
+            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
+            const fileData = await resp.json();
+            if (chip) { chip.style.pointerEvents = ''; chip.textContent = '☁️ ' + _gdFmtFileDate(modifiedTime) + ' ↩'; }
+            // Si c'est le dernier fichier détecté, mettre en cache
+            if (fileId === _gdLastDetectedFileId) _gdLastDetectedFileData = fileData;
+            _gdShowCompareModal(fileData, fileName);
+        } catch(e) {
+            if (chip) { chip.style.pointerEvents = ''; }
+            showScanToast('❌ Impossible de charger cette sauvegarde', 'error');
+        }
     };
 
     function _gdBuildSnapshot(data) {
