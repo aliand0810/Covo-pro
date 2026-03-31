@@ -9088,6 +9088,138 @@ logout = function(skipConfirmation = false) {
         setTimeout(()=>URL.revokeObjectURL(url), 1000);
     };
 
+    window.exportArticlesStatsPDF = function() {
+        const rows = window._astRows || [];
+        if (!rows.length) { showScanToast('Aucune donnée à exporter', 'info'); return; }
+
+        const periodLabel = document.getElementById('ast-period-label')?.textContent || '';
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'});
+        const totalCA  = rows.reduce((s,r)=>s+r.ca, 0);
+        const totalQty = rows.reduce((s,r)=>s+r.qty, 0);
+
+        // ── Ventilation mensuelle ──────────────────────────────────────────
+        const monthlySales = {};
+        const weeklySales  = {};
+        const moisNoms = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+        _astGetFilteredSales().forEach(s => {
+            if (s.cancelled) return;
+            const d = new Date(s.date);
+            const mKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+            const mLabel = moisNoms[d.getMonth()] + ' ' + d.getFullYear();
+            const wNum = Math.ceil((d.getDate() + new Date(d.getFullYear(),d.getMonth(),1).getDay()) / 7);
+            const wKey = `S${wNum} ${moisNoms[d.getMonth()]}`;
+            if (!monthlySales[mKey]) monthlySales[mKey] = { label:mLabel, ca:0, tickets:0 };
+            if (!weeklySales[wKey])  weeklySales[wKey]  = { label:wKey,   ca:0, tickets:0 };
+            const ca = s.items.reduce((a,it)=>a+parseFloat(it.price||0)*parseFloat(it.quantity||1),0);
+            monthlySales[mKey].ca += ca; monthlySales[mKey].tickets++;
+            weeklySales[wKey].ca  += ca; weeklySales[wKey].tickets++;
+        });
+        const monthRows = Object.entries(monthlySales).sort((a,b)=>a[0].localeCompare(b[0]))
+            .map(([,v])=>`<tr><td>${v.label}</td><td class="num">${v.tickets}</td><td class="num num-ca">${v.ca.toFixed(2)} €</td></tr>`).join('');
+        const weekRows = Object.entries(weeklySales)
+            .map(([,v])=>`<tr><td>${v.label}</td><td class="num">${v.tickets}</td><td class="num num-ca">${v.ca.toFixed(2)} €</td></tr>`).join('');
+
+        // ── Lignes articles ────────────────────────────────────────────────
+        const articleRows = rows.map((r,i) => {
+            const isKg = r.unitType==='kg';
+            const qty  = isKg ? r.qty.toFixed(2)+' kg' : Math.round(r.qty)+' u.';
+            const pct  = totalCA > 0 ? ((r.ca/totalCA)*100).toFixed(1)+'%' : '0%';
+            const rank = i===0?'🥇':i===1?'🥈':i===2?'🥉':'#'+(i+1);
+            // Estimation bénéfice : prix vente – coût estimé (30% marge standard si pas de prix achat)
+            const prod       = products.find(p => p.id == r.id || p.name === r.name);
+            const prixAchat  = prod?.costPrice || null;
+            const benefice   = prixAchat != null
+                ? ((parseFloat(prod.price||prod.pricePerKg||0) - prixAchat) * r.qty).toFixed(2) + ' €'
+                : '—';
+            const marge      = prixAchat != null && parseFloat(prod.price||prod.pricePerKg||0) > 0
+                ? (((parseFloat(prod.price||prod.pricePerKg||0)-prixAchat)/parseFloat(prod.price||prod.pricePerKg||0))*100).toFixed(0)+'%'
+                : '—';
+            return `<tr>
+                <td style="text-align:center;font-weight:700;color:#8e44ad;">${rank}</td>
+                <td style="font-weight:600;">${r.name}</td>
+                <td style="text-align:center;font-size:0.75rem;color:#666;">${isKg?'kg':'u.'}</td>
+                <td class="num">${qty}</td>
+                <td class="num num-ca">${r.ca.toFixed(2)} €</td>
+                <td class="num" style="color:#888;">${pct}</td>
+                <td class="num" style="color:#27ae60;">${benefice}</td>
+                <td class="num" style="color:#2980b9;">${marge}</td>
+            </tr>`;
+        }).join('');
+
+        const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+        <title>Rapport des ventes par article — COVO Pro</title>
+        <style>
+            * { margin:0; padding:0; box-sizing:border-box; }
+            body { font-family:'Segoe UI',Arial,sans-serif; font-size:12px; color:#1a1a2e; background:#fff; }
+            .header { background:linear-gradient(135deg,#8e44ad,#9b59b6); color:white; padding:20px 24px; margin-bottom:20px; }
+            .header h1 { font-size:18px; font-weight:800; }
+            .header p  { font-size:11px; opacity:0.85; margin-top:4px; }
+            .kpis { display:flex; gap:12px; margin:0 20px 18px; }
+            .kpi  { background:#f8f0ff; border:2px solid #d7b4f0; border-radius:10px; padding:12px 16px; flex:1; text-align:center; }
+            .kpi-val  { font-size:20px; font-weight:800; color:#8e44ad; }
+            .kpi-lbl  { font-size:10px; color:#666; margin-top:2px; text-transform:uppercase; letter-spacing:0.05em; }
+            h2 { font-size:13px; font-weight:700; color:#8e44ad; margin:0 20px 8px; padding-bottom:4px; border-bottom:2px solid #e8d5f5; }
+            table { width:calc(100% - 40px); margin:0 20px 18px; border-collapse:collapse; }
+            th { background:#8e44ad; color:white; padding:7px 10px; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; }
+            td { padding:6px 10px; border-bottom:1px solid #eeebf5; }
+            tr:nth-child(even) td { background:#fcf8ff; }
+            .num { text-align:right; font-weight:600; }
+            .num-ca { color:#8e44ad; }
+            .footer { text-align:center; font-size:9px; color:#aaa; margin-top:20px; padding:10px; border-top:1px solid #eee; }
+            .note { font-size:9px; color:#888; font-style:italic; margin:0 20px 12px; }
+            @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+        </style></head><body>
+        <div class="header">
+            <h1>📦 Rapport des ventes par article — COVO Pro</h1>
+            <p>Période : ${periodLabel} &nbsp;·&nbsp; Généré le ${dateStr}</p>
+        </div>
+        <div class="kpis">
+            <div class="kpi"><div class="kpi-val">${rows.length}</div><div class="kpi-lbl">📦 Articles</div></div>
+            <div class="kpi"><div class="kpi-val">${totalCA.toFixed(2)} €</div><div class="kpi-lbl">💰 CA total</div></div>
+            <div class="kpi"><div class="kpi-val">${_astGetFilteredSales().filter(s=>!s.cancelled).length}</div><div class="kpi-lbl">🧾 Tickets</div></div>
+            <div class="kpi"><div class="kpi-val">${(totalCA / Math.max(_astGetFilteredSales().filter(s=>!s.cancelled).length,1)).toFixed(2)} €</div><div class="kpi-lbl">📊 Panier moyen</div></div>
+        </div>
+
+        <h2>📊 Ventes et bénéfices par article</h2>
+        <p class="note">* Bénéfice estimé disponible uniquement si un prix d'achat est renseigné sur l'article. Sinon : —</p>
+        <table>
+            <thead><tr>
+                <th>Rang</th><th>Article</th><th>Type</th><th>Quantité</th>
+                <th>CA (€)</th><th>Part</th><th>Bénéfice *</th><th>Marge *</th>
+            </tr></thead>
+            <tbody>${articleRows}</tbody>
+            <tfoot><tr style="background:#8e44ad;color:white;">
+                <td colspan="3" style="font-weight:700;padding:6px 10px;">TOTAL</td>
+                <td class="num" style="color:white;padding:6px 10px;">${totalQty % 1 === 0 ? Math.round(totalQty)+' u.' : totalQty.toFixed(2)}</td>
+                <td class="num num-ca" style="color:white;padding:6px 10px;">${totalCA.toFixed(2)} €</td>
+                <td class="num" style="color:white;padding:6px 10px;">100%</td>
+                <td colspan="2"></td>
+            </tr></tfoot>
+        </table>
+
+        ${monthRows ? `<h2>📅 Ventilation mensuelle</h2>
+        <table>
+            <thead><tr><th>Mois</th><th>Tickets</th><th>CA encaissé</th></tr></thead>
+            <tbody>${monthRows}</tbody>
+        </table>` : ''}
+
+        ${weekRows ? `<h2>📆 Ventilation par semaine</h2>
+        <table>
+            <thead><tr><th>Semaine</th><th>Tickets</th><th>CA encaissé</th></tr></thead>
+            <tbody>${weekRows}</tbody>
+        </table>` : ''}
+
+        <div class="footer">COVO Pro — Rapport généré le ${now.toLocaleString('fr-FR')} · Confidentiel</div>
+        <script>window.onload=function(){window.print();};<\/script>
+        </body></html>`;
+
+        const w = window.open('', '_blank', 'width=900,height=700');
+        if (w) { w.document.write(html); w.document.close(); }
+        else showScanToast('⚠️ Autorisez les popups pour générer le PDF', 'info');
+    };
+    window.exportArticlesStatsPDF = window.exportArticlesStatsPDF;
+
     function renderTopProducts() {
         const productSales = {};
         salesHistory.forEach(sale => {
@@ -11714,6 +11846,7 @@ logout = function(skipConfirmation = false) {
                         <option value="name" style="color:#2c3e50;background:#fff;">Nom A-Z</option>
                     </select>
                     <button onclick="exportArticlesStatsCSV()" style="background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.4);color:white;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;" title="Exporter CSV">⬇️ CSV</button>
+                    <button onclick="exportArticlesStatsPDF()" style="background:rgba(255,255,255,0.9);border:none;color:#8e44ad;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:700;" title="Exporter PDF détaillé">📄 PDF</button>
                     <button onclick="closeArticlesStatsModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.95rem;">✕</button>
                 </div>
             </div>
