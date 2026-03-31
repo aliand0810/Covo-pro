@@ -15823,24 +15823,156 @@ function initAdminSections() {
         if (chip) chip.style.display = 'none';
     }
 
-    // Clic sur le chip → mini-modale de confirmation restauration
+    // Clic sur le chip → modale comparative sauvegarde actuelle vs nouvelle
     window._gdChipClick = async function() {
         if (!_gdLastDetectedFileId) return;
-        const modDate = _gdLastDetectedFileName.replace('covo_backup_','').replace('.json','').replace(/_/g,' ');
-        const ok = confirm(`↩️ Restaurer la sauvegarde :\n« ${_gdLastDetectedFileName} »\n\nToutes les données actuelles seront remplacées.\nContinuer ?`);
-        if (!ok) return;
 
-        // Charger les données si pas encore préchargées
+        // Charger les données du fichier Drive si pas encore fait
         if (!_gdLastDetectedFileData) {
             try {
-                showScanToast('⏳ Chargement de la sauvegarde…');
+                const chip = document.getElementById('gd-last-file-chip');
+                if (chip) { chip.textContent = '⏳ Chargement…'; chip.style.pointerEvents = 'none'; }
                 const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + _gdLastDetectedFileId + '?alt=media');
                 _gdLastDetectedFileData = await resp.json();
+                if (chip) { chip.textContent = '☁️ ' + chip.textContent.replace('⏳ Chargement…','') + ' ↩'; chip.style.pointerEvents = ''; }
             } catch(e) {
                 showScanToast('❌ Impossible de charger la sauvegarde', 'error');
                 return;
             }
         }
+
+        _gdShowCompareModal(_gdLastDetectedFileData, _gdLastDetectedFileName);
+    };
+
+    function _gdBuildSnapshot(data) {
+        const sales = Array.isArray(data.salesHistory) ? data.salesHistory : (data.covo_sales || []);
+        const valid = sales.filter(s => !s.cancelled);
+        return {
+            prods:    (data.products || []).length,
+            tickets:  sales.length,
+            validCA:  valid.reduce((s, t) => s + parseFloat(t.total || 0), 0),
+            retours:  (data.covo_retours || []).length,
+            marc:     (data.covo_marchandise || []).length,
+            inv:      (data.covo_investissements || []).length,
+            savedAt:  data._savedAt || null,
+            source:   data._source || 'local'
+        };
+    }
+
+    function _gdFormatSize(jsonStr) {
+        const bytes = new Blob([jsonStr]).size;
+        return bytes >= 1048576
+            ? (bytes / 1048576).toFixed(2) + ' Mo'
+            : (bytes / 1024).toFixed(1) + ' Ko';
+    }
+
+    function _gdShowCompareModal(newData, newFileName) {
+        // Construire snapshot actuel depuis localStorage
+        const currentRaw = JSON.stringify({
+            products, categories, promoTypes, users, salesHistory,
+            appSettings, nightTariffSettings, cashierPermissions, pendingSync, deliveryGoal,
+            covo_retours:     JSON.parse(localStorage.getItem('covo_retours')     || '[]'),
+            covo_marchandise: JSON.parse(localStorage.getItem('covo_marchandise') || '[]'),
+            covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
+        });
+
+        const cur  = _gdBuildSnapshot({
+            products, salesHistory,
+            covo_retours: JSON.parse(localStorage.getItem('covo_retours') || '[]'),
+            covo_marchandise: JSON.parse(localStorage.getItem('covo_marchandise') || '[]'),
+            covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
+            _savedAt: localStorage.getItem('covo_last_save')
+        });
+        const nw   = _gdBuildSnapshot(newData);
+        const newRaw = JSON.stringify(newData);
+
+        const fmtDate = iso => {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) +
+                   ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        };
+
+        const row = (label, curVal, newVal, higherIsBetter = true) => {
+            const cNum = parseFloat(curVal) || 0;
+            const nNum = parseFloat(newVal) || 0;
+            const arrow = cNum === nNum ? '' : (nNum > cNum ? (higherIsBetter ? '▲' : '▼') : (higherIsBetter ? '▼' : '▲'));
+            const arrowColor = cNum === nNum ? '' : (nNum > cNum ? (higherIsBetter ? '#2ecc71' : '#e74c3c') : (higherIsBetter ? '#e74c3c' : '#2ecc71'));
+            const bold = cNum !== nNum ? 'font-weight:800;' : '';
+            return `<tr>
+                <td style="padding:7px 10px;font-size:0.82rem;color:var(--text-main);border-bottom:1px solid var(--border-color,#eee);">${label}</td>
+                <td style="padding:7px 10px;text-align:center;font-size:0.85rem;border-bottom:1px solid var(--border-color,#eee);">${curVal}</td>
+                <td style="padding:7px 10px;text-align:center;font-size:0.85rem;${bold}border-bottom:1px solid var(--border-color,#eee);">${newVal} ${arrow ? `<span style="color:${arrowColor};font-size:0.75rem;">${arrow}</span>` : ''}</td>
+            </tr>`;
+        };
+
+        const html = `
+        <div id="gdrive-compare-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:20000;display:flex;justify-content:center;align-items:center;">
+          <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:560px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);">
+            <!-- Header -->
+            <div style="background:linear-gradient(135deg,#1565c0,#0d47a1);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+              <div>
+                <div style="color:white;font-weight:800;font-size:1rem;">☁️ Restauration Google Drive</div>
+                <div style="color:rgba(255,255,255,0.7);font-size:0.75rem;margin-top:2px;">Comparez avant de restaurer</div>
+              </div>
+              <button onclick="document.getElementById('gdrive-compare-modal').remove()" style="background:rgba(255,255,255,0.15);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+            </div>
+            <!-- Body -->
+            <div style="overflow-y:auto;flex:1;padding:16px 20px;">
+              <!-- Noms fichiers -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+                <div style="background:var(--input-bg,#f8f9fa);border-radius:8px;padding:10px 12px;border-left:4px solid #7f8c8d;">
+                  <div style="font-size:0.68rem;text-transform:uppercase;color:#7f8c8d;font-weight:700;margin-bottom:4px;">💾 Sauvegarde actuelle</div>
+                  <div style="font-size:0.75rem;font-weight:600;color:var(--text-main);">Données locales</div>
+                  <div style="font-size:0.72rem;color:#7f8c8d;margin-top:3px;">${fmtDate(cur.savedAt)}</div>
+                  <div style="font-size:0.7rem;color:#aaa;margin-top:2px;">${_gdFormatSize(currentRaw)}</div>
+                </div>
+                <div style="background:#e8f4fd;border-radius:8px;padding:10px 12px;border-left:4px solid #1565c0;">
+                  <div style="font-size:0.68rem;text-transform:uppercase;color:#1565c0;font-weight:700;margin-bottom:4px;">☁️ Sauvegarde Drive</div>
+                  <div style="font-size:0.75rem;font-weight:600;color:var(--text-main);word-break:break-all;">${newFileName}</div>
+                  <div style="font-size:0.72rem;color:#1565c0;margin-top:3px;">${fmtDate(nw.savedAt)}</div>
+                  <div style="font-size:0.7rem;color:#5d9cec;margin-top:2px;">${_gdFormatSize(newRaw)}</div>
+                </div>
+              </div>
+              <!-- Tableau comparatif -->
+              <table style="width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;border:1px solid var(--border-color,#e0e0e0);">
+                <thead>
+                  <tr style="background:var(--input-bg,#f0f0f0);">
+                    <th style="padding:8px 10px;text-align:left;font-size:0.75rem;color:#7f8c8d;font-weight:700;">Données</th>
+                    <th style="padding:8px 10px;text-align:center;font-size:0.75rem;color:#7f8c8d;font-weight:700;">💾 Actuel</th>
+                    <th style="padding:8px 10px;text-align:center;font-size:0.75rem;color:#1565c0;font-weight:700;">☁️ Drive</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${row('📦 Produits',            cur.prods,   nw.prods)}
+                  ${row('🧾 Tickets',             cur.tickets, nw.tickets)}
+                  ${row('💰 CA validé (€)',       cur.validCA.toFixed(2), nw.validCA.toFixed(2))}
+                  ${row('↩️ Retours clients',     cur.retours, nw.retours)}
+                  ${row('📦 Retours fournisseur', cur.marc,    nw.marc)}
+                  ${row('💼 Investissements',     cur.inv,     nw.inv)}
+                </tbody>
+              </table>
+              <div style="margin-top:12px;padding:10px 12px;background:#fff3cd;border:1.5px solid #ffc107;border-radius:8px;font-size:0.8rem;color:#856404;">
+                ⚠️ La restauration remplacera <strong>toutes les données locales</strong> de façon irréversible.
+              </div>
+            </div>
+            <!-- Footer -->
+            <div style="padding:12px 20px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:10px;flex-shrink:0;">
+              <button onclick="document.getElementById('gdrive-compare-modal').remove()" style="flex:1;padding:10px;background:none;border:1.5px solid #aaa;border-radius:8px;cursor:pointer;font-weight:700;color:#7f8c8d;font-size:0.88rem;">✖ Annuler</button>
+              <button onclick="_gdConfirmRestoreFromChip()" style="flex:2;padding:10px;background:linear-gradient(135deg,#1565c0,#0d47a1);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.88rem;">✅ Restaurer depuis Drive</button>
+            </div>
+          </div>
+        </div>`;
+
+        // Supprimer l'ancienne modale si présente et injecter
+        const old = document.getElementById('gdrive-compare-modal');
+        if (old) old.remove();
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    window._gdConfirmRestoreFromChip = async function() {
+        const modal = document.getElementById('gdrive-compare-modal');
+        if (modal) modal.remove();
         await _gdApplyRestore(_gdLastDetectedFileData, _gdLastDetectedFileName);
     };
 
