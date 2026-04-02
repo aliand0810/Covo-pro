@@ -4717,6 +4717,10 @@
                     <button class="admin-welcome-btn btn-cashier" onclick="switchToCashierMode()">
                         💼 Mode Caissier
                     </button>
+                    <button id="aw-history-btn" class="admin-welcome-btn" onclick="_openLoginHistory()"
+                        style="display:none;background:linear-gradient(135deg,#6d28d9,#4c1d95);border:none;">
+                        📋 Historique connexions
+                    </button>
                     <button class="admin-welcome-btn btn-close" onclick="closeAdminWelcomeModal()">
                         ✖ Fermer
                     </button>
@@ -4795,6 +4799,37 @@
             <div id="qmsg-inbox-list" style="display:flex;flex-direction:column;gap:10px;"></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ===== MODALE HISTORIQUE CONNEXIONS (Admin-Développeur uniquement) ===== -->
+    <div id="login-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:20500;justify-content:center;align-items:center;">
+      <div style="background:var(--bg-card,#fff);border-radius:16px;width:95%;max-width:660px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
+        <div style="background:linear-gradient(135deg,#4c1d95,#6d28d9);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+          <div>
+            <div style="color:white;font-weight:800;font-size:1rem;">📋 Historique des connexions</div>
+            <div style="color:rgba(255,255,255,0.7);font-size:0.72rem;margin-top:1px;">Accessible uniquement : Admin-Développeur</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button onclick="_clearLoginHistory()" style="background:rgba(231,76,60,0.8);border:none;color:white;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:700;">🗑️ Effacer</button>
+            <button onclick="document.getElementById('login-history-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+          </div>
+        </div>
+        <!-- Filtres -->
+        <div style="padding:10px 16px;border-bottom:1px solid var(--border-color,#eee);display:flex;gap:8px;flex-wrap:wrap;background:var(--input-bg,#f8f9fa);flex-shrink:0;">
+          <input id="hist-search" type="text" placeholder="🔍 Rechercher…" oninput="_renderHistory()"
+            style="flex:1;min-width:120px;padding:6px 10px;border-radius:8px;border:1.5px solid var(--border-color,#ddd);background:var(--bg-card,#fff);color:var(--text-main,#333);font-size:0.82rem;">
+          <select id="hist-filter-role" onchange="_renderHistory()" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--border-color,#ddd);background:var(--bg-card,#fff);color:var(--text-main,#333);font-size:0.82rem;">
+            <option value="all">Tous les rôles</option>
+            <option value="admin">👑 Admin</option>
+            <option value="caissier">💼 Caissier</option>
+            <option value="master">🛠️ Admin-Développeur</option>
+          </select>
+        </div>
+        <!-- Stats rapides -->
+        <div id="hist-stats" style="padding:10px 16px;border-bottom:1px solid var(--border-color,#eee);display:flex;gap:16px;flex-wrap:wrap;font-size:0.78rem;color:var(--gray,#666);flex-shrink:0;background:var(--bg-card,#fff);"></div>
+        <!-- Liste -->
+        <div id="hist-list" style="overflow-y:auto;flex:1;padding:12px 16px;display:flex;flex-direction:column;gap:6px;"></div>
       </div>
     </div>
 
@@ -5835,6 +5870,22 @@ function toggleInfoSection(headerElement) {
             isAdmin = user.role === 'admin';
             localStorage.setItem('covo_current_user', JSON.stringify(currentUser));
 
+            // ── Enregistrer l'historique de connexion ──────────────────
+            try {
+                const HIST_KEY = 'covo_login_history';
+                const hist = JSON.parse(localStorage.getItem(HIST_KEY) || '[]');
+                hist.unshift({
+                    date:     new Date().toISOString(),
+                    userId:   user.id,
+                    username: user.username,
+                    role:     user.role,
+                    isMaster: !!user.isMaster,
+                    device:   navigator.userAgent.slice(0,80)
+                });
+                // Garder les 200 dernières entrées
+                localStorage.setItem(HIST_KEY, JSON.stringify(hist.slice(0, 200)));
+            } catch(e) {}
+
             // Charger les permissions spécifiques à l'utilisateur
             if (user.role === 'caissier') {
                 const userPerms = user.permissions || DEFAULT_USER_PERMS();
@@ -5957,6 +6008,9 @@ function toggleInfoSection(headerElement) {
         _awRenderMsgList();
         // --- État panels (ordre + visibilité) ---
         _awApplyState();
+        // --- Bouton historique (master seulement) ---
+        const histBtn = document.getElementById('aw-history-btn');
+        if (histBtn) histBtn.style.display = (currentUser && currentUser.isMaster) ? '' : 'none';
 
         modal.classList.add('active');
     }
@@ -6955,6 +7009,88 @@ function toggleInfoSection(headerElement) {
     }
     document.addEventListener('DOMContentLoaded', () => { _qmsgUpdateHeaderDot(); });
     setInterval(_qmsgUpdateHeaderDot, 15000);
+
+    // =========================================================================
+    // ===== HISTORIQUE CONNEXIONS (Admin-Développeur) ==========================
+    // =========================================================================
+    const HIST_KEY = 'covo_login_history';
+
+    window._openLoginHistory = function() {
+        const modal = document.getElementById('login-history-modal');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        _renderHistory();
+    };
+
+    window._clearLoginHistory = function() {
+        if (!confirm('Effacer tout l\'historique de connexion ?')) return;
+        localStorage.removeItem(HIST_KEY);
+        _renderHistory();
+    };
+
+    window._renderHistory = function() {
+        const hist    = JSON.parse(localStorage.getItem(HIST_KEY) || '[]');
+        const search  = (document.getElementById('hist-search')?.value || '').toLowerCase();
+        const roleF   = document.getElementById('hist-filter-role')?.value || 'all';
+        const listEl  = document.getElementById('hist-list');
+        const statsEl = document.getElementById('hist-stats');
+        if (!listEl) return;
+
+        // Stats
+        const totalAdmin    = hist.filter(h => h.role === 'admin' && !h.isMaster).length;
+        const totalCaissier = hist.filter(h => h.role === 'caissier').length;
+        const totalMaster   = hist.filter(h => h.isMaster).length;
+        if (statsEl) {
+            statsEl.innerHTML = `
+                <span>📊 Total : <strong>${hist.length}</strong></span>
+                <span>👑 Admin : <strong>${totalAdmin}</strong></span>
+                <span>💼 Caissier : <strong>${totalCaissier}</strong></span>
+                <span>🛠️ Développeur : <strong>${totalMaster}</strong></span>`;
+        }
+
+        // Filtrage
+        const filtered = hist.filter(h => {
+            const matchRole = roleF === 'all'
+                || (roleF === 'master' && h.isMaster)
+                || (roleF === 'admin' && h.role === 'admin' && !h.isMaster)
+                || (roleF === 'caissier' && h.role === 'caissier');
+            const matchSearch = !search
+                || h.username.toLowerCase().includes(search)
+                || h.userId.toLowerCase().includes(search);
+            return matchRole && matchSearch;
+        });
+
+        listEl.innerHTML = '';
+        if (!filtered.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray,#999);">📭 Aucune entrée</div>';
+            return;
+        }
+
+        filtered.forEach(function(h) {
+            const d    = new Date(h.date);
+            const dateStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'})
+                + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+            const icon = h.isMaster ? '🛠️' : h.role === 'admin' ? '👑' : '💼';
+            const bgBorder = h.isMaster ? 'border-left:4px solid #6d28d9;background:linear-gradient(90deg,rgba(109,40,217,0.05),transparent);'
+                : h.role === 'admin' ? 'border-left:4px solid #f39c12;background:linear-gradient(90deg,rgba(243,156,18,0.05),transparent);'
+                : 'border-left:4px solid #3498db;background:linear-gradient(90deg,rgba(52,152,219,0.04),transparent);';
+
+            var row = document.createElement('div');
+            row.style.cssText = 'padding:10px 12px;border-radius:8px;border:1px solid var(--border-color,#e8e8e8);'+bgBorder+'display:flex;align-items:center;gap:12px;';
+            row.innerHTML = `
+                <div style="font-size:1.3rem;flex-shrink:0;">${icon}</div>
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);">${_esc(h.username)}</div>
+                    <div style="font-size:0.72rem;color:var(--gray,#666);margin-top:2px;">
+                        ${h.role}${h.isMaster?' · Admin-Développeur':''} &nbsp;·&nbsp; ID : ${_esc(h.userId)}
+                    </div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-size:0.8rem;font-weight:600;color:var(--text-main,#2c3e50);">${dateStr}</div>
+                </div>`;
+            listEl.appendChild(row);
+        });
+    };
 
     // =========================================================================
     // ===== PANELS DRAGGABLES FENÊTRE BIENVENUE ADMIN =========================
