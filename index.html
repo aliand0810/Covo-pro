@@ -1852,7 +1852,7 @@
             background: linear-gradient(135deg, #1565c0, #0d47a1);
             color: white; font-size: 1.8rem;
             box-shadow: 0 4px 20px rgba(21,101,192,0.5); z-index: 9800; cursor: pointer;
-            display: flex; justify-content: center; align-items: center;
+            display: none; justify-content: center; align-items: center;
             transition: transform 0.2s; border: 3px solid white;
             user-select: none;
         }
@@ -1868,12 +1868,15 @@
             50% { box-shadow: 0 6px 32px rgba(231,76,60,1); transform: scale(1.1); background: linear-gradient(135deg,#c0392b,#e74c3c); }
         }
         #fab-msg-badge {
-            position: absolute; top: -6px; right: -6px;
-            background: #e74c3c; color: white; font-size: 0.72rem;
-            min-width: 22px; height: 22px; border-radius: 11px;
-            font-weight: 800; box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-            display: none; text-align: center; line-height: 22px; padding: 0 5px;
-            border: 2px solid white;
+            position: absolute; top: -8px; right: -8px;
+            background: #e74c3c; color: white;
+            font-size: 0.78rem; font-weight: 900;
+            min-width: 24px; height: 24px; border-radius: 12px;
+            line-height: 24px; text-align: center; padding: 0 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            display: none;
+            border: 2.5px solid white;
+            box-sizing: border-box;
         }
         #fab-msg-badge.urgent-badge {
             background: linear-gradient(135deg,#f39c12,#e67e22);
@@ -1881,7 +1884,7 @@
         }
         @keyframes urgentBadgePulse {
             0%,100% { transform: scale(1); }
-            50% { transform: scale(1.2); }
+            50% { transform: scale(1.25); }
         }
         /* Badge réponse sur les messages dans l'inbox */
         .msg-reply-badge {
@@ -2881,6 +2884,7 @@
         <div class="tabs">
             <button class="tab active" onclick="switchTab('products')">📦 Produits</button>
             <button class="tab" onclick="switchTab('stats')" id="tab-btn-stats">📊 Statistiques</button>
+            <button class="tab" onclick="switchTab('workhours')" id="tab-btn-workhours">⏱️ Heures travail</button>
             <button class="tab" onclick="switchTab('predictions')" id="tab-btn-predictions">☂ Prédictions</button>
             <button class="tab tab-gestion" onclick="switchTab('retours')" id="tab-btn-retours">
                 <span class="tab-gestion-main">🗂️ Gestion</span>
@@ -3019,6 +3023,52 @@
             </div>
         </div>
         
+        <!-- ===== ONGLET HEURES DE TRAVAIL ===== -->
+        <div class="tab-content" id="tab-workhours" style="display:none;">
+            <!-- Sélecteur période -->
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+                <span style="font-weight:700;font-size:0.9rem;color:var(--text-main,#2c3e50);">⏱️ Contrôle des heures de travail</span>
+                <select id="wh-year" onchange="renderWorkHours()" style="padding:7px 12px;border-radius:8px;border:2px solid var(--border-color,#e0e0e0);background:var(--bg-card,#fff);color:var(--text-main);font-size:0.85rem;cursor:pointer;"></select>
+                <select id="wh-month" onchange="renderWorkHours()" style="padding:7px 12px;border-radius:8px;border:2px solid var(--border-color,#e0e0e0);background:var(--bg-card,#fff);color:var(--text-main);font-size:0.85rem;cursor:pointer;">
+                    <option value="-1">📅 Tous les mois</option>
+                    <option value="0">Janvier</option><option value="1">Février</option>
+                    <option value="2">Mars</option><option value="3">Avril</option>
+                    <option value="4">Mai</option><option value="5">Juin</option>
+                    <option value="6">Juillet</option><option value="7">Août</option>
+                    <option value="8">Septembre</option><option value="9">Octobre</option>
+                    <option value="10">Novembre</option><option value="11">Décembre</option>
+                </select>
+                <select id="wh-cashier" onchange="renderWorkHours()" style="padding:7px 12px;border-radius:8px;border:2px solid var(--border-color,#e0e0e0);background:var(--bg-card,#fff);color:var(--text-main);font-size:0.85rem;cursor:pointer;">
+                    <option value="all">👥 Tous les caissiers</option>
+                </select>
+            </div>
+
+            <!-- KPIs -->
+            <div id="wh-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;"></div>
+
+            <!-- Courbe hebdomadaire -->
+            <div style="background:var(--bg-card,#fff);border-radius:14px;padding:16px 20px;margin-bottom:16px;border:1px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);margin-bottom:14px;">📈 Moyenne hebdomadaire — tickets/heure par semaine</div>
+                <div style="position:relative;height:220px;overflow:hidden;">
+                    <canvas id="wh-weekly-chart" style="width:100%;height:100%;"></canvas>
+                </div>
+            </div>
+
+            <!-- Fréquentation mensuelle -->
+            <div style="background:var(--bg-card,#fff);border-radius:14px;padding:16px 20px;margin-bottom:16px;border:1px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);margin-bottom:14px;">📅 Fréquentation mensuelle — tickets par jour</div>
+                <div style="position:relative;height:200px;overflow:hidden;">
+                    <canvas id="wh-monthly-chart" style="width:100%;height:100%;"></canvas>
+                </div>
+            </div>
+
+            <!-- Tableau journalier -->
+            <div style="background:var(--bg-card,#fff);border-radius:14px;padding:16px 20px;border:1px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);margin-bottom:12px;">📋 Détail journalier</div>
+                <div id="wh-daily-table" style="overflow-x:auto;"></div>
+            </div>
+        </div>
+
         <div class="tab-content" id="tab-predictions">
             <div class="prediction-card">
                 <h3>☔ Prédictions de stock</h3>
@@ -4155,9 +4205,9 @@
     <!-- FAB MESSAGERIE -->
     <div id="fab-msg"
         onclick="(function(){try{if(typeof window._quickMsgOpen==='function'){window._quickMsgOpen();}else{var m=document.getElementById('quick-msg-modal');if(m)m.style.display='flex';}}catch(e){var m=document.getElementById('quick-msg-modal');if(m)m.style.display='flex';}})()"
-        title="Messages" style="cursor:pointer;display:none;">
+        title="Messages" style="cursor:pointer;display:none;position:fixed;bottom:30px;left:30px;width:65px;height:65px;border-radius:50%;background:linear-gradient(135deg,#1565c0,#0d47a1);color:white;font-size:1.8rem;box-shadow:0 4px 20px rgba(21,101,192,0.5);z-index:9800;justify-content:center;align-items:center;border:3px solid white;user-select:none;">
         💬
-        <div id="fab-msg-badge" style="display:none;"></div>
+        <span id="fab-msg-badge" style="display:none;position:absolute;top:-8px;right:-8px;background:#e74c3c;color:white;font-size:0.78rem;font-weight:900;min-width:24px;height:24px;border-radius:12px;line-height:24px;text-align:center;padding:0 6px;box-shadow:0 2px 8px rgba(0,0,0,0.4);border:2.5px solid white;box-sizing:border-box;"></span>
     </div>
 
     <div id="cashier-edit-modal">
@@ -5688,6 +5738,10 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
             if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
             if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
+            if (data.covo_messages)      localStorage.setItem('covo_messages',      JSON.stringify(data.covo_messages));
+            if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
+            if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
+            if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
             if (typeof refreshRetours === 'function') setTimeout(() => refreshRetours(), 200);
             // Sync localStorage principal
             localStorage.setItem('covo_products',      JSON.stringify(products));
@@ -5884,6 +5938,8 @@ function toggleInfoSection(headerElement) {
                 });
                 // Garder les 200 dernières entrées
                 localStorage.setItem(HIST_KEY, JSON.stringify(hist.slice(0, 200)));
+                // Synchroniser vers Drive
+                if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
             } catch(e) {}
 
             // Charger les permissions spécifiques à l'utilisateur
@@ -5904,7 +5960,7 @@ function toggleInfoSection(headerElement) {
             maybeEnterFullscreenOnLogin();
             if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
             const _fabMsg = document.getElementById('fab-msg');
-            if (_fabMsg) _fabMsg.style.display = '';
+            if (_fabMsg) _fabMsg.style.display = 'flex';
 
             // Si c'est un admin, afficher la fenêtre d'accueil admin
             if (user.role === 'admin') {
@@ -6190,6 +6246,14 @@ function toggleInfoSection(headerElement) {
         // Achats investissements
         const rpInvEl = document.getElementById('rp-investissements');
         if (rpInvEl) rpInvEl.textContent = nbInv + ' achat(s)';
+
+        // Messages et historique connexion dans le récap
+        const nbMsgs = (data.covo_messages || []).length;
+        const nbHist = (data.covo_login_history || []).length;
+        const rpMsgEl  = document.getElementById('rp-messages');
+        const rpHistEl = document.getElementById('rp-login-history');
+        if (rpMsgEl)  rpMsgEl.textContent  = nbMsgs + ' message(s)';
+        if (rpHistEl) rpHistEl.textContent = nbHist + ' entrée(s)';
 
         _rpPendingCallback = onConfirm;
         modal.classList.add('active');
@@ -6896,6 +6960,331 @@ function toggleInfoSection(headerElement) {
         try { _qmsgUpdateHeaderDot(); } catch(e) {}
     }
     window._qmsgRefreshInbox = _qmsgRefreshInbox;
+
+    // =========================================================================
+    // ===== MODULE HEURES DE TRAVAIL ==========================================
+    // =========================================================================
+
+    let _whChartWeekly  = null;
+    let _whChartMonthly = null;
+
+    function _whInit() {
+        // Peupler les années
+        const yearSel = document.getElementById('wh-year');
+        if (!yearSel) return;
+        const years = new Set();
+        salesHistory.forEach(s => { if (s.date) years.add(new Date(s.date).getFullYear()); });
+        if (!years.size) years.add(new Date().getFullYear());
+        const curYear = new Date().getFullYear();
+        yearSel.innerHTML = [...years].sort((a,b)=>b-a).map(y =>
+            `<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`
+        ).join('');
+
+        // Peupler caissiers
+        const cSel = document.getElementById('wh-cashier');
+        if (cSel) {
+            cSel.innerHTML = '<option value="all">👥 Tous les caissiers</option>';
+            users.filter(u => u.role === 'caissier').forEach(u => {
+                cSel.innerHTML += `<option value="${u.id}">💼 ${u.username}</option>`;
+            });
+        }
+
+        // Mois courant par défaut
+        const mSel = document.getElementById('wh-month');
+        if (mSel) mSel.value = new Date().getMonth();
+    }
+
+    window.renderWorkHours = function() {
+        const year   = parseInt(document.getElementById('wh-year')?.value  || new Date().getFullYear());
+        const month  = parseInt(document.getElementById('wh-month')?.value ?? -1);
+        const cashier= document.getElementById('wh-cashier')?.value || 'all';
+
+        // Filtrer les ventes
+        let sales = salesHistory.filter(s => {
+            if (!s.date || s.cancelled) return false;
+            const d = new Date(s.date);
+            if (d.getFullYear() !== year) return false;
+            if (month >= 0 && d.getMonth() !== month) return false;
+            if (cashier !== 'all' && s.cashier !== cashier && s.userId !== cashier) return false;
+            return true;
+        });
+
+        // ── Grouper par jour ─────────────────────────────────────────
+        const byDay = {};
+        sales.forEach(s => {
+            const d   = new Date(s.date);
+            const key = d.toISOString().split('T')[0];
+            if (!byDay[key]) byDay[key] = { tickets: 0, ca: 0, hours: new Set(), items: 0 };
+            byDay[key].tickets++;
+            byDay[key].ca += parseFloat(s.total || 0);
+            byDay[key].hours.add(d.getHours());
+            byDay[key].items += (s.items || []).length;
+        });
+
+        const days = Object.keys(byDay).sort();
+
+        // ── KPIs ──────────────────────────────────────────────────────
+        const totalTickets = sales.length;
+        const totalDays    = days.length;
+        const avgPerDay    = totalDays ? (totalTickets / totalDays).toFixed(1) : 0;
+        const totalCA      = sales.reduce((s,t) => s + parseFloat(t.total||0), 0);
+        const avgCADay     = totalDays ? (totalCA / totalDays).toFixed(2) : 0;
+
+        // Heure de pointe
+        const hourCount = {};
+        sales.forEach(s => {
+            const h = new Date(s.date).getHours();
+            hourCount[h] = (hourCount[h] || 0) + 1;
+        });
+        const peakHour = Object.entries(hourCount).sort((a,b)=>b[1]-a[1])[0];
+
+        const kpis = document.getElementById('wh-kpis');
+        if (kpis) {
+            const card = (icon, val, lbl, color) =>
+                `<div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px;border:1px solid var(--border-color,#e0e0e0);box-shadow:0 2px 6px rgba(0,0,0,0.05);text-align:center;">
+                    <div style="font-size:1.6rem;margin-bottom:4px;">${icon}</div>
+                    <div style="font-size:1.3rem;font-weight:900;color:${color};">${val}</div>
+                    <div style="font-size:0.72rem;color:var(--gray,#888);margin-top:2px;">${lbl}</div>
+                </div>`;
+            kpis.innerHTML =
+                card('🎫', totalTickets, 'Total tickets', '#1a73e8') +
+                card('📅', totalDays, 'Jours travaillés', '#27ae60') +
+                card('📊', avgPerDay, 'Moy. tickets/jour', '#9b59b6') +
+                card('💰', totalCA.toFixed(2)+' €', 'CA total', '#e67e22') +
+                card('💵', avgCADay+' €', 'CA moy./jour', '#16a085') +
+                card('⏰', peakHour ? peakHour[0]+'h ('+peakHour[1]+')' : '—', 'Heure de pointe', '#e74c3c');
+        }
+
+        // ── Courbe hebdomadaire ───────────────────────────────────────
+        _whDrawWeekly(days, byDay, year, month);
+
+        // ── Histogramme mensuel (fréquentation par jour) ──────────────
+        _whDrawMonthly(days, byDay, year, month);
+
+        // ── Tableau journalier ────────────────────────────────────────
+        _whDrawTable(days, byDay);
+    };
+
+    function _whDrawWeekly(days, byDay, year, month) {
+        const canvas = document.getElementById('wh-weekly-chart');
+        if (!canvas) return;
+
+        // Regrouper par semaine ISO
+        const byWeek = {};
+        days.forEach(day => {
+            const d   = new Date(day);
+            const wk  = _whGetWeek(d);
+            const key = wk.year + '-W' + String(wk.week).padStart(2,'0');
+            if (!byWeek[key]) byWeek[key] = { tickets:0, days:0 };
+            byWeek[key].tickets += byDay[day].tickets;
+            byWeek[key].days++;
+        });
+
+        const weeks   = Object.keys(byWeek).sort();
+        const labels  = weeks.map(w => w.replace('-W','\nS'));
+        const avgData = weeks.map(w => +(byWeek[w].tickets / byWeek[w].days).toFixed(2));
+        const totalData = weeks.map(w => byWeek[w].tickets);
+
+        _whDrawLineChart(canvas, labels, avgData, totalData,
+            'Moy. tickets/jour', 'Total tickets', '#1a73e8', '#27ae60');
+    }
+
+    function _whDrawMonthly(days, byDay, year, month) {
+        const canvas = document.getElementById('wh-monthly-chart');
+        if (!canvas) return;
+
+        let labels, data;
+        if (month >= 0) {
+            // Vue par jour du mois
+            const daysInMonth = new Date(year, month+1, 0).getDate();
+            labels = Array.from({length: daysInMonth}, (_,i) => String(i+1));
+            data   = labels.map(d => {
+                const key = year+'-'+String(month+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+                return byDay[key] ? byDay[key].tickets : 0;
+            });
+        } else {
+            // Vue par mois de l'année
+            const MONTHS = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
+            labels = MONTHS;
+            data   = MONTHS.map((_, mi) => {
+                return days.filter(d => new Date(d).getMonth() === mi)
+                    .reduce((sum, d) => sum + byDay[d].tickets, 0);
+            });
+        }
+
+        _whDrawBarChart(canvas, labels, data, '#9b59b6');
+    }
+
+    function _whDrawTable(days, byDay) {
+        const el = document.getElementById('wh-daily-table');
+        if (!el) return;
+        if (!days.length) { el.innerHTML = '<p style="text-align:center;color:var(--gray,#999);padding:20px;">📭 Aucune donnée</p>'; return; }
+
+        const JOURS = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+        el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+            <thead>
+                <tr style="background:var(--input-bg,#f0f4f8);">
+                    <th style="padding:8px 10px;text-align:left;border-bottom:2px solid var(--border-color,#ddd);">📅 Date</th>
+                    <th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-color,#ddd);">🎫 Tickets</th>
+                    <th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-color,#ddd);">💰 CA</th>
+                    <th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-color,#ddd);">⏰ Heures actives</th>
+                    <th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-color,#ddd);">📦 Articles</th>
+                    <th style="padding:8px 10px;text-align:center;border-bottom:2px solid var(--border-color,#ddd);">💵 Moy./ticket</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${days.slice().reverse().map((day, i) => {
+                    const d  = byDay[day];
+                    const dt = new Date(day);
+                    const dayName = JOURS[dt.getDay()];
+                    const dateStr = dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+                    const avgTicket = (d.ca / d.tickets).toFixed(2);
+                    const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+                    const row = i % 2 === 0 ? 'var(--bg-card,#fff)' : 'var(--input-bg,#f8f9fa)';
+                    return `<tr style="background:${row}${isWeekend?';opacity:0.7':''}">
+                        <td style="padding:8px 10px;font-weight:600;color:${isWeekend?'#e67e22':'var(--text-main)'};">${dayName} ${dateStr}</td>
+                        <td style="padding:8px 10px;text-align:center;font-weight:700;color:#1a73e8;">${d.tickets}</td>
+                        <td style="padding:8px 10px;text-align:center;color:#27ae60;font-weight:600;">${d.ca.toFixed(2)} €</td>
+                        <td style="padding:8px 10px;text-align:center;color:#9b59b6;">${d.hours.size}h</td>
+                        <td style="padding:8px 10px;text-align:center;color:#e67e22;">${d.items}</td>
+                        <td style="padding:8px 10px;text-align:center;color:#16a085;">${avgTicket} €</td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
+    }
+
+    // ── Rendu canvas ligne ────────────────────────────────────────────
+    function _whDrawLineChart(canvas, labels, data1, data2, lbl1, lbl2, col1, col2) {
+        const ctx = canvas.getContext('2d');
+        const W = canvas.offsetWidth || 600;
+        const H = canvas.offsetHeight || 220;
+        canvas.width = W; canvas.height = H;
+        ctx.clearRect(0,0,W,H);
+
+        const PAD = {top:20, right:20, bottom:40, left:40};
+        const CW = W - PAD.left - PAD.right;
+        const CH = H - PAD.top - PAD.bottom;
+        const n  = labels.length;
+        if (!n) return;
+
+        const max1 = Math.max(...data1, 1);
+        const max2 = Math.max(...data2, 1);
+
+        // Grille
+        ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 1;
+        for (let i=0;i<=4;i++) {
+            const y = PAD.top + (CH * i / 4);
+            ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left+CW, y); ctx.stroke();
+        }
+
+        const drawLine = (data, maxV, color, fill) => {
+            if (!data.length) return;
+            const pts = data.map((v,i) => ({x: PAD.left + (n===1?CW/2:i*(CW/(n-1))), y: PAD.top + CH - (v/maxV)*CH}));
+            // Zone remplie
+            if (fill) {
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, PAD.top+CH);
+                pts.forEach(p => ctx.lineTo(p.x, p.y));
+                ctx.lineTo(pts[pts.length-1].x, PAD.top+CH);
+                ctx.closePath();
+                ctx.fillStyle = color.replace(')',',0.08)').replace('rgb','rgba');
+                ctx.fill();
+            }
+            // Ligne
+            ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin='round';
+            pts.forEach((p,i) => i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
+            ctx.stroke();
+            // Points
+            pts.forEach(p => {
+                ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2);
+                ctx.fillStyle = color; ctx.fill();
+                ctx.strokeStyle='white'; ctx.lineWidth=1.5; ctx.stroke();
+            });
+        };
+
+        drawLine(data2.map(v=>v/max2*max1), max1, col2, false);
+        drawLine(data1, max1, col1, true);
+
+        // Labels X
+        ctx.fillStyle = 'var(--gray,#888)'; ctx.font = '10px sans-serif'; ctx.textAlign='center';
+        labels.forEach((lbl,i) => {
+            const x = PAD.left + (n===1?CW/2:i*(CW/(n-1)));
+            ctx.fillText(lbl.split('\n')[0], x, H-PAD.bottom+14);
+        });
+
+        // Légende
+        ctx.font = '11px sans-serif'; ctx.textAlign='left';
+        ctx.fillStyle=col1; ctx.fillRect(PAD.left,5,12,6);
+        ctx.fillStyle='var(--text-main,#333)'; ctx.fillText(lbl1, PAD.left+16, 13);
+        ctx.fillStyle=col2; ctx.fillRect(PAD.left+150,5,12,6);
+        ctx.fillStyle='var(--text-main,#333)'; ctx.fillText(lbl2, PAD.left+166, 13);
+    }
+
+    // ── Rendu canvas barres ───────────────────────────────────────────
+    function _whDrawBarChart(canvas, labels, data, color) {
+        const ctx = canvas.getContext('2d');
+        const W = canvas.offsetWidth || 600;
+        const H = canvas.offsetHeight || 200;
+        canvas.width = W; canvas.height = H;
+        ctx.clearRect(0,0,W,H);
+
+        const PAD = {top:16, right:10, bottom:36, left:36};
+        const CW = W - PAD.left - PAD.right;
+        const CH = H - PAD.top - PAD.bottom;
+        const n  = labels.length;
+        const max = Math.max(...data, 1);
+        const bw  = Math.max(4, (CW/n) - 4);
+
+        // Grille
+        ctx.strokeStyle='rgba(0,0,0,0.06)'; ctx.lineWidth=1;
+        for (let i=0;i<=4;i++) {
+            const y = PAD.top + CH*i/4;
+            ctx.beginPath(); ctx.moveTo(PAD.left,y); ctx.lineTo(PAD.left+CW,y); ctx.stroke();
+            ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.font='9px sans-serif'; ctx.textAlign='right';
+            ctx.fillText(Math.round(max*(4-i)/4), PAD.left-3, y+3);
+        }
+
+        // Barres
+        labels.forEach((lbl,i) => {
+            const x = PAD.left + i*(CW/n) + (CW/n - bw)/2;
+            const bh = (data[i]/max)*CH;
+            const y  = PAD.top + CH - bh;
+            const alpha = data[i]>0 ? 0.85 : 0.15;
+            ctx.fillStyle = color.replace(')',`,${alpha})`).replace('#',`rgba(`).replace('#','');
+            // Convertir hex en rgba
+            const hex = color.replace('#','');
+            const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+            ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+            const radius = Math.min(4, bh/2);
+            ctx.beginPath();
+            ctx.moveTo(x+radius, y);
+            ctx.lineTo(x+bw-radius, y);
+            ctx.quadraticCurveTo(x+bw, y, x+bw, y+radius);
+            ctx.lineTo(x+bw, y+bh);
+            ctx.lineTo(x, y+bh);
+            ctx.lineTo(x, y+radius);
+            ctx.quadraticCurveTo(x, y, x+radius, y);
+            ctx.closePath();
+            ctx.fill();
+            // Label X
+            ctx.fillStyle='var(--gray,#888)'; ctx.font='9px sans-serif'; ctx.textAlign='center';
+            ctx.fillText(lbl, x+bw/2, H-PAD.bottom+12);
+            // Valeur
+            if (data[i]>0) {
+                ctx.fillStyle=`rgba(${r},${g},${b},0.9)`; ctx.font='bold 9px sans-serif';
+                ctx.fillText(data[i], x+bw/2, y-3);
+            }
+        });
+    }
+
+    // ── Numéro de semaine ISO ─────────────────────────────────────────
+    function _whGetWeek(d) {
+        const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+        date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay()||7));
+        const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+        return { year: date.getUTCFullYear(), week: Math.ceil(((date-yearStart)/86400000+1)/7) };
+    }
 
     // Helper échappement HTML
     function _esc(str) {
@@ -7973,6 +8362,7 @@ function toggleInfoSection(headerElement) {
         if (tabName === 'predictions') renderPredictions();
         if (tabName === 'retours') refreshRetours();
         if (tabName === 'historique') { window._histTimeFilter = 'all'; renderCashierHistory(); }
+        if (tabName === 'workhours') { _whInit(); renderWorkHours(); }
     }
 
     // ===== RECHERCHE =====
@@ -11187,7 +11577,14 @@ logout = function(skipConfirmation = false) {
             // ===== MODULE INVESTISSEMENTS =====
             covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
             covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
-            covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]')
+            covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
+            // ===== MESSAGES + HISTORIQUE + RÉGLAGES =====
+            covo_messages:      JSON.parse(localStorage.getItem('covo_messages')      || '[]'),
+            covo_login_history: JSON.parse(localStorage.getItem('covo_login_history') || '[]'),
+            covo_settings:      JSON.parse(localStorage.getItem('covo_settings')      || '{}'),
+            covo_aw_panels:     localStorage.getItem('covo_aw_panels') || null,
+            _version: 18,
+            _savedAt: new Date().toISOString()
         }, null, 2);
 
         const saved = await saveFileToSelectedFolder(filename, content, 'application/json');
@@ -11244,6 +11641,10 @@ logout = function(skipConfirmation = false) {
             if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
             if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
             if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
+            if (data.covo_messages)      localStorage.setItem('covo_messages',      JSON.stringify(data.covo_messages));
+            if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
+            if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
+            if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
             saveAll(); renderAll();
             if (typeof renderCatalogueTab === 'function')   renderCatalogueTab();
             if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
@@ -11439,6 +11840,10 @@ logout = function(skipConfirmation = false) {
                 if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
                 if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
                 if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
+            if (data.covo_messages)      localStorage.setItem('covo_messages',      JSON.stringify(data.covo_messages));
+            if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
+            if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
+            if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
                 saveAll();
                 renderAll();
                 closeImportModal();
@@ -13225,6 +13630,14 @@ logout = function(skipConfirmation = false) {
                 <div class="rp-stat" style="grid-column:1/-1;background:rgba(155,89,182,0.1);border:1.5px solid rgba(155,89,182,0.3);">
                     <div class="rp-val" id="rp-investissements" style="color:#9b59b6;">-</div>
                     <div class="rp-lbl">💼 Achats / Investissements</div>
+                </div>
+                <div class="rp-stat" style="background:rgba(26,115,232,0.08);border:1.5px solid rgba(26,115,232,0.25);">
+                    <div class="rp-val" id="rp-messages" style="color:#1a73e8;">-</div>
+                    <div class="rp-lbl">💬 Messages</div>
+                </div>
+                <div class="rp-stat" style="background:rgba(109,40,217,0.08);border:1.5px solid rgba(109,40,217,0.25);">
+                    <div class="rp-val" id="rp-login-history" style="color:#6d28d9;">-</div>
+                    <div class="rp-lbl">📋 Historique connexions</div>
                 </div>
             </div>
             <div class="rp-warn">⚠️ Cette action remplacera <strong>toutes les données locales</strong> de façon irréversible.</div>
@@ -17884,7 +18297,12 @@ function initAdminSections() {
                 covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
                 covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
                 covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
-                _version: 17,
+                // ===== NOUVEAU : Messages + Historique connexions + Réglages =====
+                covo_messages:       JSON.parse(localStorage.getItem('covo_messages')       || '[]'),
+                covo_login_history:  JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
+                covo_settings:       JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
+                covo_aw_panels:      localStorage.getItem('covo_aw_panels') || null,
+                _version: 18,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
                 _folderName: _gdFolderName,
@@ -18046,6 +18464,10 @@ function initAdminSections() {
             if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
             if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
             if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
+            if (data.covo_messages)      localStorage.setItem('covo_messages',      JSON.stringify(data.covo_messages));
+            if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
+            if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
+            if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
 
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
