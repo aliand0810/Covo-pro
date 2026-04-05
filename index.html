@@ -5355,6 +5355,17 @@
           </div>
           <!-- Onglet Inbox -->
           <div id="qmsg-pane-inbox" style="display:none;">
+            <!-- Filtre Archives -->
+            <div style="display:flex;gap:6px;margin-bottom:8px;padding:4px 0;">
+              <button id="qmsg-filter-inbox" onclick="_qmsgSetFilter('inbox')"
+                style="padding:5px 12px;border-radius:20px;border:1.5px solid var(--qmsg-tab-active-color,#1a73e8);background:var(--qmsg-tab-active-color,#1a73e8);color:white;cursor:pointer;font-size:0.75rem;font-weight:700;">
+                📥 Réception
+              </button>
+              <button id="qmsg-filter-archives" onclick="_qmsgSetFilter('archives')"
+                style="padding:5px 12px;border-radius:20px;border:1.5px solid var(--border-color,#ddd);background:none;color:var(--text-muted,#888);cursor:pointer;font-size:0.75rem;font-weight:600;">
+                📦 Archives
+              </button>
+            </div>
             <div id="qmsg-inbox-list" style="display:flex;flex-direction:column;gap:10px;"></div>
           </div>
         </div>
@@ -7434,6 +7445,19 @@ function toggleInfoSection(headerElement) {
         document.execCommand('removeFormat', false, null);
     };
 
+    let _qmsgInboxFilter = 'inbox'; // 'inbox' | 'archives'
+
+    window._qmsgSetFilter = function(f) {
+        _qmsgInboxFilter = f;
+        const btnI = document.getElementById('qmsg-filter-inbox');
+        const btnA = document.getElementById('qmsg-filter-archives');
+        const activeStyle = 'border:1.5px solid var(--qmsg-tab-active-color,#1a73e8);background:var(--qmsg-tab-active-color,#1a73e8);color:white;';
+        const inactStyle  = 'border:1.5px solid var(--border-color,#ddd);background:none;color:var(--text-muted,#888);';
+        if (btnI) btnI.style.cssText += f==='inbox'    ? activeStyle : inactStyle;
+        if (btnA) btnA.style.cssText += f==='archives' ? activeStyle : inactStyle;
+        _qmsgRefreshInbox();
+    };
+
     function _qmsgRefreshInbox() {
         const listEl = document.getElementById('qmsg-inbox-list');
         if (!listEl) return;
@@ -7447,6 +7471,10 @@ function toggleInfoSection(headerElement) {
 
         // Filtrage — reçus + envoyés par moi (pour voir le statut de lecture)
         const msgs = all.filter(function(m) {
+            // Filtre archives
+            const isArchived = !!m.archived;
+            if (_qmsgInboxFilter === 'archives' && !isArchived) return false;
+            if (_qmsgInboxFilter !== 'archives' &&  isArchived) return false;
             if (_isAdmin) return true;
             // Messages reçus
             var forMe = m.to === 'all'
@@ -7462,8 +7490,9 @@ function toggleInfoSection(headerElement) {
         listEl.innerHTML = '';
 
         if (!msgs.length) {
-            listEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray,#999);font-size:0.85rem;">📭 Aucun message</div>';
-            // Marquer comme lu (rien à marquer)
+            listEl.innerHTML = _qmsgInboxFilter === 'archives'
+                ? '<div style="text-align:center;padding:30px;color:var(--gray,#999);font-size:0.85rem;">📦 Aucun message archivé</div>'
+                : '<div style="text-align:center;padding:30px;color:var(--gray,#999);font-size:0.85rem;">📭 Aucun message</div>';
             try { _qmsgUpdateHeaderDot(); } catch(e) {}
             return;
         }
@@ -7641,7 +7670,28 @@ function toggleInfoSection(headerElement) {
                 card.appendChild(editPanel);
             }
 
-            listEl.appendChild(card);
+            // ── Bouton Archiver (tous les messages) ────────────────────
+            var actBar = document.createElement('div');
+            actBar.style.cssText = 'display:flex;gap:6px;margin-top:6px;justify-content:flex-end;';
+            var archBtn = document.createElement('button');
+            var isArchived = !!m.archived;
+            archBtn.textContent = isArchived ? '📤 Désarchiver' : '📦 Archiver';
+            archBtn.title = isArchived ? 'Remettre dans la boîte de réception' : 'Archiver ce message';
+            archBtn.style.cssText = 'padding:4px 10px;border:1.5px solid var(--border-color,#ddd);background:var(--input-bg,#f8f9fa);color:var(--text-muted,#888);border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600;';
+            (function(msgId, btn) {
+                btn.onclick = function() {
+                    var msgs2 = _msgLoad();
+                    var found = msgs2.find(function(x){ return x.id === msgId; });
+                    if (found) {
+                        found.archived = !found.archived;
+                        _msgSave(msgs2);
+                        if(typeof _qmsgRefreshInbox==='function') _qmsgRefreshInbox();
+                        showScanToast(found.archived ? '📦 Message archivé' : '📤 Message désarchivé', 'success');
+                    }
+                };
+            })(m.id, archBtn);
+            actBar.appendChild(archBtn);
+            card.appendChild(actBar);
         });
 
         // Marquer comme lus
