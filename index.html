@@ -9695,7 +9695,11 @@ function toggleInfoSection(headerElement) {
         const roleF   = document.getElementById('hist-filter-role')?.value || 'all';
         const listEl  = document.getElementById('hist-list');
         const statsEl = document.getElementById('hist-stats');
+        const totalEl = document.getElementById('hist-total');
         if (!listEl) return;
+
+        // Charger depuis localStorage à chaque rendu
+        const hist = JSON.parse(localStorage.getItem('covo_login_history') || '[]');
 
         // Stats
         const totalAdmin    = hist.filter(h => h.role === 'admin' && !h.isMaster).length;
@@ -9708,48 +9712,67 @@ function toggleInfoSection(headerElement) {
                 <span>💼 Caissier : <strong>${totalCaissier}</strong></span>
                 <span>🛠️ Développeur : <strong>${totalMaster}</strong></span>`;
         }
+        if (totalEl) totalEl.textContent = hist.length;
 
         // Filtrage
         const filtered = hist.filter(h => {
             const matchRole = roleF === 'all'
-                || (roleF === 'master' && h.isMaster)
-                || (roleF === 'admin' && h.role === 'admin' && !h.isMaster)
+                || (roleF === 'master'   && h.isMaster)
+                || (roleF === 'admin'    && h.role === 'admin' && !h.isMaster)
                 || (roleF === 'caissier' && h.role === 'caissier');
-            const matchSearch = !search
-                || h.username.toLowerCase().includes(search)
-                || h.userId.toLowerCase().includes(search);
+            const searchFields = ((h.username || '') + ' ' + (h.userId || '') + ' ' + (h.role || '')).toLowerCase();
+            const matchSearch = !search || searchFields.includes(search);
             return matchRole && matchSearch;
         });
 
         listEl.innerHTML = '';
+        if (!hist.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted,#999);"><div style="font-size:2.5rem;margin-bottom:10px;">📭</div><div style="font-weight:600;">Aucune connexion enregistrée</div><div style="font-size:0.8rem;margin-top:6px;opacity:0.7;">Les connexions s\'afficheront ici après la prochaine connexion.</div></div>';
+            return;
+        }
         if (!filtered.length) {
-            listEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray,#999);">📭 Aucune entrée</div>';
+            listEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray,#999);">📭 Aucune entrée pour ce filtre</div>';
             return;
         }
 
-        filtered.forEach(function(h) {
-            const d    = new Date(h.date);
-            const dateStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'})
-                + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-            const icon = h.isMaster ? '🛠️' : h.role === 'admin' ? '👑' : '💼';
-            const bgBorder = h.isMaster ? 'border-left:4px solid #6d28d9;background:linear-gradient(90deg,rgba(109,40,217,0.05),transparent);'
-                : h.role === 'admin' ? 'border-left:4px solid #f39c12;background:linear-gradient(90deg,rgba(243,156,18,0.05),transparent);'
-                : 'border-left:4px solid #3498db;background:linear-gradient(90deg,rgba(52,152,219,0.04),transparent);';
+        // Grouper par jour
+        const byDay = {};
+        filtered.forEach(h => {
+            const dayKey = new Date(h.date).toLocaleDateString('fr-FR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'});
+            if (!byDay[dayKey]) byDay[dayKey] = [];
+            byDay[dayKey].push(h);
+        });
 
-            var row = document.createElement('div');
-            row.style.cssText = 'padding:10px 12px;border-radius:8px;border:1px solid var(--border-color,#e8e8e8);'+bgBorder+'display:flex;align-items:center;gap:12px;';
-            row.innerHTML = `
-                <div style="font-size:1.3rem;flex-shrink:0;">${icon}</div>
-                <div style="flex:1;min-width:0;">
-                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);">${_esc(h.username)}</div>
-                    <div style="font-size:0.72rem;color:var(--gray,#666);margin-top:2px;">
-                        ${h.role}${h.isMaster?' · Admin-Développeur':''} &nbsp;·&nbsp; ID : ${_esc(h.userId)}
+        Object.keys(byDay).forEach(day => {
+            // Entête de groupe journalier
+            const dayHdr = document.createElement('div');
+            dayHdr.style.cssText = 'font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:0.06em;padding:8px 4px 4px;border-bottom:1px solid var(--border-color,#e8e8e8);margin-bottom:6px;margin-top:10px;';
+            dayHdr.textContent = day + '  (' + byDay[day].length + ')';
+            listEl.appendChild(dayHdr);
+
+            byDay[day].forEach(h => {
+                const d = new Date(h.date);
+                const timeStr = d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+                const icon  = h.isMaster ? '🛠️' : h.role === 'admin' ? '👑' : '💼';
+                const color = h.isMaster ? '#6d28d9' : h.role === 'admin' ? '#f39c12' : '#1a73e8';
+                const label = h.isMaster ? 'Admin-Développeur' : h.role === 'admin' ? 'Admin' : 'Caissier';
+
+                const row = document.createElement('div');
+                row.style.cssText = `display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;border:1px solid var(--border-color,#e8e8e8);border-left:4px solid ${color};margin-bottom:5px;background:var(--bg-card,#fff);`;
+                row.innerHTML = `
+                    <div style="font-size:1.2rem;flex-shrink:0;">${icon}</div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:700;font-size:0.86rem;color:var(--text-main);">${h.username || '—'}</div>
+                        <div style="font-size:0.7rem;color:var(--text-muted,#888);margin-top:1px;">
+                            <span style="background:${color}22;color:${color};padding:1px 7px;border-radius:5px;font-weight:700;font-size:0.65rem;">${label}</span>
+                            &nbsp;·&nbsp; ID : <code style="font-size:0.68rem;">${h.userId || '—'}</code>
+                        </div>
                     </div>
-                </div>
-                <div style="text-align:right;flex-shrink:0;">
-                    <div style="font-size:0.8rem;font-weight:600;color:var(--text-main,#2c3e50);">${dateStr}</div>
-                </div>`;
-            listEl.appendChild(row);
+                    <div style="text-align:right;flex-shrink:0;">
+                        <div style="font-size:0.82rem;font-weight:700;color:var(--text-main);">🕐 ${timeStr}</div>
+                    </div>`;
+                listEl.appendChild(row);
+            });
         });
     };
 
