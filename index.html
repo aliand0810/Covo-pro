@@ -4957,7 +4957,16 @@
     <div id="login-modal">
         <div class="modal-classic-content">
             <h2>🔐 Connexion COVO Pro</h2>
-            <p style="color:var(--gray); margin-bottom:20px;">Entrez votre code PIN pour accéder au système</p>
+            <p style="color:var(--gray); margin-bottom:16px;">Entrez votre code PIN pour accéder au système</p>
+            <!-- Badge dernier utilisateur connecté -->
+            <div id="login-last-user" style="display:none;background:var(--input-bg,#f0f4ff);border:1.5px solid var(--border-color,#dce3ec);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;">
+                <div id="login-last-avatar" style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#1a73e8,#0d47a1);display:flex;align-items:center;justify-content:center;color:white;font-weight:800;font-size:0.9rem;flex-shrink:0;"></div>
+                <div style="flex:1;min-width:0;">
+                    <div id="login-last-name" style="font-weight:700;font-size:0.88rem;color:var(--text-main,#1e2d3d);"></div>
+                    <div id="login-last-role" style="font-size:0.74rem;color:var(--text-muted,#7a8fa3);margin-top:1px;"></div>
+                </div>
+                <div style="font-size:0.72rem;color:var(--text-muted,#7a8fa3);white-space:nowrap;">↩️ Reconnexion</div>
+            </div>
             <div style="position:relative;margin-bottom:10px;">
                 <input type="password" id="login-pin" placeholder="Code PIN" autocomplete="current-password"
                     style="width:100%;padding:12px 44px 12px 12px;border:2px solid #e0e0e0;border-radius:6px;font-size:1.1rem;box-sizing:border-box;">
@@ -4969,9 +4978,7 @@
             <button onclick="attemptLogin()" style="background:var(--success); color:white; width:100%; padding:12px; font-size:1.1rem;">
                 🔓 SE CONNECTER
             </button>
-            <p style="font-size:0.85rem; color:var(--gray); margin-top:15px;">
-             
-            </p>
+            <p style="font-size:0.85rem; color:var(--gray); margin-top:15px;"></p>
         </div>
     </div>
 
@@ -6028,7 +6035,65 @@ let lastActivityTime = Date.now();
 let sessionCheckInterval = null;
 let countdownInterval = null;
 const WARNING_DURATION = 30; // 30 secondes d'alerte
-    let currentUser = JSON.parse(localStorage.getItem('covo_current_user')) || null;
+    // =========================================================================
+    // ===== GESTION DE SESSION PERSISTANTE ====================================
+    // =========================================================================
+    // sessionStorage : survit au refresh mais pas à la fermeture
+    // localStorage   : persistant entre sessions (token + expiry)
+    // Règle : si le token n'est pas expiré → restauration auto sans mot de passe
+    //         si expiré ou absent → écran de connexion normal
+
+    const SESSION_KEY    = 'covo_session_token';
+    const SESSION_EXPIRY = 'covo_session_expiry';
+    const SESSION_HOURS  = 24; // durée de validité en heures
+
+    function _sessionSave(user) {
+        const expiry = Date.now() + SESSION_HOURS * 3600 * 1000;
+        try {
+            sessionStorage.setItem('covo_session', JSON.stringify(user));
+            localStorage.setItem(SESSION_KEY,    JSON.stringify(user));
+            localStorage.setItem(SESSION_EXPIRY, String(expiry));
+        } catch(e) {}
+    }
+
+    function _sessionClear() {
+        try {
+            _sessionClear();
+            localStorage.removeItem(SESSION_KEY);
+            localStorage.removeItem(SESSION_EXPIRY);
+        } catch(e) {}
+    }
+
+    function _sessionLoad() {
+        // 1. Essayer sessionStorage (refresh dans le même onglet)
+        try {
+            const ss = JSON.parse(sessionStorage.getItem('covo_session') || 'null');
+            if (ss) return ss;
+        } catch(e) {}
+        // 2. Essayer localStorage avec vérification d'expiration
+        try {
+            const expiry = parseInt(localStorage.getItem(SESSION_EXPIRY) || '0');
+            if (expiry && Date.now() < expiry) {
+                const data = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+                if (data) {
+                    // Re-synchroniser sessionStorage
+                    sessionStorage.setItem('covo_session', JSON.stringify(data));
+                    return data;
+                }
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    let _sessionData = _sessionLoad();
+    let currentUser = _sessionData || null;
+
+    // Mémoriser le dernier utilisateur (sans mot de passe) pour pré-sélectionner à l'écran de connexion
+    if (currentUser) {
+        localStorage.setItem('covo_last_user_id',   currentUser.id);
+        localStorage.setItem('covo_last_user_name', currentUser.username);
+        localStorage.setItem('covo_last_user_role', currentUser.role);
+    }
     let cart = [];
     let deliveryGoal = parseFloat(localStorage.getItem('covo_delivery_goal')) || 150;
     let isAdmin = false;
@@ -6420,6 +6485,12 @@ function toggleInfoSection(headerElement) {
             currentUser = user;
             isAdmin = user.role === 'admin';
             localStorage.setItem('covo_current_user', JSON.stringify(currentUser));
+            // Session active (refresh-proof, mais pas cross-onglet/fermeture)
+            sessionStorage.setItem('covo_session', JSON.stringify(currentUser));
+            // Mémoriser le dernier utilisateur identifié (sans mot de passe)
+            localStorage.setItem('covo_last_user_id',   user.id);
+            localStorage.setItem('covo_last_user_name', user.username);
+            localStorage.setItem('covo_last_user_role', user.role);
 
             // ── Enregistrer l'historique de connexion ──────────────────
             try {
@@ -9451,6 +9522,7 @@ function toggleInfoSection(headerElement) {
         isAdmin = false;
         cashierEditModeActive = false;
         localStorage.removeItem('covo_current_user');
+        _sessionClear();
         document.getElementById('login-modal').style.display = 'flex';
         document.getElementById('login-pin').value = "";
         cart = [];
@@ -13558,7 +13630,30 @@ logout = function(skipConfirmation = false) {
                 currentUser.permissions = savedUser.permissions;
             }
         }
-        if (currentUser) renderAll();
+        // Si session persistante valide → restaurer automatiquement sans mot de passe
+        if (currentUser) {
+            isAdmin = currentUser.role === 'admin';
+            // Restaurer les permissions caissier
+            if (currentUser.role === 'caissier') {
+                const savedUser = users.find(u => u.id === currentUser.id);
+                if (savedUser && savedUser.permissions) {
+                    cashierPermissions.editEnabled = savedUser.permissions.editEnabled || false;
+                    cashierPermissions.permissions = { ...(savedUser.permissions.fields || {}) };
+                    cashierPermissions.canRetourClient  = savedUser.permissions.canRetourClient  || false;
+                    cashierPermissions.canDeclareDefect = savedUser.permissions.canDeclareDefect || false;
+                    currentUser.permissions = savedUser.permissions;
+                }
+            }
+            document.getElementById('login-modal').style.display = 'none';
+            document.getElementById('user-display').innerText = '👤 ' + currentUser.username;
+            // Renouveler le token (refresh de session)
+            _sessionSave(currentUser);
+            // Lancer le splash de reconnexion
+            _splashStart(currentUser);
+        } else {
+            // Pas de session → afficher l'écran de connexion
+            document.getElementById('login-modal').style.display = 'flex';
+        }
 
         // Ajouter l'événement Enter sur la barre de recherche
         const searchBar = document.getElementById('search-bar');
@@ -13588,8 +13683,32 @@ logout = function(skipConfirmation = false) {
     
     document.getElementById('login-pin').addEventListener('keypress', function(e) { if (e.key === 'Enter') attemptLogin(); });
     
-    if (!currentUser) { document.getElementById('login-modal').style.display = 'flex'; }
-    // Note: renderAll() si déjà connecté est maintenant géré dans window.onload (après restauration FSA)
+    if (!currentUser) {
+        document.getElementById('login-modal').style.display = 'flex';
+        // Afficher le dernier utilisateur connecté (sans le reconnecter)
+        const lastId   = localStorage.getItem('covo_last_user_id');
+        const lastName = localStorage.getItem('covo_last_user_name');
+        const lastRole = localStorage.getItem('covo_last_user_role');
+        const lastBadge = document.getElementById('login-last-user');
+        if (lastId && lastName && lastBadge) {
+            lastBadge.style.display = 'flex';
+            const avatar = document.getElementById('login-last-avatar');
+            const nameEl = document.getElementById('login-last-name');
+            const roleEl = document.getElementById('login-last-role');
+            if (avatar) {
+                avatar.textContent = lastName.charAt(0).toUpperCase();
+                avatar.style.background = lastRole === 'admin'
+                    ? 'linear-gradient(135deg,#e67e22,#d35400)'
+                    : 'linear-gradient(135deg,#1a73e8,#0d47a1)';
+            }
+            if (nameEl) nameEl.textContent = (lastRole === 'admin' ? '👑 ' : '💼 ') + lastName;
+            if (roleEl) roleEl.textContent = lastRole === 'admin' ? 'Administrateur' : 'Caissier';
+        }
+    } else {
+        // Session active (refresh) → relancer directement le splash
+        isAdmin = currentUser.role === 'admin';
+        setTimeout(() => _splashStart(currentUser), 100);
+    }
 
     // ===== SCANNER DE CODE-BARRES GLOBAL =====
     let barcodeBuffer = ''; 
