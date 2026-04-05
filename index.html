@@ -12216,13 +12216,21 @@ logout = function(skipConfirmation = false) {
         const monthSales = salesHistory.filter(s => !s.cancelled && new Date(s.date) >= monthStart);
         const monthTotal = monthSales.reduce((sum, s) => sum + (s.total || 0), 0);
 
-        // Paiements sur la période
+        // Paiements sur la période — utiliser s.total (montant réel encaissé)
         const cashTotal = periodSales
-            .filter(s => s.type !== 'retour_article')
-            .reduce((sum, s) => sum + (s.receivedCash || (s.method === 'cash' ? s.total : 0)), 0);
+            .filter(s => s.type !== 'retour_article' && !s.cancelled)
+            .reduce((sum, s) => {
+                if (s.method === 'cash')  return sum + parseFloat(s.total || 0);
+                if (s.method === 'mixed') return sum + parseFloat(s.receivedCash || 0);
+                return sum;
+            }, 0);
         const cardTotal = periodSales
-            .filter(s => s.type !== 'retour_article')
-            .reduce((sum, s) => sum + (s.receivedCB || (s.method === 'cb' ? s.total : 0)), 0);
+            .filter(s => s.type !== 'retour_article' && !s.cancelled)
+            .reduce((sum, s) => {
+                if (s.method === 'cb')    return sum + parseFloat(s.total || 0);
+                if (s.method === 'mixed') return sum + parseFloat(s.receivedCB || 0);
+                return sum;
+            }, 0);
 
         // Mise à jour des éléments
         const ptEl = document.getElementById('stat-period-title-main');
