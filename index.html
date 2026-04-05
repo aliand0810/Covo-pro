@@ -7567,12 +7567,23 @@ function toggleInfoSection(headerElement) {
             `<option value="${y}" ${y===curYear?'selected':''}>${y}</option>`
         ).join('');
 
-        // Peupler caissiers
+        // Peupler caissiers — basé sur les ventes réelles (pas seulement les users enregistrés)
         const cSel = document.getElementById('wh-cashier');
         if (cSel) {
-            cSel.innerHTML = '<option value="all">👥 Tous les caissiers</option>';
-            users.filter(u => u.role === 'caissier').forEach(u => {
-                cSel.innerHTML += `<option value="${u.id}">💼 ${u.username}</option>`;
+            cSel.innerHTML = '<option value="all">👥 Tous</option>';
+            // Collecter tous les caissiers ayant fait des ventes
+            const seenIds = new Set();
+            salesHistory.forEach(s => {
+                const sid  = s.cashierId || '';
+                const sname= s.cashier   || '';
+                if (!sid && !sname) return;
+                const key = sid || sname;
+                if (seenIds.has(key)) return;
+                seenIds.add(key);
+                // Trouver le user correspondant pour avoir le rôle
+                const u = users.find(x => x.id === sid || x.username === sname);
+                const icon = (u && u.role === 'admin') ? '👑' : '💼';
+                cSel.innerHTML += `<option value="${key}">${icon} ${sname || (u ? u.username : sid)}</option>`;
             });
         }
 
@@ -7592,7 +7603,12 @@ function toggleInfoSection(headerElement) {
             const d = new Date(s.date);
             if (d.getFullYear() !== year) return false;
             if (month >= 0 && d.getMonth() !== month) return false;
-            if (cashier !== 'all' && s.cashier !== cashier && s.userId !== cashier) return false;
+            if (cashier !== 'all') {
+                // La valeur du select est soit l'id soit le nom (selon ce qui était disponible)
+                const sid   = s.cashierId || '';
+                const sname = s.cashier   || '';
+                if (sid !== cashier && sname !== cashier) return false;
+            }
             return true;
         });
 
