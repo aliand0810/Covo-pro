@@ -20763,8 +20763,94 @@ function initAdminSections() {
         document.body.insertAdjacentHTML('beforeend', html);
     }
 
+    // ── Modale alerte taille critique ────────────────────────────────
+    function _gdShowSizeAlert(newSize, lastSize, pctPerte, payload, fileName, ts, isBlocked) {
+        const fmtSz = bytes => bytes >= 1048576 ? (bytes/1048576).toFixed(2)+' Mo' : (bytes/1024).toFixed(1)+' Ko';
+        const old = document.getElementById('gd-size-alert-modal');
+        if (old) old.remove();
+
+        const html = `
+        <div id="gd-size-alert-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.80);backdrop-filter:blur(10px);z-index:21000;display:flex;justify-content:center;align-items:center;">
+          <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:480px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.5);">
+            <div style="background:linear-gradient(135deg,#c0392b,#922b21);padding:16px 20px;display:flex;align-items:center;gap:12px;">
+              <span style="font-size:1.8rem;">🚨</span>
+              <div>
+                <div style="color:white;font-weight:900;font-size:1rem;">${isBlocked ? 'Sauvegarde bloquée — Perte de données détectée' : 'Avertissement — Réduction importante'}</div>
+                <div style="color:rgba(255,255,255,0.8);font-size:0.75rem;margin-top:2px;">Protection anti-perte de données COVO Pro</div>
+              </div>
+            </div>
+            <div style="padding:20px;">
+              <div style="background:#fef3f2;border:1.5px solid #fca5a5;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+                <div style="font-weight:800;color:#c0392b;font-size:0.88rem;margin-bottom:10px;">📊 Comparaison des tailles</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center;">
+                  <div style="background:white;border-radius:8px;padding:10px;border:1px solid #e8e8e8;">
+                    <div style="font-size:1.1rem;font-weight:900;color:#27ae60;">${fmtSz(lastSize)}</div>
+                    <div style="font-size:0.7rem;color:#666;">✅ Dernière sauvegarde</div>
+                  </div>
+                  <div style="background:white;border-radius:8px;padding:10px;border:1.5px solid #e74c3c;">
+                    <div style="font-size:1.1rem;font-weight:900;color:#e74c3c;">${fmtSz(newSize)}</div>
+                    <div style="font-size:0.7rem;color:#666;">⚠️ Nouvelle sauvegarde</div>
+                  </div>
+                </div>
+                <div style="text-align:center;margin-top:10px;font-size:0.82rem;font-weight:800;color:#c0392b;">
+                  ▼ ${pctPerte}% de données manquantes
+                </div>
+              </div>
+              <p style="font-size:0.82rem;color:var(--text-main);line-height:1.6;margin:0 0 16px;">
+                ${isBlocked
+                    ? `La nouvelle sauvegarde est <strong>${pctPerte}%</strong> plus petite que la précédente. Cela indique une <strong>perte de données significative</strong>. La sauvegarde a été <strong>annulée</strong> pour protéger vos données.`
+                    : `La nouvelle sauvegarde est <strong>${pctPerte}%</strong> plus petite. Vérifiez vos données avant de continuer.`
+                }
+              </p>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                ${isBlocked ? `
+                <button onclick="document.getElementById('gd-size-alert-modal').remove()"
+                    style="padding:11px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;border:none;border-radius:9px;cursor:pointer;font-weight:700;font-size:0.88rem;">
+                    ✅ OK — Ne pas sauvegarder (données protégées)
+                </button>
+                <button onclick="_gdForceSaveAnyway('${fileName}','${ts}',document.getElementById('gd-size-alert-modal'))"
+                    style="padding:11px;background:none;border:1.5px solid #e74c3c;color:#e74c3c;border-radius:9px;cursor:pointer;font-weight:600;font-size:0.82rem;">
+                    ⚠️ Forcer la sauvegarde quand même (risqué)
+                </button>` : `
+                <button onclick="document.getElementById('gd-size-alert-modal').remove()"
+                    style="padding:11px;background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;border:none;border-radius:9px;cursor:pointer;font-weight:700;font-size:0.88rem;">
+                    Compris
+                </button>`}
+              </div>
+            </div>
+          </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+
+        // Stocker payload pour forçage éventuel
+        window._gdForcedPayload = { payload, fileName, ts };
+    }
+
+    window._gdForceSaveAnyway = async function(fileName, ts, modal) {
+        if (modal) modal.remove();
+        if (!window._gdForcedPayload) return;
+        const { payload } = window._gdForcedPayload;
+        const newSize = new Blob([payload]).size;
+        try {
+            _gdSaving = true; _gdShowSaving(true);
+            const metadata = JSON.stringify({ name: fileName, parents: [_gdFolderId] });
+            const boundary = '----CovoGDriveForceBoundary' + Date.now();
+            const body = '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+metadata+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
+            const cr = await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                method:'POST', headers:{'Content-Type':'multipart/related; boundary='+boundary}, body
+            });
+            const result = await cr.json();
+            if (result.id) {
+                localStorage.setItem('gdrive_last_payload_size', String(newSize));
+                localStorage.setItem('gdrive_last_save', ts);
+                _gdUpdateStatusBar(true, 'Google Drive — '+(_gdUserEmail||'Connecté')+' · 📁 '+_gdFolderName, ts);
+                showScanToast('⚠️ Sauvegarde forcée effectuée', 'info');
+            }
+        } catch(e) { showScanToast('❌ Erreur lors de la sauvegarde forcée', 'error'); }
+        finally { _gdSaving = false; _gdShowSaving(false); window._gdForcedPayload = null; }
+    };
+
     window._gdConfirmRestoreFromChip = async function() {
-        const modal = document.getElementById('gdrive-compare-modal');
         if (modal) modal.remove();
         // Utiliser les données en attente (fichier sélectionné) en priorité
         const data = _gdPendingRestoreData || _gdLastDetectedFileData;
@@ -20787,8 +20873,8 @@ function initAdminSections() {
         try {
             const now = new Date();
             const ts = now.toISOString();
-            const dateStr = now.toISOString().split('T')[0]; // 2026-03-16
-            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-'); // 14-30-25
+            const dateStr = now.toISOString().split('T')[0];
+            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
             const fileName = `covo_backup_${dateStr}_${timeStr}.json`;
 
             const exportPayload = JSON.stringify({
@@ -20802,11 +20888,9 @@ function initAdminSections() {
                 covo_rhist:       JSON.parse(localStorage.getItem('covo_rhist')       || '[]'),
                 covo_hist:        JSON.parse(localStorage.getItem('covo_hist')        || '[]'),
                 covo_sales:       JSON.parse(localStorage.getItem('covo_sales')       || '[]'),
-                // Module Investissements
                 covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
                 covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
                 covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
-                // ===== NOUVEAU : Messages + Historique connexions + Réglages =====
                 covo_messages:       JSON.parse(localStorage.getItem('covo_messages')       || '[]'),
                 covo_login_history:  JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
                 covo_settings:       JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
@@ -20820,6 +20904,25 @@ function initAdminSections() {
                 _fileName: fileName
             }, null, 2);
 
+            // ── GARDE ANTI-PERTE : vérifier que le nouveau payload n'est pas anormalement petit ──
+            const newSize  = new Blob([exportPayload]).size;
+            const lastSize = parseInt(localStorage.getItem('gdrive_last_payload_size') || '0');
+            const SEUIL_ALERTE   = 0.85; // alerte si < 85% de la taille précédente
+            const SEUIL_BLOCAGE  = 0.60; // blocage si < 60% (perte critique)
+
+            if (lastSize > 0 && newSize < lastSize * SEUIL_BLOCAGE) {
+                // Perte critique — bloquer la sauvegarde et alerter
+                const perte = Math.round((1 - newSize / lastSize) * 100);
+                _gdSaving = false; _gdShowSaving(false);
+                _gdShowSizeAlert(newSize, lastSize, perte, exportPayload, fileName, ts, true);
+                return;
+            }
+            if (lastSize > 0 && newSize < lastSize * SEUIL_ALERTE) {
+                // Alerte — sauvegarder quand même mais signaler
+                const perte = Math.round((1 - newSize / lastSize) * 100);
+                console.warn(`⚠️ GDrive save: taille réduite de ${perte}% (${_gdFmtFileSize(String(lastSize))} → ${_gdFmtFileSize(String(newSize))})`);
+                showScanToast(`⚠️ Sauvegarde réduite de ${perte}% — vérifiez vos données`, 'info');
+            }
             // Toujours créer un NOUVEAU fichier (multipart)
             const metadata = JSON.stringify({ name: fileName, parents: [_gdFolderId] });
             const boundary = '----CovoGDriveBoundary' + Date.now();
@@ -20838,8 +20941,10 @@ function initAdminSections() {
                 body: body
             });
             const result = await cr.json();
-            _gdFileId = result.id; // dernier fichier créé
+            _gdFileId = result.id;
 
+            // Mémoriser la taille du payload pour la prochaine vérification
+            localStorage.setItem('gdrive_last_payload_size', String(newSize));
             localStorage.setItem('gdrive_last_save', ts);
             localStorage.setItem('gdrive_last_file', fileName);
             _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + (_gdFolderName ? ' · 📁 ' + _gdFolderName : ''), ts);
