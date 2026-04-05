@@ -3793,7 +3793,20 @@
 
     <div id="admin-panel">
         <h2 style="margin-top:0;">⚙️ Panneau d'administration</h2>
-        
+
+        <!-- Accès rapide Admin-Développeur -->
+        <div id="master-quick-bar" style="display:none;background:linear-gradient(135deg,rgba(13,148,136,0.1),rgba(13,148,136,0.05));border:1.5px solid rgba(13,148,136,0.3);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span style="font-size:0.8rem;font-weight:700;color:#0f766e;">🛠️ Admin-Développeur</span>
+            <button onclick="_openModulesPanel()"
+                style="padding:8px 16px;background:linear-gradient(135deg,#0d9488,#0f766e);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;gap:6px;">
+                ⚙️ Contrôle des modules
+            </button>
+            <button onclick="_openLoginHistory()"
+                style="padding:8px 16px;background:linear-gradient(135deg,#6d28d9,#4c1d95);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;gap:6px;">
+                📋 Historique connexions
+            </button>
+        </div>
+
         <div class="admin-section">
             <div class="admin-section-header" onclick="toggleAdminSection('admin-sec-0')">
                 <h3>🎨 Configuration Générale</h3>
@@ -6009,6 +6022,7 @@ function saveNightTariffSettings() {
     const pctEl = document.getElementById('night-default-percent');
     if (pctEl) nightTariffSettings.defaultPercent = parseInt(pctEl.value) || 30;
     localStorage.setItem('covo_night_tariff', JSON.stringify(nightTariffSettings));
+    if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
     updateNightTariffButton();
     renderProducts();
 }
@@ -6118,7 +6132,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 
     function _sessionClear() {
         try {
-            _sessionClear();
+            sessionStorage.removeItem('covo_session');
             localStorage.removeItem(SESSION_KEY);
             localStorage.removeItem(SESSION_EXPIRY);
         } catch(e) {}
@@ -6364,6 +6378,8 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
             if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
             if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
+            if (data.covo_modules_config) localStorage.setItem('covo_modules_config', data.covo_modules_config);
+            if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
             if (typeof refreshRetours === 'function') setTimeout(() => refreshRetours(), 200);
             // Sync localStorage principal
             localStorage.setItem('covo_products',      JSON.stringify(products));
@@ -6929,6 +6945,8 @@ function toggleInfoSection(headerElement) {
     function _msgSave(msgs) {
         localStorage.setItem(MSG_KEY, JSON.stringify(msgs));
         if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+        // Sauvegarde dans le dossier Messages dédié
+        if (typeof window._gdTriggerMsgSave === 'function') window._gdTriggerMsgSave();
     }
 
     // ── Format date courte ────────────────────────────────────────────────
@@ -8654,37 +8672,122 @@ function toggleInfoSection(headerElement) {
         if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
     };
 
-    function _modulesApply() {
-        const cfg = _modulesLoad();
+    // Ajouter/supprimer un badge "Masqué" sur un élément
+    function _modBadge(el, show) {
+        if (!el) return;
+        const BADGE_ID = 'mod-hidden-badge-' + el.id;
+        let badge = document.getElementById(BADGE_ID);
+        if (show) {
+            el.style.opacity = '0.42';
+            el.style.filter  = 'grayscale(0.5)';
+            el.style.pointerEvents = 'none';
+            el.style.position = el.style.position || 'relative';
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.id = BADGE_ID;
+                badge.textContent = '🚫 Masqué';
+                badge.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(231,76,60,0.85);color:white;font-size:0.6rem;font-weight:800;padding:2px 7px;border-radius:6px;pointer-events:none;z-index:9;white-space:nowrap;letter-spacing:0.03em;';
+                el.style.position = 'relative';
+                el.style.overflow = 'hidden';
+                el.appendChild(badge);
+            }
+        } else {
+            el.style.opacity = '';
+            el.style.filter  = '';
+            el.style.pointerEvents = '';
+            if (badge) badge.remove();
+        }
+    }
 
-        // Onglets principaux
+    function _modulesApply() {
+        const cfg    = _modulesLoad();
+        const isMstr = !!(currentUser && currentUser.isMaster);
+
+        // Helper : appliquer l'état badge/disabled sur un élément
+        function applyEl(el, hidden, badgeId) {
+            if (!el) return;
+            const old = document.getElementById(badgeId);
+            if (old) old.remove();
+            el.style.opacity       = '';
+            el.style.pointerEvents = '';
+            el.style.filter        = '';
+            if (!hidden) return;
+
+            el.style.position = el.style.position || 'relative';
+            el.style.overflow = 'visible';
+            const b = document.createElement('span');
+            b.id = badgeId;
+            if (isMstr) {
+                // Admin-Développeur : fonctionnel + badge rouge "Masqué"
+                b.textContent = '🚫 Masqué';
+                b.title = 'Masqué pour les autres utilisateurs — vous pouvez quand même l\'utiliser';
+                b.style.cssText = 'position:absolute;top:-7px;right:-4px;background:rgba(231,76,60,0.9);color:white;font-size:0.52rem;font-weight:800;padding:1px 5px;border-radius:5px;pointer-events:none;z-index:99;white-space:nowrap;line-height:1.5;box-shadow:0 1px 4px rgba(0,0,0,0.25);';
+                // Fonctionnel — aucune restriction
+            } else {
+                // Admin / Caissier : désactivé + badge gris "Désactivé"
+                el.style.opacity       = '0.38';
+                el.style.pointerEvents = 'none';
+                el.style.filter        = 'grayscale(0.55)';
+                b.textContent = '✖ Désactivé';
+                b.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(80,80,80,0.82);color:white;font-size:0.58rem;font-weight:800;padding:2px 8px;border-radius:6px;pointer-events:none;z-index:99;white-space:nowrap;letter-spacing:0.02em;';
+            }
+            el.appendChild(b);
+        }
+
+        // Onglets principaux — toujours visibles, état variable
         MOD_TABS.forEach(m => {
             const btn = document.getElementById('tab-btn-' + m.key);
-            if (btn) btn.style.display = cfg[m.key] !== false ? '' : 'none';
+            if (!btn) return;
+            btn.style.display  = '';
+            btn.style.overflow = 'visible';
+            applyEl(btn, cfg[m.key] === false, 'modbadge-tab-' + m.key);
         });
 
         // Sous-onglets gestion
         MOD_GESTION.forEach(m => {
-            // Bouton de l'onglet
-            const btn = document.querySelector(`.retours-tab-btn[data-panel="${m.key}"]`);
-            if (btn) btn.style.display = cfg[m.key] !== false ? '' : 'none';
-            // Panneau
+            const btn = document.querySelector('.retours-tab-btn[data-panel="' + m.key + '"]');
+            const hidden = cfg[m.key] === false;
+            if (btn) {
+                btn.style.display  = '';
+                btn.style.overflow = 'visible';
+                applyEl(btn, hidden, 'modbadge-gestion-' + m.key);
+            }
+            // Le panneau : accessible pour master, caché pour les autres si désactivé
             const panel = document.getElementById(m.key);
-            if (panel && cfg[m.key] === false) panel.style.display = 'none';
+            if (panel) {
+                panel.style.display = (hidden && !isMstr) ? 'none' : '';
+            }
         });
 
         // Fonctionnalités
-        const features = {
-            'dark-mode':       () => { const b=document.querySelector('[onclick*="toggleTheme"]'); if(b) b.style.display=cfg['dark-mode']!==false?'':'none'; },
-            'fullscreen':      () => { const b=document.getElementById('fullscreen-btn'); if(b) b.style.display=cfg['fullscreen']!==false?'':'none'; },
-            'night-tariff':    () => { const b=document.getElementById('night-tariff-btn'); if(b) b.style.display=cfg['night-tariff']!==false?'':'none'; },
-            'retour-client':   () => { const b=document.querySelector('[onclick*="openRetourModal"]')||document.getElementById('retour-client-btn'); if(b) b.style.display=cfg['retour-client']!==false?'':'none'; },
-            'fab-msg':         () => { const b=document.getElementById('fab-msg'); if(b && currentUser) b.style.display=cfg['fab-msg']!==false?'flex':'none'; },
-            'delivery-goal':   () => { const b=document.getElementById('delivery-goal'); if(b) b.style.display=cfg['delivery-goal']!==false?'':'none'; },
-            'badge-expired':   () => { const b=document.getElementById('badge-expired'); if(b) b.style.display=(cfg['badge-expired']!==false&&b.textContent)?'':'none'; },
-            'badge-masked':    () => { const b=document.getElementById('badge-masked');  if(b) b.style.display=(cfg['badge-masked']!==false&&b.textContent)?'':'none'; },
+        const featureEls = {
+            'dark-mode':     function(){ return document.querySelector('[onclick*="toggleTheme"]'); },
+            'fullscreen':    function(){ return document.getElementById('fullscreen-btn'); },
+            'night-tariff':  function(){ return document.getElementById('night-tariff-btn'); },
+            'retour-client': function(){ return document.querySelector('[onclick*="openRetourModal"]') || document.getElementById('retour-client-btn'); },
+            'fab-msg':       function(){ return document.getElementById('fab-msg'); },
+            'delivery-goal': function(){ return document.getElementById('delivery-goal'); },
+            'badge-expired': function(){ return document.getElementById('badge-expired'); },
+            'badge-masked':  function(){ return document.getElementById('badge-masked'); },
         };
-        Object.keys(features).forEach(k => { try { features[k](); } catch(e) {} });
+
+        Object.keys(featureEls).forEach(function(k) {
+            try {
+                var el = featureEls[k]();
+                if (!el) return;
+                var hidden = cfg[k] === false;
+                // Affichage de base selon le type
+                if (k === 'fab-msg') {
+                    el.style.display = currentUser ? 'flex' : 'none';
+                } else if (k === 'badge-expired' || k === 'badge-masked') {
+                    el.style.display = el.textContent ? '' : 'none';
+                } else {
+                    el.style.display = '';
+                }
+                el.style.overflow = 'visible';
+                applyEl(el, hidden, 'modbadge-feat-' + k);
+            } catch(e) {}
+        });
     }
     window._modulesApply = _modulesApply;
 
@@ -8720,6 +8823,88 @@ function toggleInfoSection(headerElement) {
             div.innerHTML = `<span class="s-icon">${icon}</span><span class="s-label">${label}</span><span class="s-state">${state}</span>`;
             document.getElementById('splash-steps').appendChild(div);
         }
+    }
+
+    async function _splashRestoreSequence(data, file) {
+        const fmtDate = d => {
+            if (!d) return null;
+            const dt = new Date(d);
+            return dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})
+                + ' ' + dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        };
+
+        // Étape 1 : Lecture fichier
+        _splashStep('restore-read', '📄', 'Lecture du fichier', file.name, 'active');
+        await _splashDelay(400);
+        const nbProd  = (data.products     || []).length;
+        const nbVente = (data.salesHistory || []).length;
+        _splashStep('restore-read', '✅', 'Fichier analysé', nbProd+' produit(s) · '+nbVente+' vente(s)', 'done');
+        await _splashDelay(300);
+
+        // Étape 2 : Dernière sauvegarde
+        _splashStep('restore-date', '🕐', 'Dernière sauvegarde', '…', 'active');
+        await _splashDelay(400);
+        const savedAt = data._savedAt || data.savedAt || null;
+        const savedLabel = savedAt ? fmtDate(savedAt) : (file.lastModified ? fmtDate(new Date(file.lastModified)) : 'Inconnue');
+        _splashStep('restore-date', '✅', 'Dernière sauvegarde', savedLabel, 'done');
+        await _splashDelay(300);
+
+        // Étape 3 : Restauration des données
+        _splashStep('restore-data', '🔄', 'Restauration des données', '…', 'active');
+        document.getElementById('splash-status').textContent = 'Restauration en cours…';
+        await _splashDelay(500);
+
+        // Effectuer la restauration silencieuse
+        try {
+            // Lancer l'app d'abord pour initialiser les variables
+            _splashLaunchApp(_splashUser);
+            await _splashDelay(300);
+            if (typeof window._doRestoreFromData === 'function') {
+                window._doRestoreFromData(data, file.name);
+            }
+            _splashStep('restore-data', '✅', 'Synchronisation', 'À jour', 'done');
+        } catch(err) {
+            _splashStep('restore-data', '⚠️', 'Restauration', 'Partielle', 'warn');
+        }
+        await _splashDelay(300);
+
+        // Étape 4 : Chargement app
+        _splashStep('restore-app', '🚀', 'Chargement application', '…', 'active');
+        document.getElementById('splash-status').textContent = 'Préparation de l\'interface…';
+        await _splashDelay(450);
+        _splashStep('restore-app', '✅', 'Chargement application', '🎉 Prêt !', 'done');
+
+        // Changer l'icône en succès
+        (function() {
+            var li = document.getElementById('splash-logo-img');
+            var lf = document.getElementById('splash-logo-fallback');
+            if (li) li.style.filter = 'drop-shadow(0 0 8px rgba(39,174,96,0.6))';
+            if (lf) lf.style.background = 'linear-gradient(135deg,#27ae60,#1e8449)';
+        })();
+        document.getElementById('splash-status').textContent = 'Restauration réussie !';
+        document.getElementById('splash-status').style.color = '#27ae60';
+        await _splashDelay(300);
+
+        // Bouton Continuer
+        const existing = document.getElementById('splash-continue-btn');
+        if (existing) existing.remove();
+        const btnContinue = document.createElement('button');
+        btnContinue.id = 'splash-continue-btn';
+        btnContinue.textContent = '▶️ Accéder à l\'application';
+        btnContinue.style.cssText = 'margin-top:20px;width:100%;max-width:300px;padding:15px 24px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;border:none;border-radius:14px;cursor:pointer;font-size:1.05rem;font-weight:800;box-shadow:0 6px 20px rgba(39,174,96,0.4);animation:splashStepIn 0.4s ease;';
+        btnContinue.onclick = function() {
+            const splashEl = document.getElementById('login-splash');
+            splashEl.style.transition = 'opacity 0.4s';
+            splashEl.style.opacity = '0';
+            setTimeout(function() {
+                splashEl.style.display = 'none';
+                splashEl.style.opacity = '';
+                splashEl.style.transition = '';
+            }, 400);
+        };
+        document.getElementById('splash-steps').appendChild(btnContinue);
+        const splashEl = document.getElementById('login-splash');
+        setTimeout(() => splashEl.scrollTo({ top: splashEl.scrollHeight, behavior:'smooth' }), 100);
     }
 
     async function _splashStart(user) {
@@ -8982,19 +9167,25 @@ function toggleInfoSection(headerElement) {
                 file.text().then(function(text) {
                     try {
                         var data = JSON.parse(text);
-                        // Lancer l'app d'abord, puis restaurer après initialisation
-                        _splashContinueOffline();
-                        setTimeout(function() {
-                            if (typeof showRestorePreview === 'function') {
-                                showRestorePreview(file.name, data, function() {
-                                    if (typeof window._doRestoreFromData === 'function') {
-                                        window._doRestoreFromData(data, file.name);
-                                    }
-                                });
-                            } else if (typeof window._doRestoreFromData === 'function') {
-                                window._doRestoreFromData(data, file.name);
-                            }
-                        }, 800);
+                        // Masquer le panneau d'erreur, montrer les étapes de vérification
+                        panel.style.display = 'none';
+                        document.getElementById('splash-loading').style.display = 'flex';
+                        document.getElementById('splash-offline').style.display = 'none';
+                        document.getElementById('splash-steps').innerHTML = '';
+                        document.getElementById('splash-status').textContent = 'Analyse du fichier…';
+                        document.getElementById('splash-status').style.color = '';
+
+                        // Rétablir l'icône logo
+                        (function() {
+                            var li = document.getElementById('splash-logo-img');
+                            var lf = document.getElementById('splash-logo-fallback');
+                            if (li) li.style.filter = '';
+                            if (lf) lf.style.background = 'linear-gradient(135deg,#1a73e8,#0d47a1)';
+                        })();
+
+                        // Séquence d'étapes asynchrone
+                        _splashRestoreSequence(data, file);
+
                     } catch(err) { showScanToast('❌ Fichier JSON invalide', 'error'); }
                 });
             };
@@ -9029,6 +9220,9 @@ function toggleInfoSection(headerElement) {
         updateAdminButton();
         applyTabsVisibility();
         if (typeof window._modulesApply === 'function') window._modulesApply();
+        // Barre Admin-Développeur dans le panneau admin
+        const mqBar = document.getElementById('master-quick-bar');
+        if (mqBar) mqBar.style.display = user.isMaster ? 'flex' : 'none';
         renderAll();
         maybeEnterFullscreenOnLogin();
         if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
@@ -9769,6 +9963,7 @@ function toggleInfoSection(headerElement) {
         appSettings.logoUrl = logoUrl;
         localStorage.setItem('covo_settings', JSON.stringify(appSettings));
         renderLogo();
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
         showScanToast('✅ Configuration sauvegardée');
     }
 
@@ -9777,6 +9972,7 @@ function toggleInfoSection(headerElement) {
         appSettings.adminPanelColor = color;
         localStorage.setItem('covo_settings', JSON.stringify(appSettings));
         applyAdminPanelColor(color);
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
         showScanToast('✅ Couleur du panneau appliquée');
     }
 
@@ -12808,6 +13004,7 @@ logout = function(skipConfirmation = false) {
         const goalAmount = document.getElementById('goal-amount');
         if (goalAmount) goalAmount.textContent = val.toFixed(2) + '€';
         updateProgress();
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
         showScanToast('✅ Objectif journalier mis à jour : ' + val.toFixed(2) + '€');
     }
 
@@ -13245,7 +13442,9 @@ logout = function(skipConfirmation = false) {
             covo_login_history: JSON.parse(localStorage.getItem('covo_login_history') || '[]'),
             covo_settings:      JSON.parse(localStorage.getItem('covo_settings')      || '{}'),
             covo_aw_panels:     localStorage.getItem('covo_aw_panels') || null,
-            _version: 18,
+            covo_modules_config: localStorage.getItem('covo_modules_config') || null,
+            covo_night_tariff:   localStorage.getItem('covo_night_tariff') || null,
+            _version: 19,
             _savedAt: new Date().toISOString()
         }, null, 2);
 
@@ -13313,6 +13512,8 @@ logout = function(skipConfirmation = false) {
             if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
             if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
             if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
+            if (data.covo_modules_config) localStorage.setItem('covo_modules_config', data.covo_modules_config);
+            if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
             saveAll(); renderAll();
             if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
             if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
@@ -13515,6 +13716,8 @@ logout = function(skipConfirmation = false) {
             if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
             if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
             if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
+            if (data.covo_modules_config) localStorage.setItem('covo_modules_config', data.covo_modules_config);
+            if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
                 saveAll();
                 renderAll();
                 closeImportModal();
@@ -19357,7 +19560,14 @@ function initAdminSections() {
                     _gdStartAutoSave();
                     _gdStartPolling();
 
-                    // Pas de sauvegarde immédiate à la connexion — sera déclenchée lors d'une vraie modification
+                    // Restaurer les messages depuis le dossier Messages
+                    setTimeout(async () => {
+                        try {
+                            const restored = await window._gdRestoreMessages();
+                            if (restored) showScanToast('💬 Messages synchronisés depuis Drive', 'success');
+                        } catch(e) {}
+                    }, 2000);
+
                     showScanToast('✅ Google Drive connecté — sauvegarde automatique activée', 'success');
                 }
             });
@@ -20020,7 +20230,9 @@ function initAdminSections() {
                 covo_login_history:  JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
                 covo_settings:       JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
                 covo_aw_panels:      localStorage.getItem('covo_aw_panels') || null,
-                _version: 18,
+                covo_modules_config: localStorage.getItem('covo_modules_config') || null,
+                covo_night_tariff:   localStorage.getItem('covo_night_tariff') || null,
+                _version: 19,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
                 _folderName: _gdFolderName,
@@ -20186,6 +20398,8 @@ function initAdminSections() {
             if (data.covo_login_history) localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
             if (data.covo_settings)      localStorage.setItem('covo_settings',       JSON.stringify(data.covo_settings));
             if (data.covo_aw_panels)     localStorage.setItem('covo_aw_panels',      data.covo_aw_panels);
+            if (data.covo_modules_config) localStorage.setItem('covo_modules_config', data.covo_modules_config);
+            if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
 
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
@@ -20362,6 +20576,9 @@ function initAdminSections() {
                     await _gdRestoreSavedFolder();
                     _gdStartAutoSave();
                     _gdStartPolling();
+                    setTimeout(async () => {
+                        try { await window._gdRestoreMessages(); } catch(e) {}
+                    }, 2000);
                 }
             });
             _gdTokenClient.requestAccessToken({ prompt: '' });
@@ -20410,6 +20627,152 @@ function initAdminSections() {
     // ===========================================================================
     let _gdTicketFolderId = null;
     const GD_TICKET_FOLDER = 'Tickets de caisse';
+
+    // =========================================================================
+    // ===== DOSSIER MESSAGES GOOGLE DRIVE =====================================
+    // =========================================================================
+    const GD_MESSAGES_FOLDER = 'Messages COVO';
+    const GD_MESSAGES_FILE   = 'messages.json';
+    let _gdMsgFolderId = null;
+    let _gdMsgFileId   = null;
+    let _gdMsgSyncing  = false;
+
+    // S'assurer que le dossier Messages existe sur Drive
+    async function _gdEnsureMsgFolder() {
+        if (_gdMsgFolderId) return _gdMsgFolderId;
+        if (!_gdConnected || !_gdAccessToken) return null;
+        try {
+            const q = encodeURIComponent(`name='${GD_MESSAGES_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+            const data = await resp.json();
+            if (data.files && data.files.length > 0) {
+                _gdMsgFolderId = data.files[0].id;
+                return _gdMsgFolderId;
+            }
+            // Créer le dossier
+            const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: GD_MESSAGES_FOLDER, mimeType: 'application/vnd.google-apps.folder' })
+            });
+            const folder = await cr.json();
+            if (folder.id) {
+                _gdMsgFolderId = folder.id;
+                return _gdMsgFolderId;
+            }
+        } catch(e) { console.warn('GDrive msg folder:', e); }
+        return null;
+    }
+
+    // Chercher le fichier messages.json dans le dossier
+    async function _gdFindMsgFile(folderId) {
+        if (_gdMsgFileId) return _gdMsgFileId;
+        try {
+            const q = encodeURIComponent(`'${folderId}' in parents and name='${GD_MESSAGES_FILE}' and trashed=false`);
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`);
+            const data = await resp.json();
+            if (data.files && data.files.length > 0) {
+                _gdMsgFileId = data.files[0].id;
+                return _gdMsgFileId;
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    // Sauvegarder tous les messages dans Drive
+    window._gdSaveMessages = async function() {
+        if (!_gdConnected || !_gdAccessToken || _gdMsgSyncing) return;
+        _gdMsgSyncing = true;
+        try {
+            const folderId = await _gdEnsureMsgFolder();
+            if (!folderId) return;
+            let fileId = await _gdFindMsgFile(folderId);
+            const msgs = JSON.parse(localStorage.getItem('covo_messages') || '[]');
+            const content = JSON.stringify({ messages: msgs, _savedAt: new Date().toISOString() });
+            const boundary = '----CovoDriveMsgBoundary';
+            const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
+                JSON.stringify({ name: GD_MESSAGES_FILE, parents: fileId ? undefined : [folderId] }) +
+                `\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
+            const method = fileId ? 'PATCH' : 'POST';
+            const url = fileId
+                ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+            const resp = await _gdFetch(url, {
+                method,
+                headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+                body
+            });
+            const result = await resp.json();
+            if (result.id) {
+                _gdMsgFileId = result.id;
+                localStorage.setItem('gdrive_msg_file_id', result.id);
+                localStorage.setItem('gdrive_msg_last_save', new Date().toISOString());
+                console.log('✅ Messages sauvegardés Drive →', GD_MESSAGES_FOLDER + '/' + GD_MESSAGES_FILE);
+            }
+        } catch(e) { console.warn('GDrive msg save error:', e); }
+        finally { _gdMsgSyncing = false; }
+    };
+
+    // Restaurer les messages depuis Drive au démarrage
+    window._gdRestoreMessages = async function() {
+        if (!_gdConnected || !_gdAccessToken) return false;
+        try {
+            const folderId = await _gdEnsureMsgFolder();
+            if (!folderId) return false;
+            const fileId = await _gdFindMsgFile(folderId);
+            if (!fileId) return false;
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+            const text = await resp.text();
+            const data = JSON.parse(text);
+            if (data.messages && Array.isArray(data.messages)) {
+                // Fusionner : garder les messages Drive + les locaux plus récents
+                const local  = JSON.parse(localStorage.getItem('covo_messages') || '[]');
+                const merged = _gdMergeMsgs(data.messages, local);
+                localStorage.setItem('covo_messages', JSON.stringify(merged));
+                localStorage.setItem('gdrive_msg_last_restore', new Date().toISOString());
+                console.log(`✅ ${merged.length} messages restaurés depuis Drive`);
+                // Rafraîchir la boîte de réception si ouverte
+                if (typeof window._qmsgRefreshInbox === 'function') {
+                    try { window._qmsgRefreshInbox(); } catch(e) {}
+                }
+                if (typeof _qmsgUpdateHeaderDot === 'function') {
+                    try { _qmsgUpdateHeaderDot(); } catch(e) {}
+                }
+                return true;
+            }
+        } catch(e) { console.warn('GDrive msg restore error:', e); }
+        return false;
+    };
+
+    // Fusion intelligente : union par id, les plus récents gagnent
+    function _gdMergeMsgs(remote, local) {
+        const map = {};
+        remote.forEach(m => { if (m.id) map[m.id] = m; });
+        local.forEach(m => {
+            if (!m.id) return;
+            if (!map[m.id]) { map[m.id] = m; return; }
+            // Garder le plus récent (par date ou par nombre de réponses)
+            const rDate = new Date(map[m.id].date || 0);
+            const lDate = new Date(m.date || 0);
+            const rReplies = (map[m.id].replies || []).length;
+            const lReplies = (m.replies || []).length;
+            if (lReplies > rReplies || lDate > rDate) map[m.id] = m;
+        });
+        return Object.values(map).sort((a, b) => new Date(a.date) - new Date(b.date));
+    }
+
+    // Déclencher la sauvegarde messages avec debounce (2s)
+    let _gdMsgSaveTimer = null;
+    window._gdTriggerMsgSave = function() {
+        clearTimeout(_gdMsgSaveTimer);
+        _gdMsgSaveTimer = setTimeout(window._gdSaveMessages, 2000);
+    };
+
+    // Récupérer l'ID fichier depuis localStorage au démarrage
+    (function() {
+        const savedFileId = localStorage.getItem('gdrive_msg_file_id');
+        if (savedFileId) _gdMsgFileId = savedFileId;
+    })();
 
     async function _gdEnsureTicketFolder() {
         if (_gdTicketFolderId) return _gdTicketFolderId;
