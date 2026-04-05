@@ -3395,6 +3395,16 @@
                 <select id="wh-cashier" onchange="renderWorkHours()">
                     <option value="all">👥 Tous les caissiers</option>
                 </select>
+                <div style="margin-left:auto;display:flex;gap:6px;">
+                    <button onclick="whPreview()" title="Aperçu du rapport"
+                        style="padding:7px 12px;background:linear-gradient(135deg,#9b59b6,#8e44ad);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;gap:5px;">
+                        👁️ Aperçu
+                    </button>
+                    <button onclick="whExportPDF()" title="Exporter en PDF"
+                        style="padding:7px 12px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;display:flex;align-items:center;gap:5px;">
+                        📄 PDF
+                    </button>
+                </div>
             </div>
             <div id="wh-kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;"></div>
             <div class="wh-section">
@@ -8320,6 +8330,227 @@ function toggleInfoSection(headerElement) {
         });
     }
 
+    // ── Collecte des données pour export ─────────────────────────────
+    function _whCollectData() {
+        const year    = parseInt(document.getElementById('wh-year')?.value   || new Date().getFullYear());
+        const monthV  = parseInt(document.getElementById('wh-month')?.value  ?? -1);
+        const cashier = document.getElementById('wh-cashier')?.value || 'all';
+        const MOIS    = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+        const JOURS   = ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'];
+        const monthLabel = monthV >= 0 ? MOIS[monthV] + ' ' + year : 'Toute l\'année ' + year;
+        const cashierLabel = cashier === 'all' ? 'Tous les caissiers'
+            : (users.find(u=>u.id===cashier||u.username===cashier)?.username || cashier);
+        const fmt2 = n => String(n).padStart(2,'0');
+        const fmtTime = d => d ? fmt2(d.getHours())+':'+fmt2(d.getMinutes()) : '—';
+
+        let sales = salesHistory.filter(s => {
+            if (!s.date || s.cancelled) return false;
+            const d = new Date(s.date);
+            if (d.getFullYear() !== year) return false;
+            if (monthV >= 0 && d.getMonth() !== monthV) return false;
+            if (cashier !== 'all') {
+                if ((s.cashierId||'') !== cashier && (s.cashier||'') !== cashier) return false;
+            }
+            return true;
+        });
+
+        const byDay = {};
+        sales.forEach(s => {
+            const d = new Date(s.date);
+            const key = d.toISOString().split('T')[0];
+            if (!byDay[key]) byDay[key] = { tickets:0, ca:0, hours:new Set(), items:0, firstTime:null, lastTime:null, firstTs:Infinity, lastTs:-Infinity };
+            byDay[key].tickets++;
+            byDay[key].ca += parseFloat(s.total||0);
+            byDay[key].hours.add(d.getHours());
+            byDay[key].items += (s.items||[]).length;
+            const ts = d.getTime();
+            if (ts < byDay[key].firstTs) { byDay[key].firstTs=ts; byDay[key].firstTime=d; }
+            if (ts > byDay[key].lastTs)  { byDay[key].lastTs=ts;  byDay[key].lastTime=d;  }
+        });
+
+        const days = Object.keys(byDay).sort();
+        const totalTickets = sales.length;
+        const totalDays    = days.length;
+        const totalCA      = sales.reduce((s,t)=>s+parseFloat(t.total||0),0);
+        const avgPerDay    = totalDays ? (totalTickets/totalDays).toFixed(1) : 0;
+        const avgCADay     = totalDays ? (totalCA/totalDays).toFixed(2) : 0;
+
+        const openTimes  = days.filter(d=>byDay[d].firstTime).map(d=>byDay[d].firstTime);
+        const closeTimes = days.filter(d=>byDay[d].lastTime).map(d=>byDay[d].lastTime);
+        const avgOpen    = openTimes.length  ? Math.round(openTimes.reduce((s,d)=>s+d.getHours()*60+d.getMinutes(),0)/openTimes.length) : null;
+        const avgClose   = closeTimes.length ? Math.round(closeTimes.reduce((s,d)=>s+d.getHours()*60+d.getMinutes(),0)/closeTimes.length) : null;
+        const fmtMin     = m => m===null ? '—' : fmt2(Math.floor(m/60))+'h'+fmt2(m%60);
+
+        const hourCount = {};
+        sales.forEach(s => { const h=new Date(s.date).getHours(); hourCount[h]=(hourCount[h]||0)+1; });
+        const peakHour = Object.entries(hourCount).sort((a,b)=>b[1]-a[1])[0];
+
+        return { days, byDay, totalTickets, totalDays, totalCA, avgPerDay, avgCADay, avgOpen, avgClose, fmtMin, fmtTime, peakHour, monthLabel, cashierLabel, year, monthV, JOURS };
+    }
+
+    // ── Aperçu dans une modale ────────────────────────────────────────
+    window.whPreview = function() {
+        const d = _whCollectData();
+        if (!d.totalTickets) { showScanToast('Aucune donnée pour cette période', 'info'); return; }
+        const isDark = document.body.classList.contains('dark-mode');
+        const cardBg = isDark ? 'var(--bg-card-2)' : '#eef4ff';
+        const hdrBg  = isDark ? 'var(--bg-card-3)' : '#dbeafe';
+
+        const kpiCard = (icon, val, lbl, col) =>
+            `<div style="background:${cardBg};border-radius:10px;padding:12px;text-align:center;border:1px solid var(--border-color);">
+                <div style="font-size:1.2rem;margin-bottom:3px;">${icon}</div>
+                <div style="font-size:1.15rem;font-weight:900;color:${col};">${val}</div>
+                <div style="font-size:0.7rem;color:var(--text-muted);">${lbl}</div>
+            </div>`;
+
+        let html = `
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:12px;">
+            📅 ${d.monthLabel} &nbsp;·&nbsp; 👤 ${d.cashierLabel} &nbsp;·&nbsp; Généré le ${new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}
+        </div>
+
+        <!-- KPIs -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px;">
+            ${kpiCard('🟢', d.fmtMin(d.avgOpen),  'Ouverture moy.', '#27ae60')}
+            ${kpiCard('🔴', d.fmtMin(d.avgClose), 'Fermeture moy.', '#e74c3c')}
+            ${kpiCard('📅', d.totalDays, 'Jours travaillés', '#1a73e8')}
+            ${kpiCard('🎫', d.totalTickets, 'Total tickets', '#9b59b6')}
+            ${kpiCard('📊', d.avgPerDay, 'Moy. tickets/j', '#e67e22')}
+            ${kpiCard('💰', d.totalCA.toFixed(2)+' €', 'CA total', '#16a085')}
+            ${kpiCard('💵', d.avgCADay+' €', 'CA moy./jour', '#1a73e8')}
+            ${d.peakHour ? kpiCard('⏰', d.peakHour[0]+'h ('+d.peakHour[1]+')', 'Heure de pointe', '#e74c3c') : ''}
+        </div>
+
+        <!-- Tableau journalier -->
+        <div style="font-weight:700;font-size:0.85rem;color:var(--text-main);margin-bottom:8px;">📋 Détail journalier</div>
+        <div style="overflow-x:auto;">
+        <table class="wh-table">
+            <thead><tr>
+                <th style="text-align:left;">📅 Date</th>
+                <th>🟢 Ouverture</th>
+                <th>🔴 Fermeture</th>
+                <th>⏳ Durée</th>
+                <th>🎫 Tickets</th>
+                <th>💰 CA</th>
+                <th>💵 Moy./ticket</th>
+            </tr></thead>
+            <tbody>
+            ${d.days.slice().reverse().map(day => {
+                const e = d.byDay[day];
+                const dt = new Date(day);
+                const isWe = dt.getDay()===0||dt.getDay()===6;
+                const duration = (e.firstTs!==Infinity&&e.lastTs!==-Infinity)?((e.lastTs-e.firstTs)/3600000).toFixed(1)+'h':'—';
+                const avgT = e.tickets ? (e.ca/e.tickets).toFixed(2)+' €' : '—';
+                return `<tr>
+                    <td style="text-align:left;font-weight:600;color:${isWe?'#e67e22':'var(--text-main)'};">
+                        ${d.JOURS[dt.getDay()]} ${dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})}
+                    </td>
+                    <td style="color:#27ae60;font-weight:700;">${d.fmtTime(e.firstTime)}</td>
+                    <td style="color:#e74c3c;font-weight:700;">${d.fmtTime(e.lastTime)}</td>
+                    <td style="color:#9b59b6;">${duration}</td>
+                    <td style="color:#1a73e8;font-weight:700;">${e.tickets}</td>
+                    <td style="color:#16a085;font-weight:600;">${e.ca.toFixed(2)} €</td>
+                    <td style="color:var(--text-muted);">${avgT}</td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+            <tfoot>
+                <tr style="background:var(--bg-card-3);font-weight:800;">
+                    <td colspan="4" style="text-align:right;">TOTAL (${d.totalDays} jours)</td>
+                    <td style="color:#1a73e8;">${d.totalTickets}</td>
+                    <td style="color:#16a085;">${d.totalCA.toFixed(2)} €</td>
+                    <td style="color:var(--text-muted);">${d.totalDays?(d.totalCA/d.totalTickets).toFixed(2)+'  €':'—'}</td>
+                </tr>
+            </tfoot>
+        </table>
+        </div>`;
+
+        document.getElementById('wh-preview-label').textContent = d.monthLabel + ' · ' + d.cashierLabel;
+        document.getElementById('wh-preview-body').innerHTML = html;
+        document.getElementById('wh-preview-modal').style.display = 'flex';
+    };
+
+    // ── Export PDF ────────────────────────────────────────────────────
+    window.whExportPDF = function() {
+        const d = _whCollectData();
+        if (!d.totalTickets) { showScanToast('Aucune donnée pour cette période', 'info'); return; }
+
+        const fmtMin = d.fmtMin;
+        const fmtTime = d.fmtTime;
+        const companyName = appSettings.companyName || 'COVO Pro';
+
+        const rowsHtml = d.days.slice().reverse().map(day => {
+            const e = d.byDay[day];
+            const dt = new Date(day);
+            const isWe = dt.getDay()===0||dt.getDay()===6;
+            const duration = (e.firstTs!==Infinity&&e.lastTs!==-Infinity)?((e.lastTs-e.firstTs)/3600000).toFixed(1)+'h':'—';
+            const avgT = e.tickets?(e.ca/e.tickets).toFixed(2)+' €':'—';
+            return `<tr style="${isWe?'background:#fff9f0;':''}" >
+                <td>${d.JOURS[dt.getDay()]} ${dt.toLocaleDateString('fr-FR')}</td>
+                <td class="c green">${fmtTime(e.firstTime)}</td>
+                <td class="c red">${fmtTime(e.lastTime)}</td>
+                <td class="c">${duration}</td>
+                <td class="c bold">${e.tickets}</td>
+                <td class="c green">${e.ca.toFixed(2)} €</td>
+                <td class="c">${avgT}</td>
+            </tr>`;
+        }).join('');
+
+        const htmlContent = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+        <title>Heures de travail — ${d.monthLabel}</title>
+        <style>
+            body{font-family:Arial,sans-serif;font-size:11px;color:#1e2d3d;margin:0;padding:20px;}
+            h1{font-size:16px;color:#1a73e8;margin-bottom:4px;}
+            .sub{font-size:10px;color:#666;margin-bottom:16px;}
+            .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}
+            .kpi{background:#eef4ff;border-radius:8px;padding:10px;text-align:center;border:1px solid #dbeafe;}
+            .kpi-val{font-size:14px;font-weight:900;}
+            .kpi-lbl{font-size:9px;color:#666;margin-top:2px;}
+            table{width:100%;border-collapse:collapse;font-size:10px;}
+            th{background:#1a73e8;color:white;padding:7px 6px;text-align:left;}
+            th.c,td.c{text-align:center;}
+            td{padding:6px;border-bottom:1px solid #e8eaed;}
+            tr:nth-child(even) td{background:#f8fafc;}
+            .green{color:#27ae60;}.red{color:#e74c3c;}.bold{font-weight:700;}
+            tfoot td{background:#eef4ff;font-weight:800;border-top:2px solid #1a73e8;}
+            @media print{.noprint{display:none;}}
+            @page{size:A4 landscape;margin:15mm;}
+        </style></head><body>
+        <h1>⏱️ Rapport — Heures de travail</h1>
+        <div class="sub">${companyName} &nbsp;·&nbsp; ${d.monthLabel} &nbsp;·&nbsp; ${d.cashierLabel} &nbsp;·&nbsp; Généré le ${new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'})}</div>
+
+        <div class="kpis">
+            <div class="kpi"><div class="kpi-val" style="color:#27ae60">${fmtMin(d.avgOpen)}</div><div class="kpi-lbl">🟢 Ouverture moy.</div></div>
+            <div class="kpi"><div class="kpi-val" style="color:#e74c3c">${fmtMin(d.avgClose)}</div><div class="kpi-lbl">🔴 Fermeture moy.</div></div>
+            <div class="kpi"><div class="kpi-val" style="color:#1a73e8">${d.totalDays}</div><div class="kpi-lbl">📅 Jours travaillés</div></div>
+            <div class="kpi"><div class="kpi-val" style="color:#9b59b6">${d.totalTickets}</div><div class="kpi-lbl">🎫 Total tickets</div></div>
+            <div class="kpi"><div class="kpi-val" style="color:#e67e22">${d.avgPerDay}</div><div class="kpi-lbl">📊 Moy. tickets/jour</div></div>
+            <div class="kpi"><div class="kpi-val" style="color:#16a085">${d.totalCA.toFixed(2)} €</div><div class="kpi-lbl">💰 CA total</div></div>
+            <div class="kpi"><div class="kpi-val" style="color:#1a73e8">${d.avgCADay} €</div><div class="kpi-lbl">💵 CA moy./jour</div></div>
+            ${d.peakHour?`<div class="kpi"><div class="kpi-val" style="color:#e74c3c">${d.peakHour[0]}h (${d.peakHour[1]})</div><div class="kpi-lbl">⏰ Heure de pointe</div></div>`:''}
+        </div>
+
+        <table>
+            <thead><tr>
+                <th>📅 Date</th><th class="c">🟢 Ouverture</th><th class="c">🔴 Fermeture</th>
+                <th class="c">⏳ Durée</th><th class="c">🎫 Tickets</th>
+                <th class="c">💰 CA</th><th class="c">💵 Moy./ticket</th>
+            </tr></thead>
+            <tbody>${rowsHtml}</tbody>
+            <tfoot><tr>
+                <td colspan="4" style="text-align:right;">TOTAL (${d.totalDays} jours)</td>
+                <td class="c">${d.totalTickets}</td>
+                <td class="c green">${d.totalCA.toFixed(2)} €</td>
+                <td class="c">${d.totalDays?(d.totalCA/d.totalTickets).toFixed(2)+' €':'—'}</td>
+            </tr></tfoot>
+        </table>
+        <script>window.onload=function(){window.print();};<\/script>
+        </body></html>`;
+
+        const w = window.open('', '_blank');
+        if (w) { w.document.write(htmlContent); w.document.close(); }
+        else showScanToast('Activez les popups pour exporter en PDF', 'info');
+    };
+
     // ── Numéro de semaine ISO ─────────────────────────────────────────
     function _whGetWeek(d) {
         const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -12879,6 +13110,113 @@ logout = function(skipConfirmation = false) {
     };
     window.exportArticlesStatsPDF = window.exportArticlesStatsPDF;
 
+    window.previewArticlesStats = function() {
+        const rows = window._astRows || [];
+        if (!rows.length) { showScanToast('Aucune donnée à afficher', 'info'); return; }
+
+        const periodLabel = document.getElementById('ast-period-label')?.textContent || '';
+        const totalCA  = rows.reduce((s,r)=>s+r.ca, 0);
+        const totalQty = rows.reduce((s,r)=>s+r.qty, 0);
+        const now = new Date().toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
+
+        // KPIs rapides
+        const top3 = rows.slice(0,3);
+        const isDark = document.body.classList.contains('dark-mode');
+        const cardBg = isDark ? 'var(--bg-card-2,#202c3e)' : '#f8f4fc';
+        const txtMain = 'var(--text-main)';
+        const txtMuted = 'var(--text-muted)';
+
+        let html = `
+        <div style="margin-bottom:16px;">
+            <div style="font-size:0.75rem;color:${txtMuted};margin-bottom:6px;">📅 ${now} &nbsp;·&nbsp; ${periodLabel}</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px;">
+                <div style="background:${cardBg};border-radius:10px;padding:12px;text-align:center;border:1px solid var(--border-color);">
+                    <div style="font-size:1.4rem;font-weight:900;color:#8e44ad;">${rows.length}</div>
+                    <div style="font-size:0.72rem;color:${txtMuted};">Articles vendus</div>
+                </div>
+                <div style="background:${cardBg};border-radius:10px;padding:12px;text-align:center;border:1px solid var(--border-color);">
+                    <div style="font-size:1.4rem;font-weight:900;color:#27ae60;">${totalCA.toFixed(2)} €</div>
+                    <div style="font-size:0.72rem;color:${txtMuted};">CA total</div>
+                </div>
+                <div style="background:${cardBg};border-radius:10px;padding:12px;text-align:center;border:1px solid var(--border-color);">
+                    <div style="font-size:1.4rem;font-weight:900;color:#1a73e8;">${totalQty.toFixed(0)}</div>
+                    <div style="font-size:0.72rem;color:${txtMuted};">Unités vendues</div>
+                </div>
+                <div style="background:${cardBg};border-radius:10px;padding:12px;text-align:center;border:1px solid var(--border-color);">
+                    <div style="font-size:1.4rem;font-weight:900;color:#e67e22;">${(totalCA/rows.length).toFixed(2)} €</div>
+                    <div style="font-size:0.72rem;color:${txtMuted};">CA moy./article</div>
+                </div>
+            </div>
+
+            <!-- Podium Top 3 -->
+            <div style="font-weight:700;font-size:0.85rem;color:${txtMain};margin-bottom:10px;">🏆 Top 3 articles</div>
+            <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;">
+            ${top3.map((r,i)=>{
+                const medals=['🥇','🥈','🥉'];
+                const colors=['#f1c40f','#bdc3c7','#cd7f32'];
+                const pct = totalCA > 0 ? ((r.ca/totalCA)*100).toFixed(1) : 0;
+                const prod = products.find(p=>p.id==r.id||p.name===r.name);
+                const img = prod?.img || '';
+                return `<div style="flex:1;min-width:140px;background:${cardBg};border-radius:12px;padding:12px;border:2px solid ${colors[i]};text-align:center;">
+                    ${img?`<img src="${img}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;margin-bottom:6px;" onerror="this.style.display='none'">`:`<div style="font-size:2rem;margin-bottom:6px;">${medals[i]}</div>`}
+                    <div style="font-weight:700;font-size:0.82rem;color:${txtMain};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.name}</div>
+                    <div style="font-size:0.9rem;font-weight:900;color:#8e44ad;margin-top:4px;">${r.ca.toFixed(2)} €</div>
+                    <div style="font-size:0.68rem;color:${txtMuted};">${pct}% du CA</div>
+                </div>`;
+            }).join('')}
+            </div>
+
+            <!-- Tableau complet -->
+            <div style="font-weight:700;font-size:0.85rem;color:${txtMain};margin-bottom:10px;">📋 Tous les articles (${rows.length})</div>
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                <thead>
+                    <tr style="background:${isDark?'var(--bg-card-3)':'#f3e8ff'};">
+                        <th style="padding:8px;text-align:center;border-bottom:2px solid var(--border-color);color:${txtMain};">#</th>
+                        <th style="padding:8px;text-align:left;border-bottom:2px solid var(--border-color);color:${txtMain};">Article</th>
+                        <th style="padding:8px;text-align:center;border-bottom:2px solid var(--border-color);color:${txtMain};">Qté</th>
+                        <th style="padding:8px;text-align:right;border-bottom:2px solid var(--border-color);color:${txtMain};">CA</th>
+                        <th style="padding:8px;text-align:right;border-bottom:2px solid var(--border-color);color:${txtMain};">Part</th>
+                        <th style="padding:8px;text-align:center;border-bottom:2px solid var(--border-color);color:${txtMain};">Bénéfice</th>
+                    </tr>
+                </thead>
+                <tbody>
+                ${rows.map((r,i)=>{
+                    const isKg = r.unitType==='kg';
+                    const qty  = isKg ? r.qty.toFixed(2)+' kg' : Math.round(r.qty)+' u.';
+                    const pct  = totalCA>0?((r.ca/totalCA)*100).toFixed(1)+'%':'0%';
+                    const rank = i===0?'🥇':i===1?'🥈':i===2?'🥉':'#'+(i+1);
+                    const prod = products.find(p=>p.id==r.id||p.name===r.name);
+                    const prixA = prod?.costPrice||null;
+                    const benef = prixA!=null?((parseFloat(prod.price||prod.pricePerKg||0)-prixA)*r.qty).toFixed(2)+' €':'—';
+                    const rowBg = i%2===0?'':'rgba(0,0,0,0.02)';
+                    return `<tr style="background:${rowBg};">
+                        <td style="padding:7px 8px;text-align:center;font-weight:700;color:#8e44ad;">${rank}</td>
+                        <td style="padding:7px 8px;font-weight:600;color:${txtMain};">${r.name}</td>
+                        <td style="padding:7px 8px;text-align:center;color:var(--text-muted);">${qty}</td>
+                        <td style="padding:7px 8px;text-align:right;font-weight:700;color:#27ae60;">${r.ca.toFixed(2)} €</td>
+                        <td style="padding:7px 8px;text-align:right;color:var(--text-muted);">${pct}</td>
+                        <td style="padding:7px 8px;text-align:center;color:#1a73e8;">${benef}</td>
+                    </tr>`;
+                }).join('')}
+                </tbody>
+                <tfoot>
+                    <tr style="background:${isDark?'var(--bg-card-3)':'#f3e8ff'};font-weight:800;">
+                        <td colspan="3" style="padding:9px 8px;text-align:right;color:${txtMain};">TOTAL</td>
+                        <td style="padding:9px 8px;text-align:right;color:#27ae60;">${totalCA.toFixed(2)} €</td>
+                        <td style="padding:9px 8px;text-align:right;color:${txtMain};">100%</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+            </div>
+        </div>`;
+
+        document.getElementById('ast-preview-period').textContent = periodLabel;
+        document.getElementById('ast-preview-body').innerHTML = html;
+        document.getElementById('ast-preview-modal').style.display = 'flex';
+    };
+
     function renderTopProducts() {
         const productSales = {};
         salesHistory.forEach(sale => {
@@ -15570,6 +15908,40 @@ logout = function(skipConfirmation = false) {
     </div>
 </div>
 
+<!-- ===== APERÇU HEURES DE TRAVAIL ===== -->
+<div id="wh-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:99700;justify-content:center;align-items:center;">
+  <div style="background:var(--bg-card,#fff);border-radius:16px;width:96%;max-width:820px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,0.4);">
+    <div style="background:linear-gradient(135deg,#1a73e8,#0d47a1);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div>
+        <div style="color:white;font-weight:800;font-size:0.95rem;">⏱️ Aperçu — Contrôle des heures de travail</div>
+        <div id="wh-preview-label" style="color:rgba(255,255,255,0.75);font-size:0.72rem;margin-top:2px;"></div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="whExportPDF()" style="background:rgba(255,255,255,0.9);border:none;color:#0d47a1;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:700;">📄 Exporter PDF</button>
+        <button onclick="document.getElementById('wh-preview-modal').style.display='none'" style="background:rgba(255,255,255,0.15);border:none;color:white;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+      </div>
+    </div>
+    <div id="wh-preview-body" style="overflow-y:auto;flex:1;padding:20px;"></div>
+  </div>
+</div>
+
+<!-- ===== APERÇU DÉTAIL VENTES PAR ARTICLE ===== -->
+<div id="ast-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:99700;justify-content:center;align-items:center;">
+  <div style="background:var(--bg-card,#fff);border-radius:16px;width:96%;max-width:780px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,0.4);">
+    <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div>
+        <div style="color:white;font-weight:800;font-size:0.95rem;">👁️ Aperçu — Détail des ventes par article</div>
+        <div id="ast-preview-period" style="color:rgba(255,255,255,0.75);font-size:0.72rem;margin-top:2px;"></div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="exportArticlesStatsPDF()" style="background:rgba(255,255,255,0.9);border:none;color:#8e44ad;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:700;">📄 Exporter PDF</button>
+        <button onclick="document.getElementById('ast-preview-modal').style.display='none'" style="background:rgba(255,255,255,0.15);border:none;color:white;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+      </div>
+    </div>
+    <div id="ast-preview-body" style="overflow-y:auto;flex:1;padding:20px;"></div>
+  </div>
+</div>
+
 <!-- ===== HOVER PREVIEW PRODUIT ===== -->
 <div id="product-hover-preview">
     <img id="php-img" src="" alt="">
@@ -15609,6 +15981,7 @@ logout = function(skipConfirmation = false) {
                         <option value="name" style="color:#2c3e50;background:#fff;">Nom A-Z</option>
                     </select>
                     <button onclick="exportArticlesStatsCSV()" style="background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.4);color:white;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;" title="Exporter CSV">⬇️ CSV</button>
+                    <button onclick="previewArticlesStats()" style="background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.4);color:white;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;" title="Aperçu du rapport">👁️ Aperçu</button>
                     <button onclick="exportArticlesStatsPDF()" style="background:rgba(255,255,255,0.9);border:none;color:#8e44ad;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:700;" title="Exporter PDF détaillé">📄 PDF</button>
                     <button onclick="closeArticlesStatsModal()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.95rem;">✕</button>
                 </div>
