@@ -8123,21 +8123,20 @@ function toggleInfoSection(headerElement) {
         document.getElementById('splash-username').textContent = '👋 ' + user.username;
         document.getElementById('splash-status').textContent   = 'Vérification de la connexion…';
         document.getElementById('splash-steps').innerHTML      = '';
+        document.getElementById('splash-icon').textContent     = '🔐';
 
-        // Étape 1 : Internet
+        // ── ÉTAPE 1 : Internet ────────────────────────────────────────
         _splashStep('net', '🌐', 'Connexion Internet', '…', 'active');
-        await _splashDelay(500);
+        await _splashDelay(450);
 
-        let isOnline = navigator.onLine;
-        if (isOnline) {
-            try {
-                await Promise.race([
-                    fetch('https://www.google.com/favicon.ico', {mode:'no-cors', cache:'no-store'}),
-                    new Promise((_,rej) => setTimeout(() => rej(new Error('timeout')), 3000))
-                ]);
-                isOnline = true;
-            } catch(e) { isOnline = false; }
-        }
+        let isOnline = false;
+        try {
+            await Promise.race([
+                fetch('https://www.google.com/favicon.ico', {mode:'no-cors', cache:'no-store'}),
+                new Promise((_,rej) => setTimeout(() => rej(new Error('timeout')), 3500))
+            ]);
+            isOnline = true;
+        } catch(e) { isOnline = false; }
 
         if (!isOnline) {
             _splashStep('net', '📡', 'Connexion Internet', 'Hors ligne', 'err');
@@ -8145,49 +8144,212 @@ function toggleInfoSection(headerElement) {
             offline.style.display = 'flex';
             return;
         }
-
         _splashStep('net', '✅', 'Connexion Internet', 'OK', 'done');
-        await _splashDelay(300);
+        await _splashDelay(280);
 
-        // Étape 2 : Google Drive
-        _splashStep('drive', '☁️', 'Google Drive', '…', 'active');
+        // ── ÉTAPE 2 : Vérification Drive ─────────────────────────────
+        _splashStep('drive', '☁️', 'Google Drive', 'Vérification…', 'active');
         await _splashDelay(400);
 
-        const gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
-        const driveOk = !!(gdState && gdState.connected && gdState.accessToken);
+        const gdState    = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
+        const hasToken   = !!(gdState && gdState.connected);
+        const hasFolderA = !!(gdState && gdState.folderId);
+        let   driveVerified = false;
+        let   driveError    = null;
 
-        if (driveOk) {
-            _splashStep('drive', '✅', 'Google Drive', 'Connecté', 'done');
-            await _splashDelay(300);
+        if (hasToken) {
+            // Vrai appel API : lister les fichiers du dossier Drive
+            try {
+                const fid = gdState.folderId || 'root';
+                const url = `https://www.googleapis.com/drive/v3/files?q='${fid}' in parents and trashed=false&pageSize=1&fields=files(id)`;
+                // Utiliser _gdFetch si disponible (gère le token), sinon fetch direct
+                let resp;
+                if (typeof window._gdFetchPublic === 'function') {
+                    resp = await Promise.race([
+                        window._gdFetchPublic(url),
+                        new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 5000))
+                    ]);
+                } else {
+                    resp = await Promise.race([
+                        fetch(url, { headers:{ Authorization:'Bearer '+(gdState.accessToken||'') } }),
+                        new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 5000))
+                    ]);
+                }
+                if (resp && (resp.ok !== false)) {
+                    driveVerified = true;
+                } else {
+                    driveError = 'token_expired';
+                }
+            } catch(e) {
+                driveError = 'api_error';
+            }
+        } else {
+            driveError = 'not_connected';
+        }
 
-            _splashStep('backup', '📂', 'Dernière sauvegarde', '…', 'active');
-            await _splashDelay(500);
+        if (driveVerified) {
+            // ✅ Drive OK
+            _splashStep('drive', '✅', 'Google Drive', gdState.email ? '@ '+gdState.email : 'Connecté', 'done');
+            await _splashDelay(280);
+
+            // Dossier de sauvegarde
+            _splashStep('folder', '📁', 'Dossier sauvegarde', hasFolderA ? gdState.folderName||'Sélectionné' : 'Non configuré', hasFolderA ? 'done' : 'warn');
+            await _splashDelay(280);
+
+            // Dernière sauvegarde
+            _splashStep('backup', '🕐', 'Dernière sauvegarde', '…', 'active');
+            await _splashDelay(400);
             const lastSave = gdState.lastSave
                 ? new Date(gdState.lastSave).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
                 : null;
-            _splashStep('backup', '✅', 'Dernière sauvegarde', lastSave || 'Disponible', 'done');
-            await _splashDelay(300);
+            _splashStep('backup', lastSave?'✅':'⚠️', 'Dernière sauvegarde', lastSave||'Aucune sauvegarde trouvée', lastSave?'done':'warn');
+            await _splashDelay(280);
 
             _splashStep('sync', '🔄', 'Synchronisation', '…', 'active');
             document.getElementById('splash-status').textContent = 'Synchronisation…';
-            await _splashDelay(700);
+            await _splashDelay(600);
             _splashStep('sync', '✅', 'Synchronisation', 'À jour', 'done');
-            await _splashDelay(300);
+            await _splashDelay(280);
+
         } else {
-            _splashStep('drive', '⚠️', 'Google Drive', 'Non connecté', 'warn');
-            await _splashDelay(400);
+            // ❌ Problème Drive → afficher l'état + étapes de remédiation
+            const errLabels = {
+                not_connected: 'Non connecté',
+                token_expired: 'Session expirée',
+                api_error:     'Erreur API'
+            };
+            _splashStep('drive', '❌', 'Google Drive', errLabels[driveError]||'Erreur', 'err');
+            await _splashDelay(300);
+
+            _splashShowDriveError(driveError, gdState);
+            return;
         }
 
+        // ── ÉTAPE FINALE : Chargement app ────────────────────────────
         _splashStep('app', '🚀', 'Chargement application', '…', 'active');
         document.getElementById('splash-status').textContent = 'Préparation de l\'interface…';
-        await _splashDelay(500);
-        _splashStep('app', '✅', 'Application prête', 'Prêt !', 'done');
-        document.getElementById('splash-icon').textContent = '🎉';
         await _splashDelay(450);
+        _splashStep('app', '✅', 'Application prête', '🎉 Prêt !', 'done');
+        document.getElementById('splash-icon').textContent = '🎉';
+        await _splashDelay(420);
         _splashFinish();
     }
 
     function _splashDelay(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+    function _splashShowDriveError(errorType, gdState) {
+        const loading = document.getElementById('splash-loading');
+        const statusEl = document.getElementById('splash-status');
+        document.getElementById('splash-icon').textContent = '⚠️';
+        statusEl.style.color = '#e74c3c';
+        statusEl.textContent = 'Problème de connexion Google Drive';
+
+        // Construire le panneau d'erreur sous les étapes
+        const stepsEl = document.getElementById('splash-steps');
+        const isDark = document.body.classList.contains('dark-mode');
+
+        const panel = document.createElement('div');
+        panel.style.cssText = 'margin-top:14px;background:var(--bg-card,#fff);border:2px solid #e74c3c;border-radius:14px;padding:16px 18px;max-width:340px;width:100%;';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:800;font-size:0.9rem;color:#e74c3c;margin-bottom:12px;display:flex;align-items:center;gap:8px;';
+        const titles = {
+            not_connected: '❌ Google Drive non connecté',
+            token_expired: '🔑 Session Google expirée',
+            api_error:     '⚡ Erreur de communication Drive'
+        };
+        title.textContent = titles[errorType] || '❌ Problème Drive';
+        panel.appendChild(title);
+
+        // Étapes de remédiation
+        const steps = {
+            not_connected: [
+                { icon:'1️⃣', txt:'Continuez sans connexion pour accéder aux données locales', action:null },
+                { icon:'2️⃣', txt:'Une fois dans l\'app, allez dans le Panneau Admin → Google Drive', action:null },
+                { icon:'3️⃣', txt:'Cliquez sur "🔗 Connecter Google Drive" et autorisez l\'accès', action:null },
+                { icon:'4️⃣', txt:'Puis "📥 Restaurer" pour récupérer votre dernière sauvegarde', action:null },
+            ],
+            token_expired: [
+                { icon:'1️⃣', txt:'Votre session Google a expiré (token OAuth révoqué)', action:null },
+                { icon:'2️⃣', txt:'Cliquez sur "🔄 Reconnecter Drive" pour renouveler l\'accès', action:'reconnect' },
+                { icon:'3️⃣', txt:'Ou continuez sans connexion — les données locales sont intactes', action:null },
+            ],
+            api_error: [
+                { icon:'1️⃣', txt:'L\'API Google Drive ne répond pas correctement', action:null },
+                { icon:'2️⃣', txt:'Vérifiez que votre Client ID Google est toujours valide', action:null },
+                { icon:'3️⃣', txt:'Cliquez sur "🔄 Réessayer" ou continuez sans connexion', action:'retry' },
+            ]
+        };
+
+        const stepsData = steps[errorType] || steps.api_error;
+        const stepsList = document.createElement('div');
+        stepsList.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-bottom:14px;';
+        stepsData.forEach(s => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;font-size:0.82rem;color:var(--text-main,#1e2d3d);line-height:1.45;';
+            row.innerHTML = `<span style="flex-shrink:0;">${s.icon}</span><span>${s.txt}</span>`;
+            stepsList.appendChild(row);
+        });
+        panel.appendChild(stepsList);
+
+        // Boutons d'action
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+
+        // Bouton Reconnecter (si token expiré)
+        if (errorType === 'token_expired' || errorType === 'api_error') {
+            const btnReconnect = document.createElement('button');
+            btnReconnect.textContent = '🔄 Reconnecter Google Drive';
+            btnReconnect.style.cssText = 'padding:11px 16px;background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;border:none;border-radius:10px;cursor:pointer;font-size:0.88rem;font-weight:700;';
+            btnReconnect.onclick = function() {
+                _splashFinish();
+                setTimeout(() => {
+                    if (typeof window.gdriveConnect === 'function') window.gdriveConnect();
+                }, 500);
+            };
+            actions.appendChild(btnReconnect);
+        }
+
+        // Bouton Restauration manuelle
+        const btnRestore = document.createElement('button');
+        btnRestore.textContent = '📥 Restaurer manuellement (fichier local)';
+        btnRestore.style.cssText = 'padding:10px 16px;background:var(--bg-card-2,#f8fafc);color:var(--text-main,#1e2d3d);border:2px solid var(--border-color,#dce3ec);border-radius:10px;cursor:pointer;font-size:0.85rem;font-weight:600;';
+        btnRestore.onclick = function() {
+            _splashContinueOffline();
+            setTimeout(() => {
+                const input = document.createElement('input');
+                input.type = 'file'; input.accept = '.json';
+                input.onchange = async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    try {
+                        const text = await file.text();
+                        const data = JSON.parse(text);
+                        if (typeof showRestorePreview === 'function') {
+                            showRestorePreview(file.name, data, () => {
+                                if (typeof importData === 'function') importData(data);
+                                else showScanToast('⚠️ Importation non disponible', 'error');
+                            });
+                        } else if (typeof importData === 'function') {
+                            importData(data);
+                        }
+                    } catch(err) { showScanToast('❌ Fichier invalide', 'error'); }
+                };
+                input.click();
+            }, 500);
+        };
+        actions.appendChild(btnRestore);
+
+        // Bouton Continuer sans connexion
+        const btnOffline = document.createElement('button');
+        btnOffline.textContent = '➡️ Continuer sans Drive (données locales)';
+        btnOffline.style.cssText = 'padding:10px 16px;background:none;color:var(--text-muted,#7a8fa3);border:1.5px dashed var(--border-color,#dce3ec);border-radius:10px;cursor:pointer;font-size:0.83rem;';
+        btnOffline.onclick = _splashContinueOffline;
+        actions.appendChild(btnOffline);
+
+        panel.appendChild(actions);
+        stepsEl.appendChild(panel);
+    }
 
     function _splashFinish() {
         const splash = document.getElementById('login-splash');
