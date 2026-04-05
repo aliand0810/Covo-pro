@@ -9028,6 +9028,12 @@ function toggleInfoSection(headerElement) {
         if (!modal) return;
         modal.style.display = 'flex';
         _renderHistory();
+        // Tenter de synchroniser depuis Drive en arrière-plan
+        if (typeof window._gdRestoreHistory === 'function') {
+            window._gdRestoreHistory().then(restored => {
+                if (restored) _renderHistory();
+            }).catch(() => {});
+        }
     };
 
     window._clearLoginHistory = function() {
@@ -9639,6 +9645,30 @@ function toggleInfoSection(headerElement) {
     }
 
     function _splashLaunchApp(user) {
+        if (!user) return;
+
+        // ── Enregistrer l'historique de connexion au lancement ────────
+        try {
+            const HIST = 'covo_login_history';
+            const hist = JSON.parse(localStorage.getItem(HIST) || '[]');
+            // Ne pas doubler si déjà enregistré dans les 30 dernières secondes
+            const recent = hist.length > 0 ? new Date(hist[0].date) : null;
+            const isRecent = recent && (Date.now() - recent.getTime()) < 30000;
+            if (!isRecent) {
+                hist.unshift({
+                    date:     new Date().toISOString(),
+                    userId:   user.id,
+                    username: user.username,
+                    role:     user.role,
+                    isMaster: !!user.isMaster,
+                    device:   navigator.userAgent.slice(0, 80)
+                });
+                localStorage.setItem(HIST, JSON.stringify(hist.slice(0, 500)));
+                if (typeof window._gdTriggerHistSave === 'function') window._gdTriggerHistSave();
+                if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+            }
+        } catch(e) {}
+
         showScanToast(`✅ Bienvenue ${user.username} !`);
         updateAdminButton();
         applyTabsVisibility();
