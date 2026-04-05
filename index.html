@@ -6590,10 +6590,11 @@ function toggleInfoSection(headerElement) {
                     isMaster: !!user.isMaster,
                     device:   navigator.userAgent.slice(0,80)
                 });
-                // Garder les 200 dernières entrées
-                localStorage.setItem(HIST_KEY, JSON.stringify(hist.slice(0, 200)));
-                // Synchroniser vers Drive
-                if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+                // Garder les 500 dernières entrées
+                localStorage.setItem(HIST_KEY, JSON.stringify(hist.slice(0, 500)));
+                // Synchroniser vers Drive (sauvegarde globale + dossier dédié)
+                if (typeof window._gdTriggerAutoSave  === 'function') window._gdTriggerAutoSave();
+                if (typeof window._gdTriggerHistSave  === 'function') window._gdTriggerHistSave();
             } catch(e) {}
 
             // Charger les permissions spécifiques à l'utilisateur
@@ -9252,20 +9253,86 @@ function toggleInfoSection(headerElement) {
             _splashStep('folder', '📁', 'Dossier sauvegarde', folderLabel, hasFolderA ? 'done' : 'warn');
             await _splashDelay(280);
 
-            _splashStep('backup', '🕐', 'Dernière sauvegarde', '…', 'active');
-            await _splashDelay(400);
-            const lastSave = gdState?.lastSave || localStorage.getItem('gdrive_last_save');
-            const lastSaveFmt = lastSave
-                ? new Date(lastSave).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
-                : null;
+            // ── Récupérer et restaurer la dernière sauvegarde Drive ───
+            _splashStep('backup', '🕐', 'Dernière sauvegarde', 'Recherche…', 'active');
+            await _splashDelay(300);
+
+            let latestFile = null;
+            let latestDate = null;
+            try {
+                if (gdState?.folderId) {
+                    const q = encodeURIComponent(
+                        `'${gdState.folderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
+                    );
+                    const resp = await Promise.race([
+                        window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)`),
+                        new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),5000))
+                    ]);
+                    const data = await resp.json();
+                    if (data.files && data.files.length > 0) {
+                        latestFile = data.files[0];
+                        latestDate = new Date(latestFile.modifiedTime);
+                    }
+                }
+            } catch(e) {}
+
+            const lastSaveLocal = gdState?.lastSave || localStorage.getItem('gdrive_last_save');
+            const lastSaveFmt = latestDate
+                ? latestDate.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' +
+                  latestDate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})
+                : lastSaveLocal
+                    ? new Date(lastSaveLocal).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
+                    : null;
+
             _splashStep('backup', lastSaveFmt?'✅':'⚠️', 'Dernière sauvegarde', lastSaveFmt||'Aucune sauvegarde', lastSaveFmt?'done':'warn');
             await _splashDelay(280);
 
-            _splashStep('sync', '🔄', 'Synchronisation', '…', 'active');
-            document.getElementById('splash-status').textContent = 'Synchronisation…';
-            await _splashDelay(600);
-            _splashStep('sync', '✅', 'Synchronisation', 'À jour', 'done');
+            // ── Restauration automatique ──────────────────────────────
+            _splashStep('sync', '🔄', 'Restauration des données', '…', 'active');
+            document.getElementById('splash-status').textContent = 'Restauration depuis Drive…';
+            await _splashDelay(300);
+
+            let restoreOk = false;
+            let restoreLabel = 'À jour';
+            if (latestFile && window._gdFetchPublic) {
+                try {
+                    _splashStep('sync', '⏳', 'Restauration des données', 'Téléchargement…', 'active');
+                    const resp = await Promise.race([
+                        window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${latestFile.id}?alt=media`),
+                        new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),10000))
+                    ]);
+                    const text = await resp.text();
+                    const data = JSON.parse(text);
+                    if (data && (data.products || data.salesHistory)) {
+                        // Toujours restaurer depuis Drive (source de vérité)
+                        if (typeof window._doRestoreFromData === 'function') {
+                            window._doRestoreFromData(data, latestFile.name);
+                        }
+                        localStorage.setItem('gdrive_last_restore', new Date().toISOString());
+                        const nbProd = (data.products||[]).length;
+                        const nbVente = (data.salesHistory||[]).length;
+                        restoreOk = true;
+                        restoreLabel = `${nbProd} produits · ${nbVente} ventes`;
+                    }
+                } catch(e) {
+                    console.warn('Splash restore error:', e);
+                    restoreLabel = 'Erreur de téléchargement';
+                }
+            } else {
+                restoreLabel = 'Aucune sauvegarde trouvée';
+            }
+
+            _splashStep('sync', restoreOk ? '✅' : '⚠️', 'Synchronisation', restoreOk ? restoreLabel : restoreLabel, restoreOk ? 'done' : 'warn');
             await _splashDelay(280);
+
+            // ── Démarrer le polling de détection (toutes les 2s pendant 30s puis 2min) ──
+            _splashStartPolling(gdState?.folderId, latestFile?.id, lastSaveFmt);
+
+            // Restaurer messages et historique connexions depuis dossiers dédiés
+            setTimeout(async () => {
+                try { await window._gdRestoreMessages(); } catch(e) {}
+                try { await window._gdRestoreHistory();  } catch(e) {}
+            }, 1500);
 
         } else {
             const errLabels = {
@@ -9323,6 +9390,131 @@ function toggleInfoSection(headerElement) {
     }
 
     function _splashDelay(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+    // ── Polling post-splash : détection nouvelle sauvegarde toutes 2s ─
+    let _splashPollTimer = null;
+    let _splashPollKnownId = null;
+
+    function _splashStartPolling(folderId, knownFileId, knownDateLabel) {
+        if (!folderId) return;
+        _splashPollKnownId = knownFileId;
+        let fastCount = 0; // 15 vérifications rapides (30s) puis on ralentit
+
+        function poll() {
+            if (!_gdConnected || !_gdAccessToken || !window._gdFetchPublic) return;
+            const q = encodeURIComponent(
+                `'${folderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
+            );
+            window._gdFetchPublic(
+                `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)`
+            ).then(r => r.json()).then(data => {
+                const files = data.files || [];
+                if (!files.length) return;
+                const latest = files[0];
+                if (latest.id !== _splashPollKnownId) {
+                    // Nouvelle sauvegarde détectée !
+                    _splashPollKnownId = latest.id;
+                    const newDate = new Date(latest.modifiedTime);
+                    const newLabel = newDate.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})
+                        + ' ' + newDate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+                    _splashNotifyNewBackup(newLabel, latest.id, folderId);
+                }
+            }).catch(() => {});
+
+            fastCount++;
+            const nextDelay = fastCount < 15 ? 2000 : 120000; // 2s × 15, puis 2min
+            _splashPollTimer = setTimeout(poll, nextDelay);
+        }
+
+        _splashPollTimer = setTimeout(poll, 2000); // premier poll 2s après
+    }
+
+    function _splashNotifyNewBackup(dateLabel, fileId, folderId) {
+        // Si le splash est encore ouvert, mettre à jour l'étape sync
+        const splash = document.getElementById('login-splash');
+        if (splash && splash.style.display !== 'none') {
+            // Ajouter une alerte dans les étapes
+            const existing = document.getElementById('splash-step-new-backup');
+            if (!existing) {
+                _splashStep('new-backup', '🆕', 'Nouvelle sauvegarde détectée', dateLabel, 'warn');
+            } else {
+                existing.querySelector('.s-state').textContent = dateLabel;
+            }
+            // Mettre à jour le bouton continuer s'il existe
+            const continueBtn = document.getElementById('splash-continue-btn');
+            if (continueBtn) {
+                continueBtn.innerHTML = '📥 Restaurer la nouvelle sauvegarde (' + dateLabel + ')';
+                continueBtn.style.background = 'linear-gradient(135deg,#1a73e8,#0d47a1)';
+                const oldOnclick = continueBtn.onclick;
+                continueBtn.onclick = function() {
+                    window._splashRestoreLatest(fileId);
+                };
+                // Ajouter aussi un bouton ignorer
+                const ignore = document.getElementById('splash-ignore-new');
+                if (!ignore) {
+                    const btn2 = document.createElement('button');
+                    btn2.id = 'splash-ignore-new';
+                    btn2.textContent = 'Ignorer et continuer';
+                    btn2.style.cssText = 'margin-top:8px;width:100%;max-width:300px;padding:10px 20px;background:none;border:1.5px dashed var(--border-color,#dce3ec);color:var(--text-muted);border-radius:12px;cursor:pointer;font-size:0.85rem;';
+                    btn2.onclick = function() { _splashFinish(); };
+                    continueBtn.insertAdjacentElement('afterend', btn2);
+                }
+            }
+            document.getElementById('splash-status').textContent = '🆕 Nouvelle sauvegarde disponible !';
+            document.getElementById('splash-status').style.color = '#1a73e8';
+            return; // Ne pas afficher la bannière si splash encore ouvert
+        }
+
+        // App déjà ouverte → bannière en haut
+        showScanToast(`🆕 Nouvelle sauvegarde Drive : ${dateLabel} — cliquez pour restaurer`, 'info');
+        let banner = document.getElementById('gd-new-backup-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'gd-new-backup-banner';
+            banner.style.cssText = [
+                'position:fixed','top:0','left:0','right:0','z-index:99800',
+                'background:linear-gradient(135deg,#1a73e8,#0d47a1)',
+                'color:white','padding:10px 18px',
+                'display:flex','align-items:center','gap:12px',
+                'font-size:0.85rem','font-weight:700',
+                'box-shadow:0 4px 16px rgba(26,115,232,0.4)',
+                'animation:splashStepIn 0.35s ease'
+            ].join(';');
+            document.body.appendChild(banner);
+        }
+        banner.innerHTML = `
+            <span style="font-size:1.1rem;">🆕</span>
+            <span style="flex:1;">Nouvelle sauvegarde Drive : <strong>${dateLabel}</strong></span>
+            <button onclick="_splashRestoreLatest('${fileId}')"
+                style="background:white;color:#1a73e8;border:none;border-radius:8px;padding:6px 14px;cursor:pointer;font-weight:800;font-size:0.82rem;white-space:nowrap;">
+                📥 Restaurer
+            </button>
+            <button onclick="document.getElementById('gd-new-backup-banner').remove()"
+                style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>`;
+        banner.style.display = 'flex';
+    }
+
+    window._splashRestoreLatest = async function(fileId) {
+        const banner = document.getElementById('gd-new-backup-banner');
+        if (banner) banner.innerHTML = '<span>⏳ Restauration en cours…</span>';
+        try {
+            const resp = await window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+            const text = await resp.text();
+            const data = JSON.parse(text);
+            if (data && typeof window._doRestoreFromData === 'function') {
+                if (typeof showRestorePreview === 'function') {
+                    if (banner) banner.remove();
+                    showRestorePreview('Nouvelle sauvegarde Drive', data, () => window._doRestoreFromData(data, 'Drive'));
+                } else {
+                    window._doRestoreFromData(data, 'Drive');
+                    if (banner) banner.remove();
+                }
+            }
+        } catch(e) {
+            showScanToast('❌ Erreur lors de la restauration', 'error');
+            if (banner) banner.remove();
+        }
+    };
 
     function _splashShowDriveError(errorType, saved) {
         (function(){var li=document.getElementById('splash-logo-img');var lf=document.getElementById('splash-logo-fallback');if(li)li.style.filter='drop-shadow(0 0 8px rgba(231,76,60,0.7)) grayscale(0.3)';if(lf){lf.style.background='linear-gradient(135deg,#e74c3c,#c0392b)';}})();
@@ -19941,6 +20133,11 @@ function initAdminSections() {
                         } catch(e) {}
                     }, 2000);
 
+                    // Restaurer l'historique de connexion
+                    setTimeout(async () => {
+                        try { await window._gdRestoreHistory(); } catch(e) {}
+                    }, 3500);
+
                     showScanToast('✅ Google Drive connecté — sauvegarde automatique activée', 'success');
                 }
             });
@@ -20429,8 +20626,13 @@ function initAdminSections() {
             : (bytes / 1024).toFixed(1) + ' Ko';
     }
 
+    let _gdPendingRestoreData = null;
+    let _gdPendingRestoreName = null;
+
     function _gdShowCompareModal(newData, newFileName) {
-        // Construire snapshot actuel depuis localStorage
+        // Stocker les données pour la restauration confirmée
+        _gdPendingRestoreData = newData;
+        _gdPendingRestoreName = newFileName;
         const currentRaw = JSON.stringify({
             products, categories, promoTypes, users, salesHistory,
             appSettings, nightTariffSettings, cashierPermissions, pendingSync, deliveryGoal,
@@ -20564,7 +20766,13 @@ function initAdminSections() {
     window._gdConfirmRestoreFromChip = async function() {
         const modal = document.getElementById('gdrive-compare-modal');
         if (modal) modal.remove();
-        await _gdApplyRestore(_gdLastDetectedFileData, _gdLastDetectedFileName);
+        // Utiliser les données en attente (fichier sélectionné) en priorité
+        const data = _gdPendingRestoreData || _gdLastDetectedFileData;
+        const name = _gdPendingRestoreName || _gdLastDetectedFileName;
+        if (!data) { showScanToast('❌ Aucune donnée à restaurer', 'error'); return; }
+        await _gdApplyRestore(data, name);
+        _gdPendingRestoreData = null;
+        _gdPendingRestoreName = null;
     };
 
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
@@ -20952,6 +21160,9 @@ function initAdminSections() {
                     setTimeout(async () => {
                         try { await window._gdRestoreMessages(); } catch(e) {}
                     }, 2000);
+                    setTimeout(async () => {
+                        try { await window._gdRestoreHistory(); } catch(e) {}
+                    }, 3500);
                 }
             });
             _gdTokenClient.requestAccessToken({ prompt: '' });
@@ -21145,6 +21356,142 @@ function initAdminSections() {
     (function() {
         const savedFileId = localStorage.getItem('gdrive_msg_file_id');
         if (savedFileId) _gdMsgFileId = savedFileId;
+    })();
+
+    // =========================================================================
+    // ===== DOSSIER HISTORIQUE CONNEXIONS GOOGLE DRIVE ========================
+    // =========================================================================
+    const GD_HISTORY_FOLDER = 'Historique Connexions COVO';
+    const GD_HISTORY_FILE   = 'historique_connexions.json';
+    let _gdHistFolderId = null;
+    let _gdHistFileId   = null;
+    let _gdHistSyncing  = false;
+
+    async function _gdEnsureHistFolder() {
+        if (_gdHistFolderId) return _gdHistFolderId;
+        if (!_gdConnected || !_gdAccessToken) return null;
+        try {
+            const q = encodeURIComponent(`name='${GD_HISTORY_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`);
+            const data = await resp.json();
+            if (data.files && data.files.length > 0) {
+                _gdHistFolderId = data.files[0].id;
+                return _gdHistFolderId;
+            }
+            const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: GD_HISTORY_FOLDER, mimeType: 'application/vnd.google-apps.folder' })
+            });
+            const folder = await cr.json();
+            if (folder.id) {
+                _gdHistFolderId = folder.id;
+                return _gdHistFolderId;
+            }
+        } catch(e) { console.warn('GDrive hist folder:', e); }
+        return null;
+    }
+
+    async function _gdFindHistFile(folderId) {
+        if (_gdHistFileId) return _gdHistFileId;
+        try {
+            const q = encodeURIComponent(`'${folderId}' in parents and name='${GD_HISTORY_FILE}' and trashed=false`);
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)`);
+            const data = await resp.json();
+            if (data.files && data.files.length > 0) {
+                _gdHistFileId = data.files[0].id;
+                return _gdHistFileId;
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    window._gdSaveHistory = async function() {
+        if (!_gdConnected || !_gdAccessToken || _gdHistSyncing) return;
+        _gdHistSyncing = true;
+        try {
+            const folderId = await _gdEnsureHistFolder();
+            if (!folderId) return;
+            let fileId = await _gdFindHistFile(folderId);
+            const hist = JSON.parse(localStorage.getItem('covo_login_history') || '[]');
+            const content = JSON.stringify({
+                history:   hist,
+                total:     hist.length,
+                _savedAt:  new Date().toISOString(),
+                _source:   'covo_pro'
+            }, null, 2);
+            const boundary = '----CovoDriveHistBoundary';
+            const meta = fileId
+                ? JSON.stringify({ name: GD_HISTORY_FILE })
+                : JSON.stringify({ name: GD_HISTORY_FILE, parents: [folderId] });
+            const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
+            const method = fileId ? 'PATCH' : 'POST';
+            const url = fileId
+                ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+            const resp = await _gdFetch(url, {
+                method,
+                headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+                body
+            });
+            const result = await resp.json();
+            if (result.id) {
+                _gdHistFileId = result.id;
+                localStorage.setItem('gdrive_hist_file_id', result.id);
+                localStorage.setItem('gdrive_hist_last_save', new Date().toISOString());
+                console.log(`✅ Historique (${hist.length} entrées) sauvegardé Drive →`, GD_HISTORY_FOLDER);
+            }
+        } catch(e) { console.warn('GDrive hist save error:', e); }
+        finally { _gdHistSyncing = false; }
+    };
+
+    window._gdRestoreHistory = async function() {
+        if (!_gdConnected || !_gdAccessToken) return false;
+        try {
+            const folderId = await _gdEnsureHistFolder();
+            if (!folderId) return false;
+            const fileId = await _gdFindHistFile(folderId);
+            if (!fileId) return false;
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+            const text = await resp.text();
+            const data = JSON.parse(text);
+            if (data.history && Array.isArray(data.history)) {
+                // Fusionner : union par date+userId (pas de doublon)
+                const local = JSON.parse(localStorage.getItem('covo_login_history') || '[]');
+                const seen = new Set(local.map(h => h.date + '_' + h.userId));
+                const merged = [...local];
+                data.history.forEach(h => {
+                    const key = h.date + '_' + h.userId;
+                    if (!seen.has(key)) { seen.add(key); merged.push(h); }
+                });
+                // Trier par date décroissante, garder les 500 dernières
+                merged.sort((a, b) => new Date(b.date) - new Date(a.date));
+                const trimmed = merged.slice(0, 500);
+                localStorage.setItem('covo_login_history', JSON.stringify(trimmed));
+                localStorage.setItem('gdrive_hist_last_restore', new Date().toISOString());
+                console.log(`✅ ${trimmed.length} entrées historique restaurées depuis Drive`);
+                // Rafraîchir si la modale historique est ouverte
+                const histModal = document.getElementById('login-history-modal');
+                if (histModal && histModal.style.display !== 'none') {
+                    if (typeof window._renderHistory === 'function') window._renderHistory();
+                }
+                return true;
+            }
+        } catch(e) { console.warn('GDrive hist restore error:', e); }
+        return false;
+    };
+
+    // Déclencher la sauvegarde historique avec debounce (3s)
+    let _gdHistSaveTimer = null;
+    window._gdTriggerHistSave = function() {
+        clearTimeout(_gdHistSaveTimer);
+        _gdHistSaveTimer = setTimeout(window._gdSaveHistory, 3000);
+    };
+
+    // Récupérer l'ID fichier depuis localStorage au démarrage
+    (function() {
+        const savedId = localStorage.getItem('gdrive_hist_file_id');
+        if (savedId) _gdHistFileId = savedId;
     })();
 
     async function _gdEnsureTicketFolder() {
