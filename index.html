@@ -4545,6 +4545,44 @@
                 <div id="disabled-products-list" style="display:flex;flex-direction:column;gap:6px;"></div>
             </div>
 
+            <!-- ===== SECTION TICKETS OUBLIÉS ===== -->
+            <div class="admin-section-header" onclick="toggleAdminSection('admin-sec-tickets')" style="margin-top:10px;">
+                <h3>🧾 Importer des tickets oubliés</h3>
+                <button class="deploy-toggle-btn" id="btn-admin-sec-tickets" onclick="event.stopPropagation();toggleAdminSection('admin-sec-tickets')"><span class="arrow">&#9660;</span> <span class="btn-label">D&eacute;ployer</span></button>
+            </div>
+            <div class="admin-section-body" id="admin-sec-tickets">
+                <div style="background:var(--bg-card-2,#f8fafc);border-radius:10px;padding:14px 16px;margin-bottom:12px;border:1px solid var(--border-color,#e0e0e0);">
+                    <p style="margin:0 0 10px;font-size:0.84rem;color:var(--text-main);">
+                        Importez un ou plusieurs fichiers <code>.html</code> de tickets pour les comptabiliser dans l'historique des ventes. Les données sont extraites automatiquement (montant, articles, caissier, date).
+                    </p>
+                    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+                        <label style="cursor:pointer;padding:9px 16px;background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;border-radius:8px;font-size:0.85rem;font-weight:700;display:flex;align-items:center;gap:6px;">
+                            📂 Sélectionner des tickets HTML
+                            <input type="file" id="ticket-import-input" accept=".html" multiple style="display:none;" onchange="_ticketImportFiles(this)">
+                        </label>
+                        <div id="ticket-import-status" style="font-size:0.82rem;color:var(--text-muted,#888);"></div>
+                    </div>
+                    <!-- Aperçu avant import -->
+                    <div id="ticket-import-preview" style="display:none;">
+                        <div style="font-weight:700;font-size:0.84rem;color:var(--text-main);margin-bottom:8px;">📋 Aperçu des tickets détectés :</div>
+                        <div id="ticket-import-list" style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow-y:auto;margin-bottom:10px;"></div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <button onclick="_ticketImportConfirm()"
+                                style="padding:9px 20px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">
+                                ✅ Importer et comptabiliser
+                            </button>
+                            <button onclick="_ticketImportCancel()"
+                                style="padding:9px 16px;background:none;border:1.5px solid var(--border-color,#ddd);color:var(--text-muted,#888);border-radius:8px;cursor:pointer;font-size:0.82rem;">
+                                ✕ Annuler
+                            </button>
+                            <span id="ticket-import-count" style="font-size:0.82rem;color:var(--text-muted);"></span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Résultat de l'import -->
+                <div id="ticket-import-result" style="display:none;"></div>
+            </div>
+
         </div></div>
     </div>
 
@@ -21337,6 +21375,8 @@ function initAdminSections() {
                 localStorage.setItem('gdrive_last_payload_size', String(newSize));
                 localStorage.setItem('gdrive_last_save', ts);
                 _gdUpdateStatusBar(true, 'Google Drive — '+(_gdUserEmail||'Connecté')+' · 📁 '+_gdFolderName, ts);
+                // Copier aussi dans la hiérarchie Paramètres/
+                setTimeout(() => { try { window._gdUploadParametres(payload, ts); } catch(e) {} }, 500);
                 showScanToast('⚠️ Sauvegarde forcée effectuée', 'info');
             }
         } catch(e) { showScanToast('❌ Erreur lors de la sauvegarde forcée', 'error'); }
@@ -21809,7 +21849,268 @@ function initAdminSections() {
 
     // ===========================================================================
     // ===========================================================================
-    // ===== MOTEUR DE DOSSIERS HIÉRARCHIQUES GOOGLE DRIVE ======================
+    // ===== IMPORT DE TICKETS OUBLIÉS (HTML → salesHistory) ====================
+    // ===========================================================================
+    let _ticketPendingImports = []; // [{fileName, saleObj}]
+
+    window._ticketImportFiles = async function(input) {
+        const files = [...(input.files || [])];
+        if (!files.length) return;
+        _ticketPendingImports = [];
+        const statusEl  = document.getElementById('ticket-import-status');
+        const previewEl = document.getElementById('ticket-import-preview');
+        const listEl    = document.getElementById('ticket-import-list');
+        const countEl   = document.getElementById('ticket-import-count');
+        if (statusEl) statusEl.textContent = '⏳ Analyse des tickets…';
+        if (listEl)   listEl.innerHTML = '';
+        if (previewEl) previewEl.style.display = 'none';
+
+        let parsed = 0, skipped = 0;
+        for (const file of files) {
+            try {
+                const html  = await file.text();
+                const sale  = _ticketParseHTML(html, file.name);
+                if (!sale) { skipped++; continue; }
+                // Vérifier si déjà importé (doublon par id ou date+total)
+                const alreadyIn = salesHistory.some(s =>
+                    (sale.id && s.id === sale.id) ||
+                    (s.date === sale.date && Math.abs(parseFloat(s.total) - parseFloat(sale.total)) < 0.01)
+                );
+                _ticketPendingImports.push({ fileName: file.name, sale, duplicate: alreadyIn });
+                parsed++;
+            } catch(e) { skipped++; }
+        }
+
+        if (!_ticketPendingImports.length) {
+            if (statusEl) statusEl.textContent = `❌ Aucun ticket valide détecté (${skipped} ignoré${skipped>1?'s':''})`;
+            return;
+        }
+
+        // Afficher l'aperçu
+        if (statusEl) statusEl.textContent = `✅ ${parsed} ticket${parsed>1?'s':''} analysé${parsed>1?'s':''}${skipped?` · ${skipped} ignoré${skipped>1?'s':''}`:''}.`;
+        if (listEl) {
+            _ticketPendingImports.forEach((item, i) => {
+                const s = item.sale;
+                const fmtDate = new Date(s.date).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+                const isDup   = item.duplicate;
+                const row = document.createElement('div');
+                row.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1.5px solid ${isDup?'#f39c12':'var(--border-color,#ddd)'};background:${isDup?'rgba(243,156,18,0.06)':'var(--bg-card,#fff)'};`;
+                row.innerHTML = `
+                    <input type="checkbox" data-idx="${i}" ${isDup?'':'checked'} style="width:16px;height:16px;accent-color:#27ae60;flex-shrink:0;">
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:700;font-size:0.83rem;color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            ${isDup?'⚠️ ':'🧾 '}${s.cashier||'?'} — ${fmtDate}
+                        </div>
+                        <div style="font-size:0.72rem;color:var(--text-muted,#888);margin-top:2px;">
+                            ${s.items?.length||0} article(s) · ${parseFloat(s.total).toFixed(2)} € · ${s.method==='cb'?'💳 CB':s.method==='mixed'?'💳💶 Mixte':'💶 Espèces'}
+                            ${isDup?'<span style="color:#e67e22;font-weight:700;"> · Possible doublon</span>':''}
+                            ${(()=>{
+                                let found=0,notFound=0;
+                                (s.items||[]).forEach(it=>{
+                                    const p=products.find(x=>x.name.toLowerCase().trim()===(it.name||'').toLowerCase().trim());
+                                    if(p)found++; else notFound++;
+                                });
+                                if(!s.items?.length) return '';
+                                return `<span style="color:${notFound>0?'#e67e22':'#27ae60'};font-weight:600;"> · 📦 ${found}/${s.items.length} stock${found>1?'s':''} identifié${found>1?'s':''}</span>`;
+                            })()}
+                        </div>
+                    </div>
+                    <div style="font-weight:800;font-size:0.9rem;color:#27ae60;flex-shrink:0;">${parseFloat(s.total).toFixed(2)} €</div>`;
+                listEl.appendChild(row);
+            });
+        }
+        const newCount = _ticketPendingImports.filter(x=>!x.duplicate).length;
+        const dupCount = _ticketPendingImports.filter(x=>x.duplicate).length;
+        if (countEl) countEl.textContent = `${newCount} nouveau${newCount>1?'x':''}${dupCount?` · ${dupCount} doublon${dupCount>1?'s':''}`:''} détecté${newCount>1?'s':''}`;
+        if (previewEl) previewEl.style.display = '';
+    };
+
+    // Parser un ticket HTML pour extraire les données de vente
+    function _ticketParseHTML(html, fileName) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const text = doc.body?.innerText || doc.body?.textContent || '';
+
+        // Chercher le total
+        let total = 0;
+        const totalMatch = text.match(/Total[^\d]*([\d]+[.,][\d]{2})\s*€/i)
+            || text.match(/TOTAL[^\d]*([\d]+[.,][\d]{2})/i)
+            || text.match(/([\d]+[.,][\d]{2})\s*€\s*(?:TTC)?$/im);
+        if (totalMatch) total = parseFloat(totalMatch[1].replace(',', '.'));
+
+        // Chercher la date
+        let date = null;
+        const dateMatch = text.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})[^\d]*(\d{2}):(\d{2})/)
+            || text.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+        if (dateMatch) {
+            try {
+                if (dateMatch[0].includes('T') || dateMatch[3].length === 4) {
+                    date = new Date(dateMatch[0].replace(' ', 'T')).toISOString();
+                } else {
+                    date = new Date(`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}T${dateMatch[4]}:${dateMatch[5]}:00`).toISOString();
+                }
+            } catch(e) {}
+        }
+        // Fallback : date de modification du fichier ou maintenant
+        if (!date) {
+            const fnMatch = fileName.match(/(\d{4}-\d{2}-\d{2})[_\-](\d{2}[-:]\d{2})/);
+            if (fnMatch) date = new Date(`${fnMatch[1]}T${fnMatch[2].replace('-',':')}`).toISOString();
+            else date = new Date().toISOString();
+        }
+
+        // Caissier
+        let cashier = 'Import manuel';
+        const cashierMatch = text.match(/[Cc]aissier\s*:?\s*([A-Za-zÀ-ÿ\-_0-9 ]+)/);
+        if (cashierMatch) cashier = cashierMatch[1].trim().split('\n')[0].trim();
+
+        // Mode de paiement
+        let method = 'cash';
+        if (/carte|cb|bancaire/i.test(text))  method = 'cb';
+        if (/mixte|espèces.*carte|cb.*espèces/i.test(text)) method = 'mixed';
+
+        // Articles (tentative simple)
+        const items = [];
+        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        lines.forEach(line => {
+            const m = line.match(/^(.+?)\s+x?\s*(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€/i);
+            if (m) {
+                items.push({ name: m[1].trim(), quantity: parseFloat(m[2].replace(',','.')), price: parseFloat(m[3].replace(',','.')) });
+            }
+        });
+
+        if (!total || total <= 0) return null;
+
+        return {
+            id:         'IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
+            date:       date,
+            cashier:    cashier,
+            cashierId:  null,
+            total:      total,
+            method:     method,
+            received:   total,
+            change:     0,
+            items:      items,
+            _imported:  true,
+            _source:    fileName
+        };
+    }
+
+    window._ticketImportConfirm = function() {
+        const listEl = document.getElementById('ticket-import-list');
+        const checkboxes = listEl ? listEl.querySelectorAll('input[type="checkbox"]') : [];
+        const toImport = [];
+        checkboxes.forEach(cb => {
+            if (cb.checked) {
+                const idx = parseInt(cb.dataset.idx);
+                if (_ticketPendingImports[idx]) toImport.push(_ticketPendingImports[idx].sale);
+            }
+        });
+        if (!toImport.length) { showScanToast('⚠️ Aucun ticket sélectionné', 'info'); return; }
+
+        // ── Comptabiliser + déduire le stock ──────────────────────────
+        const stockChanges = []; // { name, before, after, qty }
+        let stockUpdated = 0;
+        let stockNotFound = 0;
+
+        toImport.forEach(s => {
+            // Ajouter à l'historique
+            salesHistory.push(s);
+
+            // Déduire le stock pour chaque article du ticket
+            (s.items || []).forEach(item => {
+                // Chercher par nom (import sans id produit)
+                const product = products.find(p =>
+                    p.name.toLowerCase().trim() === (item.name || '').toLowerCase().trim()
+                );
+                if (product) {
+                    const before = product.stock;
+                    const qty    = parseFloat(item.quantity) || 1;
+                    if (product.unitType === 'kg') {
+                        product.stock = parseFloat((product.stock - qty).toFixed(3));
+                    } else {
+                        product.stock = Math.max(0, product.stock - qty);
+                    }
+                    stockChanges.push({ name: product.name, before, after: product.stock, qty });
+                    stockUpdated++;
+                } else {
+                    stockNotFound++;
+                }
+            });
+        });
+
+        // Trier par date
+        salesHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+        saveAll();
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+
+        // ── Résultat ──────────────────────────────────────────────────
+        const totalCA  = toImport.reduce((sum, s) => sum + parseFloat(s.total), 0);
+        const resultEl = document.getElementById('ticket-import-result');
+        if (resultEl) {
+            const stockRows = stockChanges.slice(0, 10).map(c =>
+                `<tr>
+                    <td style="padding:5px 8px;font-size:0.8rem;color:var(--text-main);">${c.name}</td>
+                    <td style="padding:5px 8px;text-align:center;font-size:0.8rem;color:var(--text-muted);">-${c.qty}</td>
+                    <td style="padding:5px 8px;text-align:center;font-size:0.8rem;color:#e67e22;font-weight:700;">${c.before}</td>
+                    <td style="padding:5px 8px;text-align:center;font-size:0.8rem;color:${c.after<=0?'#e74c3c':c.after<5?'#e67e22':'#27ae60'};font-weight:800;">${c.after}</td>
+                </tr>`
+            ).join('');
+
+            resultEl.style.display = '';
+            resultEl.innerHTML = `
+                <div style="background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:10px;padding:14px 16px;margin-bottom:8px;">
+                    <div style="font-weight:800;color:#1b5e20;font-size:0.88rem;margin-bottom:10px;">✅ ${toImport.length} ticket${toImport.length>1?'s':''} importé${toImport.length>1?'s':''} avec succès</div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:12px;">
+                        <div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid #c8e6c9;">
+                            <div style="font-size:1.2rem;font-weight:900;color:#27ae60;">${toImport.length}</div>
+                            <div style="font-size:0.7rem;color:#666;">Tickets ajoutés</div>
+                        </div>
+                        <div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid #c8e6c9;">
+                            <div style="font-size:1.2rem;font-weight:900;color:#1a73e8;">${totalCA.toFixed(2)} €</div>
+                            <div style="font-size:0.7rem;color:#666;">CA comptabilisé</div>
+                        </div>
+                        <div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid ${stockUpdated>0?'#c8e6c9':'#ffcdd2'};">
+                            <div style="font-size:1.2rem;font-weight:900;color:${stockUpdated>0?'#27ae60':'#e74c3c'};">${stockUpdated}</div>
+                            <div style="font-size:0.7rem;color:#666;">Articles ↓ stock</div>
+                        </div>
+                        ${stockNotFound > 0 ? `<div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid #ffe0b2;">
+                            <div style="font-size:1.2rem;font-weight:900;color:#e67e22;">${stockNotFound}</div>
+                            <div style="font-size:0.7rem;color:#666;">Non trouvés</div>
+                        </div>` : ''}
+                    </div>
+                    ${stockChanges.length > 0 ? `
+                    <div style="font-weight:700;font-size:0.8rem;color:#1b5e20;margin-bottom:6px;">📦 Mouvements de stock :</div>
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.8rem;border:1px solid #c8e6c9;border-radius:8px;overflow:hidden;">
+                        <thead><tr style="background:#c8e6c9;">
+                            <th style="padding:6px 8px;text-align:left;color:#1b5e20;">Article</th>
+                            <th style="padding:6px 8px;text-align:center;color:#1b5e20;">Qté</th>
+                            <th style="padding:6px 8px;text-align:center;color:#1b5e20;">Avant</th>
+                            <th style="padding:6px 8px;text-align:center;color:#1b5e20;">Après</th>
+                        </tr></thead>
+                        <tbody>${stockRows}</tbody>
+                        ${stockChanges.length > 10 ? `<tfoot><tr><td colspan="4" style="padding:5px 8px;font-size:0.75rem;color:#666;text-align:center;">+ ${stockChanges.length-10} autre(s) article(s) mis à jour</td></tr></tfoot>` : ''}
+                    </table>
+                    </div>` : ''}
+                    ${stockNotFound > 0 ? `<div style="font-size:0.75rem;color:#e67e22;margin-top:8px;">⚠️ ${stockNotFound} article(s) non trouvé(s) dans le catalogue — stock non modifié.</div>` : ''}
+                </div>`;
+        }
+
+        document.getElementById('ticket-import-preview').style.display = 'none';
+        document.getElementById('ticket-import-status').textContent = '';
+        _ticketPendingImports = [];
+        document.getElementById('ticket-import-input').value = '';
+
+        const toast = `✅ ${toImport.length} ticket${toImport.length>1?'s':''} importé${toImport.length>1?'s':''} · ${totalCA.toFixed(2)} € · ${stockUpdated} stock${stockUpdated>1?'s':''} mis à jour`;
+        showScanToast(toast, 'success');
+        renderAll();
+    };
+
+    window._ticketImportCancel = function() {
+        _ticketPendingImports = [];
+        document.getElementById('ticket-import-preview').style.display = 'none';
+        document.getElementById('ticket-import-status').textContent = '';
+        document.getElementById('ticket-import-input').value = '';
+    };
     // ===========================================================================
     //
     //  Architecture :
