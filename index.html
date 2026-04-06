@@ -3513,6 +3513,10 @@
                                 <option value="">Tous statuts</option><option value="pending">En attente</option><option value="processing">En traitement</option><option value="approved">Approuvé</option><option value="refused">Refusé</option>
                             </select>
                             <button class="retours-btn retours-btn-primary" onclick="openRetourModal('rm-retour')">➕ Nouveau retour</button>
+                            <button id="retour-archive-toggle-btn" class="retours-btn" onclick="toggleRetourArchiveView()"
+                                style="background:linear-gradient(135deg,#607d8b,#455a64);color:white;border:none;">
+                                📁 Archives
+                            </button>
                             <button class="retours-btn retours-btn-outline" onclick="exportRetours()">⬇️ CSV</button>
                         </div>
                     </div>
@@ -19029,28 +19033,39 @@ function updateRetourStats() {
 
 // ===== STATUS LABELS =====
 const RSL = {
-    retour: { pending:{l:'En attente',c:'rbadge-pending',i:'⏳'}, processing:{l:'En traitement',c:'rbadge-processing',i:'⚙️'}, approved:{l:'Approuvé',c:'rbadge-approved',i:'✅'}, refused:{l:'Refusé',c:'rbadge-refused',i:'❌'} },
+    retour: { pending:{l:'En attente',c:'rbadge-pending',i:'⏳'}, processing:{l:'En traitement',c:'rbadge-processing',i:'⚙️'}, approved:{l:'Approuvé',c:'rbadge-approved',i:'✅'}, refused:{l:'Refusé',c:'rbadge-refused',i:'❌'}, archived:{l:'Archivé',c:'rbadge-ok',i:'📁'} },
     marc: { pending:{l:'En attente',c:'rbadge-pending',i:'⏳'}, sent:{l:'Envoyé',c:'rbadge-sent',i:'📤'}, confirmed:{l:'Confirmé',c:'rbadge-ok',i:'✓'}, credited:{l:'Avoir reçu',c:'rbadge-approved',i:'💳'}, archived:{l:'Archivé',c:'rbadge-ok',i:'📁'} }
 };
 
 // ===== RENDER RETOURS =====
 function renderRetours(data) {
     const tb = document.getElementById('retours-tbody');
-    if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📭</div><h3 style="margin:8px 0 4px;">Aucun retour client</h3><p style="font-size:0.82rem;">Cliquez sur "Nouveau retour" pour en créer un.</p></div></td></tr>`; return; }
-    tb.innerHTML = data.map(r => {
+    // Filtrer les archivés selon le filtre actif
+    const showArchived = window._retourShowArchived || false;
+    const filtered = (data || []).filter(r => showArchived ? r.statut === 'archived' : r.statut !== 'archived');
+
+    if (!filtered.length) {
+        tb.innerHTML = `<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;">
+            <div style="font-size:2.5rem;">${showArchived ? '📁' : '📭'}</div>
+            <h3 style="margin:8px 0 4px;">${showArchived ? 'Aucun retour archivé' : 'Aucun retour client'}</h3>
+            <p style="font-size:0.82rem;">${showArchived ? '' : 'Cliquez sur "Nouveau retour" pour en créer un.'}</p>
+        </div></td></tr>`;
+        return;
+    }
+    tb.innerHTML = filtered.map(r => {
         const s = RSL.retour[r.statut] || RSL.retour.pending;
         const isAutoCancel = r.motif === 'Annulation ticket caisse';
+        const isArchived   = r.statut === 'archived';
         const autoBadge = isAutoCancel ? `<span style="background:#e74c3c;color:white;font-size:0.65rem;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle;">🚫 CAISSE</span>` : '';
         const articleDisplay = isAutoCancel ? `<div style="font-size:0.76rem;max-width:200px;line-height:1.4;">${r.article.split(' | ').map(a=>`<div>• ${a}</div>`).join('')}</div>` : r.article;
-        // Indicateur restock
         let restockBadge = '';
         if (isAutoCancel && r._restockPending) {
             restockBadge = `<div style="font-size:0.68rem;margin-top:3px;padding:2px 6px;background:#fff3cd;border:1px solid #f39c12;border-radius:4px;color:#856404;display:inline-block;">⏳ Stock en attente</div>`;
         } else if (isAutoCancel && r._restockPending === false) {
             restockBadge = `<div style="font-size:0.68rem;margin-top:3px;padding:2px 6px;background:#d4edda;border:1px solid #28a745;border-radius:4px;color:#155724;display:inline-block;">✅ Stock restauré</div>`;
         }
-        return `<tr oncontextmenu="retourCtxOpen(event,'${r.id}','retour')">
-            <td><strong style="color:#3498db">${r.id}</strong>${autoBadge}${restockBadge}</td>
+        return `<tr oncontextmenu="retourCtxOpen(event,'${r.id}','retour')" style="${isArchived?'opacity:0.6;':''}" >
+            <td><strong style="color:${isArchived?'#7f8c8d':'#3498db'}">${r.id}</strong>${autoBadge}${restockBadge}</td>
             <td>${r.date}</td>
             <td><strong>${r.client}</strong></td>
             <td>${articleDisplay}</td>
@@ -19062,8 +19077,10 @@ function renderRetours(data) {
             <td><div style="display:flex;gap:4px;flex-wrap:wrap;">
                 ${r.statut==='pending'?`<button class="retours-btn retours-btn-sm" style="background:#2ecc71;color:white;" onclick="setRetourStatus('${r.id}','approved')" title="Approuver${r._restockPending?' (remettra le stock)':''}">✅</button><button class="retours-btn retours-btn-sm" style="background:#f1c40f;color:#333;" onclick="setRetourStatus('${r.id}','processing')">⚙️</button>`:''}
                 ${r.statut==='processing'?`<button class="retours-btn retours-btn-sm" style="background:#2ecc71;color:white;" onclick="setRetourStatus('${r.id}','approved')" title="Approuver${r._restockPending?' (remettra le stock)':''}">✅</button>`:''}
-                ${r.statut!=='refused'&&r.statut!=='approved'?`<button class="retours-btn retours-btn-sm" style="background:#e74c3c;color:white;" onclick="setRetourStatus('${r.id}','refused')">❌</button>`:''}
+                ${r.statut!=='refused'&&r.statut!=='approved'&&!isArchived?`<button class="retours-btn retours-btn-sm" style="background:#e74c3c;color:white;" onclick="setRetourStatus('${r.id}','refused')">❌</button>`:''}
                 ${r.statut==='approved'&&isAutoCancel?`<button class="retours-btn retours-btn-sm" style="background:#e67e22;color:white;font-size:0.65rem;" onclick="setRetourStatus('${r.id}','pending')" title="Revenir en attente (le stock sera retiré)">↩️ Annuler</button>`:''}
+                ${(r.statut==='approved'||r.statut==='refused')?`<button class="retours-btn retours-btn-sm" style="background:#607d8b;color:white;" onclick="archiveRetour('${r.id}')" title="Archiver ce retour clôturé">📁</button>`:''}
+                ${isArchived?`<button class="retours-btn retours-btn-sm" style="background:#e67e22;color:white;font-size:0.65rem;" onclick="unarchiveRetour('${r.id}')" title="Désarchiver">↩️</button>`:''}
                 <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="openEditRetour('${r.id}')">✏️</button>
                 ${window._appSettings?.showRetourDelete ? `<button class="retours-btn retours-btn-sm retours-btn-outline" style="color:#e74c3c;" onclick="delRetour('${r.id}')">🗑️</button>` : ''}
             </div></td>
@@ -19386,9 +19403,51 @@ function setMarcStatus(id, status) {
     rToast(status==='archived'?'📁 Archivé — problème résolu':'Statut mis à jour','success');
 }
 
+// ===== ARCHIVAGE RETOURS CLIENTS =====
+function archiveRetour(id) {
+    const data = rLoad('retours');
+    const r = data.find(x => x.id === id);
+    if (!r) return;
+    if (r.statut !== 'approved' && r.statut !== 'refused') {
+        rToast('⚠️ Seuls les retours approuvés ou refusés peuvent être archivés', 'info');
+        return;
+    }
+    r.statut = 'archived';
+    r._archivedAt = new Date().toISOString();
+    rSave('retours', data);
+    addRetourHist('archived', 'retour', `Retour ${id} archivé`, `Client: ${r.client}`);
+    renderRetours(data);
+    rToast(`📁 Retour ${id} archivé avec succès`, 'success');
+}
+window.archiveRetour = archiveRetour;
+
+function unarchiveRetour(id) {
+    const data = rLoad('retours');
+    const r = data.find(x => x.id === id);
+    if (!r) return;
+    r.statut = 'approved';
+    delete r._archivedAt;
+    rSave('retours', data);
+    addRetourHist('approved', 'retour', `Retour ${id} désarchivé`, `Client: ${r.client}`);
+    renderRetours(data);
+    rToast(`↩️ Retour ${id} désarchivé`, 'success');
+}
+window.unarchiveRetour = unarchiveRetour;
+
+window._retourShowArchived = false;
+function toggleRetourArchiveView() {
+    window._retourShowArchived = !window._retourShowArchived;
+    const btn = document.getElementById('retour-archive-toggle-btn');
+    if (btn) {
+        btn.textContent = window._retourShowArchived ? '📋 Voir actifs' : '📁 Archives';
+        btn.style.background = window._retourShowArchived ? 'linear-gradient(135deg,#e67e22,#d35400)' : 'linear-gradient(135deg,#607d8b,#455a64)';
+    }
+    renderRetours(rLoad('retours'));
+}
+window.toggleRetourArchiveView = toggleRetourArchiveView;
+
 // ===== DELETE =====
-function delRetour(id) {
-    const r = rLoad('retours').find(x=>x.id===id);
+function delRetour(id) {    const r = rLoad('retours').find(x=>x.id===id);
     rSave('retours',rLoad('retours').filter(r=>r.id!==id));
     if (r) addRetourHist('deleted','retour',`🗑️ Retour client supprimé: ${id}`,`Client: ${r.client||'-'} · ${r.article||'-'}`);
     refreshRetours(); rToast('🗑️ Retour client supprimé','success');
@@ -21871,12 +21930,27 @@ function initAdminSections() {
                 const html  = await file.text();
                 const sale  = _ticketParseHTML(html, file.name);
                 if (!sale) { skipped++; continue; }
-                // Vérifier si déjà importé (doublon par id ou date+total)
-                const alreadyIn = salesHistory.some(s =>
-                    (sale.id && s.id === sale.id) ||
-                    (s.date === sale.date && Math.abs(parseFloat(s.total) - parseFloat(sale.total)) < 0.01)
-                );
-                _ticketPendingImports.push({ fileName: file.name, sale, duplicate: alreadyIn });
+
+                // Vérification doublon — priorité au N° de ticket
+                let isDuplicate = false;
+                let dupReason   = '';
+                if (sale._ticketId) {
+                    // Chercher par N° de ticket dans toute la base
+                    const byId = salesHistory.find(s =>
+                        String(s.id) === String(sale._ticketId) ||
+                        String(s._ticketId) === String(sale._ticketId)
+                    );
+                    if (byId) { isDuplicate = true; dupReason = `N° ${sale._ticketId} déjà en base`; }
+                }
+                if (!isDuplicate) {
+                    // Vérification secondaire : même date + même total (tolérance 1 centime)
+                    const byDateTotal = salesHistory.find(s =>
+                        s.date === sale.date && Math.abs(parseFloat(s.total) - parseFloat(sale.total)) < 0.01
+                    );
+                    if (byDateTotal) { isDuplicate = true; dupReason = 'Même date et montant détectés'; }
+                }
+
+                _ticketPendingImports.push({ fileName: file.name, sale, duplicate: isDuplicate, dupReason });
                 parsed++;
             } catch(e) { skipped++; }
         }
@@ -21894,16 +21968,16 @@ function initAdminSections() {
                 const fmtDate = new Date(s.date).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
                 const isDup   = item.duplicate;
                 const row = document.createElement('div');
-                row.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1.5px solid ${isDup?'#f39c12':'var(--border-color,#ddd)'};background:${isDup?'rgba(243,156,18,0.06)':'var(--bg-card,#fff)'};`;
+                row.style.cssText = `display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;border:1.5px solid ${isDup?'#e74c3c':'var(--border-color,#ddd)'};background:${isDup?'rgba(231,76,60,0.05)':'var(--bg-card,#fff)'};`;
                 row.innerHTML = `
                     <input type="checkbox" data-idx="${i}" ${isDup?'':'checked'} style="width:16px;height:16px;accent-color:#27ae60;flex-shrink:0;">
                     <div style="flex:1;min-width:0;">
                         <div style="font-weight:700;font-size:0.83rem;color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                            ${isDup?'⚠️ ':'🧾 '}${s.cashier||'?'} — ${fmtDate}
+                            ${isDup?'⛔ ':'🧾 '}${s._ticketId?`N°${s._ticketId} — `:''}${s.cashier||'?'} — ${fmtDate}
                         </div>
                         <div style="font-size:0.72rem;color:var(--text-muted,#888);margin-top:2px;">
                             ${s.items?.length||0} article(s) · ${parseFloat(s.total).toFixed(2)} € · ${s.method==='cb'?'💳 CB':s.method==='mixed'?'💳💶 Mixte':'💶 Espèces'}
-                            ${isDup?'<span style="color:#e67e22;font-weight:700;"> · Possible doublon</span>':''}
+                            ${isDup?`<span style="color:#e74c3c;font-weight:700;"> · ⛔ Doublon : ${item.dupReason||'déjà importé'}</span>`:''}
                             ${(()=>{
                                 let found=0,notFound=0;
                                 (s.items||[]).forEach(it=>{
@@ -21930,6 +22004,19 @@ function initAdminSections() {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const text = doc.body?.innerText || doc.body?.textContent || '';
 
+        // ── Extraire le N° de ticket ──────────────────────────────────
+        let ticketId = null;
+        const idMatch = text.match(/[Tt]icket\s*[Nn]°?\s*[:#]?\s*([A-Za-z0-9\-]+)/)
+            || text.match(/N°\s*([A-Za-z0-9\-]+)/)
+            || text.match(/#([A-Za-z0-9\-]+)/);
+        if (idMatch) ticketId = idMatch[1].trim();
+
+        // Depuis le nom de fichier (ticket_2026-04-06_14-30-25_#123.html)
+        if (!ticketId) {
+            const fnId = fileName.match(/#([A-Za-z0-9\-]+)/);
+            if (fnId) ticketId = fnId[1];
+        }
+
         // Chercher le total
         let total = 0;
         const totalMatch = text.match(/Total[^\d]*([\d]+[.,][\d]{2})\s*€/i)
@@ -21950,7 +22037,6 @@ function initAdminSections() {
                 }
             } catch(e) {}
         }
-        // Fallback : date de modification du fichier ou maintenant
         if (!date) {
             const fnMatch = fileName.match(/(\d{4}-\d{2}-\d{2})[_\-](\d{2}[-:]\d{2})/);
             if (fnMatch) date = new Date(`${fnMatch[1]}T${fnMatch[2].replace('-',':')}`).toISOString();
@@ -21967,7 +22053,7 @@ function initAdminSections() {
         if (/carte|cb|bancaire/i.test(text))  method = 'cb';
         if (/mixte|espèces.*carte|cb.*espèces/i.test(text)) method = 'mixed';
 
-        // Articles (tentative simple)
+        // Articles
         const items = [];
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         lines.forEach(line => {
@@ -21980,17 +22066,18 @@ function initAdminSections() {
         if (!total || total <= 0) return null;
 
         return {
-            id:         'IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6),
-            date:       date,
-            cashier:    cashier,
-            cashierId:  null,
-            total:      total,
-            method:     method,
-            received:   total,
-            change:     0,
-            items:      items,
-            _imported:  true,
-            _source:    fileName
+            id:        ticketId || ('IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)),
+            _ticketId: ticketId,  // toujours présent pour la vérification doublon
+            date,
+            cashier,
+            cashierId: null,
+            total,
+            method,
+            received:  total,
+            change:    0,
+            items,
+            _imported: true,
+            _source:   fileName
         };
     }
 
