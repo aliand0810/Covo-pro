@@ -21441,6 +21441,9 @@ function initAdminSections() {
             localStorage.setItem('gdrive_last_save', ts);
             localStorage.setItem('gdrive_last_file', fileName);
             _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + (_gdFolderName ? ' · 📁 ' + _gdFolderName : ''), ts);
+
+            // Copier aussi dans la hiérarchie Paramètres/YYYY/MM-Mois/DD/
+            setTimeout(() => { try { window._gdUploadParametres(exportPayload, ts); } catch(e) {} }, 500);
             
             // Flash vert sur la status bar
             const bar = document.getElementById('gdrive-status-bar');
@@ -21805,14 +21808,169 @@ function initAdminSections() {
     });
 
     // ===========================================================================
-    // ===== UPLOAD TICKET DE CAISSE SUR GOOGLE DRIVE ===========================
     // ===========================================================================
-    let _gdTicketFolderId = null;
-    const GD_TICKET_FOLDER = 'Tickets de caisse';
+    // ===== MOTEUR DE DOSSIERS HIÉRARCHIQUES GOOGLE DRIVE ======================
+    // ===========================================================================
+    //
+    //  Architecture :
+    //  📁 <Root>  (ex: Tickets_Caisse)
+    //    └── 📁 2026
+    //          └── 📁 04-Avril
+    //                └── 📁 06
+    //                      └── fichier.html
+    //
+    //  Racines prédéfinies (extensibles dynamiquement) :
+    //  - Tickets_Caisse  → tickets HTML par vente
+    //  - Paramètres      → sauvegardes JSON (remplacement futur)
+    //  - Achats          → retours fournisseur / bons de commande
+    // ===========================================================================
 
-    // =========================================================================
-    // ===== DOSSIER MESSAGES GOOGLE DRIVE =====================================
-    // =========================================================================
+    const GD_ROOTS = {
+        tickets:    'Tickets_Caisse',
+        parametres: 'Paramètres',
+        achats:     'Achats',
+        messages:   'Messages_COVO',
+        historique: 'Historique_Connexions',
+    };
+
+    const MOIS_FR = ['01-Janvier','02-Février','03-Mars','04-Avril','05-Mai','06-Juin',
+                     '07-Juillet','08-Août','09-Septembre','10-Octobre','11-Novembre','12-Décembre'];
+
+    // Cache hiérarchique :  "RootName/2026/04-Avril/06" → folderId
+    const _gdFolderCache = {};
+
+    // Trouver ou créer un dossier par nom dans un parent donné
+    async function _gdFolderEnsure(name, parentId) {
+        const cacheKey = parentId + '/' + name;
+        if (_gdFolderCache[cacheKey]) return _gdFolderCache[cacheKey];
+
+        const mime = 'application/vnd.google-apps.folder';
+        const qParts = [`name='${name.replace(/'/g, "\\'")}'`, `mimeType='${mime}'`, 'trashed=false'];
+        if (parentId) qParts.push(`'${parentId}' in parents`);
+
+        const q = encodeURIComponent(qParts.join(' and '));
+        const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`);
+        const data = await resp.json();
+
+        if (data.files && data.files.length > 0) {
+            _gdFolderCache[cacheKey] = data.files[0].id;
+            return data.files[0].id;
+        }
+
+        // Créer le dossier
+        const body = { name, mimeType: mime };
+        if (parentId) body.parents = [parentId];
+        const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const folder = await cr.json();
+        if (folder.id) {
+            _gdFolderCache[cacheKey] = folder.id;
+            return folder.id;
+        }
+        return null;
+    }
+
+    // Obtenir (ou créer) le chemin hiérarchique complet pour une date donnée
+    // rootKey : clé dans GD_ROOTS  |  date : objet Date
+    async function _gdGetDateFolder(rootKey, date) {
+        if (!_gdConnected || !_gdAccessToken) return null;
+        const rootName = GD_ROOTS[rootKey] || rootKey;
+        const year     = String(date.getFullYear());
+        const month    = MOIS_FR[date.getMonth()];
+        const day      = String(date.getDate()).padStart(2, '0');
+        try {
+            const rootId  = await _gdFolderEnsure(rootName,  null);   if (!rootId) return null;
+            const yearId  = await _gdFolderEnsure(year,      rootId); if (!yearId) return null;
+            const monthId = await _gdFolderEnsure(month,     yearId); if (!monthId) return null;
+            const dayId   = await _gdFolderEnsure(day,       monthId);
+            return dayId;
+        } catch(e) {
+            console.warn('GDrive hierarchy error:', e);
+            return null;
+        }
+    }
+
+    // Ajouter dynamiquement une nouvelle racine (extensibilité)
+    window._gdAddRoot = function(key, name) {
+        GD_ROOTS[key] = name;
+    };
+
+    // Uploader un fichier dans le dossier hiérarchique approprié
+    async function _gdUploadToHierarchy(rootKey, date, fileName, content, mimeType) {
+        const folderId = await _gdGetDateFolder(rootKey, date);
+        if (!folderId) return null;
+        const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
+        const boundary = '----CovoDriveHierarchy' + Date.now();
+        const body =
+            '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' +
+            metadata + '\r\n' +
+            '--' + boundary + '\r\nContent-Type: ' + mimeType + '\r\n\r\n' +
+            content + '\r\n' +
+            '--' + boundary + '--';
+        const resp = await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+            method: 'POST',
+            headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+            body
+        });
+        const result = await resp.json();
+        console.log(`✅ ${fileName} → Drive/${GD_ROOTS[rootKey] || rootKey}/${date.getFullYear()}/${MOIS_FR[date.getMonth()]}/${String(date.getDate()).padStart(2,'0')}/`);
+        return result.id || null;
+    }
+    window._gdUploadToHierarchy = _gdUploadToHierarchy;
+
+    // ===========================================================================
+    // ===== TICKETS DE CAISSE → Tickets_Caisse/YYYY/MM-Mois/DD/ ================
+    // ===========================================================================
+    window._gdUploadTicket = async function(sale, receiptHTML) {
+        if (!_gdConnected || !_gdAccessToken) return;
+        try {
+            const now      = new Date(sale.date);
+            const dateStr  = now.toISOString().split('T')[0];
+            const timeStr  = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const fileName = `ticket_${dateStr}_${timeStr}_#${sale.id}.html`;
+
+            const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Ticket #${sale.id}</title>
+<style>body{font-family:'Courier New',monospace;padding:20px;max-width:320px;margin:0 auto;color:#000;background:#fff;}</style>
+</head><body>${receiptHTML}</body></html>`;
+
+            await _gdUploadToHierarchy('tickets', now, fileName, html, 'text/html');
+        } catch(e) { console.warn('GDrive ticket upload error:', e); }
+    };
+
+    // ===========================================================================
+    // ===== PARAMÈTRES → Paramètres/YYYY/MM-Mois/DD/ ===========================
+    // ===========================================================================
+    // Sauvegarde JSON enrichie dans la hiérarchie Paramètres  (appelée depuis _gdDoSave)
+    window._gdUploadParametres = async function(payload, ts) {
+        if (!_gdConnected || !_gdAccessToken) return;
+        try {
+            const now      = new Date(ts);
+            const dateStr  = now.toISOString().split('T')[0];
+            const timeStr  = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const fileName = `covo_backup_${dateStr}_${timeStr}.json`;
+            await _gdUploadToHierarchy('parametres', now, fileName, payload, 'application/json');
+        } catch(e) { console.warn('GDrive paramètres upload error:', e); }
+    };
+
+    // ===========================================================================
+    // ===== ACHATS → Achats/YYYY/MM-Mois/DD/ ===================================
+    // ===========================================================================
+    window._gdUploadAchat = async function(achat) {
+        if (!_gdConnected || !_gdAccessToken) return;
+        try {
+            const now      = new Date(achat.date || new Date());
+            const dateStr  = now.toISOString().split('T')[0];
+            const fileName = `achat_${dateStr}_${achat.id || Date.now()}.json`;
+            const content  = JSON.stringify(achat, null, 2);
+            await _gdUploadToHierarchy('achats', now, fileName, content, 'application/json');
+        } catch(e) { console.warn('GDrive achat upload error:', e); }
+    };
+
+    // ---- Getter d'état public (utilisé par openAdminWelcomeModal et autres) ----
     const GD_MESSAGES_FOLDER = 'Messages COVO';
     const GD_MESSAGES_FILE   = 'messages.json';
     let _gdMsgFolderId = null;
@@ -21861,36 +22019,43 @@ function initAdminSections() {
         return null;
     }
 
-    // Sauvegarder tous les messages dans Drive
+    // Sauvegarder tous les messages dans Drive (fichier plat + hiérarchie)
     window._gdSaveMessages = async function() {
         if (!_gdConnected || !_gdAccessToken || _gdMsgSyncing) return;
         _gdMsgSyncing = true;
         try {
-            const folderId = await _gdEnsureMsgFolder();
-            if (!folderId) return;
-            let fileId = await _gdFindMsgFile(folderId);
+            const now  = new Date();
             const msgs = JSON.parse(localStorage.getItem('covo_messages') || '[]');
-            const content = JSON.stringify({ messages: msgs, _savedAt: new Date().toISOString() });
-            const boundary = '----CovoDriveMsgBoundary';
-            const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n` +
-                JSON.stringify({ name: GD_MESSAGES_FILE, parents: fileId ? undefined : [folderId] }) +
-                `\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
-            const method = fileId ? 'PATCH' : 'POST';
-            const url = fileId
-                ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-            const resp = await _gdFetch(url, {
-                method,
-                headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-                body
-            });
-            const result = await resp.json();
-            if (result.id) {
-                _gdMsgFileId = result.id;
-                localStorage.setItem('gdrive_msg_file_id', result.id);
-                localStorage.setItem('gdrive_msg_last_save', new Date().toISOString());
-                console.log('✅ Messages sauvegardés Drive →', GD_MESSAGES_FOLDER + '/' + GD_MESSAGES_FILE);
+            const savedAt = now.toISOString();
+            const content = JSON.stringify({ messages: msgs, total: msgs.length, _savedAt: savedAt }, null, 2);
+
+            // 1️⃣ Fichier plat unique (pour restauration rapide)
+            const folderId = await _gdEnsureMsgFolder();
+            if (folderId) {
+                let fileId = await _gdFindMsgFile(folderId);
+                const boundary = '----CovoDriveMsgBoundary';
+                const meta = JSON.stringify({ name: GD_MESSAGES_FILE, parents: fileId ? undefined : [folderId] });
+                const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
+                const method = fileId ? 'PATCH' : 'POST';
+                const url = fileId
+                    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+                    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+                const resp = await _gdFetch(url, { method, headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+                const result = await resp.json();
+                if (result.id) {
+                    _gdMsgFileId = result.id;
+                    localStorage.setItem('gdrive_msg_file_id', result.id);
+                    localStorage.setItem('gdrive_msg_last_save', savedAt);
+                }
             }
+
+            // 2️⃣ Archivage horodaté dans la hiérarchie Messages_COVO/YYYY/MM/DD/
+            const ts    = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const ds    = now.toISOString().split('T')[0];
+            const fname = `messages_${ds}_${ts}.json`;
+            await _gdUploadToHierarchy('messages', now, fname, content, 'application/json');
+
+            console.log(`✅ ${msgs.length} messages sauvegardés → Messages_COVO + hiérarchie`);
         } catch(e) { console.warn('GDrive msg save error:', e); }
         finally { _gdMsgSyncing = false; }
     };
@@ -22008,37 +22173,50 @@ function initAdminSections() {
         if (!_gdConnected || !_gdAccessToken || _gdHistSyncing) return;
         _gdHistSyncing = true;
         try {
-            const folderId = await _gdEnsureHistFolder();
-            if (!folderId) return;
-            let fileId = await _gdFindHistFile(folderId);
+            const now  = new Date();
             const hist = JSON.parse(localStorage.getItem('covo_login_history') || '[]');
+            const savedAt = now.toISOString();
             const content = JSON.stringify({
-                history:   hist,
-                total:     hist.length,
-                _savedAt:  new Date().toISOString(),
-                _source:   'covo_pro'
+                history: hist,
+                total:   hist.length,
+                _savedAt: savedAt,
+                _source: 'covo_pro'
             }, null, 2);
-            const boundary = '----CovoDriveHistBoundary';
-            const meta = fileId
-                ? JSON.stringify({ name: GD_HISTORY_FILE })
-                : JSON.stringify({ name: GD_HISTORY_FILE, parents: [folderId] });
-            const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
-            const method = fileId ? 'PATCH' : 'POST';
-            const url = fileId
-                ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
-                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-            const resp = await _gdFetch(url, {
-                method,
-                headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-                body
-            });
-            const result = await resp.json();
-            if (result.id) {
-                _gdHistFileId = result.id;
-                localStorage.setItem('gdrive_hist_file_id', result.id);
-                localStorage.setItem('gdrive_hist_last_save', new Date().toISOString());
-                console.log(`✅ Historique (${hist.length} entrées) sauvegardé Drive →`, GD_HISTORY_FOLDER);
+
+            // 1️⃣ Fichier plat unique (pour restauration rapide)
+            const folderId = await _gdEnsureHistFolder();
+            if (folderId) {
+                let fileId = await _gdFindHistFile(folderId);
+                const boundary = '----CovoDriveHistBoundary';
+                const meta = fileId
+                    ? JSON.stringify({ name: GD_HISTORY_FILE })
+                    : JSON.stringify({ name: GD_HISTORY_FILE, parents: [folderId] });
+                const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${content}\r\n--${boundary}--`;
+                const method = fileId ? 'PATCH' : 'POST';
+                const url = fileId
+                    ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+                    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+                const resp = await _gdFetch(url, { method, headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+                const result = await resp.json();
+                if (result.id) {
+                    _gdHistFileId = result.id;
+                    localStorage.setItem('gdrive_hist_file_id', result.id);
+                    localStorage.setItem('gdrive_hist_last_save', savedAt);
+                }
             }
+
+            // 2️⃣ Archivage horodaté dans hiérarchie Historique_Connexions/YYYY/MM/DD/
+            // On n'archive pas à chaque connexion pour éviter des doublons — une fois par jour suffit
+            const todayKey = now.toISOString().split('T')[0];
+            const lastArchive = localStorage.getItem('gdrive_hist_last_archive_day');
+            if (lastArchive !== todayKey) {
+                const ts    = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+                const fname = `historique_${todayKey}_${ts}.json`;
+                await _gdUploadToHierarchy('historique', now, fname, content, 'application/json');
+                localStorage.setItem('gdrive_hist_last_archive_day', todayKey);
+            }
+
+            console.log(`✅ Historique (${hist.length} entrées) → Historique_Connexions + hiérarchie`);
         } catch(e) { console.warn('GDrive hist save error:', e); }
         finally { _gdHistSyncing = false; }
     };
@@ -22092,74 +22270,6 @@ function initAdminSections() {
         if (savedId) _gdHistFileId = savedId;
     })();
 
-    async function _gdEnsureTicketFolder() {
-        if (_gdTicketFolderId) return _gdTicketFolderId;
-        if (!_gdConnected || !_gdAccessToken) return null;
-        try {
-            // Chercher le dossier existant
-            const q = encodeURIComponent(`name='${GD_TICKET_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name)');
-            const data = await resp.json();
-            if (data.files && data.files.length > 0) {
-                _gdTicketFolderId = data.files[0].id;
-                return _gdTicketFolderId;
-            }
-            // Créer le dossier
-            const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: GD_TICKET_FOLDER, mimeType: 'application/vnd.google-apps.folder' })
-            });
-            const folder = await cr.json();
-            if (folder.id) {
-                _gdTicketFolderId = folder.id;
-                return _gdTicketFolderId;
-            }
-        } catch(e) {
-            console.warn('GDrive ticket folder error:', e);
-        }
-        return null;
-    }
-
-    // Fonction globale appelée depuis validateSale
-    window._gdUploadTicket = async function(sale, receiptHTML) {
-        if (!_gdConnected || !_gdAccessToken) return;
-        try {
-            const folderId = await _gdEnsureTicketFolder();
-            if (!folderId) return;
-
-            const now = new Date(sale.date);
-            const dateStr = now.toISOString().split('T')[0];
-            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const fileName = `ticket_${dateStr}_${timeStr}_#${sale.id}.html`;
-
-            const printableContent = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Ticket #${sale.id}</title>
-<style>body{font-family:'Courier New',monospace;padding:20px;max-width:300px;margin:0 auto;color:#000;background:#fff;}</style>
-</head><body>${receiptHTML}</body></html>`;
-
-            const metadata = JSON.stringify({ name: fileName, parents: [folderId] });
-            const boundary = '----CovoTicketBoundary' + Date.now();
-            const body = 
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: text/html\r\n\r\n' +
-                printableContent + '\r\n' +
-                '--' + boundary + '--';
-
-            await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                method: 'POST',
-                headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
-                body: body
-            });
-
-            console.log('✅ Ticket #' + sale.id + ' uploadé sur Google Drive → ' + GD_TICKET_FOLDER);
-        } catch(e) {
-            console.warn('GDrive ticket upload error:', e);
-        }
-    };
 
     // ---- Getter d'état public (utilisé par openAdminWelcomeModal et autres) ----
     window._gdGetState = function() {
