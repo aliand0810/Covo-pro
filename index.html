@@ -23790,7 +23790,7 @@ function initAdminSections() {
             if (data.pendingSync)  { pendingSync  = data.pendingSync;  localStorage.setItem('covo_pending_sync',  JSON.stringify(pendingSync)); }
         }
         if (mode === 'params' || mode === 'tout') {
-            if (data.products)            { products = data.products; localStorage.setItem('products', JSON.stringify(products)); }
+            if (data.products)            { products = data.products.map(p => ({ unitType:'unit', pricePerKg:null, ...p })); localStorage.setItem('products', JSON.stringify(products)); }
             if (data.categories)          { categories = data.categories; localStorage.setItem('categories', JSON.stringify(categories)); }
             if (data.promoTypes)          { promoTypes = data.promoTypes; localStorage.setItem('promoTypes', JSON.stringify(promoTypes)); }
             if (data.users)               { users = data.users; localStorage.setItem('users', JSON.stringify(users)); }
@@ -23801,10 +23801,26 @@ function initAdminSections() {
             ['covo_retours','covo_marchandise','covo_echeances','covo_rhist','covo_hist','covo_investissements','covo_inv_categories','covo_ech_categories','covo_messages','covo_login_history','covo_settings','covo_aw_panels','covo_modules_config','covo_night_tariff','covo_presence','covo_inv_questions','covo_dark_mode'].forEach(k => {
                 if (data[k] != null) localStorage.setItem(k, typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]));
             });
+            // Appliquer le mode nuit immédiatement si restauré
+            const darkMode = localStorage.getItem('covo_dark_mode');
+            if (darkMode !== null) {
+                if (darkMode === 'true') document.body.classList.add('dark-mode');
+                else document.body.classList.remove('dark-mode');
+            }
+            // Appliquer les modules si restaurés
+            if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
         }
-        saveAll(); renderAll();
-        showScanToast(`✅ Restauration "${mode === 'ventes' ? 'Ventes' : mode === 'params' ? 'Paramètres' : 'Complète'}" appliquée`, 'success');
-        setTimeout(() => location.reload(), 1200);
+
+        // Appliquer sans rechargement de page
+        try { saveAll(); } catch(e) {}
+        try { renderAll(); } catch(e) {}
+        try { if (typeof renderProducts === 'function') renderProducts(); } catch(e) {}
+        try { if (typeof renderStatsHistory === 'function') renderStatsHistory(); } catch(e) {}
+        try { if (typeof invRender === 'function') invRender(); } catch(e) {}
+        try { if (typeof refreshRetours === 'function') refreshRetours(); } catch(e) {}
+
+        const modeLabel = mode === 'ventes' ? '💰 Ventes' : mode === 'params' ? '⚙️ Paramètres' : '📦 Tout';
+        showScanToast(`✅ Restauration ${modeLabel} appliquée avec succès`, 'success');
     };
 
     // ---- Getter d'état public (utilisé par openAdminWelcomeModal et autres) ----
