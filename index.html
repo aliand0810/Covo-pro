@@ -714,8 +714,9 @@
             background: var(--bg-body); 
             color: var(--text-main); 
             overflow-x: hidden; 
-            transition: margin-right 0.3s ease, background 0.3s, color 0.3s; 
+            transition: margin-right 0.3s ease, background 0.3s, color 0.3s, padding-top 0.32s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
+            padding-top: 4px;
         }
 
         /* ===== SCROLLBARS GLOBALES — FINES ET DISCRÈTES ===== */
@@ -759,10 +760,55 @@
             display: flex; 
             justify-content: space-between; 
             align-items: center; 
-            position: sticky; 
-            top: 24px; 
-            z-index: 100; 
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2); 
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+            transform: translateY(-100%);
+            transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+                        box-shadow 0.32s ease,
+                        opacity 0.32s ease;
+            opacity: 0;
+            will-change: transform, opacity;
+        }
+
+        header.header-visible {
+            transform: translateY(0);
+            opacity: 1;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+
+        /* Trigger zone invisible en haut de l'écran */
+        #header-trigger-zone {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 6px;
+            z-index: 1001;
+            background: transparent;
+        }
+
+        /* Indicateur de survol discret */
+        #header-peek-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            z-index: 999;
+            background: linear-gradient(90deg, #1a73e8, #0d47a1, #9b59b6, #1a73e8);
+            background-size: 200% 100%;
+            animation: headerBarShimmer 3s linear infinite;
+            opacity: 0.7;
+            transition: height 0.2s ease, opacity 0.2s ease;
+        }
+
+        @keyframes headerBarShimmer {
+            0%   { background-position: 0% 50%; }
+            100% { background-position: 200% 50%; }
         }
         
         .header-left { display: flex; align-items: center; gap: 15px; }
@@ -3163,7 +3209,12 @@
         </div>
     </div>
 
-    <header>
+    <!-- Zone trigger invisible pour afficher la barre -->
+    <div id="header-trigger-zone"></div>
+    <!-- Barre décorative visible en permanence -->
+    <div id="header-peek-bar"></div>
+
+    <header id="main-header">
         <div class="header-left">
           
                 <img id="header-logo" src="" alt="Logo Entreprise">
@@ -9475,6 +9526,80 @@ function toggleInfoSection(headerElement) {
                 document.body.appendChild(el);
             }
         });
+
+        // ── Barre de navigation auto-masquante ─────────────────────────
+        const header      = document.getElementById('main-header');
+        const triggerZone = document.getElementById('header-trigger-zone');
+        const peekBar     = document.getElementById('header-peek-bar');
+        let headerHideTimer = null;
+        let headerVisible   = false;
+
+        function showHeader() {
+            if (!header) return;
+            clearTimeout(headerHideTimer);
+            header.classList.add('header-visible');
+            headerVisible = true;
+            if (peekBar) { peekBar.style.height = '3px'; peekBar.style.opacity = '0'; }
+        }
+
+        function hideHeader(delay) {
+            clearTimeout(headerHideTimer);
+            headerHideTimer = setTimeout(() => {
+                if (!header) return;
+                header.classList.remove('header-visible');
+                headerVisible = false;
+                if (peekBar) { peekBar.style.height = '3px'; peekBar.style.opacity = '0.7'; }
+            }, delay || 1800);
+        }
+
+        // Survol de la zone trigger (6px en haut)
+        if (triggerZone) {
+            triggerZone.addEventListener('mouseenter', () => {
+                showHeader();
+                if (peekBar) { peekBar.style.height = '4px'; peekBar.style.opacity = '1'; }
+            });
+        }
+
+        // Garder le header visible quand la souris est dessus
+        if (header) {
+            header.addEventListener('mouseenter', () => {
+                clearTimeout(headerHideTimer);
+                headerVisible = true;
+            });
+            header.addEventListener('mouseleave', () => {
+                hideHeader(2000);
+            });
+        }
+
+        // Surveiller la position de la souris globalement
+        document.addEventListener('mousemove', (e) => {
+            if (e.clientY <= 6) {
+                showHeader();
+            } else if (headerVisible && e.clientY > 80) {
+                // Auto-masquer après 2s si la souris quitte le header
+                if (!header.matches(':hover')) {
+                    hideHeader(2000);
+                }
+            }
+        });
+
+        // Sur mobile : tap en haut pour afficher/masquer
+        document.addEventListener('touchstart', (e) => {
+            if (e.touches[0]?.clientY <= 20) {
+                if (headerVisible) hideHeader(0);
+                else showHeader();
+            }
+        }, { passive: true });
+
+        // Pousser le contenu vers le bas quand le header est visible
+        if (header) {
+            const headerHeight = header.offsetHeight || 60;
+            const observer = new MutationObserver(() => {
+                const isVisible = header.classList.contains('header-visible');
+                document.body.style.paddingTop = isVisible ? (headerHeight + 4) + 'px' : '4px';
+            });
+            observer.observe(header, { attributes: true, attributeFilter: ['class'] });
+        }
     });
     setInterval(_qmsgUpdateHeaderDot, 15000);
 
