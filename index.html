@@ -3348,6 +3348,13 @@
                     <div class="stat-value" id="stat-month-sales">0€</div>
                     <span class="stat-change positive" id="stat-month-change">+0%</span>
                 </div>
+                <!-- Carte Bénéfice -->
+                <div class="stat-card" style="border-left:4px solid #27ae60;position:relative;overflow:hidden;">
+                    <h3>📈 Bénéfice net</h3>
+                    <div class="stat-value" id="stat-benef-total" style="color:#27ae60;">—</div>
+                    <span class="stat-change" id="stat-benef-marge" style="color:#27ae60;">Marge : —</span>
+                    <div style="font-size:0.72rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-benef-detail"></div>
+                </div>
             </div>
             
             <div class="chart-container">
@@ -13228,6 +13235,63 @@ logout = function(skipConfirmation = false) {
         document.getElementById('stat-cash-total').textContent = cashTotal.toFixed(2) + '€';
         document.getElementById('stat-card-total').textContent = cardTotal.toFixed(2) + '€';
 
+        // ── Calcul du bénéfice net sur la période ──────────────────────
+        (function() {
+            let totalCA     = 0;
+            let totalCout   = 0;
+            let nbAvecCout  = 0;
+            let nbSansCout  = 0;
+
+            periodSales.filter(s => s.type !== 'retour_article' && !s.cancelled).forEach(sale => {
+                totalCA += parseFloat(sale.total || 0);
+                (sale.items || []).forEach(item => {
+                    const prod = products.find(p =>
+                        p.id === item.id ||
+                        (p.name && item.name && p.name.toLowerCase() === item.name.toLowerCase())
+                    );
+                    if (prod && prod.costPrice != null && prod.costPrice !== '') {
+                        const qty  = parseFloat(item.quantity || 1);
+                        const cost = parseFloat(prod.costPrice) * qty;
+                        totalCout += cost;
+                        nbAvecCout++;
+                    } else {
+                        nbSansCout++;
+                    }
+                });
+            });
+
+            const benefEl   = document.getElementById('stat-benef-total');
+            const margeEl   = document.getElementById('stat-benef-marge');
+            const detailEl  = document.getElementById('stat-benef-detail');
+
+            if (!benefEl) return;
+
+            if (nbAvecCout === 0) {
+                // Aucun prix d'achat renseigné
+                benefEl.textContent = '—';
+                benefEl.style.color = 'var(--gray,#aaa)';
+                if (margeEl) { margeEl.textContent = 'Prix d\'achat non renseignés'; margeEl.style.color = 'var(--gray,#aaa)'; }
+                if (detailEl) detailEl.textContent = 'Ajoutez le prix d\'achat dans le catalogue pour calculer votre marge.';
+                return;
+            }
+
+            const benef = totalCA - totalCout;
+            const marge = totalCA > 0 ? (benef / totalCA * 100) : 0;
+            const isPositif = benef >= 0;
+            const color = isPositif ? '#27ae60' : '#e74c3c';
+
+            benefEl.textContent   = (isPositif ? '+' : '') + benef.toFixed(2) + '€';
+            benefEl.style.color   = color;
+            if (margeEl) {
+                margeEl.textContent = `Marge : ${marge.toFixed(1)}%`;
+                margeEl.style.color = color;
+            }
+            if (detailEl) {
+                const partiel = nbSansCout > 0 ? ` · ⚠️ ${nbSansCout} article(s) sans prix d'achat` : '';
+                detailEl.textContent = `CA : ${totalCA.toFixed(2)}€ − Coût : ${totalCout.toFixed(2)}€${partiel}`;
+            }
+        })();
+
         renderSalesChart();
         renderTopProducts();
         renderStatsHistory();
@@ -14454,17 +14518,25 @@ logout = function(skipConfirmation = false) {
         salesHistory.forEach(sale => {
             if (sale.cancelled) return;
             sale.items.forEach(item => {
+                const prod = products.find(p => p.id == item.id || p.name === item.name);
                 if (!productSales[item.id]) {
-                    const prod = products.find(p => p.id == item.id || p.name === item.name);
                     productSales[item.id] = {
                         name: item.name,
                         quantity: 0,
                         revenue: 0,
+                        cout: 0,
+                        hasCout: false,
                         unitType: item.unitType || (prod ? prod.unitType : 'unit') || 'unit'
                     };
                 }
                 productSales[item.id].quantity += item.quantity;
-                productSales[item.id].revenue  += item.price * item.quantity;
+                const lineCA = parseFloat(item.price || 0) * parseFloat(item.quantity || 1);
+                productSales[item.id].revenue += lineCA;
+                // Calculer le coût si prix d'achat connu
+                if (prod && prod.costPrice != null && prod.costPrice !== '') {
+                    productSales[item.id].cout += parseFloat(prod.costPrice) * parseFloat(item.quantity || 1);
+                    productSales[item.id].hasCout = true;
+                }
             });
         });
 
@@ -14476,12 +14548,39 @@ logout = function(skipConfirmation = false) {
             ? p.quantity.toFixed(2) + ' kg'
             : Math.round(p.quantity) + ' unité(s)';
 
+        const fmtBenef = p => {
+            if (!p.hasCout) return '';
+            const b = p.revenue - p.cout;
+            const m = p.revenue > 0 ? (b / p.revenue * 100).toFixed(0) : 0;
+            const c = b >= 0 ? '#27ae60' : '#e74c3c';
+            return `<span style="font-size:0.72rem;color:${c};font-weight:700;margin-left:6px;">${b >= 0 ? '+' : ''}${b.toFixed(2)}€ (${m}%)</span>`;
+        };
+
         document.getElementById('top-products').innerHTML = top5.length > 0 ? top5.map((p, i) => `
-            <div class="top-product-item"><div class="top-product-rank">#${i + 1}</div><div class="top-product-info"><div class="top-product-name">${p.name}</div><div class="top-product-stats">${fmtQty(p)}</div></div><div class="top-product-revenue">${p.revenue.toFixed(2)}€</div></div>
+            <div class="top-product-item">
+                <div class="top-product-rank">#${i + 1}</div>
+                <div class="top-product-info">
+                    <div class="top-product-name">${p.name}</div>
+                    <div class="top-product-stats">${fmtQty(p)}</div>
+                </div>
+                <div class="top-product-revenue" style="text-align:right;">
+                    <div>${p.revenue.toFixed(2)}€</div>
+                    ${fmtBenef(p)}
+                </div>
+            </div>
         `).join('') : '<p style="text-align:center; color:var(--gray);">Aucune vente</p>';
 
         document.getElementById('low-rotation').innerHTML = low5.length > 0 ? low5.map(p => `
-            <div class="top-product-item"><div class="top-product-info"><div class="top-product-name">${p.name}</div><div class="top-product-stats">${fmtQty(p)}</div></div><div class="top-product-revenue">${p.revenue.toFixed(2)}€</div></div>
+            <div class="top-product-item">
+                <div class="top-product-info">
+                    <div class="top-product-name">${p.name}</div>
+                    <div class="top-product-stats">${fmtQty(p)}</div>
+                </div>
+                <div class="top-product-revenue" style="text-align:right;">
+                    <div>${p.revenue.toFixed(2)}€</div>
+                    ${fmtBenef(p)}
+                </div>
+            </div>
         `).join('') : '<p style="text-align:center; color:var(--gray);">Pas de données</p>';
     }
 
