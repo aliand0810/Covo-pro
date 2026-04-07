@@ -10053,32 +10053,44 @@ function toggleInfoSection(headerElement) {
 
             let latestFile = null;
             let latestDate = null;
+            let latestVentesFile = null;
+            let latestParamsFile = null;
             try {
                 if (gdState?.folderId) {
                     const q = encodeURIComponent(
                         `'${gdState.folderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
                     );
                     const resp = await Promise.race([
-                        window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)`),
+                        window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime)`),
                         new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),5000))
                     ]);
                     const data = await resp.json();
                     if (data.files && data.files.length > 0) {
                         latestFile = data.files[0];
                         latestDate = new Date(latestFile.modifiedTime);
+                        // Trouver les sauvegardes scindées les plus récentes
+                        latestVentesFile = data.files.find(f => f.name.includes('_VENTES_'));
+                        latestParamsFile = data.files.find(f => f.name.includes('_PARAMS_'));
                     }
                 }
             } catch(e) {}
 
             const lastSaveLocal = gdState?.lastSave || localStorage.getItem('gdrive_last_save');
-            const lastSaveFmt = latestDate
-                ? latestDate.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' +
-                  latestDate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})
-                : lastSaveLocal
-                    ? new Date(lastSaveLocal).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})
-                    : null;
+            const fmtDT = d => d ? new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' + new Date(d).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : null;
+            const lastSaveFmt = latestDate ? fmtDT(latestDate) : lastSaveLocal ? fmtDT(lastSaveLocal) : null;
 
-            _splashStep('backup', lastSaveFmt?'✅':'⚠️', 'Dernière sauvegarde', lastSaveFmt||'Aucune sauvegarde', lastSaveFmt?'done':'warn');
+            // Afficher les 3 types de sauvegardes
+            const ventesTs = latestVentesFile ? fmtDT(new Date(latestVentesFile.modifiedTime)) : null;
+            const paramsTs = latestParamsFile ? fmtDT(new Date(latestParamsFile.modifiedTime)) : null;
+
+            let backupDetail = lastSaveFmt || 'Aucune sauvegarde';
+            if (ventesTs || paramsTs) {
+                const parts = [];
+                if (ventesTs) parts.push(`💰 Ventes ${ventesTs}`);
+                if (paramsTs) parts.push(`⚙️ Params ${paramsTs}`);
+                backupDetail = parts.join(' · ');
+            }
+            _splashStep('backup', lastSaveFmt?'✅':'⚠️', 'Dernière sauvegarde', backupDetail, lastSaveFmt?'done':'warn');
             await _splashDelay(280);
 
             // ── Restauration automatique ──────────────────────────────
@@ -10091,22 +10103,40 @@ function toggleInfoSection(headerElement) {
             if (latestFile && window._gdFetchPublic) {
                 try {
                     _splashStep('sync', '⏳', 'Restauration des données', 'Téléchargement…', 'active');
-                    const resp = await Promise.race([
-                        window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${latestFile.id}?alt=media`),
-                        new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),10000))
-                    ]);
+
+                    // Restauration parallèle : fichier complet + ventes scindées si plus récentes
+                    const fetchMain = window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${latestFile.id}?alt=media`);
+                    const resp = await Promise.race([fetchMain, new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),10000))]);
                     const text = await resp.text();
                     const data = JSON.parse(text);
+
                     if (data && (data.products || data.salesHistory)) {
-                        // Toujours restaurer depuis Drive (source de vérité)
                         if (typeof window._doRestoreFromData === 'function') {
                             window._doRestoreFromData(data, latestFile.name);
                         }
+
+                        // Si un fichier VENTES scindé est plus récent → l'appliquer par-dessus
+                        if (latestVentesFile && latestFile.id !== latestVentesFile.id) {
+                            const ventesDate = new Date(latestVentesFile.modifiedTime);
+                            const mainDate   = new Date(latestFile.modifiedTime);
+                            if (ventesDate > mainDate) {
+                                try {
+                                    _splashStep('sync', '💰', 'Restauration des données', 'Ventes récentes…', 'active');
+                                    const rv = await window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${latestVentesFile.id}?alt=media`);
+                                    const dv = JSON.parse(await rv.text());
+                                    if (dv.salesHistory) {
+                                        localStorage.setItem('covo_sales_history', JSON.stringify(dv.salesHistory));
+                                    }
+                                } catch(e) { console.warn('Ventes restore warning:', e); }
+                            }
+                        }
+
                         localStorage.setItem('gdrive_last_restore', new Date().toISOString());
-                        const nbProd = (data.products||[]).length;
+                        const nbProd  = (data.products||[]).length;
                         const nbVente = (data.salesHistory||[]).length;
-                        restoreOk = true;
+                        restoreOk    = true;
                         restoreLabel = `${nbProd} produits · ${nbVente} ventes`;
+                        if (latestVentesFile) restoreLabel += ' · 💰';
                     }
                 } catch(e) {
                     console.warn('Splash restore error:', e);
@@ -22238,14 +22268,35 @@ function initAdminSections() {
                 </tbody>
               </table>
 
-              <div style="padding:10px 12px;background:${clr.bgWarn};border:1.5px solid #f39c12;border-radius:8px;font-size:0.82rem;color:${clr.textWarn};font-weight:600;">
+              <!-- Infos sauvegardes scindées -->
+              <div style="margin-top:10px;padding:10px 12px;background:${clr.bgAlt||'rgba(26,115,232,0.05)'};border:1.5px solid ${clr.border};border-radius:8px;font-size:0.78rem;color:${clr.text};">
+                <div style="font-weight:700;margin-bottom:6px;color:${clr.textDrive};">📂 Sauvegardes scindées disponibles</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <span style="padding:3px 9px;border-radius:12px;background:#e8f5e9;color:#1b5e20;font-weight:700;">
+                    💰 Ventes : ${localStorage.getItem('gdrive_last_sales_save') ? new Date(localStorage.getItem('gdrive_last_sales_save')).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '—'}
+                  </span>
+                  <span style="padding:3px 9px;border-radius:12px;background:#e8f0fe;color:#1a237e;font-weight:700;">
+                    ⚙️ Params : ${localStorage.getItem('gdrive_last_params_save') ? new Date(localStorage.getItem('gdrive_last_params_save')).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '—'}
+                  </span>
+                  <span style="padding:3px 9px;border-radius:12px;background:#fff3e0;color:#e65100;font-weight:700;">
+                    📦 Complet : ${localStorage.getItem('gdrive_last_save') ? new Date(localStorage.getItem('gdrive_last_save')).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '—'}
+                  </span>
+                </div>
+                <div style="margin-top:6px;font-size:0.72rem;color:${clr.textSub};">Utilisez "Restauration intelligente" pour choisir ce que vous souhaitez restaurer.</div>
+              </div>
+
+              <div style="padding:10px 12px;background:${clr.bgWarn};border:1.5px solid #f39c12;border-radius:8px;font-size:0.82rem;color:${clr.textWarn};font-weight:600;margin-top:10px;">
                 ⚠️ La restauration remplacera <strong>toutes les données locales</strong> de façon irréversible.
               </div>
             </div>
-            <div style="padding:12px 20px;border-top:1px solid ${clr.border};display:flex;gap:10px;flex-shrink:0;background:${clr.bg};">
-              <button onclick="document.getElementById('gdrive-compare-modal').remove()" style="flex:1;padding:10px;background:${clr.cancelBg};border:1.5px solid ${clr.border};border-radius:8px;cursor:pointer;font-weight:700;color:${clr.cancelClr};font-size:0.88rem;">✖ Annuler</button>
+            <div style="padding:12px 20px;border-top:1px solid ${clr.border};display:flex;gap:8px;flex-shrink:0;background:${clr.bg};flex-wrap:wrap;">
+              <button onclick="document.getElementById('gdrive-compare-modal').remove()" style="flex:1;min-width:80px;padding:10px;background:${clr.cancelBg};border:1.5px solid ${clr.border};border-radius:8px;cursor:pointer;font-weight:700;color:${clr.cancelClr};font-size:0.85rem;">✖ Annuler</button>
+              <button onclick="(function(){const d=_gdPendingRestoreData||_gdLastDetectedFileData;const n=_gdPendingRestoreName||_gdLastDetectedFileName;document.getElementById('gdrive-compare-modal').remove();if(d&&typeof window._gdSmartRestoreOpen==='function')window._gdSmartRestoreOpen(null,n,d);})()"
+                style="flex:1;min-width:100px;padding:10px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">
+                🔄 Restauration intelligente
+              </button>
               <button onclick="_gdConfirmRestoreFromChip()"
-                style="flex:2;padding:10px;background:${driveIsBigger?'linear-gradient(135deg,#27ae60,#1e8449)':'linear-gradient(135deg,#1565c0,#0d47a1)'};color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.88rem;">
+                style="flex:2;min-width:140px;padding:10px;background:${driveIsBigger?'linear-gradient(135deg,#27ae60,#1e8449)':'linear-gradient(135deg,#1565c0,#0d47a1)'};color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">
                 ${driveIsBigger?'✅ Restaurer depuis Drive (recommandé)':'✅ Restaurer depuis Drive'}
               </button>
             </div>
