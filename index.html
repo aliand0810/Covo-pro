@@ -10614,8 +10614,9 @@ function toggleInfoSection(headerElement) {
                     device:   navigator.userAgent.slice(0, 80)
                 });
                 localStorage.setItem(HIST, JSON.stringify(hist.slice(0, 500)));
-                if (typeof window._gdTriggerHistSave === 'function') window._gdTriggerHistSave();
-                if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+                // Décaler les sauvegardes Drive au login pour éviter les doublons de dossiers
+                if (typeof window._gdTriggerHistSave  === 'function') setTimeout(() => window._gdTriggerHistSave(),  1000);
+                if (typeof window._gdTriggerAutoSave  === 'function') setTimeout(() => window._gdTriggerAutoSave(),  2500);
             }
         } catch(e) {}
 
@@ -15582,9 +15583,9 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_last_save', _ts);
         _updateLastSaveDisplay(_now);
         writeToCovoFile();
-        // Google Drive : sauvegarde complète + paramètres scindée
+        // Google Drive : sauvegarde complète + paramètres scindée (décalée de 1s pour éviter les doublons)
         if (typeof window._gdTriggerAutoSave  === 'function') window._gdTriggerAutoSave();
-        if (typeof window._gdTriggerParamsSave === 'function') window._gdTriggerParamsSave();
+        if (typeof window._gdTriggerParamsSave === 'function') setTimeout(() => window._gdTriggerParamsSave(), 1000);
         renderProducts(); updateProgress(); renderLogo();
     }
 
@@ -21924,12 +21925,14 @@ function initAdminSections() {
         }
 
         // Aucun dossier sauvegardé — chercher ou créer le dossier par défaut
+        // 1. Chercher d'abord dans la liste locale
         const defaultFolder = _gdAllFolders.find(f => f.name === GD_DEFAULT_FOLDER);
         if (defaultFolder) {
-            _gdFolderId = defaultFolder.id;
+            _gdFolderId   = defaultFolder.id;
             _gdFolderName = defaultFolder.name;
         } else {
-            // Créer le dossier par défaut
+            // 2. Interroger Drive directement pour éviter les doublons
+            // (_gdCreateFolderByName fait cette vérification en interne)
             await _gdCreateFolderByName(GD_DEFAULT_FOLDER);
         }
 
@@ -21949,18 +21952,46 @@ function initAdminSections() {
 
     // Créer un dossier sur Drive par nom
     async function _gdCreateFolderByName(name) {
+        // ── Vérifier d'abord dans Drive si le dossier existe déjà ──────
+        try {
+            const mime = 'application/vnd.google-apps.folder';
+            const q = encodeURIComponent(
+                `name='${name.replace(/'/g,"\\'")}' and mimeType='${mime}' and trashed=false`
+            );
+            const check = await _gdFetch(
+                `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=5&orderBy=createdTime`
+            );
+            const checkData = await check.json();
+            if (checkData.files && checkData.files.length > 0) {
+                // Dossier déjà existant → le réutiliser sans créer
+                const existing = checkData.files[0];
+                _gdFolderId   = existing.id;
+                _gdFolderName = existing.name;
+                if (!_gdAllFolders.find(f => f.id === existing.id)) {
+                    _gdAllFolders.push({ id: existing.id, name: existing.name });
+                    _gdAllFolders.sort((a, b) => a.name.localeCompare(b.name));
+                }
+                console.log(`📁 Dossier "${name}" déjà existant sur Drive → réutilisé (${existing.id})`);
+                showScanToast(`📁 Dossier « ${name} » déjà existant — sélectionné`, 'info');
+                return { id: existing.id, name: existing.name, _reused: true };
+            }
+        } catch(e) {
+            console.warn('_gdCreateFolderByName check error:', e);
+        }
+
+        // ── Aucun dossier existant → créer ─────────────────────────────
         const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: name, mimeType: 'application/vnd.google-apps.folder' })
+            body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' })
         });
         const folder = await cr.json();
         if (folder.id) {
-            _gdFolderId = folder.id;
+            _gdFolderId   = folder.id;
             _gdFolderName = name;
-            // Ajouter au cache
-            _gdAllFolders.push({ id: folder.id, name: name });
+            _gdAllFolders.push({ id: folder.id, name });
             _gdAllFolders.sort((a, b) => a.name.localeCompare(b.name));
+            console.log(`📁 Dossier "${name}" créé sur Drive (${folder.id})`);
         }
         return folder;
     }
@@ -22006,18 +22037,18 @@ function initAdminSections() {
             return;
         }
 
-        // Vérifier si un dossier du même nom existe déjà
-        const existing = _gdAllFolders.find(f => f.name.toLowerCase() === name.toLowerCase());
-        if (existing) {
-            showScanToast('⚠️ Un dossier « ' + existing.name + ' » existe déjà — sélectionnez-le dans la liste', 'info');
+        // Vérification locale rapide (la vérification Drive est dans _gdCreateFolderByName)
+        const existingLocal = _gdAllFolders.find(f => f.name.toLowerCase() === name.toLowerCase());
+        if (existingLocal) {
+            showScanToast('📁 Dossier « ' + existingLocal.name + ' » déjà dans la liste — sélectionné', 'info');
             const sel = document.getElementById('gdrive-folder-select');
-            if (sel) { sel.value = existing.id; window.gdriveOnFolderSelect(); }
+            if (sel) { sel.value = existingLocal.id; window.gdriveOnFolderSelect(); }
             return;
         }
 
         try {
-            showScanToast('📁 Création du dossier « ' + name + ' »…', 'info');
-            await _gdCreateFolderByName(name);
+            showScanToast('🔍 Vérification sur Drive…', 'info');
+            const result = await _gdCreateFolderByName(name);
 
             localStorage.setItem('gdrive_folder_id', _gdFolderId);
             localStorage.setItem('gdrive_folder_name', _gdFolderName);
@@ -23435,40 +23466,65 @@ function initAdminSections() {
                      '07-Juillet','08-Août','09-Septembre','10-Octobre','11-Novembre','12-Décembre'];
 
     // Cache hiérarchique :  "RootName/2026/04-Avril/06" → folderId
-    const _gdFolderCache = {};
+    const _gdFolderCache   = {};   // cacheKey → folderId  (trouvé ou créé)
+    const _gdFolderPending = {};   // cacheKey → Promise    (verrou anti-doublon)
 
     // Trouver ou créer un dossier par nom dans un parent donné
+    // Anti-doublon : si deux appels simultanés arrivent sur la même clé,
+    // le second attend la résolution du premier (mutex par Promise).
     async function _gdFolderEnsure(name, parentId) {
-        const cacheKey = parentId + '/' + name;
+        const cacheKey = (parentId || 'root') + '/' + name;
+
+        // 1. Déjà en cache → retour immédiat
         if (_gdFolderCache[cacheKey]) return _gdFolderCache[cacheKey];
 
-        const mime = 'application/vnd.google-apps.folder';
-        const qParts = [`name='${name.replace(/'/g, "\\'")}'`, `mimeType='${mime}'`, 'trashed=false'];
-        if (parentId) qParts.push(`'${parentId}' in parents`);
+        // 2. Opération en cours pour cette clé → attendre son résultat
+        if (_gdFolderPending[cacheKey]) return _gdFolderPending[cacheKey];
 
-        const q = encodeURIComponent(qParts.join(' and '));
-        const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`);
-        const data = await resp.json();
+        // 3. Lancer la résolution et la mettre en attente
+        _gdFolderPending[cacheKey] = (async () => {
+            try {
+                const mime   = 'application/vnd.google-apps.folder';
+                const qParts = [`name='${name.replace(/'/g, "\\'")}'`, `mimeType='${mime}'`, 'trashed=false'];
+                if (parentId) qParts.push(`'${parentId}' in parents`);
 
-        if (data.files && data.files.length > 0) {
-            _gdFolderCache[cacheKey] = data.files[0].id;
-            return data.files[0].id;
-        }
+                const q    = encodeURIComponent(qParts.join(' and '));
+                const resp = await _gdFetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&orderBy=createdTime&pageSize=10`
+                );
+                const data = await resp.json();
 
-        // Créer le dossier
-        const body = { name, mimeType: mime };
-        if (parentId) body.parents = [parentId];
-        const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        const folder = await cr.json();
-        if (folder.id) {
-            _gdFolderCache[cacheKey] = folder.id;
-            return folder.id;
-        }
-        return null;
+                if (data.files && data.files.length > 0) {
+                    // Dossier(s) existant(s) → prendre le plus ancien (le premier créé)
+                    const id = data.files[0].id;
+                    _gdFolderCache[cacheKey] = id;
+                    return id;
+                }
+
+                // Aucun dossier trouvé → créer
+                const body = { name, mimeType: mime };
+                if (parentId) body.parents = [parentId];
+                const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify(body)
+                });
+                const folder = await cr.json();
+                if (folder.id) {
+                    _gdFolderCache[cacheKey] = folder.id;
+                    return folder.id;
+                }
+                return null;
+            } catch(e) {
+                console.warn('_gdFolderEnsure error:', name, e);
+                return null;
+            } finally {
+                // Libérer le verrou une fois terminé
+                delete _gdFolderPending[cacheKey];
+            }
+        })();
+
+        return _gdFolderPending[cacheKey];
     }
 
     // Obtenir (ou créer) le chemin hiérarchique complet pour une date donnée
