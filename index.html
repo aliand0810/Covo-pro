@@ -12110,6 +12110,8 @@ logout = function(skipConfirmation = false) {
         }
         
         saveAll();
+        // Sauvegarde VENTES séparée sur Drive
+        if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
         showReceipt(sale);
         
         // Télécharger automatiquement le ticket en PDF
@@ -15321,15 +15323,14 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_pending_sync',         JSON.stringify(pendingSync));
         localStorage.setItem('covo_cashier_permissions',  JSON.stringify(cashierPermissions));
         localStorage.setItem('covo_delivery_goal',        String(deliveryGoal));
-        // Enregistrer l'heure de dernière sauvegarde
         const _now = new Date();
         const _ts = _now.toISOString();
         localStorage.setItem('covo_last_save', _ts);
         _updateLastSaveDisplay(_now);
-        // Auto-sauvegarde vers le fichier FSA lié (si disponible)
         writeToCovoFile();
-        // Google Drive : déclencher avec debounce
-        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+        // Google Drive : sauvegarde complète + paramètres scindée
+        if (typeof window._gdTriggerAutoSave  === 'function') window._gdTriggerAutoSave();
+        if (typeof window._gdTriggerParamsSave === 'function') window._gdTriggerParamsSave();
         renderProducts(); updateProgress(); renderLogo();
     }
 
@@ -22501,31 +22502,52 @@ function initAdminSections() {
                 return;
             }
 
-            listEl.innerHTML = `
-                <div style="font-size:0.78rem;color:var(--gray,#888);margin-bottom:10px;">${files.length} sauvegarde(s) — triées de la plus récente à la plus ancienne</div>
-                ${files.map((f, i) => {
-                    const created = new Date(f.createdTime);
-                    const dateStr = created.toLocaleDateString('fr-FR', { weekday:'short', year:'numeric', month:'short', day:'numeric' });
-                    const timeStr = created.toLocaleTimeString('fr-FR');
-                    const sizeKb = f.size ? (parseInt(f.size) / 1024).toFixed(1) + ' Ko' : '?';
-                    const isLatest = i === 0;
-                    return `
-                        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;background:${isLatest ? 'linear-gradient(135deg,#e8f5e9,#f1f8e9)' : 'var(--bg-card,#f9f9f9)'};border:1.5px solid ${isLatest ? '#66bb6a' : 'var(--border,#e0e0e0)'};border-radius:8px;transition:background 0.2s;" onmouseover="this.style.background='#e3f2fd'" onmouseout="this.style.background='${isLatest ? 'linear-gradient(135deg,#e8f5e9,#f1f8e9)' : 'var(--bg-card,#f9f9f9)'}'">
+            // Détecter le type depuis le nom du fichier
+            function _fileType(name) {
+                if (name.includes('_VENTES_'))    return { label:'💰 Ventes',      bg:'#e8f5e9', c:'#2e7d32', btn:'#27ae60' };
+                if (name.includes('_PARAMS_'))    return { label:'⚙️ Paramètres', bg:'#e8f0fe', c:'#3949ab', btn:'#3949ab' };
+                if (name.includes('_COMPLET_'))   return { label:'📦 Complet',     bg:'#fff3e0', c:'#e65100', btn:'#e65100' };
+                return { label:'📄 Complet',      bg:'#f5f5f5', c:'#555',         btn:'#f57c00' };
+            }
+
+            // Grouper par type
+            const ventes  = files.filter(f => f.name.includes('_VENTES_'));
+            const params  = files.filter(f => f.name.includes('_PARAMS_'));
+            const complet = files.filter(f => !f.name.includes('_VENTES_') && !f.name.includes('_PARAMS_'));
+
+            function _renderGroup(groupFiles, groupLabel) {
+                if (!groupFiles.length) return '';
+                return `<div style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:0.06em;margin:10px 0 5px;">${groupLabel} · ${groupFiles.length}</div>` +
+                    groupFiles.map((f, i) => {
+                        const created  = new Date(f.createdTime);
+                        const isToday  = created.toDateString() === new Date().toDateString();
+                        const dateStr  = isToday ? 'Aujourd\'hui' : created.toLocaleDateString('fr-FR', {weekday:'short',day:'numeric',month:'short'});
+                        const timeStr  = created.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+                        const sizeKb   = f.size ? (parseInt(f.size)/1024).toFixed(1)+' Ko' : '?';
+                        const isLatest = i === 0;
+                        const ft       = _fileType(f.name);
+                        return `
+                        <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;margin-bottom:5px;background:${isLatest?ft.bg:'var(--bg-card,#f9f9f9)'};border:1.5px solid ${isLatest?ft.btn+'88':'var(--border-color,#e0e0e0)'};border-radius:9px;">
                             <div style="flex:1;min-width:0;">
-                                <div style="font-weight:600;font-size:0.85rem;color:var(--text-main,#333);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                                    ${isLatest ? '⭐ ' : '📄 '}${f.name}
+                                <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                                    <span style="font-weight:700;font-size:0.84rem;color:var(--text-main,#333);">${dateStr} ${timeStr}</span>
+                                    ${isLatest ? '<span style="background:'+ft.btn+';color:white;font-size:0.62rem;padding:1px 7px;border-radius:10px;font-weight:700;">Dernière</span>' : ''}
                                 </div>
-                                <div style="font-size:0.75rem;color:var(--gray,#888);margin-top:2px;">
-                                    ${dateStr} à ${timeStr} · ${sizeKb}${isLatest ? ' · <strong style="color:#2e7d32;">Plus récente</strong>' : ''}
-                                </div>
+                                <div style="font-size:0.72rem;color:var(--gray,#888);">${f.name.replace('covo_backup_','').replace('.json','')} · ${sizeKb}</div>
                             </div>
-                            <button onclick="gdriveRestoreFile('${f.id}','${f.name.replace(/'/g,"\\'")}')" style="background:#f57c00;color:white;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:0.82rem;font-weight:600;white-space:nowrap;">
-                                📥 Restaurer
+                            <button onclick="gdriveRestoreFile('${f.id}','${f.name.replace(/'/g,"\\'")}')"
+                                style="background:${ft.btn};color:white;padding:6px 13px;border-radius:7px;border:none;cursor:pointer;font-size:0.8rem;font-weight:700;white-space:nowrap;">
+                                ← Sélectionner
                             </button>
-                        </div>
-                    `;
-                }).join('')}
-            `;
+                        </div>`;
+                    }).join('');
+            }
+
+            listEl.innerHTML =
+                _renderGroup(ventes,  '💰 Sauvegardes Ventes') +
+                _renderGroup(params,  '⚙️ Sauvegardes Paramètres') +
+                _renderGroup(complet, '📦 Sauvegardes Complètes');
+
         } catch(err) {
             console.error('GDrive list files error:', err);
             listEl.innerHTML = '<div style="text-align:center;padding:30px;color:#e74c3c;">❌ Erreur lors du chargement des sauvegardes</div>';
@@ -22538,22 +22560,15 @@ function initAdminSections() {
         try {
             if (!data) {
                 const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
-                const text = await resp.text();
-                data = JSON.parse(text);
+                data = JSON.parse(await resp.text());
             }
-
-            // Si appelé sans preview (ex: depuis gdrive-restore-modal), afficher le récap
-            if (!preloadedData) {
-                showRestorePreview(fileName, data, () => _gdApplyRestore(data, fileName));
-                return;
-            }
-
-            // Appelé depuis awRestoreFile (préchargé) → appliquer directement
-            await _gdApplyRestore(data, fileName);
-
+            // Fermer la liste et ouvrir la modale de restauration intelligente
+            const modal = document.getElementById('gdrive-restore-modal');
+            if (modal) modal.style.display = 'none';
+            await window._gdSmartRestoreOpen(null, fileName, data);
         } catch(err) {
             console.error('GDrive restore error:', err);
-            showScanToast('❌ Erreur lors de la restauration de « ' + fileName + ' »', 'error');
+            showScanToast('❌ Erreur lors de la lecture de « ' + fileName + ' »', 'error');
         }
     };
 
@@ -23566,6 +23581,168 @@ function initAdminSections() {
     })();
 
 
+
+    // ===========================================================================
+    // ===== SAUVEGARDE SCINDÉE : VENTES / PARAMÈTRES / COMPLET =================
+    // ===========================================================================
+
+    function _gdBuildSalesPayload(ts) {
+        return JSON.stringify({
+            salesHistory, pendingSync,
+            _type: 'ventes', _version: 20, _savedAt: ts, _source: 'google_drive_split',
+        }, null, 2);
+    }
+
+    function _gdBuildParamsPayload(ts) {
+        return JSON.stringify({
+            products, categories, promoTypes, users,
+            appSettings, nightTariffSettings, cashierPermissions, deliveryGoal,
+            covo_dark_mode:       localStorage.getItem('covo_dark_mode'),
+            covo_retours:         JSON.parse(localStorage.getItem('covo_retours')        || '[]'),
+            covo_marchandise:     JSON.parse(localStorage.getItem('covo_marchandise')    || '[]'),
+            covo_echeances:       JSON.parse(localStorage.getItem('covo_echeances')      || '[]'),
+            covo_rhist:           JSON.parse(localStorage.getItem('covo_rhist')          || '[]'),
+            covo_hist:            JSON.parse(localStorage.getItem('covo_hist')           || '[]'),
+            covo_investissements: JSON.parse(localStorage.getItem('covo_investissements')|| '[]'),
+            covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories') || '[]'),
+            covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories') || '[]'),
+            covo_messages:        JSON.parse(localStorage.getItem('covo_messages')       || '[]'),
+            covo_login_history:   JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
+            covo_settings:        JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
+            covo_aw_panels:       localStorage.getItem('covo_aw_panels')       || null,
+            covo_modules_config:  localStorage.getItem('covo_modules_config')  || null,
+            covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
+            covo_presence:        localStorage.getItem('covo_presence')        || null,
+            covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
+            _type: 'parametres', _version: 20, _savedAt: ts, _source: 'google_drive_split',
+        }, null, 2);
+    }
+
+    // ── Sauvegarde VENTES (déclenchée à chaque vente) ─────────────────
+    let _gdSalesTimer = null;
+    window._gdTriggerSalesSave = function() {
+        if (!window._gdUploadToHierarchy) return;
+        clearTimeout(_gdSalesTimer);
+        _gdSalesTimer = setTimeout(async () => {
+            try {
+                const now = new Date();
+                const ts  = now.toISOString();
+                const ds  = ts.split('T')[0];
+                const tm  = now.toTimeString().split(' ')[0].replace(/:/g,'-');
+                await window._gdUploadToHierarchy('parametres', now, `covo_backup_VENTES_${ds}_${tm}.json`, _gdBuildSalesPayload(ts), 'application/json');
+                localStorage.setItem('gdrive_last_sales_save', ts);
+                console.log('💰 Sauvegarde VENTES OK');
+            } catch(e) { console.warn('GDrive sales save:', e); }
+        }, 1500);
+    };
+
+    // ── Sauvegarde PARAMÈTRES (déclenchée sur modif settings) ─────────
+    let _gdParamsTimer = null;
+    window._gdTriggerParamsSave = function() {
+        if (!window._gdUploadToHierarchy) return;
+        clearTimeout(_gdParamsTimer);
+        _gdParamsTimer = setTimeout(async () => {
+            try {
+                const now = new Date();
+                const ts  = now.toISOString();
+                const ds  = ts.split('T')[0];
+                const tm  = now.toTimeString().split(' ')[0].replace(/:/g,'-');
+                await window._gdUploadToHierarchy('parametres', now, `covo_backup_PARAMS_${ds}_${tm}.json`, _gdBuildParamsPayload(ts), 'application/json');
+                localStorage.setItem('gdrive_last_params_save', ts);
+                console.log('⚙️ Sauvegarde PARAMS OK');
+            } catch(e) { console.warn('GDrive params save:', e); }
+        }, 2000);
+    };
+
+    // ── Modale de restauration intelligente ──────────────────────────
+    window._gdSmartRestoreOpen = async function(fileId, fileName, rawData) {
+        let data = rawData;
+        if (!data && fileId && window._gdFetchPublic) {
+            try {
+                const r = await window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+                data = JSON.parse(await r.text());
+            } catch(e) { showScanToast('❌ Erreur lecture fichier', 'error'); return; }
+        }
+        if (!data) return;
+        window._gdSmartRestoreData = data;
+
+        const type    = data._type || 'complet';
+        const savedAt = data._savedAt ? new Date(data._savedAt).toLocaleString('fr-FR') : '—';
+        const nVentes = (data.salesHistory||[]).length;
+        const nProd   = (data.products||[]).length;
+        const nUsers  = (data.users||[]).length;
+        const typeCfg = { ventes:{label:'💰 Ventes uniquement',bg:'#e8f5e9',c:'#1b5e20'}, parametres:{label:'⚙️ Paramètres uniquement',bg:'#e8f0fe',c:'#1a237e'}, complet:{label:'📦 Sauvegarde complète',bg:'#fff3e0',c:'#e65100'} };
+        const tc = typeCfg[type] || typeCfg.complet;
+        const os = (bg,bc) => `display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid ${bc}44;background:${bg};cursor:pointer;margin-bottom:6px;`;
+
+        let opts = '';
+        if (type === 'ventes') {
+            opts = `<label style="${os('#e8f5e9','#2e7d32')}"><input type="radio" name="sr-mode" value="ventes" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Restaurer les ventes uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) · vos paramètres actuels sont conservés</div></div></label>`;
+        } else if (type === 'parametres') {
+            opts = `<label style="${os('#e8f0fe','#3949ab')}"><input type="radio" name="sr-mode" value="params" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Restaurer les paramètres uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) · ventes actuelles conservées</div></div></label>`;
+        } else {
+            opts = `
+                <label style="${os('#fff3e0','#e65100')}"><input type="radio" name="sr-mode" value="tout" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#e65100;font-size:0.85rem;">📦 Tout restaurer</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">Ventes + paramètres — remplace toutes les données locales</div></div></label>
+                <label style="${os('#e8f5e9','#2e7d32')}"><input type="radio" name="sr-mode" value="ventes" style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Ventes uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) · paramètres actuels conservés</div></div></label>
+                <label style="${os('#e8f0fe','#3949ab')}"><input type="radio" name="sr-mode" value="params" style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Paramètres uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) · ventes actuelles conservées</div></div></label>`;
+        }
+
+        const prev = document.getElementById('gd-smart-restore-modal');
+        if (prev) prev.remove();
+        const modal = document.createElement('div');
+        modal.id = 'gd-smart-restore-modal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:20999;display:flex;justify-content:center;align-items:center;';
+        modal.innerHTML = `
+            <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:460px;box-shadow:0 24px 60px rgba(0,0,0,0.4);overflow:hidden;">
+                <div style="background:linear-gradient(135deg,#1a73e8,#0d47a1);padding:16px 20px;">
+                    <div style="font-weight:800;font-size:1rem;color:white;">🔄 Restauration intelligente</div>
+                    <div style="font-size:0.73rem;color:rgba(255,255,255,0.75);margin-top:2px;">${fileName||'Sauvegarde'} · ${savedAt}</div>
+                </div>
+                <div style="padding:16px 20px;">
+                    <div style="display:inline-flex;gap:5px;padding:4px 10px;background:${tc.bg};border-radius:20px;font-size:0.75rem;font-weight:700;color:${tc.c};margin-bottom:12px;">${tc.label}</div>
+                    <div style="font-weight:700;font-size:0.83rem;color:var(--text-main);margin-bottom:10px;">Que souhaitez-vous restaurer ?</div>
+                    <div>${opts}</div>
+                    <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:8px 12px;font-size:0.75rem;color:#856404;margin:12px 0;">⚠️ Les données sélectionnées remplaceront les données locales correspondantes. Cette action est irréversible.</div>
+                    <div style="display:flex;gap:8px;">
+                        <button onclick="window._gdSmartRestoreConfirm()" style="flex:1;padding:10px;background:linear-gradient(135deg,#1a73e8,#0d47a1);color:white;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.87rem;">✅ Restaurer</button>
+                        <button onclick="document.getElementById('gd-smart-restore-modal').remove()" style="padding:10px 14px;background:none;border:1.5px solid var(--border-color,#ddd);border-radius:8px;cursor:pointer;font-size:0.84rem;color:var(--text-muted);">Annuler</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+    };
+
+    window._gdSmartRestoreConfirm = function() {
+        const data = window._gdSmartRestoreData;
+        if (!data) return;
+        const mode = document.querySelector('input[name="sr-mode"]:checked')?.value || 'tout';
+        window._gdApplyRestore(data, mode);
+        document.getElementById('gd-smart-restore-modal')?.remove();
+    };
+
+    window._gdApplyRestore = function(data, mode) {
+        if (mode === 'ventes' || mode === 'tout') {
+            if (data.salesHistory) { salesHistory = data.salesHistory; localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory)); }
+            if (data.pendingSync)  { pendingSync  = data.pendingSync;  localStorage.setItem('covo_pending_sync',  JSON.stringify(pendingSync)); }
+        }
+        if (mode === 'params' || mode === 'tout') {
+            if (data.products)            { products = data.products; localStorage.setItem('products', JSON.stringify(products)); }
+            if (data.categories)          { categories = data.categories; localStorage.setItem('categories', JSON.stringify(categories)); }
+            if (data.promoTypes)          { promoTypes = data.promoTypes; localStorage.setItem('promoTypes', JSON.stringify(promoTypes)); }
+            if (data.users)               { users = data.users; localStorage.setItem('users', JSON.stringify(users)); }
+            if (data.appSettings)         { Object.assign(appSettings, data.appSettings); localStorage.setItem('appSettings', JSON.stringify(appSettings)); }
+            if (data.nightTariffSettings) { Object.assign(nightTariffSettings, data.nightTariffSettings); localStorage.setItem('nightTariffSettings', JSON.stringify(nightTariffSettings)); }
+            if (data.cashierPermissions)  { Object.assign(cashierPermissions, data.cashierPermissions); localStorage.setItem('cashierPermissions', JSON.stringify(cashierPermissions)); }
+            if (data.deliveryGoal != null){ deliveryGoal = data.deliveryGoal; localStorage.setItem('deliveryGoal', String(deliveryGoal)); }
+            ['covo_retours','covo_marchandise','covo_echeances','covo_rhist','covo_hist','covo_investissements','covo_inv_categories','covo_ech_categories','covo_messages','covo_login_history','covo_settings','covo_aw_panels','covo_modules_config','covo_night_tariff','covo_presence','covo_inv_questions','covo_dark_mode'].forEach(k => {
+                if (data[k] != null) localStorage.setItem(k, typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]));
+            });
+        }
+        saveAll(); renderAll();
+        showScanToast(`✅ Restauration "${mode === 'ventes' ? 'Ventes' : mode === 'params' ? 'Paramètres' : 'Complète'}" appliquée`, 'success');
+        setTimeout(() => location.reload(), 1200);
+    };
+
     // ---- Getter d'état public (utilisé par openAdminWelcomeModal et autres) ----
     window._gdGetState = function() {
         return {
@@ -23573,7 +23750,9 @@ function initAdminSections() {
             email: _gdUserEmail,
             folderId: _gdFolderId,
             folderName: _gdFolderName,
-            lastSave: localStorage.getItem('gdrive_last_save') || null
+            lastSave:       localStorage.getItem('gdrive_last_save')        || null,
+            lastSalesSave:  localStorage.getItem('gdrive_last_sales_save')  || null,
+            lastParamsSave: localStorage.getItem('gdrive_last_params_save') || null,
         };
     };
 
