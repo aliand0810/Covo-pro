@@ -7670,44 +7670,60 @@ function toggleInfoSection(headerElement) {
 
     function _qmsgRenderCashierStatus(presence) {
         const wrap = document.getElementById('qmsg-cashier-status-panel');
-        if (!wrap) return;
+        if (!wrap || !currentUser?.isMaster) { if (wrap) wrap.style.display = 'none'; return; }
 
-        const cashiers = users.filter(u => u.role === 'caissier');
-        if (!cashiers.length) { wrap.style.display = 'none'; return; }
+        // Admin-Développeur voit tout le monde (caissiers + admins)
+        const allUsers = users.filter(u => u.id !== currentUser.id);
+        if (!allUsers.length) { wrap.style.display = 'none'; return; }
 
         const PCFG = {
             online:  { dot:'#4ade80', label:'En ligne',   bg:'rgba(74,222,128,0.10)',  border:'rgba(74,222,128,0.30)'  },
             busy:    { dot:'#fb923c', label:'Occupé',     bg:'rgba(251,146,60,0.10)',  border:'rgba(251,146,60,0.30)'  },
             away:    { dot:'#facc15', label:'Absent',     bg:'rgba(250,204,21,0.10)',  border:'rgba(250,204,21,0.30)'  },
-            offline: { dot:'#9ca3af', label:'Hors ligne', bg:'rgba(156,163,175,0.08)', border:'rgba(156,163,175,0.20)' },
+            offline: { dot:'#9ca3af', label:'Hors ligne', bg:'rgba(156,163,175,0.06)', border:'rgba(156,163,175,0.15)' },
         };
 
-        const connected = cashiers.filter(u => (presence[u.id]||{}).status && (presence[u.id]||{}).status !== 'offline');
-        const nOnline   = connected.length;
+        const myVis   = _presenceVisGet();
+        const visLabels = { none:'⚫ Masqué', cashier:'💼 Visible caissiers', admin:'👑 Visible admins', all:'👥 Visible par tous' };
+        const nOnline = allUsers.filter(u => (presence[u.id]||{}).status && (presence[u.id]||{}).status !== 'offline').length;
 
         wrap.style.display = '';
         wrap.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                <div style="font-size:0.72rem;font-weight:800;color:var(--qmsg-label);text-transform:uppercase;letter-spacing:0.06em;">
-                    👥 Statut des caissiers
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:6px;flex-wrap:wrap;">
+                <div style="font-size:0.72rem;font-weight:800;color:var(--qmsg-label);text-transform:uppercase;letter-spacing:0.05em;">👥 Utilisateurs connectés</div>
+                <div style="display:flex;align-items:center;gap:5px;">
+                    <span style="font-size:0.68rem;font-weight:700;padding:2px 7px;border-radius:10px;background:${nOnline>0?'rgba(74,222,128,0.15)':'rgba(156,163,175,0.12)'};color:${nOnline>0?'#4ade80':'#9ca3af'};">${nOnline} en ligne</span>
+                    <button onclick="_presenceToggleVisMenu()" title="Ma visibilité"
+                        style="font-size:0.68rem;padding:2px 7px;border-radius:10px;border:1px solid var(--qmsg-border);background:var(--qmsg-input-bg);color:var(--qmsg-label);cursor:pointer;">
+                        🔒 ${visLabels[myVis]||myVis}
+                    </button>
                 </div>
-                <span style="font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:10px;background:${nOnline>0?'rgba(74,222,128,0.15)':'rgba(156,163,175,0.12)'};color:${nOnline>0?'#4ade80':'#9ca3af'};">
-                    ${nOnline} en ligne
-                </span>
             </div>
-            <div style="display:flex;flex-direction:column;gap:5px;">
-                ${cashiers.map(u => {
+            <div id="presence-vis-quick" style="display:none;padding:6px 8px;background:var(--qmsg-card-bg);border:1px solid var(--qmsg-border);border-radius:9px;margin-bottom:8px;display:none;">
+                <div style="font-size:0.68rem;color:var(--qmsg-label);margin-bottom:5px;font-weight:700;">Ma présence est visible par :</div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    ${[{v:'none',i:'⚫',l:'Personne'},{v:'cashier',i:'💼',l:'Caissiers'},{v:'admin',i:'👑',l:'Admins'},{v:'all',i:'👥',l:'Tous'}].map(o =>
+                        `<button onclick="_presenceVisSet('${o.v}');_presenceToggleVisMenu();"
+                            style="padding:4px 9px;border-radius:8px;border:1.5px solid ${myVis===o.v?'#5ba4ff':'var(--qmsg-border)'};background:${myVis===o.v?'rgba(91,164,255,0.12)':'transparent'};color:var(--qmsg-text);font-size:0.75rem;font-weight:${myVis===o.v?800:500};cursor:pointer;">
+                            ${o.i} ${o.l}
+                        </button>`).join('')}
+                </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                ${allUsers.map(u => {
                     const st  = (presence[u.id]||{}).status || 'offline';
                     const cfg = PCFG[st] || PCFG.offline;
                     const ts  = (presence[u.id]||{}).updatedAt;
                     const since = ts ? (() => {
-                        const diff = Math.round((Date.now() - new Date(ts)) / 60000);
-                        return diff < 1 ? 'à l\'instant' : diff < 60 ? `il y a ${diff} min` : `il y a ${Math.round(diff/60)}h`;
+                        const diff = Math.round((Date.now()-new Date(ts))/60000);
+                        return diff<1?'à l\'instant':diff<60?`${diff} min`:`${Math.round(diff/60)}h`;
                     })() : '';
-                    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;background:${cfg.bg};border:1px solid ${cfg.border};cursor:pointer;"
+                    const roleIcon = u.isMaster ? '🛠️' : u.role==='admin' ? '👑' : '💼';
+                    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;background:${cfg.bg};border:1px solid ${cfg.border};cursor:pointer;transition:opacity 0.2s;"
                             onclick="document.getElementById('qmsg-to').value='${u.id}';"
                             title="Écrire à ${u.username}">
-                        <span style="width:8px;height:8px;border-radius:50%;background:${cfg.dot};display:inline-block;flex-shrink:0;box-shadow:0 0 6px ${cfg.dot};"></span>
+                        <span style="width:8px;height:8px;border-radius:50%;background:${cfg.dot};flex-shrink:0;${st!=='offline'?'box-shadow:0 0 6px '+cfg.dot+';':''}"></span>
+                        <span style="font-size:0.8rem;color:var(--text-muted);">${roleIcon}</span>
                         <span style="flex:1;font-size:0.82rem;font-weight:700;color:var(--qmsg-text);">${u.username}</span>
                         <span style="font-size:0.68rem;color:var(--qmsg-label);">${cfg.label}${since?' · '+since:''}</span>
                     </div>`;
@@ -7715,6 +7731,12 @@ function toggleInfoSection(headerElement) {
             </div>`;
     }
     window._qmsgRenderCashierStatus = _qmsgRenderCashierStatus;
+
+    window._presenceToggleVisMenu = function() {
+        const el = document.getElementById('presence-vis-quick');
+        if (!el) return;
+        el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    };
 
     function _qmsgTab(tab) {
         const compose = document.getElementById('qmsg-pane-compose');
@@ -7832,6 +7854,7 @@ function toggleInfoSection(headerElement) {
     // ===== SYSTÈME DE PRÉSENCE / STATUT EN LIGNE =============================
     // =========================================================================
     const PRESENCE_KEY = 'covo_presence';
+    const PRESENCE_VIS_KEY = 'covo_presence_visibility'; // 'none' | 'admin' | 'cashier' | 'all'
 
     const PRESENCE_CONFIG = {
         online:  { dot: '#4ade80', label: 'En ligne',  icon: '🟢' },
@@ -7851,8 +7874,23 @@ function toggleInfoSection(headerElement) {
         const d = _presenceLoad();
         return d[userId] || { status: 'offline', updatedAt: null };
     }
+    function _presenceVisGet()      { return localStorage.getItem(PRESENCE_VIS_KEY) || 'none'; }
+    function _presenceVisSave(v)    { localStorage.setItem(PRESENCE_VIS_KEY, v); }
 
-    // Mettre à jour le statut du bouton dans la modale
+    // Filtre : ce qu'un utilisateur donné peut voir selon son rôle
+    function _presenceVisibleTo(entry, viewerRole, viewerIsMaster) {
+        if (!entry || entry.status === 'offline') return false;
+        // Admin-Développeur voit tout le monde
+        if (viewerIsMaster) return true;
+        // Pour les autres, vérifier la visibilité déclarée par chaque entrée
+        const vis = entry.visibleTo || 'none';
+        if (vis === 'all')     return true;
+        if (vis === 'admin'   && (viewerRole === 'admin' || viewerIsMaster)) return true;
+        if (vis === 'cashier' && viewerRole === 'caissier') return true;
+        return false;
+    }
+
+    // Bouton de statut dans le header messagerie
     function _presenceUpdateBtn() {
         const wrap  = document.getElementById('qmsg-presence-wrap');
         const dot   = document.getElementById('qmsg-presence-dot');
@@ -7860,15 +7898,14 @@ function toggleInfoSection(headerElement) {
         if (!wrap || !dot || !label) return;
 
         const isMaster = !!(currentUser && currentUser.isMaster);
-        const isAdmin  = !!(currentUser && currentUser.role === 'admin');
+        const _isAdmin = !!(currentUser && currentUser.role === 'admin');
 
-        // Seuls Admin et Admin-Développeur ont le bouton de statut
-        if (!isMaster && !isAdmin) { wrap.style.display = 'none'; return; }
+        if (!isMaster && !_isAdmin) { wrap.style.display = 'none'; return; }
         wrap.style.display = '';
 
-        const uid    = currentUser?.id || '';
-        const state  = _presenceGet(uid);
-        const cfg    = PRESENCE_CONFIG[state.status] || PRESENCE_CONFIG.offline;
+        const uid  = currentUser?.id || '';
+        const state = _presenceGet(uid);
+        const cfg   = PRESENCE_CONFIG[state.status] || PRESENCE_CONFIG.offline;
         dot.style.background = cfg.dot;
         label.textContent    = cfg.label;
     }
@@ -7878,10 +7915,59 @@ function toggleInfoSection(headerElement) {
         if (!menu) return;
         const open = menu.style.display !== 'none';
         menu.style.display = open ? 'none' : '';
-        if (!open) {
-            setTimeout(() => document.addEventListener('click', _presenceCloseMenu, true), 10);
+
+        // Injecter le sélecteur de visibilité pour Admin-Développeur
+        if (!open && currentUser?.isMaster) {
+            _presenceRenderVisibilityPicker(menu);
         }
+        if (!open) setTimeout(() => document.addEventListener('click', _presenceCloseMenu, true), 10);
     };
+
+    function _presenceRenderVisibilityPicker(menu) {
+        let visPicker = menu.querySelector('#presence-vis-picker');
+        if (visPicker) { visPicker.remove(); } // rafraîchir
+
+        const cur = _presenceVisGet();
+        const div = document.createElement('div');
+        div.id = 'presence-vis-picker';
+        div.style.cssText = 'border-top:1px solid var(--border-color,#eee);margin-top:6px;padding-top:8px;';
+        div.innerHTML = `
+            <div style="font-size:0.68rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;padding:0 10px 5px;">🔒 Ma visibilité</div>
+            ${[
+                { v:'none',    icon:'⚫', label:'Masqué (personne)' },
+                { v:'cashier', icon:'💼', label:'Visible aux caissiers' },
+                { v:'admin',   icon:'👑', label:'Visible aux admins' },
+                { v:'all',     icon:'👥', label:'Visible par tous' },
+            ].map(opt => `
+                <button onclick="_presenceVisSet('${opt.v}')"
+                    style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 10px;border:none;background:${cur===opt.v?'rgba(91,164,255,0.12)':'none'};color:var(--text-main);border-radius:7px;cursor:pointer;font-size:0.82rem;font-weight:${cur===opt.v?'800':'500'};">
+                    ${opt.icon} ${opt.label}${cur===opt.v?' ✓':''}
+                </button>`).join('')}`;
+        menu.appendChild(div);
+    }
+
+    window._presenceVisSet = function(vis) {
+        _presenceVisSave(vis);
+        // Mettre à jour l'entrée de présence avec la nouvelle visibilité
+        if (currentUser?.id) {
+            const data = _presenceLoad();
+            if (data[currentUser.id]) {
+                data[currentUser.id].visibleTo = vis;
+                _presenceSave(data);
+            }
+        }
+        // Fermer menu et rafraîchir
+        const menu = document.getElementById('qmsg-presence-menu');
+        if (menu) menu.style.display = 'none';
+        _presenceUpdateBtn();
+        _presenceUpdateBanner();
+        if (typeof window._qmsgRenderCashierStatus === 'function') {
+            window._qmsgRenderCashierStatus(_presenceLoad());
+        }
+        const labels = { none:'⚫ Masqué', cashier:'💼 Visible aux caissiers', admin:'👑 Visible aux admins', all:'👥 Visible par tous' };
+        showScanToast(`🔒 Visibilité : ${labels[vis]||vis}`, 'info');
+    };
+
     function _presenceCloseMenu(e) {
         const menu = document.getElementById('qmsg-presence-menu');
         const btn  = document.getElementById('qmsg-presence-btn');
@@ -7895,47 +7981,55 @@ function toggleInfoSection(headerElement) {
         if (!currentUser) return;
         const data = _presenceLoad();
         const uid  = currentUser.id;
+        const vis  = currentUser.isMaster ? _presenceVisGet() : 'all'; // caissier/admin toujours visible
         data[uid]  = {
             status,
             userId:    uid,
             username:  currentUser.username,
             role:      currentUser.role,
             isMaster:  !!currentUser.isMaster,
+            visibleTo: vis,
             updatedAt: new Date().toISOString(),
         };
         _presenceSave(data);
-        // Fermer le menu
         const menu = document.getElementById('qmsg-presence-menu');
         if (menu) menu.style.display = 'none';
         _presenceUpdateBtn();
         _presenceUpdateBanner();
-
+        if (typeof window._qmsgRenderCashierStatus === 'function') {
+            window._qmsgRenderCashierStatus(data);
+        }
         const cfg = PRESENCE_CONFIG[status] || PRESENCE_CONFIG.offline;
         showScanToast(`${cfg.icon} Statut : ${cfg.label}`, 'success');
     };
 
-    // Passer automatiquement offline à la déconnexion
     function _presenceSetOfflineOnLogout() {
         if (currentUser?.id) {
             const data = _presenceLoad();
             if (data[currentUser.id]) {
-                data[currentUser.id].status = 'offline';
+                data[currentUser.id].status    = 'offline';
+                data[currentUser.id].visibleTo = 'none';
                 data[currentUser.id].updatedAt = new Date().toISOString();
                 _presenceSave(data);
             }
         }
     }
 
-    // Bandeau de statut affiché dans l'inbox (qui est en ligne)
+    // Bandeau inbox — filtré selon rôle du viewer
     function _presenceUpdateBanner() {
         const listEl = document.getElementById('qmsg-inbox-list');
         if (!listEl) return;
         const existing = document.getElementById('qmsg-presence-banner');
         if (existing) existing.remove();
 
-        const data = _presenceLoad();
+        const data        = _presenceLoad();
+        const viewerMaster = !!(currentUser?.isMaster);
+        const viewerRole   = currentUser?.role || 'caissier';
+        const myId         = currentUser?.id || '';
+
+        // Admin-Développeur voit tout le monde ; les autres voient selon visibleTo
         const online = Object.values(data).filter(u =>
-            u.status !== 'offline' && u.userId !== currentUser?.id
+            u.userId !== myId && _presenceVisibleTo(u, viewerRole, viewerMaster)
         );
 
         if (!online.length) return;
@@ -7946,39 +8040,34 @@ function toggleInfoSection(headerElement) {
         banner.innerHTML = '<span style="color:var(--text-muted);font-weight:600;flex-shrink:0;">👥 En ligne :</span>';
 
         online.forEach(u => {
-            const cfg = PRESENCE_CONFIG[u.status] || PRESENCE_CONFIG.offline;
+            const cfg  = PRESENCE_CONFIG[u.status] || PRESENCE_CONFIG.offline;
+            const role = u.isMaster ? '🛠️' : u.role === 'admin' ? '👑' : '💼';
             const chip = document.createElement('span');
-            chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:${cfg.dot}22;color:var(--text-main);font-weight:700;`;
-            chip.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${cfg.dot};display:inline-block;"></span>${u.username} <span style="font-weight:400;color:var(--text-muted);font-size:0.7rem;">${cfg.label}</span>`;
+            chip.style.cssText = `display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:12px;background:${cfg.dot}22;color:var(--text-main);font-weight:700;cursor:pointer;`;
+            chip.title = `Écrire à ${u.username}`;
+            chip.onclick = () => { if(document.getElementById('qmsg-to')) document.getElementById('qmsg-to').value=u.userId; };
+            chip.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${cfg.dot};box-shadow:0 0 4px ${cfg.dot};display:inline-block;"></span>${role} ${u.username} <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">${cfg.label}</span>`;
             banner.appendChild(chip);
         });
 
         listEl.insertBefore(banner, listEl.firstChild);
     }
 
-    // Appeler à l'ouverture de la modale et à chaque refresh inbox
-    const _origQmsgRefreshInbox = window._qmsgRefreshInbox;
-
-    // Hook post-refresh pour mettre à jour la bannière
     window._presenceInit = function() {
         _presenceUpdateBtn();
         _presenceUpdateBanner();
-        // Rafraîchir le panneau statuts caissiers si Admin-Développeur
         if (currentUser?.isMaster && typeof window._qmsgRenderCashierStatus === 'function') {
-            const presence = _presenceLoad();
-            window._qmsgRenderCashierStatus(presence);
+            window._qmsgRenderCashierStatus(_presenceLoad());
         }
-        // Rafraîchir les icônes dans le select Destinataire
         if (typeof _qmsgPopulateTo === 'function') try { _qmsgPopulateTo(); } catch(e) {}
     };
 
-    // Se mettre en ligne automatiquement à l'ouverture de la messagerie
     window._presenceAutoOnline = function() {
         if (!currentUser || currentUser.role !== 'admin') return;
         const data  = _presenceLoad();
         const uid   = currentUser.id;
         const state = data[uid];
-        // Ne pas écraser si déjà configuré à autre chose
+        const vis   = currentUser.isMaster ? _presenceVisGet() : 'all';
         if (!state || state.status === 'offline') {
             _presenceSet('online');
         } else {
