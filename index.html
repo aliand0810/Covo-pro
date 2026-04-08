@@ -5600,6 +5600,10 @@
         <div style="overflow-y:auto;flex:1;padding:16px;background:var(--qmsg-body-bg,#f4f7fb);">
           <!-- Onglet Composer -->
           <div id="qmsg-pane-compose">
+            <!-- Panneau statut caissiers (Admin-Développeur uniquement) -->
+            <div id="qmsg-cashier-status-panel" style="display:none;background:var(--qmsg-card-bg,#fff);border-radius:12px;padding:12px 14px;border:1px solid var(--qmsg-border,#dce3ec);margin-bottom:10px;">
+            </div>
+
             <div style="background:var(--qmsg-card-bg,#fff);border-radius:12px;padding:14px;box-shadow:0 1px 6px rgba(0,0,0,0.07);border:1px solid var(--qmsg-border,#dce3ec);margin-bottom:12px;">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
                 <div>
@@ -7631,31 +7635,86 @@ function toggleInfoSection(headerElement) {
         const myId     = cu ? cu.id : null;
         const _isAdmin = typeof isAdmin !== 'undefined' && isAdmin;
 
+        // Charger les statuts de présence
+        const presence = _presenceLoad ? _presenceLoad() : {};
+        const presenceIcon = (uid) => {
+            const s = (presence[uid]||{}).status || 'offline';
+            return { online:'🟢', busy:'🟠', away:'🟡', offline:'⚫' }[s] || '⚫';
+        };
+
         sel.innerHTML = '';
 
         if (isMaster) {
-            // Admin-Développeur → peut écrire à tous, admin, chaque caissier
             sel.innerHTML = '<option value="all">📢 Tous</option><option value="admin">👑 Admin</option>';
             users.filter(u => u.role === 'caissier').forEach(u => {
-                sel.innerHTML += `<option value="${u.id}">💼 ${u.username}</option>`;
+                sel.innerHTML += `<option value="${u.id}">${presenceIcon(u.id)} ${u.username}</option>`;
             });
         } else if (_isAdmin) {
-            // Admin normal → tous les caissiers + Admin-Développeur
             sel.innerHTML = '<option value="all">👥 Tous les caissiers</option>'
                 + '<option value="USR-MASTER">🛠️ Admin-Développeur</option>';
             users.filter(u => u.role === 'caissier').forEach(u => {
-                sel.innerHTML += `<option value="${u.id}">💼 ${u.username}</option>`;
+                sel.innerHTML += `<option value="${u.id}">${presenceIcon(u.id)} ${u.username}</option>`;
             });
         } else {
-            // Caissier → admin + Admin-Développeur + tous + autres caissiers
             sel.innerHTML = '<option value="admin">👑 Admin</option>'
                 + '<option value="USR-MASTER">🛠️ Admin-Développeur</option>'
                 + '<option value="all">📢 Visible par tous</option>';
             users.filter(u => u.role === 'caissier' && u.id !== myId).forEach(u => {
-                sel.innerHTML += `<option value="${u.id}">💼 ${u.username}</option>`;
+                sel.innerHTML += `<option value="${u.id}">${presenceIcon(u.id)} ${u.username}</option>`;
             });
         }
+
+        // Panneau statuts caissiers (Admin-Développeur uniquement)
+        if (isMaster) _qmsgRenderCashierStatus(presence);
     }
+
+    function _qmsgRenderCashierStatus(presence) {
+        const wrap = document.getElementById('qmsg-cashier-status-panel');
+        if (!wrap) return;
+
+        const cashiers = users.filter(u => u.role === 'caissier');
+        if (!cashiers.length) { wrap.style.display = 'none'; return; }
+
+        const PCFG = {
+            online:  { dot:'#4ade80', label:'En ligne',   bg:'rgba(74,222,128,0.10)',  border:'rgba(74,222,128,0.30)'  },
+            busy:    { dot:'#fb923c', label:'Occupé',     bg:'rgba(251,146,60,0.10)',  border:'rgba(251,146,60,0.30)'  },
+            away:    { dot:'#facc15', label:'Absent',     bg:'rgba(250,204,21,0.10)',  border:'rgba(250,204,21,0.30)'  },
+            offline: { dot:'#9ca3af', label:'Hors ligne', bg:'rgba(156,163,175,0.08)', border:'rgba(156,163,175,0.20)' },
+        };
+
+        const connected = cashiers.filter(u => (presence[u.id]||{}).status && (presence[u.id]||{}).status !== 'offline');
+        const nOnline   = connected.length;
+
+        wrap.style.display = '';
+        wrap.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <div style="font-size:0.72rem;font-weight:800;color:var(--qmsg-label);text-transform:uppercase;letter-spacing:0.06em;">
+                    👥 Statut des caissiers
+                </div>
+                <span style="font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:10px;background:${nOnline>0?'rgba(74,222,128,0.15)':'rgba(156,163,175,0.12)'};color:${nOnline>0?'#4ade80':'#9ca3af'};">
+                    ${nOnline} en ligne
+                </span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px;">
+                ${cashiers.map(u => {
+                    const st  = (presence[u.id]||{}).status || 'offline';
+                    const cfg = PCFG[st] || PCFG.offline;
+                    const ts  = (presence[u.id]||{}).updatedAt;
+                    const since = ts ? (() => {
+                        const diff = Math.round((Date.now() - new Date(ts)) / 60000);
+                        return diff < 1 ? 'à l\'instant' : diff < 60 ? `il y a ${diff} min` : `il y a ${Math.round(diff/60)}h`;
+                    })() : '';
+                    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;background:${cfg.bg};border:1px solid ${cfg.border};cursor:pointer;"
+                            onclick="document.getElementById('qmsg-to').value='${u.id}';"
+                            title="Écrire à ${u.username}">
+                        <span style="width:8px;height:8px;border-radius:50%;background:${cfg.dot};display:inline-block;flex-shrink:0;box-shadow:0 0 6px ${cfg.dot};"></span>
+                        <span style="flex:1;font-size:0.82rem;font-weight:700;color:var(--qmsg-text);">${u.username}</span>
+                        <span style="font-size:0.68rem;color:var(--qmsg-label);">${cfg.label}${since?' · '+since:''}</span>
+                    </div>`;
+                }).join('')}
+            </div>`;
+    }
+    window._qmsgRenderCashierStatus = _qmsgRenderCashierStatus;
 
     function _qmsgTab(tab) {
         const compose = document.getElementById('qmsg-pane-compose');
@@ -7904,6 +7963,13 @@ function toggleInfoSection(headerElement) {
     window._presenceInit = function() {
         _presenceUpdateBtn();
         _presenceUpdateBanner();
+        // Rafraîchir le panneau statuts caissiers si Admin-Développeur
+        if (currentUser?.isMaster && typeof window._qmsgRenderCashierStatus === 'function') {
+            const presence = _presenceLoad();
+            window._qmsgRenderCashierStatus(presence);
+        }
+        // Rafraîchir les icônes dans le select Destinataire
+        if (typeof _qmsgPopulateTo === 'function') try { _qmsgPopulateTo(); } catch(e) {}
     };
 
     // Se mettre en ligne automatiquement à l'ouverture de la messagerie
