@@ -21979,7 +21979,7 @@ function initAdminSections() {
     let _gdSaving = false;
     let _gdUserEmail = '';
     let _gdAllFolders = [];            // Cache de la liste des dossiers
-    const GD_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
+    const GD_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/userinfo.email';
     const GD_DEFAULT_FOLDER = 'COVO_PRO_BACKUPS';
 
     // ---- UI Helpers ----
@@ -22146,6 +22146,7 @@ function initAdminSections() {
                 client_id: clientId,
                 scope: GD_SCOPE,
                 login_hint: localStorage.getItem('gdrive_hint_email') || _gdUserEmail || '',
+                // prompt vide = auto si déjà accordé, sinon demande le consentement
                 callback: async (resp) => {
                     if (resp.error) {
                         console.error('GDrive auth error:', resp);
@@ -22525,37 +22526,66 @@ function initAdminSections() {
     async function _gdScanCovoProFolder() {
         if (!_gdConnected || !_gdAccessToken) return;
 
-        // Animer le spinner → chargement en cours
-        const spinner     = document.getElementById('gd-live-spinner');
-        const panelSpin   = document.getElementById('gd-panel-spinner');
-        const lastUpd     = document.getElementById('gd-panel-last-update');
+        const spinner   = document.getElementById('gd-live-spinner');
+        const panelSpin = document.getElementById('gd-panel-spinner');
+        const lastUpd   = document.getElementById('gd-panel-last-update');
         if (spinner)   { spinner.classList.remove('idle'); spinner.classList.add('spinning'); }
         if (panelSpin) { panelSpin.style.animationDuration = '0.7s'; }
 
         try {
-            const mime = 'application/vnd.google-apps.folder';
-            const q    = encodeURIComponent(`name='Covo pro' and mimeType='${mime}' and trashed=false`);
-            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`);
-            const data = await resp.json();
-            if (!data.files || !data.files.length) {
-                _gdSpinnerIdle(spinner, panelSpin);
-                return;
+            // Utiliser l'ID parent mis en cache, sinon chercher sur Drive
+            let covoProId = _gdParentFolderId;
+
+            if (!covoProId) {
+                const mime = 'application/vnd.google-apps.folder';
+                const q    = encodeURIComponent(`name='Covo pro' and mimeType='${mime}' and trashed=false`);
+                const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=5`);
+                const data = await resp.json();
+                if (data.files && data.files.length) {
+                    covoProId = data.files[0].id;
+                    _gdParentFolderId = covoProId; // mise en cache
+                }
             }
-            const covoProId = data.files[0].id;
 
-            const q2 = encodeURIComponent(
-                `'${covoProId}' in ancestors and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
-            );
-            const resp2 = await _gdFetch(
-                `https://www.googleapis.com/drive/v3/files?q=${q2}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size,parents)`
-            );
-            const data2 = await resp2.json();
-            const files = data2.files || [];
+            let files = [];
 
-            // Mettre à jour le panneau si ouvert
+            if (covoProId) {
+                // Recherche récursive dans tout Covo pro (nécessite drive.metadata.readonly)
+                const q2 = encodeURIComponent(
+                    `'${covoProId}' in ancestors and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
+                );
+                const resp2 = await _gdFetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q2}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
+                );
+                const data2 = await resp2.json();
+                files = data2.files || [];
+
+                // Fallback : si 0 résultats avec ancestors (scope insuffisant),
+                // chercher directement dans le dossier sélectionné
+                if (!files.length && _gdFolderId) {
+                    const q3 = encodeURIComponent(
+                        `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
+                    );
+                    const resp3 = await _gdFetch(
+                        `https://www.googleapis.com/drive/v3/files?q=${q3}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
+                    );
+                    const data3 = await resp3.json();
+                    files = data3.files || [];
+                }
+            } else if (_gdFolderId) {
+                // Pas de dossier Covo pro trouvé → chercher dans le dossier configuré
+                const q3 = encodeURIComponent(
+                    `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
+                );
+                const resp3 = await _gdFetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q3}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
+                );
+                const data3 = await resp3.json();
+                files = data3.files || [];
+            }
+
             _gdUpdateLivePanel(files, covoProId);
 
-            // Toujours mettre à jour le chip (même panneau fermé)
             if (files.length) {
                 const latest = files[0];
                 _gdUpdateChip(latest);
@@ -22566,14 +22596,14 @@ function initAdminSections() {
                 }
             }
 
-            // Timestamp dernière mise à jour
             if (lastUpd) {
                 const now = new Date();
                 lastUpd.textContent = now.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
             }
-        } catch(e) { /* silencieux */ }
+        } catch(e) {
+            console.warn('_gdScanCovoProFolder error:', e);
+        }
 
-        // Spinner → idle après scan
         _gdSpinnerIdle(spinner, panelSpin);
     }
 
