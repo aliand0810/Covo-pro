@@ -23679,6 +23679,8 @@ function initAdminSections() {
     //  - Achats          → retours fournisseur / bons de commande
     // ===========================================================================
 
+    const GD_PARENT_FOLDER = 'Covo pro';  // Dossier racine sur Drive
+
     const GD_ROOTS = {
         tickets:    'Tickets_Caisse',
         parametres: 'Paramètres',
@@ -23694,19 +23696,24 @@ function initAdminSections() {
     const _gdFolderCache   = {};   // cacheKey → folderId  (trouvé ou créé)
     const _gdFolderPending = {};   // cacheKey → Promise    (verrou anti-doublon)
 
+    // ID du dossier parent "Covo pro" (mis en cache dès la première utilisation)
+    let _gdParentFolderId = null;
+
+    // Obtenir (ou créer) le dossier parent "Covo pro"
+    async function _gdEnsureParentFolder() {
+        if (_gdParentFolderId) return _gdParentFolderId;
+        const id = await _gdFolderEnsure(GD_PARENT_FOLDER, null);
+        _gdParentFolderId = id;
+        return id;
+    }
+
     // Trouver ou créer un dossier par nom dans un parent donné
-    // Anti-doublon : si deux appels simultanés arrivent sur la même clé,
-    // le second attend la résolution du premier (mutex par Promise).
     async function _gdFolderEnsure(name, parentId) {
         const cacheKey = (parentId || 'root') + '/' + name;
 
-        // 1. Déjà en cache → retour immédiat
         if (_gdFolderCache[cacheKey]) return _gdFolderCache[cacheKey];
-
-        // 2. Opération en cours pour cette clé → attendre son résultat
         if (_gdFolderPending[cacheKey]) return _gdFolderPending[cacheKey];
 
-        // 3. Lancer la résolution et la mettre en attente
         _gdFolderPending[cacheKey] = (async () => {
             try {
                 const mime   = 'application/vnd.google-apps.folder';
@@ -23720,13 +23727,11 @@ function initAdminSections() {
                 const data = await resp.json();
 
                 if (data.files && data.files.length > 0) {
-                    // Dossier(s) existant(s) → prendre le plus ancien (le premier créé)
                     const id = data.files[0].id;
                     _gdFolderCache[cacheKey] = id;
                     return id;
                 }
 
-                // Aucun dossier trouvé → créer
                 const body = { name, mimeType: mime };
                 if (parentId) body.parents = [parentId];
                 const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files', {
@@ -23744,7 +23749,6 @@ function initAdminSections() {
                 console.warn('_gdFolderEnsure error:', name, e);
                 return null;
             } finally {
-                // Libérer le verrou une fois terminé
                 delete _gdFolderPending[cacheKey];
             }
         })();
@@ -23752,8 +23756,8 @@ function initAdminSections() {
         return _gdFolderPending[cacheKey];
     }
 
-    // Obtenir (ou créer) le chemin hiérarchique complet pour une date donnée
-    // rootKey : clé dans GD_ROOTS  |  date : objet Date
+    // Obtenir (ou créer) le chemin complet :
+    // 📁 Covo pro / Tickets_Caisse / 2026 / 04-Avril / 06 /
     async function _gdGetDateFolder(rootKey, date) {
         if (!_gdConnected || !_gdAccessToken) return null;
         const rootName = GD_ROOTS[rootKey] || rootKey;
@@ -23761,10 +23765,11 @@ function initAdminSections() {
         const month    = MOIS_FR[date.getMonth()];
         const day      = String(date.getDate()).padStart(2, '0');
         try {
-            const rootId  = await _gdFolderEnsure(rootName,  null);   if (!rootId) return null;
-            const yearId  = await _gdFolderEnsure(year,      rootId); if (!yearId) return null;
-            const monthId = await _gdFolderEnsure(month,     yearId); if (!monthId) return null;
-            const dayId   = await _gdFolderEnsure(day,       monthId);
+            const parentId = await _gdEnsureParentFolder();          if (!parentId) return null;
+            const rootId   = await _gdFolderEnsure(rootName, parentId); if (!rootId) return null;
+            const yearId   = await _gdFolderEnsure(year,     rootId);   if (!yearId) return null;
+            const monthId  = await _gdFolderEnsure(month,    yearId);   if (!monthId) return null;
+            const dayId    = await _gdFolderEnsure(day,      monthId);
             return dayId;
         } catch(e) {
             console.warn('GDrive hierarchy error:', e);
@@ -23772,7 +23777,7 @@ function initAdminSections() {
         }
     }
 
-    // Ajouter dynamiquement une nouvelle racine (extensibilité)
+    // Ajouter dynamiquement une nouvelle racine
     window._gdAddRoot = function(key, name) {
         GD_ROOTS[key] = name;
     };
