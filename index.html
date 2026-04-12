@@ -22533,9 +22533,8 @@ function initAdminSections() {
         if (panelSpin) { panelSpin.style.animationDuration = '0.7s'; }
 
         try {
-            // Utiliser l'ID parent mis en cache, sinon chercher sur Drive
+            // 1. Obtenir l'ID du dossier parent "Covo pro"
             let covoProId = _gdParentFolderId;
-
             if (!covoProId) {
                 const mime = 'application/vnd.google-apps.folder';
                 const q    = encodeURIComponent(`name='Covo pro' and mimeType='${mime}' and trashed=false`);
@@ -22543,62 +22542,77 @@ function initAdminSections() {
                 const data = await resp.json();
                 if (data.files && data.files.length) {
                     covoProId = data.files[0].id;
-                    _gdParentFolderId = covoProId; // mise en cache
+                    _gdParentFolderId = covoProId;
                 }
             }
 
-            let files = [];
+            // 2. Chercher dans chaque sous-dossier racine indépendamment
+            // Structure : Covo pro > Paramètres|Messages_COVO > 2026 > 04-Avril > 06 > fichier
+            // On cherche les sous-dossiers directs de Covo pro, puis dans chacun
+            const allFiles = [];
 
             if (covoProId) {
-                // Recherche récursive dans tout Covo pro (nécessite drive.metadata.readonly)
-                const q2 = encodeURIComponent(
-                    `'${covoProId}' in ancestors and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
-                );
-                const resp2 = await _gdFetch(
-                    `https://www.googleapis.com/drive/v3/files?q=${q2}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
-                );
-                const data2 = await resp2.json();
-                files = data2.files || [];
+                // Récupérer les sous-dossiers directs de Covo pro
+                const mime    = 'application/vnd.google-apps.folder';
+                const qSubs   = encodeURIComponent(`'${covoProId}' in parents and mimeType='${mime}' and trashed=false`);
+                const rSubs   = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${qSubs}&fields=files(id,name)&pageSize=20`);
+                const dSubs   = await rSubs.json();
+                const subFolders = dSubs.files || [];
 
-                // Fallback : si 0 résultats avec ancestors (scope insuffisant),
-                // chercher directement dans le dossier sélectionné
-                if (!files.length && _gdFolderId) {
-                    const q3 = encodeURIComponent(
-                        `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
-                    );
-                    const resp3 = await _gdFetch(
-                        `https://www.googleapis.com/drive/v3/files?q=${q3}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
-                    );
-                    const data3 = await resp3.json();
-                    files = data3.files || [];
-                }
-            } else if (_gdFolderId) {
-                // Pas de dossier Covo pro trouvé → chercher dans le dossier configuré
-                const q3 = encodeURIComponent(
-                    `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
-                );
-                const resp3 = await _gdFetch(
-                    `https://www.googleapis.com/drive/v3/files?q=${q3}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
-                );
-                const data3 = await resp3.json();
-                files = data3.files || [];
+                // Pour chaque sous-dossier, chercher récursivement les JSON
+                const searches = subFolders.map(async sub => {
+                    try {
+                        const nameFilter = sub.name === 'Messages_COVO'
+                            ? `name contains 'messages_'`
+                            : `name contains 'covo_backup'`;
+                        const q = encodeURIComponent(
+                            `'${sub.id}' in ancestors and trashed=false and mimeType='application/json' and (${nameFilter})`
+                        );
+                        const r = await _gdFetch(
+                            `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=10&fields=files(id,name,modifiedTime,size)`
+                        );
+                        const d = await r.json();
+                        return (d.files || []).map(f => ({ ...f, _folder: sub.name }));
+                    } catch(e) { return []; }
+                });
+
+                const results = await Promise.all(searches);
+                results.forEach(r => allFiles.push(...r));
+
+                // Trier par date décroissante
+                allFiles.sort((a,b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
             }
 
-            _gdUpdateLivePanel(files, covoProId);
+            // Fallback si aucun résultat (scope insuffisant) → chercher dans _gdFolderId direct
+            if (!allFiles.length && _gdFolderId) {
+                const q = encodeURIComponent(
+                    `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
+                );
+                const r = await _gdFetch(
+                    `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
+                );
+                const d = await r.json();
+                (d.files || []).forEach(f => allFiles.push(f));
+            }
 
-            if (files.length) {
-                const latest = files[0];
-                _gdUpdateChip(latest);
-                if (latest.id !== _gdLastDetectedFileId) {
-                    _gdLastDetectedFileId   = latest.id;
-                    _gdLastDetectedFileName = latest.name;
+            // 3. Toujours stocker les fichiers (même panneau fermé)
+            _gdAllFiles = allFiles;
+
+            // 4. Mettre à jour le panneau si ouvert
+            _gdUpdateLivePanel();
+
+            // 5. Chip status bar
+            if (allFiles.length) {
+                _gdUpdateChip(allFiles[0]);
+                if (allFiles[0].id !== _gdLastDetectedFileId) {
+                    _gdLastDetectedFileId   = allFiles[0].id;
+                    _gdLastDetectedFileName = allFiles[0].name;
                     _gdLastDetectedFileData = null;
                 }
             }
 
             if (lastUpd) {
-                const now = new Date();
-                lastUpd.textContent = now.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+                lastUpd.textContent = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
             }
         } catch(e) {
             console.warn('_gdScanCovoProFolder error:', e);
@@ -22727,22 +22741,22 @@ function initAdminSections() {
         }).join('');
     }
 
-    function _gdUpdateLivePanel(files, covoProId) {
+    function _gdUpdateLivePanel() {
         const panel = document.getElementById('gd-live-panel');
         if (!panel || panel.style.display === 'none') return;
 
-        _gdAllFiles = files; // stocker pour le filtre
-
+        const files   = _gdAllFiles;
         const countEl = panel.querySelector('#gd-live-count');
         if (countEl) {
-            const total = files.length;
             const v = files.filter(f=>f.name.includes('_VENTES_')).length;
             const p = files.filter(f=>f.name.includes('_PARAMS_')).length;
             const c = files.filter(f=>f.name.includes('_COMPLET_')).length;
             const m = files.filter(f=>f.name.startsWith('messages_')).length;
-            countEl.textContent = `${total} fichier${total>1?'s':''} — 💰${v} ⚙️${p} 📦${c} 💬${m}`;
+            const tot = files.length;
+            countEl.textContent = tot
+                ? `${tot} fichier${tot>1?'s':''} — 💰${v} ⚙️${p} 📦${c} 💬${m}`
+                : 'Aucun fichier trouvé';
         }
-
         _gdRenderFilteredList();
     }
 
@@ -22863,7 +22877,12 @@ function initAdminSections() {
         if (!panel) return;
         const isOpen = panel.style.display !== 'none';
         panel.style.display = isOpen ? 'none' : 'block';
-        if (!isOpen) _gdScanCovoProFolder(); // rafraîchir à l'ouverture
+        if (!isOpen) {
+            // Afficher les données déjà en cache immédiatement
+            _gdUpdateLivePanel();
+            // Puis lancer un scan frais
+            _gdScanCovoProFolder();
+        }
     };
 
     // Clic sur le chip → liste des sauvegardes disponibles
