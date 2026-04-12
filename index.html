@@ -951,6 +951,40 @@
         #net-quality-dot[data-q="slow"]      { background:#f39c12!important; box-shadow:0 0 5px #f39c1288!important; animation:netPulseOrange 2s infinite; }
         #net-quality-dot[data-q="offline"]   { background:#e74c3c!important; box-shadow:0 0 4px #e74c3c88!important; animation:netBlink 1.2s infinite; }
         #gdrive-status-bar .gd-time { color: #5d7a8c; font-family: monospace; font-size: 0.68rem; }
+
+        @keyframes gdPulse {
+            0%   { transform: scale(1); }
+            50%  { transform: scale(1.15); }
+            100% { transform: scale(1); }
+        }
+
+        #gd-live-panel {
+            display: none;
+            position: fixed;
+            top: 30px;
+            right: 12px;
+            width: 360px;
+            max-height: 480px;
+            background: var(--bg-card, #fff);
+            border: 1.5px solid var(--border-color, #dce3ec);
+            border-radius: 14px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+            z-index: 5000;
+            overflow: hidden;
+            animation: adminWelcomeIn 0.2s ease;
+        }
+        #gd-live-panel .gd-live-header {
+            background: linear-gradient(135deg, #1a73e8, #0d47a1);
+            padding: 11px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        #gd-live-list {
+            overflow-y: auto;
+            max-height: 380px;
+            padding: 8px;
+        }
         #gdrive-status-bar.connected .gd-time { color: #52be80; }
         #gdrive-status-bar .gd-saving {
             display: none;
@@ -3234,6 +3268,34 @@
                 style="display:none;margin-left:6px;padding:1px 8px;background:rgba(46,204,113,0.18);border:1px solid rgba(46,204,113,0.35);border-radius:10px;font-size:0.65rem;color:#52be80;cursor:pointer;white-space:nowrap;transition:background 0.2s;"
                 onmouseover="this.style.background='rgba(46,204,113,0.32)'" onmouseout="this.style.background='rgba(46,204,113,0.18)'">
             </span>
+            <!-- Bouton panneau live Covo pro -->
+            <span id="gd-live-btn" onclick="_gdToggleLivePanel()" title="Recherche automatique dans Covo pro"
+                style="display:none;margin-left:6px;padding:2px 8px;background:rgba(26,115,232,0.18);border:1px solid rgba(26,115,232,0.35);border-radius:10px;font-size:0.65rem;color:#5ba4ff;cursor:pointer;white-space:nowrap;display:none;align-items:center;gap:4px;"
+                onmouseover="this.style.background='rgba(26,115,232,0.32)'" onmouseout="this.style.background='rgba(26,115,232,0.18)'">
+                <span id="gd-live-pulse" style="width:6px;height:6px;border-radius:50%;background:#5ba4ff;display:inline-block;"></span>
+                📁 Covo pro
+            </span>
+        </div>
+
+        <!-- Panneau flottant recherche automatique Covo pro -->
+        <div id="gd-live-panel">
+            <div class="gd-live-header">
+                <div>
+                    <div style="color:white;font-weight:800;font-size:0.88rem;">📁 Covo pro — Drive</div>
+                    <div id="gd-live-count" style="color:rgba(255,255,255,0.7);font-size:0.68rem;margin-top:1px;">Recherche en cours…</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:0.65rem;color:rgba(255,255,255,0.55);">↺ 5s</span>
+                    <button onclick="_gdToggleLivePanel()" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">✕</button>
+                </div>
+            </div>
+            <div style="padding:6px 10px;border-bottom:1px solid var(--border-color,#eee);display:flex;gap:5px;flex-wrap:wrap;">
+                <span style="font-size:0.68rem;padding:2px 7px;border-radius:8px;background:#27ae6018;color:#27ae60;font-weight:700;">💰 Ventes</span>
+                <span style="font-size:0.68rem;padding:2px 7px;border-radius:8px;background:#1a73e818;color:#1a73e8;font-weight:700;">⚙️ Params</span>
+                <span style="font-size:0.68rem;padding:2px 7px;border-radius:8px;background:#e67e2218;color:#e67e22;font-weight:700;">📦 Complet</span>
+                <span style="margin-left:auto;font-size:0.68rem;color:var(--text-muted);">Clic = restaurer</span>
+            </div>
+            <div id="gd-live-list"><div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">⏳ Chargement…</div></div>
         </div>
         <!-- Zone DLC : marquee roulant OU affichage un par un avec nav -->
         <div id="expiry-zone" style="display:flex;align-items:center;flex:1;min-width:0;gap:4px;">
@@ -21861,6 +21923,10 @@ function initAdminSections() {
             }
         }
 
+        // Afficher/masquer le bouton live panel
+        const liveBtn = document.getElementById('gd-live-btn');
+        if (liveBtn) liveBtn.style.display = connected ? 'inline-flex' : 'none';
+
         if (lbl) {
             if (connected) {
                 lbl.textContent = '☁️ Drive connecté';
@@ -22364,60 +22430,134 @@ function initAdminSections() {
         } catch(e) {}
     }
 
-    // ===== POLLING DERNIER FICHIER DRIVE → CHIP DANS LA STATUS BAR =================
+    // ===== POLLING DERNIER FICHIER DRIVE → CHIP + PANNEAU EN DIRECT ==============
     let _gdLastDetectedFileId   = null;
     let _gdLastDetectedFileName = '';
-    let _gdLastDetectedFileData = null; // données préchargées pour restauration rapide
+    let _gdLastDetectedFileData = null;
     let _gdPollInterval = null;
+    let _gdLivePanelInterval = null;
 
-    async function _gdPollLatestFile() {
-        if (!_gdConnected || !_gdFolderId || !_gdAccessToken) return;
+    // ── Recherche automatique dans "Covo pro" toutes les 5 secondes ──────
+    async function _gdScanCovoProFolder() {
+        if (!_gdConnected || !_gdAccessToken) return;
         try {
-            const q = encodeURIComponent(
-                `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
-            );
-            const resp = await _gdFetch(
-                'https://www.googleapis.com/drive/v3/files?q=' + q +
-                '&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)'
-            );
+            // Trouver le dossier "Covo pro" (sans le créer si absent)
+            const mime = 'application/vnd.google-apps.folder';
+            const q    = encodeURIComponent(`name='Covo pro' and mimeType='${mime}' and trashed=false`);
+            const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`);
             const data = await resp.json();
-            const files = data.files || [];
+            if (!data.files || !data.files.length) return;
+            const covoProId = data.files[0].id;
+
+            // Chercher récursivement les derniers fichiers JSON dans toute la hiérarchie
+            const q2 = encodeURIComponent(
+                `'${covoProId}' in ancestors and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
+            );
+            const resp2 = await _gdFetch(
+                `https://www.googleapis.com/drive/v3/files?q=${q2}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size,parents)`
+            );
+            const data2 = await resp2.json();
+            const files = data2.files || [];
+
+            _gdUpdateLivePanel(files, covoProId);
             if (!files.length) return;
 
+            // Mettre à jour le chip status bar
             const latest = files[0];
-            const chip = document.getElementById('gd-last-file-chip');
-            if (!chip) return;
+            _gdUpdateChip(latest);
 
-            // Mettre à jour le chip
-            const modDate = new Date(latest.modifiedTime);
-            const isToday = modDate.toDateString() === new Date().toDateString();
-            const dateLabel = isToday
-                ? modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'})
-                : modDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' +
-                  modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
-
-            chip.textContent = '☁️ ' + dateLabel + ' ↩';
-            chip.style.display = '';
-
-            // Nouveau fichier détecté depuis la dernière vérification → flash
             if (latest.id !== _gdLastDetectedFileId) {
                 _gdLastDetectedFileId   = latest.id;
                 _gdLastDetectedFileName = latest.name;
-                _gdLastDetectedFileData = null; // réinitialiser les données préchargées
-                chip.style.borderColor = '#f39c12';
-                chip.style.color = '#f39c12';
-                setTimeout(() => {
-                    chip.style.borderColor = 'rgba(46,204,113,0.35)';
-                    chip.style.color = '#52be80';
-                }, 3000);
+                _gdLastDetectedFileData = null;
             }
         } catch(e) { /* silencieux */ }
     }
 
+    function _gdUpdateChip(latest) {
+        const chip = document.getElementById('gd-last-file-chip');
+        if (!chip || !latest) return;
+        const modDate  = new Date(latest.modifiedTime);
+        const isToday  = modDate.toDateString() === new Date().toDateString();
+        const dateLabel = isToday
+            ? modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'})
+            : modDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' +
+              modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+        chip.textContent = '☁️ ' + dateLabel + ' ↩';
+        chip.style.display = '';
+    }
+
+    function _gdUpdateLivePanel(files, covoProId) {
+        const panel = document.getElementById('gd-live-panel');
+        if (!panel || panel.style.display === 'none') return;
+
+        const now = Date.now();
+        const fmtSz = b => b >= 1048576 ? (b/1048576).toFixed(1)+' Mo' : (b/1024).toFixed(0)+' Ko';
+        const fmtDt = d => {
+            const dt   = new Date(d);
+            const diff = Math.round((now - dt) / 1000);
+            if (diff < 60)  return `il y a ${diff}s`;
+            if (diff < 3600) return `il y a ${Math.round(diff/60)}min`;
+            if (dt.toDateString() === new Date().toDateString())
+                return dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+            return dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' +
+                   dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        };
+        const typeOf = name => {
+            if (name.includes('_VENTES_'))    return {label:'💰 Ventes',   color:'#27ae60'};
+            if (name.includes('_PARAMS_'))    return {label:'⚙️ Params',   color:'#1a73e8'};
+            if (name.includes('_COMPLET_'))   return {label:'📦 Complet',  color:'#e67e22'};
+            return {label:'📄 Backup', color:'#7f8c8d'};
+        };
+
+        const countEl = panel.querySelector('#gd-live-count');
+        if (countEl) countEl.textContent = `${files.length} fichier${files.length>1?'s':''} dans Covo pro`;
+
+        const listEl = panel.querySelector('#gd-live-list');
+        if (!listEl) return;
+
+        if (!files.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:16px;color:var(--gray,#888);font-size:0.82rem;">📭 Aucun fichier trouvé</div>';
+            return;
+        }
+
+        listEl.innerHTML = files.slice(0, 10).map((f, i) => {
+            const t = typeOf(f.name);
+            const isNew = i === 0;
+            const sz = f.size ? fmtSz(parseInt(f.size)) : '—';
+            return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:${isNew?'rgba(39,174,96,0.06)':'transparent'};border:1px solid ${isNew?'rgba(39,174,96,0.2)':'transparent'};cursor:pointer;transition:background 0.15s;"
+                        onmouseenter="this.style.background='var(--input-bg,#f0f4ff)'" onmouseleave="this.style.background='${isNew?'rgba(39,174,96,0.06)':'transparent'}'"
+                        onclick="gdriveRestoreFile('${f.id}','${f.name.replace(/'/g,"\\'")}')">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:0.78rem;font-weight:700;color:var(--text-main);display:flex;align-items:center;gap:5px;">
+                        <span style="font-size:0.68rem;padding:1px 6px;border-radius:8px;background:${t.color}18;color:${t.color};font-weight:800;">${t.label}</span>
+                        ${isNew?'<span style="font-size:0.6rem;background:#27ae60;color:white;padding:1px 5px;border-radius:6px;">DERNIER</span>':''}
+                    </div>
+                    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name.replace('covo_backup_','').replace('.json','')}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-size:0.7rem;font-weight:700;color:${isNew?'#27ae60':'var(--text-muted)'};">${fmtDt(f.modifiedTime)}</div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);">${sz}</div>
+                </div>
+            </div>`;
+        }).join('');
+
+        // Compteur en temps réel (animation "pulse" si nouveau)
+        const pulseEl = panel.querySelector('#gd-live-pulse');
+        if (pulseEl) {
+            pulseEl.style.animation = 'none';
+            requestAnimationFrame(() => { pulseEl.style.animation = 'gdPulse 0.6s ease'; });
+        }
+    }
+
+    async function _gdPollLatestFile() {
+        await _gdScanCovoProFolder();
+    }
+
     function _gdStartPolling() {
-        _gdPollLatestFile(); // première vérification immédiate
+        _gdScanCovoProFolder(); // immédiat
         if (_gdPollInterval) clearInterval(_gdPollInterval);
-        _gdPollInterval = setInterval(_gdPollLatestFile, 2 * 60 * 1000); // toutes les 2 min
+        _gdPollInterval = setInterval(_gdScanCovoProFolder, 5000); // toutes les 5s
     }
 
     function _gdStopPolling() {
@@ -22425,6 +22565,15 @@ function initAdminSections() {
         const chip = document.getElementById('gd-last-file-chip');
         if (chip) chip.style.display = 'none';
     }
+
+    // Ouvrir/fermer le panneau live
+    window._gdToggleLivePanel = function() {
+        const panel = document.getElementById('gd-live-panel');
+        if (!panel) return;
+        const isOpen = panel.style.display !== 'none';
+        panel.style.display = isOpen ? 'none' : 'block';
+        if (!isOpen) _gdScanCovoProFolder(); // rafraîchir à l'ouverture
+    };
 
     // Clic sur le chip → liste des sauvegardes disponibles
     window._gdChipClick = async function() {
