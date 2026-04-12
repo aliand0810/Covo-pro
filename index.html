@@ -3304,9 +3304,11 @@
 
         <!-- Panneau flottant recherche automatique Covo pro -->
         <div id="gd-live-panel">
-            <div class="gd-live-header">
+            <div class="gd-live-header" id="gd-live-drag-handle" style="cursor:move;user-select:none;">
                 <div>
-                    <div style="color:white;font-weight:800;font-size:0.88rem;">📁 Covo pro — Drive</div>
+                    <div style="color:white;font-weight:800;font-size:0.88rem;">
+                        <span style="opacity:0.5;font-size:0.7rem;margin-right:4px;">⠿</span>📁 Covo pro — Drive
+                    </div>
                     <div id="gd-live-count" style="color:rgba(255,255,255,0.7);font-size:0.68rem;margin-top:1px;">Recherche en cours…</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -22533,60 +22535,76 @@ function initAdminSections() {
         if (panelSpin) { panelSpin.style.animationDuration = '0.7s'; }
 
         try {
-            // 1. Obtenir l'ID du dossier parent "Covo pro"
+            // 1. ID du dossier "Covo pro"
             let covoProId = _gdParentFolderId;
             if (!covoProId) {
                 const mime = 'application/vnd.google-apps.folder';
                 const q    = encodeURIComponent(`name='Covo pro' and mimeType='${mime}' and trashed=false`);
                 const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=5`);
-                const data = await resp.json();
-                if (data.files && data.files.length) {
-                    covoProId = data.files[0].id;
+                const d = await resp.json();
+                if (d.files && d.files.length) {
+                    covoProId = d.files[0].id;
                     _gdParentFolderId = covoProId;
                 }
             }
 
-            // 2. Chercher dans chaque sous-dossier racine indépendamment
-            // Structure : Covo pro > Paramètres|Messages_COVO > 2026 > 04-Avril > 06 > fichier
-            // On cherche les sous-dossiers directs de Covo pro, puis dans chacun
+            // 2. Filtrer sur les 2 derniers jours
+            const twoDaysAgo = new Date();
+            twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+            const afterDate  = twoDaysAgo.toISOString();
+
             const allFiles = [];
 
             if (covoProId) {
-                // Récupérer les sous-dossiers directs de Covo pro
-                const mime    = 'application/vnd.google-apps.folder';
-                const qSubs   = encodeURIComponent(`'${covoProId}' in parents and mimeType='${mime}' and trashed=false`);
-                const rSubs   = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${qSubs}&fields=files(id,name)&pageSize=20`);
-                const dSubs   = await rSubs.json();
-                const subFolders = dSubs.files || [];
+                // Lister les sous-dossiers directs de Covo pro
+                const mime  = 'application/vnd.google-apps.folder';
+                const qSubs = encodeURIComponent(`'${covoProId}' in parents and mimeType='${mime}' and trashed=false`);
+                const rSubs = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${qSubs}&fields=files(id,name)&pageSize=20`);
+                const dSubs = await rSubs.json();
+                const subs  = dSubs.files || [];
 
-                // Pour chaque sous-dossier, chercher récursivement les JSON
-                const searches = subFolders.map(async sub => {
+                // Chercher dans chaque sous-dossier (Paramètres, Messages_COVO, Tickets_Caisse…)
+                // Stratégie : chercher les JSON depuis chaque dossier racine récursivement
+                const searches = subs.map(async sub => {
                     try {
-                        const nameFilter = sub.name === 'Messages_COVO'
-                            ? `name contains 'messages_'`
-                            : `name contains 'covo_backup'`;
+                        // Déterminer le filtre selon le dossier
+                        let nameFilter;
+                        if (sub.name === 'Messages_COVO')
+                            nameFilter = `name contains 'messages_'`;
+                        else if (sub.name === 'Tickets_Caisse')
+                            nameFilter = `name contains 'ticket_'`;
+                        else
+                            nameFilter = `name contains 'covo_backup'`;
+
                         const q = encodeURIComponent(
-                            `'${sub.id}' in ancestors and trashed=false and mimeType='application/json' and (${nameFilter})`
+                            `'${sub.id}' in ancestors and trashed=false` +
+                            ` and mimeType='application/json'` +
+                            ` and (${nameFilter})` +
+                            ` and modifiedTime > '${afterDate}'`
                         );
                         const r = await _gdFetch(
-                            `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=10&fields=files(id,name,modifiedTime,size)`
+                            `https://www.googleapis.com/drive/v3/files?q=${q}` +
+                            `&orderBy=modifiedTime+desc&pageSize=20` +
+                            `&fields=files(id,name,modifiedTime,size)`
                         );
                         const d = await r.json();
+                        if (d.error) { console.warn('Scan subfolder error', sub.name, d.error); return []; }
                         return (d.files || []).map(f => ({ ...f, _folder: sub.name }));
                     } catch(e) { return []; }
                 });
 
                 const results = await Promise.all(searches);
                 results.forEach(r => allFiles.push(...r));
-
-                // Trier par date décroissante
                 allFiles.sort((a,b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
             }
 
-            // Fallback si aucun résultat (scope insuffisant) → chercher dans _gdFolderId direct
+            // Fallback : dossier principal configuré (drive.file scope)
             if (!allFiles.length && _gdFolderId) {
                 const q = encodeURIComponent(
-                    `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
+                    `'${_gdFolderId}' in parents and trashed=false` +
+                    ` and mimeType='application/json'` +
+                    ` and (name contains 'covo_backup' or name contains 'messages_')` +
+                    ` and modifiedTime > '${afterDate}'`
                 );
                 const r = await _gdFetch(
                     `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime,size)`
@@ -22595,13 +22613,10 @@ function initAdminSections() {
                 (d.files || []).forEach(f => allFiles.push(f));
             }
 
-            // 3. Toujours stocker les fichiers (même panneau fermé)
+            // Stocker (même panneau fermé) et rafraîchir l'affichage
             _gdAllFiles = allFiles;
-
-            // 4. Mettre à jour le panneau si ouvert
             _gdUpdateLivePanel();
 
-            // 5. Chip status bar
             if (allFiles.length) {
                 _gdUpdateChip(allFiles[0]);
                 if (allFiles[0].id !== _gdLastDetectedFileId) {
@@ -22611,9 +22626,7 @@ function initAdminSections() {
                 }
             }
 
-            if (lastUpd) {
-                lastUpd.textContent = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-            }
+            if (lastUpd) lastUpd.textContent = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
         } catch(e) {
             console.warn('_gdScanCovoProFolder error:', e);
         }
@@ -22674,11 +22687,8 @@ function initAdminSections() {
 
         const filtered = _gdAllFiles.filter(f => {
             if (_gdLiveFilter === 'all')      return true;
-            if (_gdLiveFilter === 'ventes')   return f.name.includes('_VENTES_');
-            if (_gdLiveFilter === 'params')   return f.name.includes('_PARAMS_');
-            if (_gdLiveFilter === 'complet')  return f.name.includes('_COMPLET_');
-            if (_gdLiveFilter === 'messages') return f.name.startsWith('messages_');
-            return true;
+            const t = _gdGetType(f);
+            return t.key === _gdLiveFilter;
         });
 
         const now   = Date.now();
@@ -22693,52 +22703,71 @@ function initAdminSections() {
             return dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' +
                    dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
         };
-        const typeOf = name => {
-            if (name.includes('_VENTES_'))    return {label:'💰 Ventes',   color:'#27ae60'};
-            if (name.includes('_PARAMS_'))    return {label:'⚙️ Params',   color:'#1a73e8'};
-            if (name.includes('_COMPLET_'))   return {label:'📦 Complet',  color:'#e67e22'};
-            if (name.startsWith('messages_')) return {label:'💬 Messages',  color:'#9b59b6'};
-            return {label:'📄 Fichier',      color:'#7f8c8d'};
-        };
 
         if (!filtered.length) {
-            listEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">
-                📭 Aucun fichier ${_gdLiveFilter !== 'all' ? 'de ce type' : 'trouvé'}
-            </div>`;
+            const typeLbl = {'ventes':'Ventes','params':'Params','complet':'Complet','messages':'Messages','all':''}[_gdLiveFilter]||'';
+            listEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">📭 Aucun fichier ${typeLbl} sur les 2 derniers jours</div>`;
             return;
         }
 
-        listEl.innerHTML = filtered.slice(0, 15).map((f, i) => {
-            const t     = typeOf(f.name);
-            const isNew = i === 0 && _gdLiveFilter === 'all';
-            const sz    = fmtSz(parseInt(f.size || 0));
-            const safeName = f.name.replace(/'/g, "\\'");
-            const displayName = f.name
-                .replace('covo_backup_','')
-                .replace('messages_','msg_')
-                .replace('.json','');
-            return `<div
-                style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;
-                    background:${isNew?'rgba(39,174,96,0.06)':'transparent'};
-                    border:1.5px solid ${isNew?'rgba(39,174,96,0.2)':'transparent'};
-                    cursor:pointer;transition:all 0.15s;"
-                onmouseenter="this.style.background='rgba(91,164,255,0.08)';this.style.borderColor='rgba(91,164,255,0.3)';this.style.transform='translateX(3px)'"
-                onmouseleave="this.style.background='${isNew?'rgba(39,174,96,0.06)':'transparent'}';this.style.borderColor='${isNew?'rgba(39,174,96,0.2)':'transparent'}';this.style.transform=''"
-                onclick="_gdOpenRestoreChoice('${f.id}','${safeName}')">
-                <div style="flex:1;min-width:0;">
-                    <div style="display:flex;align-items:center;gap:5px;margin-bottom:2px;">
-                        <span style="font-size:0.66rem;padding:1px 6px;border-radius:7px;background:${t.color}1a;color:${t.color};font-weight:800;flex-shrink:0;">${t.label}</span>
-                        ${isNew?'<span style="font-size:0.58rem;background:#27ae60;color:white;padding:1px 5px;border-radius:5px;font-weight:700;">RÉCENT</span>':''}
+        // Grouper par jour — Aujourd'hui / Hier
+        const today     = new Date().toDateString();
+        const yesterday = new Date(Date.now()-86400000).toDateString();
+        const groups = {};
+        filtered.forEach(f => {
+            const d = new Date(f.modifiedTime);
+            const k = d.toDateString();
+            const lbl = k===today ? "📅 Aujourd'hui" : k===yesterday ? "📅 Hier" : "📅 "+d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+            if (!groups[lbl]) groups[lbl] = [];
+            groups[lbl].push(f);
+        });
+
+        let firstItem = true;
+        listEl.innerHTML = Object.entries(groups).map(([day, dayFiles]) => {
+            const rows = dayFiles.map(f => {
+                const t       = _gdGetType(f);
+                const isFirst = firstItem; firstItem = false;
+                const sz      = fmtSz(parseInt(f.size||0));
+                const safeName = (f.id||'').replace(/'/g,"\'");
+                const dispName = f.name.replace(/^covo_backup_/,'').replace(/^messages_/,'msg_').replace(/\.json$/,'');
+                const bg0  = isFirst ? t.color+'14' : 'transparent';
+                const bdr0 = isFirst ? t.color+'40' : 'transparent';
+                const bg1  = t.color+'20';
+                const bdr1 = t.color+'60';
+                return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;margin-bottom:3px;background:${bg0};border:1.5px solid ${bdr0};cursor:pointer;transition:all 0.15s;"
+                    onmouseenter="this.style.background='${bg1}';this.style.borderColor='${bdr1}';this.style.transform='translateX(3px)'"
+                    onmouseleave="this.style.background='${bg0}';this.style.borderColor='${bdr0}';this.style.transform=''"
+                    onclick="_gdOpenRestoreChoice('${f.id}','${safeName}')">
+                    <div style="flex:1;min-width:0;">
+                        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">
+                            <span style="font-size:0.64rem;padding:2px 6px;border-radius:7px;background:${t.color}22;color:${t.color};font-weight:800;">${t.label}</span>
+                            ${isFirst?'<span style="font-size:0.56rem;background:'+t.color+';color:#fff;padding:1px 5px;border-radius:5px;font-weight:700;">RÉCENT</span>':''}
+                        </div>
+                        <div style="font-size:0.68rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${dispName}</div>
                     </div>
-                    <div style="font-size:0.7rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${displayName}</div>
-                </div>
-                <div style="text-align:right;flex-shrink:0;">
-                    <div style="font-size:0.7rem;font-weight:700;color:${isNew?'#27ae60':'var(--text-muted)'};">${fmtDt(f.modifiedTime)}</div>
-                    <div style="font-size:0.62rem;color:var(--text-muted);">${sz}</div>
-                </div>
-                <span style="font-size:0.9rem;color:var(--text-muted);flex-shrink:0;">↩️</span>
-            </div>`;
+                    <div style="text-align:right;flex-shrink:0;">
+                        <div style="font-size:0.7rem;font-weight:700;color:${isFirst?t.color:'var(--text-muted)'};">${fmtDt(f.modifiedTime)}</div>
+                        <div style="font-size:0.62rem;color:var(--text-muted);">${sz}</div>
+                    </div>
+                    <span style="font-size:0.85rem;flex-shrink:0;">↩️</span>
+                </div>`;
+            }).join('');
+            return `<div style="font-size:0.68rem;font-weight:800;color:var(--text-muted);padding:8px 10px 3px;text-transform:uppercase;letter-spacing:0.05em;">${day} <span style="font-weight:400;opacity:0.7;">(${dayFiles.length})</span></div>${rows}`;
         }).join('');
+    }
+
+
+    function _gdGetType(f) {
+        const n = f.name || '';
+        const folder = f._folder || '';
+        if (n.includes('_VENTES_'))        return {key:'ventes',   label:'💰 Ventes',    color:'#27ae60'};
+        if (n.includes('_PARAMS_'))        return {key:'params',   label:'⚙️ Params',    color:'#1a73e8'};
+        if (n.includes('_COMPLET_'))       return {key:'complet',  label:'📦 Complet',   color:'#e67e22'};
+        if (n.startsWith('messages_'))     return {key:'messages', label:'💬 Messages',   color:'#9b59b6'};
+        if (folder === 'Messages_COVO')    return {key:'messages', label:'💬 Messages',   color:'#9b59b6'};
+        if (folder === 'Tickets_Caisse')   return {key:'ticket',   label:'🎫 Ticket',     color:'#16a085'};
+        if (n.startsWith('covo_backup_'))  return {key:'complet',  label:'📦 Complet',   color:'#e67e22'};
+        return {key:'autre', label:'📄 Fichier', color:'#7f8c8d'};
     }
 
     function _gdUpdateLivePanel() {
@@ -22748,10 +22777,10 @@ function initAdminSections() {
         const files   = _gdAllFiles;
         const countEl = panel.querySelector('#gd-live-count');
         if (countEl) {
-            const v = files.filter(f=>f.name.includes('_VENTES_')).length;
-            const p = files.filter(f=>f.name.includes('_PARAMS_')).length;
-            const c = files.filter(f=>f.name.includes('_COMPLET_')).length;
-            const m = files.filter(f=>f.name.startsWith('messages_')).length;
+            const v = files.filter(f => _gdGetType(f).key === 'ventes').length;
+            const p = files.filter(f => _gdGetType(f).key === 'params').length;
+            const c = files.filter(f => _gdGetType(f).key === 'complet').length;
+            const m = files.filter(f => _gdGetType(f).key === 'messages').length;
             const tot = files.length;
             countEl.textContent = tot
                 ? `${tot} fichier${tot>1?'s':''} — 💰${v} ⚙️${p} 📦${c} 💬${m}`
@@ -22878,11 +22907,86 @@ function initAdminSections() {
         const isOpen = panel.style.display !== 'none';
         panel.style.display = isOpen ? 'none' : 'block';
         if (!isOpen) {
-            // Afficher les données déjà en cache immédiatement
             _gdUpdateLivePanel();
-            // Puis lancer un scan frais
             _gdScanCovoProFolder();
+            _gdInitDrag(panel);
         }
+    };
+
+    function _gdInitDrag(panel) {
+        const handle = document.getElementById('gd-live-drag-handle');
+        if (!handle || handle._dragInit) return;
+        handle._dragInit = true;
+
+        let isDragging = false, startX, startY, origLeft, origTop;
+
+        handle.addEventListener('mousedown', e => {
+            if (e.target.tagName === 'BUTTON') return; // ne pas draguer si clic sur ✕
+            isDragging = true;
+            const rect = panel.getBoundingClientRect();
+            startX   = e.clientX;
+            startY   = e.clientY;
+            origLeft = rect.left;
+            origTop  = rect.top;
+            panel.style.right   = 'auto';
+            panel.style.left    = origLeft + 'px';
+            panel.style.top     = origTop  + 'px';
+            panel.style.transition = 'none';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            let newLeft = origLeft + dx;
+            let newTop  = origTop  + dy;
+            // Garder dans la fenêtre
+            newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  newLeft));
+            newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, newTop));
+            panel.style.left = newLeft + 'px';
+            panel.style.top  = newTop  + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            panel.style.transition = '';
+            document.body.style.userSelect = '';
+        });
+
+        // Touch support (mobile)
+        handle.addEventListener('touchstart', e => {
+            if (e.target.tagName === 'BUTTON') return;
+            const touch = e.touches[0];
+            const rect  = panel.getBoundingClientRect();
+            isDragging = true;
+            startX   = touch.clientX;
+            startY   = touch.clientY;
+            origLeft = rect.left;
+            origTop  = rect.top;
+            panel.style.right  = 'auto';
+            panel.style.left   = origLeft + 'px';
+            panel.style.top    = origTop  + 'px';
+            panel.style.transition = 'none';
+        }, { passive: true });
+
+        document.addEventListener('touchmove', e => {
+            if (!isDragging) return;
+            const touch = e.touches[0];
+            let newLeft = origLeft + touch.clientX - startX;
+            let newTop  = origTop  + touch.clientY - startY;
+            newLeft = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  newLeft));
+            newTop  = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, newTop));
+            panel.style.left = newLeft + 'px';
+            panel.style.top  = newTop  + 'px';
+        }, { passive: true });
+
+        document.addEventListener('touchend', () => {
+            isDragging = false;
+            panel.style.transition = '';
+        });
     };
 
     // Clic sur le chip → liste des sauvegardes disponibles
