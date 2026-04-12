@@ -953,9 +953,34 @@
         #gdrive-status-bar .gd-time { color: #5d7a8c; font-family: monospace; font-size: 0.68rem; }
 
         @keyframes gdPulse {
-            0%   { transform: scale(1); }
-            50%  { transform: scale(1.15); }
-            100% { transform: scale(1); }
+            0%   { transform: scale(1);    opacity: 1;   }
+            50%  { transform: scale(1.18); opacity: 0.7; }
+            100% { transform: scale(1);    opacity: 1;   }
+        }
+
+        /* Cercle spinner rafraîchissement 5s */
+        @keyframes gdSpin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+
+        .gd-spinner {
+            width: 11px; height: 11px;
+            border-radius: 50%;
+            border: 2px solid rgba(91,164,255,0.25);
+            border-top-color: #5ba4ff;
+            display: inline-block;
+            flex-shrink: 0;
+            animation: gdSpin 1s linear infinite;
+        }
+        .gd-spinner.spinning {
+            border-top-color: #5ba4ff;
+            animation: gdSpin 0.7s linear infinite;
+        }
+        .gd-spinner.idle {
+            border: 2px solid rgba(91,164,255,0.35);
+            border-top-color: transparent;
+            animation: none;
         }
 
         #gd-live-panel {
@@ -3269,10 +3294,10 @@
                 onmouseover="this.style.background='rgba(46,204,113,0.32)'" onmouseout="this.style.background='rgba(46,204,113,0.18)'">
             </span>
             <!-- Bouton panneau live Covo pro -->
-            <span id="gd-live-btn" onclick="_gdToggleLivePanel()" title="Recherche automatique dans Covo pro"
-                style="display:none;margin-left:6px;padding:2px 8px;background:rgba(26,115,232,0.18);border:1px solid rgba(26,115,232,0.35);border-radius:10px;font-size:0.65rem;color:#5ba4ff;cursor:pointer;white-space:nowrap;display:none;align-items:center;gap:4px;"
+            <span id="gd-live-btn" onclick="_gdToggleLivePanel()" title="Recherche automatique dans Covo pro — rafraîchissement toutes les 5s"
+                style="display:none;margin-left:6px;padding:3px 9px;background:rgba(26,115,232,0.18);border:1px solid rgba(26,115,232,0.35);border-radius:10px;font-size:0.65rem;color:#5ba4ff;cursor:pointer;white-space:nowrap;align-items:center;gap:5px;"
                 onmouseover="this.style.background='rgba(26,115,232,0.32)'" onmouseout="this.style.background='rgba(26,115,232,0.18)'">
-                <span id="gd-live-pulse" style="width:6px;height:6px;border-radius:50%;background:#5ba4ff;display:inline-block;"></span>
+                <span id="gd-live-spinner" class="gd-spinner idle"></span>
                 📁 Covo pro
             </span>
         </div>
@@ -3284,8 +3309,11 @@
                     <div style="color:white;font-weight:800;font-size:0.88rem;">📁 Covo pro — Drive</div>
                     <div id="gd-live-count" style="color:rgba(255,255,255,0.7);font-size:0.68rem;margin-top:1px;">Recherche en cours…</div>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;">
-                    <span style="font-size:0.65rem;color:rgba(255,255,255,0.55);">↺ 5s</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:5px;">
+                        <span id="gd-panel-spinner" class="gd-spinner" style="border-color:rgba(255,255,255,0.2);border-top-color:white;"></span>
+                        <span id="gd-panel-last-update" style="font-size:0.62rem;color:rgba(255,255,255,0.5);">—</span>
+                    </div>
                     <button onclick="_gdToggleLivePanel()" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:0.85rem;display:flex;align-items:center;justify-content:center;">✕</button>
                 </div>
             </div>
@@ -22496,16 +22524,25 @@ function initAdminSections() {
     // ── Recherche automatique dans "Covo pro" toutes les 5 secondes ──────
     async function _gdScanCovoProFolder() {
         if (!_gdConnected || !_gdAccessToken) return;
+
+        // Animer le spinner → chargement en cours
+        const spinner     = document.getElementById('gd-live-spinner');
+        const panelSpin   = document.getElementById('gd-panel-spinner');
+        const lastUpd     = document.getElementById('gd-panel-last-update');
+        if (spinner)   { spinner.classList.remove('idle'); spinner.classList.add('spinning'); }
+        if (panelSpin) { panelSpin.style.animationDuration = '0.7s'; }
+
         try {
-            // Trouver le dossier "Covo pro" (sans le créer si absent)
             const mime = 'application/vnd.google-apps.folder';
             const q    = encodeURIComponent(`name='Covo pro' and mimeType='${mime}' and trashed=false`);
             const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`);
             const data = await resp.json();
-            if (!data.files || !data.files.length) return;
+            if (!data.files || !data.files.length) {
+                _gdSpinnerIdle(spinner, panelSpin);
+                return;
+            }
             const covoProId = data.files[0].id;
 
-            // Chercher récursivement backups + messages dans toute la hiérarchie Covo pro
             const q2 = encodeURIComponent(
                 `'${covoProId}' in ancestors and trashed=false and mimeType='application/json' and (name contains 'covo_backup' or name contains 'messages_')`
             );
@@ -22515,19 +22552,37 @@ function initAdminSections() {
             const data2 = await resp2.json();
             const files = data2.files || [];
 
+            // Mettre à jour le panneau si ouvert
             _gdUpdateLivePanel(files, covoProId);
-            if (!files.length) return;
 
-            // Mettre à jour le chip status bar
-            const latest = files[0];
-            _gdUpdateChip(latest);
+            // Toujours mettre à jour le chip (même panneau fermé)
+            if (files.length) {
+                const latest = files[0];
+                _gdUpdateChip(latest);
+                if (latest.id !== _gdLastDetectedFileId) {
+                    _gdLastDetectedFileId   = latest.id;
+                    _gdLastDetectedFileName = latest.name;
+                    _gdLastDetectedFileData = null;
+                }
+            }
 
-            if (latest.id !== _gdLastDetectedFileId) {
-                _gdLastDetectedFileId   = latest.id;
-                _gdLastDetectedFileName = latest.name;
-                _gdLastDetectedFileData = null;
+            // Timestamp dernière mise à jour
+            if (lastUpd) {
+                const now = new Date();
+                lastUpd.textContent = now.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
             }
         } catch(e) { /* silencieux */ }
+
+        // Spinner → idle après scan
+        _gdSpinnerIdle(spinner, panelSpin);
+    }
+
+    function _gdSpinnerIdle(spinner, panelSpin) {
+        // Petit délai pour que l'animation soit visible même si le scan est rapide
+        setTimeout(() => {
+            if (spinner)   { spinner.classList.remove('spinning'); spinner.classList.add('idle'); }
+            if (panelSpin) { panelSpin.style.animationDuration = '3s'; }
+        }, 400);
     }
 
     function _gdUpdateChip(latest) {
