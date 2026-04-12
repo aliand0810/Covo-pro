@@ -24146,65 +24146,125 @@ function initAdminSections() {
 
         // ── Articles — lire les <div> du ticket ──────────────────────
         const items = [];
+        const SKIP  = /total|ticket|caissier|mode|reçu|rendu|merci|covo|date|n°|bientôt|visite|mixte|espèces|carte|cb/i;
 
-        // Stratégie 1 : lire les éléments structurés du ticket COVO
-        // Format HTML : <div>Nom x2 <span>3.50€</span></div>
-        // ou : <div><span>Nom x2</span><span>3.50€</span></div>
-        const divs = body.querySelectorAll('div');
-        divs.forEach(div => {
-            const t = (div.innerText || div.textContent || '').trim();
-            if (!t || t.length > 120) return;
-            // Format "Nom x2 3.50€" ou "Nom x2 3.50"
-            const m1 = t.match(/^(.+?)\s+x(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€?$/i);
-            if (m1) {
-                const name = m1[1].trim();
-                const qty  = parseFloat(m1[2].replace(',','.'));
-                const lineTotal = parseFloat(m1[3].replace(',','.'));
-                if (name && qty > 0 && lineTotal > 0 && !name.match(/total|ticket|caissier|mode|reçu|rendu|merci|covo/i)) {
-                    items.push({ name, quantity: qty, price: parseFloat((lineTotal/qty).toFixed(4)) });
+        // ── Stratégie 1 : lire les <div> avec 2 <span> enfants directs ──────
+        // Format COVO : <div><span>Nom x2</span><span>3.50€</span></div>
+        body.querySelectorAll('div').forEach(div => {
+            // Ne prendre que les div qui ont exactement des spans comme enfants directs
+            const spans = Array.from(div.childNodes).filter(n =>
+                n.nodeType === 1 || (n.nodeType === 3 && n.textContent.trim())
+            );
+            if (spans.length < 2) return;
+
+            // Dernier enfant = prix, reste = libellé+qté
+            const lastEl   = div.lastElementChild;
+            const priceRaw = lastEl ? (lastEl.textContent||'').trim() : '';
+            const leftRaw  = (div.firstChild === lastEl) ? '' : (() => {
+                // Tout le texte sauf le dernier élément
+                let t = '';
+                div.childNodes.forEach(n => { if (n !== lastEl) t += (n.textContent||''); });
+                return t.trim();
+            })();
+
+            // Prix : "3.50€"
+            const priceM = priceRaw.match(/([\d]+[.,][\d]{2})\s*€/);
+            if (!priceM) return;
+            const lineTotal = parseFloat(priceM[1].replace(',','.'));
+            if (!lineTotal || lineTotal <= 0) return;
+
+            // Libellé + quantité : "Nom x2" ou "Nom 0.500kg × 5.00€/kg"
+            if (SKIP.test(leftRaw || priceRaw)) return;
+            if (!leftRaw) return;
+
+            // Format kg : "Carottes 0.500kg × 2.00€/kg"
+            const kgM = leftRaw.match(/^(.+?)\s+([\d]+[.,][\d]+)\s*kg/i);
+            if (kgM) {
+                const name = kgM[1].trim();
+                const qty  = parseFloat(kgM[2].replace(',','.'));
+                const ppu  = qty > 0 ? parseFloat((lineTotal/qty).toFixed(4)) : lineTotal;
+                if (name && qty > 0 && !SKIP.test(name)) {
+                    items.push({ name, quantity: qty, price: ppu, unitType: 'kg', lineTotal });
                 }
                 return;
             }
-            // Format kg "Nom 0.500kg × 5.00€/kg 2.50€"
-            const m2 = t.match(/^(.+?)\s+([\d]+[.,][\d]+)\s*kg\s*[×x]\s*([\d]+[.,][\d]{2})\s*€\/kg/i);
-            if (m2) {
-                const name = m2[1].trim();
-                const qty  = parseFloat(m2[2].replace(',','.'));
-                const pricePerKg = parseFloat(m2[3].replace(',','.'));
-                if (name && qty > 0 && !name.match(/total|ticket|caissier|mode|reçu|rendu|merci|covo/i)) {
-                    items.push({ name, quantity: qty, price: pricePerKg, unitType: 'kg' });
+
+            // Format unité : "Nom x2" ou "Nom x 2"
+            const unitM = leftRaw.match(/^(.+?)\s+x\s*(\d+(?:[.,]\d+)?)$/i);
+            if (unitM) {
+                const name = unitM[1].trim();
+                const qty  = parseFloat(unitM[2].replace(',','.'));
+                const ppu  = qty > 0 ? parseFloat((lineTotal/qty).toFixed(4)) : lineTotal;
+                if (name && qty > 0 && !SKIP.test(name)) {
+                    items.push({ name, quantity: qty, price: ppu, lineTotal });
                 }
                 return;
+            }
+
+            // Format sans quantité explicite (x1 implicite)
+            if (leftRaw.length > 1 && leftRaw.length < 80 && !SKIP.test(leftRaw)) {
+                items.push({ name: leftRaw, quantity: 1, price: lineTotal, lineTotal });
             }
         });
 
-        // Stratégie 2 (fallback) : analyse ligne par ligne du texte brut
+        // ── Stratégie 2 : lecture du texte brut ligne par ligne ──────────
         if (!items.length) {
-            const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-            lines.forEach(line => {
-                if (/total|ticket|caissier|mode|reçu|rendu|merci|covo|date|n°/i.test(line)) return;
-                const m = line.match(/^(.+?)\s+x?(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€?$/i);
-                if (m) {
-                    const qty = parseFloat(m[2].replace(',','.'));
-                    const lt  = parseFloat(m[3].replace(',','.'));
-                    items.push({ name: m[1].trim(), quantity: qty, price: parseFloat((lt/qty).toFixed(4)) });
+            text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+                if (SKIP.test(line)) return;
+                // "Nom x2 3.50€"
+                const m1 = line.match(/^(.+?)\s+x\s*(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€?$/i);
+                if (m1) {
+                    const qty = parseFloat(m1[2].replace(',','.'));
+                    const lt  = parseFloat(m1[3].replace(',','.'));
+                    items.push({ name: m1[1].trim(), quantity: qty, price: parseFloat((lt/qty).toFixed(4)), lineTotal: lt });
+                    return;
+                }
+                // "Nom 0.500 kg × 2.00€/kg" ou suivi de prix
+                const m2 = line.match(/^(.+?)\s+([\d]+[.,][\d]+)\s*kg.*?([\d]+[.,][\d]{2})\s*€?$/i);
+                if (m2) {
+                    const qty = parseFloat(m2[2].replace(',','.'));
+                    const lt  = parseFloat(m2[3].replace(',','.'));
+                    items.push({ name: m2[1].trim(), quantity: qty, price: parseFloat((lt/qty).toFixed(4)), unitType:'kg', lineTotal: lt });
                 }
             });
         }
+
+        // Résoudre les IDs produit depuis le catalogue
+        const resolvedItems = items.map(item => {
+            const prod = products.find(p =>
+                p.name && p.name.toLowerCase().trim() === item.name.toLowerCase().trim()
+            );
+            return {
+                id:        prod ? prod.id   : null,
+                name:      item.name,
+                quantity:  item.quantity,
+                price:     item.price,
+                lineTotal: item.lineTotal || parseFloat((item.price * item.quantity).toFixed(2)),
+                unitType:  item.unitType || (prod ? prod.unitType : 'unit') || 'unit',
+            };
+        });
+
+        // Résoudre le vrai nom du caissier depuis la base utilisateurs
+        const cashierUser = users && users.find(u =>
+            u.id === cashier || u.username === cashier ||
+            u.id === cashier.toUpperCase() || (cashier && cashier.includes(u.id))
+        );
+        const cashierName     = cashierUser ? cashierUser.username : cashier;
+        const cashierResolved = cashierUser ? cashierUser.id : null;
 
         return {
             id:          ticketId || ('IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)),
             _ticketId:   ticketId,
             date,
-            cashier,
-            cashierId:   null,
+            cashier:     cashierName,
+            cashierId:   cashierResolved,
             total,
             method,
-            received:    method === 'cash' ? received : total,
+            received:    method === 'cash' ? (received || total) : total,
             change,
             receivedCB:  method === 'mixed' ? receivedCB   : undefined,
             receivedCash:method === 'mixed' ? receivedCash : undefined,
-            items,
+            items:       resolvedItems,
             _imported:   true,
             _source:     fileName
         };
