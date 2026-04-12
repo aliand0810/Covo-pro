@@ -22569,9 +22569,10 @@ function initAdminSections() {
                     try {
                         // Déterminer le filtre selon le dossier
                         let nameFilter;
-                        if (sub.name === 'Messages_COVO')
-                            nameFilter = `name contains 'messages_'`;
-                        else if (sub.name === 'Tickets_Caisse')
+                        const subNameNorm = sub.name.toLowerCase().replace(/[\s_]/g,'');
+                        if (subNameNorm.includes('messagescovo') || subNameNorm.includes('messages'))
+                            nameFilter = `name contains 'messages'`;
+                        else if (subNameNorm.includes('ticketscaisse'))
                             nameFilter = `name contains 'ticket_'`;
                         else
                             nameFilter = `name contains 'covo_backup'`;
@@ -22593,8 +22594,36 @@ function initAdminSections() {
                     } catch(e) { return []; }
                 });
 
-                const results = await Promise.all(searches);
+                // Chercher aussi dans "Messages COVO" (avec espace) s'il existe hors de Covo pro
+                const msgSearch = (async () => {
+                    try {
+                        const mime2 = 'application/vnd.google-apps.folder';
+                        const qMsg  = encodeURIComponent(`name='Messages COVO' and mimeType='${mime2}' and trashed=false`);
+                        const rMsg  = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${qMsg}&fields=files(id,name)&pageSize=3`);
+                        const dMsg  = await rMsg.json();
+                        const msgFolders = dMsg.files || [];
+                        const msgResults = await Promise.all(msgFolders.map(async mf => {
+                            const qf = encodeURIComponent(`'${mf.id}' in ancestors and trashed=false and mimeType='application/json' and name contains 'messages' and modifiedTime > '${afterDate}'`);
+                            const rf = await _gdFetch(`https://www.googleapis.com/drive/v3/files?q=${qf}&orderBy=modifiedTime+desc&pageSize=10&fields=files(id,name,modifiedTime,size)`);
+                            const df = await rf.json();
+                            return (df.files||[]).map(f => ({...f, _folder:'Messages_COVO'}));
+                        }));
+                        return msgResults.flat();
+                    } catch(e) { return []; }
+                })();
+
+                const results = await Promise.all([...searches, msgSearch]);
                 results.forEach(r => allFiles.push(...r));
+
+                // Dédupliquer par ID
+                const seen = new Set();
+                const deduped = allFiles.filter(f => {
+                    if (seen.has(f.id)) return false;
+                    seen.add(f.id);
+                    return true;
+                });
+                allFiles.length = 0;
+                deduped.forEach(f => allFiles.push(f));
                 allFiles.sort((a,b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
             }
 
@@ -23478,7 +23507,7 @@ function initAdminSections() {
             const ts = now.toISOString();
             const dateStr = now.toISOString().split('T')[0];
             const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const fileName = `covo_backup_${dateStr}_${timeStr}.json`;
+            const fileName = `covo_backup_COMPLET_${dateStr}_${timeStr}.json`;
 
             const exportPayload = JSON.stringify({
                 products, categories, promoTypes, users, salesHistory,
@@ -24030,83 +24059,154 @@ function initAdminSections() {
 
     // Parser un ticket HTML pour extraire les données de vente
     function _ticketParseHTML(html, fileName) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const text = doc.body?.innerText || doc.body?.textContent || '';
+        const doc  = new DOMParser().parseFromString(html, 'text/html');
+        const body = doc.body;
+        if (!body) return null;
 
-        // ── Extraire le N° de ticket ──────────────────────────────────
+        // Texte complet pour les regex
+        const text = body.innerText || body.textContent || '';
+
+        // ── N° de ticket ─────────────────────────────────────────────
         let ticketId = null;
-        const idMatch = text.match(/[Tt]icket\s*[Nn]°?\s*[:#]?\s*([A-Za-z0-9\-]+)/)
-            || text.match(/N°\s*([A-Za-z0-9\-]+)/)
-            || text.match(/#([A-Za-z0-9\-]+)/);
-        if (idMatch) ticketId = idMatch[1].trim();
 
-        // Depuis le nom de fichier (ticket_2026-04-06_14-30-25_#123.html)
+        // 1. Depuis la balise structurée "Ticket N°123" dans le HTML
+        const ticketNodeMatch = text.match(/Ticket\s+N°\s*([A-Za-z0-9\-]+)/i);
+        if (ticketNodeMatch) ticketId = ticketNodeMatch[1].trim();
+
+        // 2. Depuis le nom de fichier ticket_2026-04-06_14-30-25_#123.html
         if (!ticketId) {
-            const fnId = fileName.match(/#([A-Za-z0-9\-]+)/);
+            const fnId = fileName.match(/[#_](\d{3,})/);
             if (fnId) ticketId = fnId[1];
         }
 
-        // Chercher le total
-        let total = 0;
-        const totalMatch = text.match(/Total[^\d]*([\d]+[.,][\d]{2})\s*€/i)
-            || text.match(/TOTAL[^\d]*([\d]+[.,][\d]{2})/i)
-            || text.match(/([\d]+[.,][\d]{2})\s*€\s*(?:TTC)?$/im);
-        if (totalMatch) total = parseFloat(totalMatch[1].replace(',', '.'));
+        // 3. Fallback regex
+        if (!ticketId) {
+            const m = text.match(/N°\s*([A-Za-z0-9\-]+)/);
+            if (m) ticketId = m[1].trim();
+        }
 
-        // Chercher la date
+        // ── Date ────────────────────────────────────────────────────
         let date = null;
-        const dateMatch = text.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})[^\d]*(\d{2}):(\d{2})/)
-            || text.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
-        if (dateMatch) {
-            try {
-                if (dateMatch[0].includes('T') || dateMatch[3].length === 4) {
-                    date = new Date(dateMatch[0].replace(' ', 'T')).toISOString();
-                } else {
-                    date = new Date(`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}T${dateMatch[4]}:${dateMatch[5]}:00`).toISOString();
-                }
-            } catch(e) {}
+
+        // Format "07/04/2026 23:18" ou "07/04/2026, 23:18:00"
+        const dateMatch1 = text.match(/(\d{2})\/(\d{2})\/(\d{4})[,\s]+(\d{2}):(\d{2})(?::(\d{2}))?/);
+        if (dateMatch1) {
+            const [, d, m, y, h, min, s] = dateMatch1;
+            date = new Date(`${y}-${m}-${d}T${h}:${min}:${s||'00'}`).toISOString();
         }
+
+        // Format ISO dans le nom de fichier ticket_2026-04-07_23-18-00_123.html
         if (!date) {
-            const fnMatch = fileName.match(/(\d{4}-\d{2}-\d{2})[_\-](\d{2}[-:]\d{2})/);
-            if (fnMatch) date = new Date(`${fnMatch[1]}T${fnMatch[2].replace('-',':')}`).toISOString();
-            else date = new Date().toISOString();
+            const fnDate = fileName.match(/(\d{4}-\d{2}-\d{2})[_\-](\d{2}[-\-]\d{2}[-\-]?\d{0,2})/);
+            if (fnDate) {
+                const timePart = fnDate[2].replace(/-/g, ':');
+                date = new Date(`${fnDate[1]}T${timePart}`).toISOString();
+            }
         }
 
-        // Caissier
+        if (!date) date = new Date().toISOString();
+
+        // ── Caissier ─────────────────────────────────────────────────
         let cashier = 'Import manuel';
-        const cashierMatch = text.match(/[Cc]aissier\s*:?\s*([A-Za-zÀ-ÿ\-_0-9 ]+)/);
-        if (cashierMatch) cashier = cashierMatch[1].trim().split('\n')[0].trim();
+        const cashierMatch = text.match(/Caissier\s*:?\s*([^\n\r,]+)/i);
+        if (cashierMatch) cashier = cashierMatch[1].trim();
 
-        // Mode de paiement
+        // ── Mode de paiement ─────────────────────────────────────────
         let method = 'cash';
-        if (/carte|cb|bancaire/i.test(text))  method = 'cb';
-        if (/mixte|espèces.*carte|cb.*espèces/i.test(text)) method = 'mixed';
+        let received = 0, change = 0, receivedCB = 0, receivedCash = 0;
 
-        // Articles
-        const items = [];
-        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-        lines.forEach(line => {
-            const m = line.match(/^(.+?)\s+x?\s*(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€/i);
-            if (m) {
-                items.push({ name: m[1].trim(), quantity: parseFloat(m[2].replace(',','.')), price: parseFloat(m[3].replace(',','.')) });
-            }
-        });
+        if (/mixte/i.test(text)) {
+            method = 'mixed';
+            const cbM    = text.match(/CB\s*:\s*([\d]+[.,][\d]{2})/i);
+            const cashM  = text.match(/Espèces\s*:\s*([\d]+[.,][\d]{2})/i);
+            const rendM  = text.match(/Rendu\s*:\s*([\d]+[.,][\d]{2})/i);
+            if (cbM)   receivedCB   = parseFloat(cbM[1].replace(',','.'));
+            if (cashM) receivedCash = parseFloat(cashM[1].replace(',','.'));
+            if (rendM) change       = parseFloat(rendM[1].replace(',','.'));
+        } else if (/carte|cb/i.test(text)) {
+            method = 'cb';
+        } else {
+            method = 'cash';
+            const recuM  = text.match(/Reçu\s*:\s*([\d]+[.,][\d]{2})/i);
+            const renduM = text.match(/Rendu\s*:\s*([\d]+[.,][\d]{2})/i);
+            if (recuM)  received = parseFloat(recuM[1].replace(',','.'));
+            if (renduM) change   = parseFloat(renduM[1].replace(',','.'));
+        }
+
+        // ── Total ────────────────────────────────────────────────────
+        let total = 0;
+        // Chercher "TOTAL: 12.50€" ou "TOTAL FINAL : 12.50€"
+        const totalMatch = text.match(/TOTAL\s*(?:FINAL)?\s*:?\s*([\d]+[.,][\d]{2})\s*€/i)
+            || text.match(/Total\s*:?\s*([\d]+[.,][\d]{2})\s*€/i);
+        if (totalMatch) total = parseFloat(totalMatch[1].replace(',', '.'));
 
         if (!total || total <= 0) return null;
 
+        if (method === 'cash' && !received) received = total;
+
+        // ── Articles — lire les <div> du ticket ──────────────────────
+        const items = [];
+
+        // Stratégie 1 : lire les éléments structurés du ticket COVO
+        // Format HTML : <div>Nom x2 <span>3.50€</span></div>
+        // ou : <div><span>Nom x2</span><span>3.50€</span></div>
+        const divs = body.querySelectorAll('div');
+        divs.forEach(div => {
+            const t = (div.innerText || div.textContent || '').trim();
+            if (!t || t.length > 120) return;
+            // Format "Nom x2 3.50€" ou "Nom x2 3.50"
+            const m1 = t.match(/^(.+?)\s+x(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€?$/i);
+            if (m1) {
+                const name = m1[1].trim();
+                const qty  = parseFloat(m1[2].replace(',','.'));
+                const lineTotal = parseFloat(m1[3].replace(',','.'));
+                if (name && qty > 0 && lineTotal > 0 && !name.match(/total|ticket|caissier|mode|reçu|rendu|merci|covo/i)) {
+                    items.push({ name, quantity: qty, price: parseFloat((lineTotal/qty).toFixed(4)) });
+                }
+                return;
+            }
+            // Format kg "Nom 0.500kg × 5.00€/kg 2.50€"
+            const m2 = t.match(/^(.+?)\s+([\d]+[.,][\d]+)\s*kg\s*[×x]\s*([\d]+[.,][\d]{2})\s*€\/kg/i);
+            if (m2) {
+                const name = m2[1].trim();
+                const qty  = parseFloat(m2[2].replace(',','.'));
+                const pricePerKg = parseFloat(m2[3].replace(',','.'));
+                if (name && qty > 0 && !name.match(/total|ticket|caissier|mode|reçu|rendu|merci|covo/i)) {
+                    items.push({ name, quantity: qty, price: pricePerKg, unitType: 'kg' });
+                }
+                return;
+            }
+        });
+
+        // Stratégie 2 (fallback) : analyse ligne par ligne du texte brut
+        if (!items.length) {
+            const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+            lines.forEach(line => {
+                if (/total|ticket|caissier|mode|reçu|rendu|merci|covo|date|n°/i.test(line)) return;
+                const m = line.match(/^(.+?)\s+x?(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€?$/i);
+                if (m) {
+                    const qty = parseFloat(m[2].replace(',','.'));
+                    const lt  = parseFloat(m[3].replace(',','.'));
+                    items.push({ name: m[1].trim(), quantity: qty, price: parseFloat((lt/qty).toFixed(4)) });
+                }
+            });
+        }
+
         return {
-            id:        ticketId || ('IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)),
-            _ticketId: ticketId,  // toujours présent pour la vérification doublon
+            id:          ticketId || ('IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)),
+            _ticketId:   ticketId,
             date,
             cashier,
-            cashierId: null,
+            cashierId:   null,
             total,
             method,
-            received:  total,
-            change:    0,
+            received:    method === 'cash' ? received : total,
+            change,
+            receivedCB:  method === 'mixed' ? receivedCB   : undefined,
+            receivedCash:method === 'mixed' ? receivedCash : undefined,
             items,
-            _imported: true,
-            _source:   fileName
+            _imported:   true,
+            _source:     fileName
         };
     }
 
@@ -24398,7 +24498,7 @@ function initAdminSections() {
             const now      = new Date(ts);
             const dateStr  = now.toISOString().split('T')[0];
             const timeStr  = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const fileName = `covo_backup_${dateStr}_${timeStr}.json`;
+            const fileName = `covo_backup_PARAMS_${dateStr}_${timeStr}.json`;
             await _gdUploadToHierarchy('parametres', now, fileName, payload, 'application/json');
         } catch(e) { console.warn('GDrive paramètres upload error:', e); }
     };
