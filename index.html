@@ -24080,17 +24080,13 @@ function initAdminSections() {
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
     async function _gdDoSave() {
         if (!_gdConnected || !_gdAccessToken || _gdSaving) return;
-        if (!_gdFolderId) {
-            console.warn('GDrive save: aucun dossier sélectionné');
-            return;
-        }
         _gdSaving = true;
         _gdShowSaving(true);
         try {
-            const now = new Date();
-            const ts = now.toISOString();
-            const dateStr = now.toISOString().split('T')[0];
-            const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const now      = new Date();
+            const ts       = now.toISOString();
+            const dateStr  = now.toISOString().split('T')[0];
+            const timeStr  = now.toTimeString().split(' ')[0].replace(/:/g, '-');
             const fileName = `covo_backup_COMPLET_${dateStr}_${timeStr}.json`;
 
             const exportPayload = JSON.stringify({
@@ -24107,90 +24103,61 @@ function initAdminSections() {
                 covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
                 covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
                 covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
-                covo_messages:       JSON.parse(localStorage.getItem('covo_messages')       || '[]'),
-                covo_login_history:  JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
-                covo_settings:       JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
-                covo_aw_panels:      localStorage.getItem('covo_aw_panels') || null,
-                covo_modules_config:  localStorage.getItem('covo_modules_config')  || null,
-                covo_custom_tabs:     localStorage.getItem('covo_custom_tabs')     || null,
-                covo_tab_order:       localStorage.getItem('covo_tab_order')       || null,
-                covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
-                covo_presence:        localStorage.getItem('covo_presence')        || null,
-                covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
+                covo_messages:        JSON.parse(localStorage.getItem('covo_messages')         || '[]'),
+                covo_login_history:   JSON.parse(localStorage.getItem('covo_login_history')    || '[]'),
+                covo_settings:        JSON.parse(localStorage.getItem('covo_settings')         || '{}'),
+                covo_aw_panels:       localStorage.getItem('covo_aw_panels')      || null,
+                covo_modules_config:  localStorage.getItem('covo_modules_config') || null,
+                covo_custom_tabs:     localStorage.getItem('covo_custom_tabs')    || null,
+                covo_tab_order:       localStorage.getItem('covo_tab_order')      || null,
+                covo_night_tariff:    localStorage.getItem('covo_night_tariff')   || null,
+                covo_presence:        localStorage.getItem('covo_presence')       || null,
+                covo_inv_questions:   localStorage.getItem('covo_inv_questions')  || null,
                 _version: 20,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
-                _folderName: _gdFolderName,
+                _folderName: 'Covo pro/Paramètres',
                 _fileName: fileName
             }, null, 2);
 
-            // ── GARDE ANTI-PERTE : vérifier que le nouveau payload n'est pas anormalement petit ──
+            // ── GARDE ANTI-PERTE ────────────────────────────────────────
             const newSize  = new Blob([exportPayload]).size;
             const lastSize = parseInt(localStorage.getItem('gdrive_last_payload_size') || '0');
-            const SEUIL_ALERTE   = 0.85; // alerte si < 85% de la taille précédente
-            const SEUIL_BLOCAGE  = 0.60; // blocage si < 60% (perte critique)
+            const SEUIL_ALERTE  = 0.85;
+            const SEUIL_BLOCAGE = 0.60;
 
             if (lastSize > 0 && newSize < lastSize * SEUIL_BLOCAGE) {
-                // Perte critique — bloquer la sauvegarde et alerter
                 const perte = Math.round((1 - newSize / lastSize) * 100);
                 _gdSaving = false; _gdShowSaving(false);
                 _gdShowSizeAlert(newSize, lastSize, perte, exportPayload, fileName, ts, true);
                 return;
             }
             if (lastSize > 0 && newSize < lastSize * SEUIL_ALERTE) {
-                // Alerte — sauvegarder quand même mais signaler
                 const perte = Math.round((1 - newSize / lastSize) * 100);
-                console.warn(`⚠️ GDrive save: taille réduite de ${perte}% (${_gdFmtFileSize(String(lastSize))} → ${_gdFmtFileSize(String(newSize))})`);
-                showScanToast(`⚠️ Sauvegarde réduite de ${perte}% — vérifiez vos données`, 'info');
+                console.warn(`⚠️ GDrive save: taille réduite de ${perte}%`);
+                showScanToast(`⚠️ Sauvegarde réduite de ${perte}%`, 'info');
             }
-            // Toujours créer un NOUVEAU fichier (multipart)
-            const metadata = JSON.stringify({ name: fileName, parents: [_gdFolderId] });
-            const boundary = '----CovoGDriveBoundary' + Date.now();
-            const body = 
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json\r\n\r\n' +
-                exportPayload + '\r\n' +
-                '--' + boundary + '--';
 
-            const cr = await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                method: 'POST',
-                headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
-                body: body
-            });
-            const result = await cr.json();
-            _gdFileId = result.id;
+            // ── Sauvegarder dans Covo pro / Paramètres / YYYY / MM / DD ─
+            const fileId = await _gdUploadToHierarchy('parametres', now, fileName, exportPayload, 'application/json');
+            if (fileId) _gdFileId = fileId;
 
-            // Mémoriser la taille du payload pour la prochaine vérification
             localStorage.setItem('gdrive_last_payload_size', String(newSize));
             localStorage.setItem('gdrive_last_save', ts);
             localStorage.setItem('gdrive_last_file', fileName);
-            _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + (_gdFolderName ? ' · 📁 ' + _gdFolderName : ''), ts);
+            _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + ' · 📁 Covo pro', ts);
 
-            // Copier aussi dans la hiérarchie Paramètres/YYYY/MM-Mois/DD/
-            setTimeout(() => { try { window._gdUploadParametres(exportPayload, ts); } catch(e) {} }, 500);
-            
-            // Flash vert sur la status bar
+            // Flash vert
             const bar = document.getElementById('gdrive-status-bar');
             if (bar) {
                 bar.style.borderBottom = '2px solid #2ecc71';
                 setTimeout(() => { bar.style.borderBottom = '1px solid rgba(255,255,255,0.06)'; }, 1200);
             }
 
-            // Mettre à jour le compteur + chip status bar
-            _gdUpdateFileCount();
-            setTimeout(_gdPollLatestFile, 1000); // mise à jour du chip après 1s
-
-        } catch(err) {
-            console.error('GDrive save error:', err);
-            _gdUpdateStatusBar(true, 'Google Drive — Erreur sauvegarde ⚠️');
-            if (err.message === 'Token expiré') {
-                _gdConnected = false;
-                _gdUpdateUI(false);
-                _gdUpdateStatusBar(false, 'Google Drive — Déconnecté (session expirée)');
-            }
+            console.log(`✅ COMPLET sauvegardé → Covo pro/Paramètres/.../${fileName}`);
+        } catch(e) {
+            console.error('_gdDoSave error:', e);
+            showScanToast('❌ Erreur sauvegarde Drive : ' + e.message, 'error');
         } finally {
             _gdSaving = false;
             _gdShowSaving(false);
