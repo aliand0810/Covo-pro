@@ -16552,7 +16552,6 @@ logout = function(skipConfirmation = false) {
 
     // ===== UTILITAIRES & INIT =====
     function saveAll() {
-        localStorage.setItem('covo_products',             JSON.stringify(products));
         localStorage.setItem('covo_categories',           JSON.stringify(categories));
         localStorage.setItem('covo_promos',               JSON.stringify(promoTypes));
         localStorage.setItem('covo_users',                JSON.stringify(users));
@@ -16573,8 +16572,10 @@ logout = function(skipConfirmation = false) {
         if (typeof window._gdTriggerParamsSave === 'function') setTimeout(() => window._gdTriggerParamsSave(), 1000);
         renderProducts(); updateProgress(); renderLogo();
     }
-
-    // Sauvegarde silencieuse en arrière-plan (sans dialog ni refresh visuel lourd)
+    // Exposer pour appel depuis l'IIFE Drive
+    window.saveAll      = saveAll;
+    window.renderAll    = function() { if (typeof renderAll === 'function') renderAll(); };
+    window.updateProgress = function() { if (typeof updateProgress === 'function') updateProgress(); };
     function autoSave() {
         localStorage.setItem('covo_products',            JSON.stringify(products));
         localStorage.setItem('covo_categories',          JSON.stringify(categories));
@@ -25714,28 +25715,28 @@ function initAdminSections() {
         // ── Fermer les modales ouvertes ───────────────────────────────
         ['gdrive-restore-modal','gd-restore-choice-modal','gd-smart-restore-modal'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.style.display = 'none';
+            if (el) { el.style.display = 'none'; el.remove && el.remove(); }
         });
 
         // ── Sauvegarder en localStorage et rafraîchir l'UI ───────────
         _gdRestoring = true;
-        try { saveAll(); } catch(e) {}
+        
+        // saveAll via window.saveAll exposé
+        try { window.saveAll(); } catch(e) { console.error('saveAll error:', e); }
 
-        // Rafraîchir dans l'ordre logique
-        const refresh = [
-            'renderAll','renderCatalogueTab','renderDisabledProducts',
-            'refreshRetours','invUpdateStats','_updateExpiryMarquee',
-            'updateProgress','updateStats',
-        ];
-        refresh.forEach(fn => {
-            try { if (typeof window[fn] === 'function') window[fn](); } catch(e) {}
-        });
-        // Appliquer les modules
-        try { if (typeof window._modulesApply === 'function') window._modulesApply(); } catch(e) {}
-        // Appliquer les onglets custom
-        try { if (typeof window._customTabsApply === 'function') window._customTabsApply(); } catch(e) {}
-
-        setTimeout(() => { _gdRestoring = false; }, 3000);
+        // Rafraîchir l'UI via les fonctions exposées
+        setTimeout(() => {
+            try { if (typeof renderAll === 'function') renderAll(); } catch(e) {}
+            try { if (typeof renderCatalogueTab === 'function') renderCatalogueTab(); } catch(e) {}
+            try { if (typeof renderDisabledProducts === 'function') renderDisabledProducts(); } catch(e) {}
+            try { if (typeof refreshRetours === 'function') refreshRetours(); } catch(e) {}
+            try { if (typeof invUpdateStats === 'function') invUpdateStats(); } catch(e) {}
+            try { if (typeof _updateExpiryMarquee === 'function') _updateExpiryMarquee(); } catch(e) {}
+            try { if (typeof updateProgress === 'function') updateProgress(); } catch(e) {}
+            try { if (typeof window._modulesApply === 'function') window._modulesApply(); } catch(e) {}
+            try { if (typeof window._customTabsApply === 'function') window._customTabsApply(); } catch(e) {}
+            _gdRestoring = false;
+        }, 100);
 
         // ── Toast récapitulatif ───────────────────────────────────────
         const modeLabels = {
