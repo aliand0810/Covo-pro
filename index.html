@@ -24348,88 +24348,6 @@ function initAdminSections() {
         }
     };
 
-    async function _gdApplyRestore(data, modeOrFileName) {
-        // modeOrFileName peut être : 'ventes' | 'params' | 'tout' | un nom de fichier (string)
-        const mode = ['ventes','params','tout'].includes(modeOrFileName) ? modeOrFileName : 'tout';
-        const fileName = typeof modeOrFileName === 'string' && !['ventes','params','tout'].includes(modeOrFileName)
-            ? modeOrFileName : (data._fileName || 'Drive');
-
-        try {
-            const restoreAll    = mode === 'tout';
-            const restoreVentes = mode === 'ventes' || restoreAll;
-            const restoreParams = mode === 'params' || restoreAll;
-
-            // ── VENTES ────────────────────────────────────────────────
-            if (restoreVentes) {
-                if (data.salesHistory) salesHistory = data.salesHistory;
-                if (data.pendingSync)  pendingSync  = data.pendingSync;
-            }
-
-            // ── PARAMÈTRES ────────────────────────────────────────────
-            if (restoreParams) {
-                if (data.products)          products = data.products.map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
-                if (data.categories)        categories = data.categories;
-                if (data.promoTypes)        promoTypes = data.promoTypes;
-                if (data.users)             users = data.users.map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
-                if (data.appSettings)     { appSettings = data.appSettings; if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5; if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false; }
-                if (data.nightTariffSettings) nightTariffSettings = data.nightTariffSettings;
-                if (data.cashierPermissions)  cashierPermissions  = data.cashierPermissions;
-                if (data.deliveryGoal != null) {
-                    deliveryGoal = parseFloat(data.deliveryGoal) || 150;
-                    localStorage.setItem('covo_delivery_goal', deliveryGoal);
-                }
-                if (data.covo_dark_mode    != null) localStorage.setItem('covo_dark_mode',    data.covo_dark_mode);
-                if (data.covo_retours)     localStorage.setItem('covo_retours',     JSON.stringify(data.covo_retours));
-                if (data.covo_marchandise) localStorage.setItem('covo_marchandise', JSON.stringify(data.covo_marchandise));
-                if (data.covo_echeances)   localStorage.setItem('covo_echeances',   JSON.stringify(data.covo_echeances));
-                if (data.covo_rhist)       localStorage.setItem('covo_rhist',       JSON.stringify(data.covo_rhist));
-                if (data.covo_hist)        localStorage.setItem('covo_hist',        JSON.stringify(data.covo_hist));
-                if (data.covo_sales)       localStorage.setItem('covo_sales',       JSON.stringify(data.covo_sales));
-                if (data.covo_investissements) localStorage.setItem('covo_investissements', JSON.stringify(data.covo_investissements));
-                if (data.covo_inv_categories)  localStorage.setItem('covo_inv_categories',  JSON.stringify(data.covo_inv_categories));
-                if (data.covo_ech_categories)  localStorage.setItem('covo_ech_categories',  JSON.stringify(data.covo_ech_categories));
-                if (data.covo_messages)        localStorage.setItem('covo_messages',         JSON.stringify(data.covo_messages));
-                if (data.covo_login_history)   localStorage.setItem('covo_login_history',    JSON.stringify(data.covo_login_history));
-                if (data.covo_settings)        localStorage.setItem('covo_settings',          JSON.stringify(data.covo_settings));
-                if (data.covo_aw_panels)       localStorage.setItem('covo_aw_panels',         data.covo_aw_panels);
-                if (data.covo_modules_config)  localStorage.setItem('covo_modules_config',    data.covo_modules_config);
-                if (data.covo_custom_tabs)     localStorage.setItem('covo_custom_tabs',       data.covo_custom_tabs);
-                if (data.covo_tab_order)       localStorage.setItem('covo_tab_order',         data.covo_tab_order);
-                if (data.covo_night_tariff)    localStorage.setItem('covo_night_tariff',      data.covo_night_tariff);
-                if (data.covo_presence)        localStorage.setItem('covo_presence',          data.covo_presence);
-                if (data.covo_inv_questions)   localStorage.setItem('covo_inv_questions',     data.covo_inv_questions);
-            }
-
-            const modal = document.getElementById('gdrive-restore-modal');
-            if (modal) modal.style.display = 'none';
-
-            _gdRestoring = true;
-            saveAll();
-
-            // ── Rafraîchissement complet de l'interface ─────────────
-            if (typeof renderAll === 'function')              renderAll();
-            if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
-            if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
-            if (typeof refreshRetours === 'function')         refreshRetours();
-            if (typeof invUpdateStats === 'function')         invUpdateStats();
-            if (typeof _updateExpiryMarquee === 'function')   _updateExpiryMarquee();
-            // Objectif du jour
-            if (typeof updateProgress === 'function')         updateProgress();
-            // Statistiques
-            if (typeof updateStats === 'function')            updateStats();
-
-            setTimeout(() => { _gdRestoring = false; }, 3000);
-
-            const modeLabels = { ventes:'💰 Ventes', params:'⚙️ Paramètres', tout:'📦 Tout' };
-            const nbP = restoreParams ? (data.products||[]).length : '—';
-            const nbV = restoreVentes ? (data.salesHistory||[]).filter(s=>!s.cancelled).length : '—';
-            showScanToast(`✅ Restauré [${modeLabels[mode]}] — ${nbP} produit(s), ${nbV} vente(s)`, 'success');
-        } catch(err) {
-            console.error('GDrive apply restore error:', err);
-            showScanToast('❌ Erreur lors de la restauration : ' + err.message, 'error');
-        }
-    }
-
     let _gdRestoring = false; // Flag pour bloquer la sauvegarde pendant une restauration
 
     // ---- DISCONNECT ----
@@ -25626,20 +25544,47 @@ function initAdminSections() {
         const nVentes = (data.salesHistory||[]).length;
         const nProd   = (data.products||[]).length;
         const nUsers  = (data.users||[]).length;
-        const typeCfg = { ventes:{label:'💰 Ventes uniquement',bg:'#e8f5e9',c:'#1b5e20'}, parametres:{label:'⚙️ Paramètres uniquement',bg:'#e8f0fe',c:'#1a237e'}, complet:{label:'📦 Sauvegarde complète',bg:'#fff3e0',c:'#e65100'} };
-        const tc = typeCfg[type] || typeCfg.complet;
-        const os = (bg,bc) => `display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid ${bc}44;background:${bg};cursor:pointer;margin-bottom:6px;`;
+        const nMsg    = (data.covo_messages||[]).length;
+        const nHist   = (data.covo_login_history||[]).length;
 
         let opts = '';
         if (type === 'ventes') {
-            opts = `<label style="${os('#e8f5e9','#2e7d32')}"><input type="radio" name="sr-mode" value="ventes" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Restaurer les ventes uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) · vos paramètres actuels sont conservés</div></div></label>`;
+            opts = `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #2e7d3244;background:#e8f5e9;cursor:pointer;margin-bottom:6px;">
+                <input type="radio" name="sr-mode" value="ventes" checked style="margin-top:2px;flex-shrink:0;">
+                <div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Restaurer les ventes</div>
+                <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) — paramètres conservés</div></div></label>`;
         } else if (type === 'parametres') {
-            opts = `<label style="${os('#e8f0fe','#3949ab')}"><input type="radio" name="sr-mode" value="params" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Restaurer les paramètres uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) · ventes actuelles conservées</div></div></label>`;
+            opts = `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #3949ab44;background:#e8f0fe;cursor:pointer;margin-bottom:6px;">
+                <input type="radio" name="sr-mode" value="params" checked style="margin-top:2px;flex-shrink:0;">
+                <div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Restaurer les paramètres</div>
+                <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) — ventes conservées</div></div></label>`;
+        } else if (fileName && (fileName.startsWith('messages_') || type === 'messages')) {
+            opts = `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #9b59b644;background:#f3e5f5;cursor:pointer;margin-bottom:6px;">
+                <input type="radio" name="sr-mode" value="messages" checked style="margin-top:2px;flex-shrink:0;">
+                <div><div style="font-weight:700;color:#6a1b9a;font-size:0.85rem;">💬 Restaurer les messages COVO</div>
+                <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nMsg} message(s)</div></div></label>`;
         } else {
             opts = `
-                <label style="${os('#fff3e0','#e65100')}"><input type="radio" name="sr-mode" value="tout" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#e65100;font-size:0.85rem;">📦 Tout restaurer</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">Ventes + paramètres — remplace toutes les données locales</div></div></label>
-                <label style="${os('#e8f5e9','#2e7d32')}"><input type="radio" name="sr-mode" value="ventes" style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Ventes uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) · paramètres actuels conservés</div></div></label>
-                <label style="${os('#e8f0fe','#3949ab')}"><input type="radio" name="sr-mode" value="params" style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Paramètres uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) · ventes actuelles conservées</div></div></label>`;
+                <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #e6500044;background:#fff3e0;cursor:pointer;margin-bottom:6px;">
+                    <input type="radio" name="sr-mode" value="tout" checked style="margin-top:2px;flex-shrink:0;">
+                    <div><div style="font-weight:700;color:#e65100;font-size:0.85rem;">📦 Tout restaurer</div>
+                    <div style="font-size:0.73rem;color:#555;margin-top:2px;">Ventes + paramètres + messages — remplace toutes les données</div></div></label>
+                <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #2e7d3244;background:#e8f5e9;cursor:pointer;margin-bottom:6px;">
+                    <input type="radio" name="sr-mode" value="ventes" style="margin-top:2px;flex-shrink:0;">
+                    <div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Ventes uniquement</div>
+                    <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) — paramètres actuels conservés</div></div></label>
+                <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #3949ab44;background:#e8f0fe;cursor:pointer;margin-bottom:6px;">
+                    <input type="radio" name="sr-mode" value="params" style="margin-top:2px;flex-shrink:0;">
+                    <div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Paramètres uniquement</div>
+                    <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) — ventes conservées</div></div></label>
+                ${nMsg>0?`<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #9b59b644;background:#f3e5f5;cursor:pointer;margin-bottom:6px;">
+                    <input type="radio" name="sr-mode" value="messages" style="margin-top:2px;flex-shrink:0;">
+                    <div><div style="font-weight:700;color:#6a1b9a;font-size:0.85rem;">💬 Messages COVO</div>
+                    <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nMsg} message(s)</div></div></label>`:''}
+                ${nHist>0?`<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid #37474f44;background:#eceff1;cursor:pointer;margin-bottom:6px;">
+                    <input type="radio" name="sr-mode" value="historique" style="margin-top:2px;flex-shrink:0;">
+                    <div><div style="font-weight:700;color:#37474f;font-size:0.85rem;">📋 Historique connexions</div>
+                    <div style="font-size:0.73rem;color:#555;margin-top:2px;">${nHist} connexion(s)</div></div></label>`:''}`;
         }
 
         const prev = document.getElementById('gd-smart-restore-modal');
@@ -25675,43 +25620,134 @@ function initAdminSections() {
         document.getElementById('gd-smart-restore-modal')?.remove();
     };
 
+    // ═══════════════════════════════════════════════════════════════
+    // RESTAURATION UNIFIÉE — ventes | params | messages | tout
+    // ═══════════════════════════════════════════════════════════════
     window._gdApplyRestore = function(data, mode) {
-        if (mode === 'ventes' || mode === 'tout') {
-            if (data.salesHistory) { salesHistory = data.salesHistory; localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory)); }
-            if (data.pendingSync)  { pendingSync  = data.pendingSync;  localStorage.setItem('covo_pending_sync',  JSON.stringify(pendingSync)); }
+        if (!data) { showScanToast('❌ Aucune donnée à restaurer', 'error'); return; }
+
+        // Normaliser le mode selon le _type du fichier si non fourni
+        if (!mode || mode === 'auto') {
+            const t = data._type || 'complet';
+            mode = t === 'ventes' ? 'ventes' : t === 'parametres' ? 'params' : 'tout';
         }
-        if (mode === 'params' || mode === 'tout') {
-            if (data.products)            { products = data.products.map(p => ({ unitType:'unit', pricePerKg:null, ...p })); localStorage.setItem('products', JSON.stringify(products)); }
-            if (data.categories)          { categories = data.categories; localStorage.setItem('categories', JSON.stringify(categories)); }
-            if (data.promoTypes)          { promoTypes = data.promoTypes; localStorage.setItem('promoTypes', JSON.stringify(promoTypes)); }
-            if (data.users)               { users = data.users; localStorage.setItem('users', JSON.stringify(users)); }
-            if (data.appSettings)         { Object.assign(appSettings, data.appSettings); localStorage.setItem('appSettings', JSON.stringify(appSettings)); }
-            if (data.nightTariffSettings) { Object.assign(nightTariffSettings, data.nightTariffSettings); localStorage.setItem('nightTariffSettings', JSON.stringify(nightTariffSettings)); }
-            if (data.cashierPermissions)  { Object.assign(cashierPermissions, data.cashierPermissions); localStorage.setItem('cashierPermissions', JSON.stringify(cashierPermissions)); }
-            if (data.deliveryGoal != null){ deliveryGoal = data.deliveryGoal; localStorage.setItem('deliveryGoal', String(deliveryGoal)); }
-            ['covo_retours','covo_marchandise','covo_echeances','covo_rhist','covo_hist','covo_investissements','covo_inv_categories','covo_ech_categories','covo_messages','covo_login_history','covo_settings','covo_aw_panels','covo_modules_config','covo_night_tariff','covo_presence','covo_inv_questions','covo_dark_mode'].forEach(k => {
-                if (data[k] != null) localStorage.setItem(k, typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]));
-            });
-            // Appliquer le mode nuit immédiatement si restauré
-            const darkMode = localStorage.getItem('covo_dark_mode');
-            if (darkMode !== null) {
-                if (darkMode === 'true') document.body.classList.add('dark-mode');
-                else document.body.classList.remove('dark-mode');
+
+        const restoreAll     = mode === 'tout';
+        const restoreVentes  = mode === 'ventes'   || restoreAll;
+        const restoreParams  = mode === 'params'   || restoreAll;
+        const restoreMsg     = mode === 'messages' || restoreAll;
+        const restoreHist    = mode === 'historique'|| restoreAll;
+
+        try {
+            // ── 1. VENTES ────────────────────────────────────────────
+            if (restoreVentes) {
+                if (data.salesHistory) {
+                    salesHistory = data.salesHistory;
+                    localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory));
+                }
+                if (data.pendingSync) {
+                    pendingSync = data.pendingSync;
+                    localStorage.setItem('covo_pending_sync', JSON.stringify(pendingSync));
+                }
             }
-            // Appliquer les modules si restaurés
-            if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
+
+            // ── 2. PARAMÈTRES ─────────────────────────────────────────
+            if (restoreParams) {
+                if (data.products) {
+                    products = data.products.map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
+                    localStorage.setItem('products', JSON.stringify(products));
+                }
+                if (data.categories)  { categories = data.categories;  localStorage.setItem('categories',  JSON.stringify(categories)); }
+                if (data.promoTypes)  { promoTypes = data.promoTypes;   localStorage.setItem('promoTypes',   JSON.stringify(promoTypes)); }
+                if (data.users)       {
+                    users = data.users.map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
+                    localStorage.setItem('users', JSON.stringify(users));
+                }
+                if (data.appSettings) {
+                    appSettings = { ...appSettings, ...data.appSettings };
+                    if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
+                    localStorage.setItem('appSettings', JSON.stringify(appSettings));
+                }
+                if (data.nightTariffSettings) { nightTariffSettings = data.nightTariffSettings; localStorage.setItem('nightTariffSettings', JSON.stringify(nightTariffSettings)); }
+                if (data.cashierPermissions)  { cashierPermissions  = data.cashierPermissions;  localStorage.setItem('cashierPermissions',  JSON.stringify(cashierPermissions)); }
+                if (data.deliveryGoal != null) {
+                    deliveryGoal = parseFloat(data.deliveryGoal) || 150;
+                    localStorage.setItem('covo_delivery_goal', String(deliveryGoal));
+                }
+                // Clés localStorage simples
+                const lsKeys = [
+                    'covo_dark_mode','covo_retours','covo_marchandise','covo_echeances',
+                    'covo_rhist','covo_hist','covo_sales','covo_investissements',
+                    'covo_inv_categories','covo_ech_categories','covo_settings',
+                    'covo_aw_panels','covo_modules_config','covo_custom_tabs','covo_tab_order',
+                    'covo_night_tariff','covo_presence','covo_inv_questions',
+                ];
+                lsKeys.forEach(k => {
+                    if (data[k] != null)
+                        localStorage.setItem(k, typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]));
+                });
+                // Dark mode immédiat
+                const dm = localStorage.getItem('covo_dark_mode');
+                if (dm === 'true') document.body.classList.add('dark-mode');
+                else if (dm === 'false') document.body.classList.remove('dark-mode');
+            }
+
+            // ── 3. MESSAGES ───────────────────────────────────────────
+            if (restoreMsg && data.covo_messages) {
+                localStorage.setItem('covo_messages', JSON.stringify(data.covo_messages));
+            }
+
+            // ── 4. HISTORIQUE CONNEXIONS ──────────────────────────────
+            if (restoreHist && data.covo_login_history) {
+                localStorage.setItem('covo_login_history', JSON.stringify(data.covo_login_history));
+            }
+
+            // ── 5. TICKETS (dans salesHistory) ────────────────────────
+            // Les tickets font partie des ventes — déjà couverts par restoreVentes
+
+        } catch(err) {
+            console.error('_gdApplyRestore error:', err);
+            showScanToast('❌ Erreur restauration : ' + err.message, 'error');
+            return;
         }
 
-        // Appliquer sans rechargement de page
-        try { saveAll(); } catch(e) {}
-        try { renderAll(); } catch(e) {}
-        try { if (typeof renderProducts === 'function') renderProducts(); } catch(e) {}
-        try { if (typeof renderStatsHistory === 'function') renderStatsHistory(); } catch(e) {}
-        try { if (typeof invRender === 'function') invRender(); } catch(e) {}
-        try { if (typeof refreshRetours === 'function') refreshRetours(); } catch(e) {}
+        // ── Fermer les modales ouvertes ───────────────────────────────
+        ['gdrive-restore-modal','gd-restore-choice-modal','gd-smart-restore-modal'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
 
-        const modeLabel = mode === 'ventes' ? '💰 Ventes' : mode === 'params' ? '⚙️ Paramètres' : '📦 Tout';
-        showScanToast(`✅ Restauration ${modeLabel} appliquée avec succès`, 'success');
+        // ── Sauvegarder en localStorage et rafraîchir l'UI ───────────
+        _gdRestoring = true;
+        try { saveAll(); } catch(e) {}
+
+        // Rafraîchir dans l'ordre logique
+        const refresh = [
+            'renderAll','renderCatalogueTab','renderDisabledProducts',
+            'refreshRetours','invUpdateStats','_updateExpiryMarquee',
+            'updateProgress','updateStats',
+        ];
+        refresh.forEach(fn => {
+            try { if (typeof window[fn] === 'function') window[fn](); } catch(e) {}
+        });
+        // Appliquer les modules
+        try { if (typeof window._modulesApply === 'function') window._modulesApply(); } catch(e) {}
+        // Appliquer les onglets custom
+        try { if (typeof window._customTabsApply === 'function') window._customTabsApply(); } catch(e) {}
+
+        setTimeout(() => { _gdRestoring = false; }, 3000);
+
+        // ── Toast récapitulatif ───────────────────────────────────────
+        const modeLabels = {
+            ventes:'💰 Ventes', params:'⚙️ Paramètres', messages:'💬 Messages',
+            historique:'📋 Historique', tout:'📦 Tout'
+        };
+        const nbV = restoreVentes ? (data.salesHistory||[]).filter(s=>!s.cancelled).length : null;
+        const nbP = restoreParams ? (data.products||[]).length : null;
+        const parts = [];
+        if (nbV !== null) parts.push(nbV + ' vente(s)');
+        if (nbP !== null) parts.push(nbP + ' article(s)');
+        showScanToast(`✅ Restauration [${modeLabels[mode]||mode}]${parts.length?' — '+parts.join(', '):''} appliquée`, 'success');
     };
 
     // ---- Getter d'état public (utilisé par openAdminWelcomeModal et autres) ----
