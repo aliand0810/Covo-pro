@@ -23334,9 +23334,25 @@ function initAdminSections() {
             return;
         }
 
+        // Filtrage intelligent : utilise le dossier source en priorité
         const filtered = _gdAllFiles.filter(f => {
             if (_gdLiveFilter === 'all') return true;
-            return _gdGetType(f).key === _gdLiveFilter;
+            const folder = (f._folder || '').toLowerCase().replace(/[\s_]/g,'');
+            const name   = f.name || '';
+            const t      = _gdGetType(f);
+
+            if (_gdLiveFilter === 'params') {
+                // Tout fichier dans Paramètres, ou avec suffixe _PARAMS_ ou _COMPLET_
+                return folder === 'paramètres' || folder === 'parametres' ||
+                       name.includes('_PARAMS_') || name.includes('_COMPLET_') || name.startsWith('covo_backup_');
+            }
+            if (_gdLiveFilter === 'messages') {
+                return folder.includes('message') || name.startsWith('messages_');
+            }
+            if (_gdLiveFilter === 'complet') {
+                return name.includes('_COMPLET_') || (name.startsWith('covo_backup_') && !name.includes('_PARAMS_') && !name.includes('_VENTES_'));
+            }
+            return t.key === _gdLiveFilter;
         });
 
         const now   = Date.now();
@@ -23552,13 +23568,25 @@ function initAdminSections() {
         const files   = _gdAllFiles;
         const countEl = panel.querySelector('#gd-live-count');
         if (countEl) {
-            const v = files.filter(f => _gdGetType(f).key === 'ventes').length;
-            const p = files.filter(f => _gdGetType(f).key === 'params').length;
-            const c = files.filter(f => _gdGetType(f).key === 'complet').length;
-            const m = files.filter(f => _gdGetType(f).key === 'messages').length;
+            // Même logique que le filtre : dossier source en priorité
+            const clsf = f => {
+                const folder = (f._folder||'').toLowerCase().replace(/[\s_]/g,'');
+                const n = f.name||'';
+                if (n.includes('_VENTES_')) return 'ventes';
+                if (folder.includes('message') || n.startsWith('messages_')) return 'messages';
+                if (folder.includes('ticket') || n.startsWith('ticket_')) return 'ticket';
+                return 'params'; // tout ce qui est dans Paramètres (covo_backup_*)
+            };
+            const v   = files.filter(f => clsf(f) === 'ventes').length;
+            const p   = files.filter(f => clsf(f) === 'params').length;
+            const m   = files.filter(f => clsf(f) === 'messages').length;
+            // Ventes du jour (local)
+            const today = new Date(); today.setHours(0,0,0,0);
+            const vToday = (typeof salesHistory !== 'undefined') ?
+                salesHistory.filter(s => !s.cancelled && new Date(s.date) >= today).length : 0;
             const tot = files.length;
             countEl.textContent = tot
-                ? `${tot} fichier${tot>1?'s':''} — 💰${v} ⚙️${p} 📦${c} 💬${m}`
+                ? `${tot} fichier${tot>1?'s':''} — 💰${vToday} vente(s) · ⚙️${p} · 💬${m}`
                 : 'Aucun fichier trouvé';
         }
         _gdRenderFilteredList();
