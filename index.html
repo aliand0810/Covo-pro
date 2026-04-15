@@ -16573,9 +16573,11 @@ logout = function(skipConfirmation = false) {
         renderProducts(); updateProgress(); renderLogo();
     }
     // Exposer pour appel depuis l'IIFE Drive
-    window.saveAll      = saveAll;
-    window.renderAll    = function() { if (typeof renderAll === 'function') renderAll(); };
+    window.saveAll        = saveAll;
+    window.renderAll      = function() { if (typeof renderAll      === 'function') renderAll(); };
     window.updateProgress = function() { if (typeof updateProgress === 'function') updateProgress(); };
+    window.renderHistory  = function() { if (typeof renderHistory  === 'function') renderHistory(); };
+    window.renderProducts = function() { if (typeof renderProducts === 'function') renderProducts(); };
     function autoSave() {
         localStorage.setItem('covo_products',            JSON.stringify(products));
         localStorage.setItem('covo_categories',          JSON.stringify(categories));
@@ -23540,8 +23542,12 @@ function initAdminSections() {
         listEl.innerHTML = html;
     }
 
-    // Import en masse de tous les tickets Drive en attente
     window._gdImportAllPendingTickets = async function() {
+        const parseFunc = window._ticketParseHTML;
+        if (typeof parseFunc !== 'function') {
+            showScanToast('❌ Parseur de ticket non disponible', 'error');
+            return;
+        }
         const importedIds = new Set(salesHistory ? salesHistory.map(s => String(s._ticketId||s.id)) : []);
         const pending = _gdAllFiles.filter(f => {
             if (f._folder !== 'Tickets_Caisse' && !f.name.startsWith('ticket_')) return false;
@@ -23555,22 +23561,27 @@ function initAdminSections() {
             try {
                 const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + f.id + '?alt=media');
                 const html = await resp.text();
-                const sale = (typeof _ticketParseHTML === 'function') && _ticketParseHTML(html, f.name);
+                const sale = parseFunc(html, f.name);
                 if (!sale) { errors++; continue; }
                 const dup = salesHistory.some(s =>
-                    String(s._ticketId) === String(sale._ticketId) ||
+                    (sale._ticketId && (String(s._ticketId) === String(sale._ticketId) || String(s.id) === String(sale._ticketId))) ||
                     (s.date === sale.date && Math.abs(parseFloat(s.total)-parseFloat(sale.total)) < 0.01)
                 );
                 if (!dup) { salesHistory.push(sale); imported++; }
-            } catch(e) { errors++; }
+            } catch(e) { console.warn('Import ticket error:', f.name, e); errors++; }
         }
-        salesHistory.sort((a,b) => new Date(a.date)-new Date(b.date));
-        saveAll();
-        if (typeof renderAll === 'function')      renderAll();
-        if (typeof updateProgress === 'function') updateProgress();
-        if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
-        _gdRenderFilteredList();
-        showScanToast('✅ ' + imported + ' ticket(s) importé(s)' + (errors?' · ' + errors + ' erreur(s)':''), imported>0?'success':'info');
+        if (imported > 0) {
+            salesHistory.sort((a,b) => new Date(a.date)-new Date(b.date));
+            window.saveAll();
+            setTimeout(() => {
+                if (typeof renderAll      === 'function') renderAll();
+                if (typeof updateProgress === 'function') updateProgress();
+                if (typeof renderHistory  === 'function') renderHistory();
+            }, 80);
+            if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
+            _gdRenderFilteredList();
+        }
+        showScanToast('✅ ' + imported + ' ticket(s) importé(s)' + (errors ? ' · ' + errors + ' erreur(s)' : ''), imported>0 ? 'success' : 'info');
     };
 
     // Modal détail ticket cliquable
@@ -23757,30 +23768,38 @@ function initAdminSections() {
 
             // ── Fichier HTML = ticket de caisse ───────────────────────────
             if (fileName.endsWith('.html') || rawText.trimStart().startsWith('<!')) {
-                const sale = (typeof _ticketParseHTML === 'function') && _ticketParseHTML(rawText, fileName);
+                const parseFunc = window._ticketParseHTML;
+                if (typeof parseFunc !== 'function') {
+                    showScanToast('❌ Parseur de ticket non disponible', 'error');
+                    return;
+                }
+                const sale = parseFunc(rawText, fileName);
                 if (!sale) {
                     showScanToast('❌ Impossible de lire ce ticket HTML', 'error');
                     return;
                 }
                 // Vérifier doublon
                 const isDup = salesHistory.some(s =>
-                    String(s.id) === String(sale._ticketId) ||
-                    String(s._ticketId) === String(sale._ticketId) ||
+                    (sale._ticketId && (String(s.id) === String(sale._ticketId) || String(s._ticketId) === String(sale._ticketId))) ||
                     (s.date === sale.date && Math.abs(parseFloat(s.total) - parseFloat(sale.total)) < 0.01)
                 );
                 if (isDup) {
-                    showScanToast('⚠️ Ce ticket est déjà dans l\'historique (N°' + (sale._ticketId||'?') + ')', 'info');
+                    showScanToast('⚠️ Ticket N°' + (sale._ticketId||'?') + ' déjà dans l\'historique', 'info');
                     return;
                 }
                 salesHistory.push(sale);
                 salesHistory.sort((a,b) => new Date(a.date) - new Date(b.date));
-                saveAll();
-                if (typeof renderAll === 'function')      renderAll();
-                if (typeof updateProgress === 'function') updateProgress();
-                if (typeof renderHistory === 'function')  renderHistory();
+                window.saveAll();
+                setTimeout(() => {
+                    if (typeof renderAll      === 'function') renderAll();
+                    if (typeof updateProgress === 'function') updateProgress();
+                    if (typeof renderHistory  === 'function') renderHistory();
+                }, 80);
                 if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
                 document.getElementById('gd-restore-choice-modal')?.remove();
-                showScanToast('✅ Ticket N°' + (sale._ticketId||sale.id) + ' ajouté à l\'historique — ' + parseFloat(sale.total).toFixed(2) + ' €', 'success');
+                // Rafraîchir le panneau Drive
+                _gdRenderFilteredList();
+                showScanToast('✅ Ticket N°' + (sale._ticketId||sale.id) + ' importé — ' + parseFloat(sale.total).toFixed(2) + ' €', 'success');
                 return;
             }
 
@@ -25106,6 +25125,8 @@ function initAdminSections() {
             _source:     fileName
         };
     }
+    // Exposer pour l'IIFE Drive (même problème de scope que saveAll/renderAll)
+    window._ticketParseHTML = _ticketParseHTML;
 
     window._ticketImportConfirm = function() {
         const listEl = document.getElementById('ticket-import-list');
