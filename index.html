@@ -3403,12 +3403,12 @@
                 <div style="display:flex;align-items:center;gap:6px;">
                     <!-- Sélecteur de jours -->
                     <select id="gd-days-select" onchange="localStorage.setItem('gd_scan_days',this.value);_gdParentFolderId=null;_gdScanCovoProFolder();"
-                        style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);color:white;border-radius:6px;font-size:0.65rem;padding:2px 5px;cursor:pointer;">
-                        <option value="1">1 j</option>
-                        <option value="3">3 j</option>
-                        <option value="7" selected>7 j</option>
-                        <option value="14">14 j</option>
-                        <option value="30">30 j</option>
+                        style="background:#1a73e8;border:1px solid rgba(255,255,255,0.40);color:white;border-radius:6px;font-size:0.65rem;padding:3px 6px;cursor:pointer;font-weight:700;appearance:none;-webkit-appearance:none;outline:none;">
+                        <option value="1"  style="background:#1a2040;color:white;">1 j</option>
+                        <option value="3"  style="background:#1a2040;color:white;">3 j</option>
+                        <option value="7" selected style="background:#1a2040;color:white;">7 j</option>
+                        <option value="14" style="background:#1a2040;color:white;">14 j</option>
+                        <option value="30" style="background:#1a2040;color:white;">30 j</option>
                     </select>
                     <div style="display:flex;align-items:center;gap:4px;">
                         <span id="gd-panel-spinner" class="gd-spinner" style="border-color:rgba(255,255,255,0.2);border-top-color:white;"></span>
@@ -23328,10 +23328,15 @@ function initAdminSections() {
         const listEl = document.getElementById('gd-live-list');
         if (!listEl) return;
 
+        // Mode VENTES : tickets depuis salesHistory local
+        if (_gdLiveFilter === 'ventes') {
+            _gdRenderTicketsDuJour(listEl);
+            return;
+        }
+
         const filtered = _gdAllFiles.filter(f => {
-            if (_gdLiveFilter === 'all')      return true;
-            const t = _gdGetType(f);
-            return t.key === _gdLiveFilter;
+            if (_gdLiveFilter === 'all') return true;
+            return _gdGetType(f).key === _gdLiveFilter;
         });
 
         const now   = Date.now();
@@ -23339,8 +23344,8 @@ function initAdminSections() {
         const fmtDt = d => {
             const dt   = new Date(d);
             const diff = Math.round((now - dt) / 1000);
-            if (diff < 60)   return `il y a ${diff}s`;
-            if (diff < 3600) return `il y a ${Math.round(diff/60)}min`;
+            if (diff < 60)    return 'il y a ' + diff + 's';
+            if (diff < 3600)  return 'il y a ' + Math.round(diff/60) + 'min';
             if (dt.toDateString() === new Date().toDateString())
                 return dt.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
             return dt.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'}) + ' ' +
@@ -23348,57 +23353,173 @@ function initAdminSections() {
         };
 
         if (!filtered.length) {
-            const typeLbl = {'ventes':'Ventes','params':'Params','complet':'Complet','messages':'Messages','all':''}[_gdLiveFilter]||'';
-            listEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">📭 Aucun fichier ${typeLbl} sur les 2 derniers jours</div>`;
+            const daysBack = localStorage.getItem('gd_scan_days') || '7';
+            const lbl = {params:'Paramètres',complet:'Complet',messages:'Messages',all:''}[_gdLiveFilter]||_gdLiveFilter;
+            listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">\u{1F4ED} Aucun fichier ' + lbl + ' sur les ' + daysBack + ' dernier(s) jour(s)<br><span style="font-size:0.72rem;opacity:0.7;">Augmentez la période avec le sélecteur</span></div>';
             return;
         }
 
-        // Grouper par jour — Aujourd'hui / Hier
         const today     = new Date().toDateString();
         const yesterday = new Date(Date.now()-86400000).toDateString();
         const groups = {};
         filtered.forEach(f => {
             const d = new Date(f.modifiedTime);
             const k = d.toDateString();
-            const lbl = k===today ? "📅 Aujourd'hui" : k===yesterday ? "📅 Hier" : "📅 "+d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
-            if (!groups[lbl]) groups[lbl] = [];
-            groups[lbl].push(f);
+            const lbl2 = k===today ? "\u{1F4C5} Aujourd'hui" : k===yesterday ? "\u{1F4C5} Hier" : "\u{1F4C5} "+d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+            if (!groups[lbl2]) groups[lbl2] = [];
+            groups[lbl2].push(f);
         });
 
         let firstItem = true;
-        listEl.innerHTML = Object.entries(groups).map(([day, dayFiles]) => {
-            const rows = dayFiles.map(f => {
+        listEl.innerHTML = Object.entries(groups).map(function([day, dayFiles]) {
+            const rows = dayFiles.map(function(f) {
                 const t       = _gdGetType(f);
                 const isFirst = firstItem; firstItem = false;
                 const sz      = fmtSz(parseInt(f.size||0));
-                const safeName = (f.id||'').replace(/'/g,"\'");
+                const safeId  = (f.id||'').replace(/'/g,"\\'");
                 const dispName = f.name.replace(/^covo_backup_/,'').replace(/^messages_/,'msg_').replace(/\.json$/,'');
-                const bg0  = isFirst ? t.color+'14' : 'transparent';
-                const bdr0 = isFirst ? t.color+'40' : 'transparent';
-                const bg1  = t.color+'20';
-                const bdr1 = t.color+'60';
-                return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;margin-bottom:3px;background:${bg0};border:1.5px solid ${bdr0};cursor:pointer;transition:all 0.15s;"
-                    onmouseenter="this.style.background='${bg1}';this.style.borderColor='${bdr1}';this.style.transform='translateX(3px)'"
-                    onmouseleave="this.style.background='${bg0}';this.style.borderColor='${bdr0}';this.style.transform=''"
-                    onclick="_gdOpenRestoreChoice('${f.id}','${safeName}')">
-                    <div style="flex:1;min-width:0;">
-                        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">
-                            <span style="font-size:0.64rem;padding:2px 6px;border-radius:7px;background:${t.color}22;color:${t.color};font-weight:800;">${t.label}</span>
-                            ${isFirst?'<span style="font-size:0.56rem;background:'+t.color+';color:#fff;padding:1px 5px;border-radius:5px;font-weight:700;">RÉCENT</span>':''}
-                        </div>
-                        <div style="font-size:0.68rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${dispName}</div>
-                    </div>
-                    <div style="text-align:right;flex-shrink:0;">
-                        <div style="font-size:0.7rem;font-weight:700;color:${isFirst?t.color:'var(--text-muted)'};">${fmtDt(f.modifiedTime)}</div>
-                        <div style="font-size:0.62rem;color:var(--text-muted);">${sz}</div>
-                    </div>
-                    <span style="font-size:0.85rem;flex-shrink:0;">↩️</span>
-                </div>`;
+                const bg0 = isFirst ? t.color+'14' : 'transparent';
+                const bdr0= isFirst ? t.color+'40' : 'transparent';
+                return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;margin-bottom:3px;background:' + bg0 + ';border:1.5px solid ' + bdr0 + ';cursor:pointer;transition:all 0.15s;"' +
+                    ' onmouseenter="this.style.background=\'' + t.color + '20\';this.style.borderColor=\'' + t.color + '60\';this.style.transform=\'translateX(3px)\'"' +
+                    ' onmouseleave="this.style.background=\'' + bg0 + '\';this.style.borderColor=\'' + bdr0 + '\';this.style.transform=\'\'  "' +
+                    ' onclick="_gdOpenRestoreChoice(\'' + safeId + '\',\'' + dispName.replace(/'/g,"\\'") + '\')">' +
+                    '<div style="flex:1;min-width:0;">' +
+                        '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">' +
+                            '<span style="font-size:0.64rem;padding:2px 6px;border-radius:7px;background:' + t.color + '22;color:' + t.color + ';font-weight:800;">' + t.label + '</span>' +
+                            (isFirst ? '<span style="font-size:0.56rem;background:' + t.color + ';color:#fff;padding:1px 5px;border-radius:5px;font-weight:700;">R\u00C9CENT</span>' : '') +
+                        '</div>' +
+                        '<div style="font-size:0.68rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + f.name + '">' + dispName + '</div>' +
+                    '</div>' +
+                    '<div style="text-align:right;flex-shrink:0;">' +
+                        '<div style="font-size:0.7rem;font-weight:700;color:' + (isFirst ? t.color : 'var(--text-muted)') + ';">' + fmtDt(f.modifiedTime) + '</div>' +
+                        '<div style="font-size:0.62rem;color:var(--text-muted);">' + sz + '</div>' +
+                    '</div>' +
+                    '<span style="font-size:0.85rem;flex-shrink:0;opacity:0.5;">\u21A9\uFE0F</span>' +
+                '</div>';
             }).join('');
-            return `<div style="font-size:0.68rem;font-weight:800;color:var(--text-muted);padding:8px 10px 3px;text-transform:uppercase;letter-spacing:0.05em;">${day} <span style="font-weight:400;opacity:0.7;">(${dayFiles.length})</span></div>${rows}`;
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px 3px;">' +
+                '<span style="font-size:0.68rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">' + day + ' <span style="font-weight:400;opacity:0.7;">(' + dayFiles.length + ')</span></span>' +
+                '</div>' + rows;
         }).join('');
     }
 
+
+    // ═══════════════════════════════════════════════════════════════
+    // Tickets du jour (filtre Ventes) depuis salesHistory local
+    // ═══════════════════════════════════════════════════════════════
+    function _gdRenderTicketsDuJour(listEl) {
+        if (typeof salesHistory === 'undefined' || !salesHistory || !salesHistory.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray,#888);font-size:0.82rem;">📭 Aucune vente en mémoire</div>';
+            return;
+        }
+        const daysBack = parseInt(localStorage.getItem('gd_scan_days') || '7');
+        const cutoff   = new Date(); cutoff.setDate(cutoff.getDate() - daysBack); cutoff.setHours(0,0,0,0);
+        const todayStr = new Date().toDateString();
+        const hierStr  = new Date(Date.now()-86400000).toDateString();
+
+        const groups = {};
+        salesHistory
+            .filter(s => !s.cancelled && new Date(s.date) >= cutoff)
+            .sort((a,b) => new Date(b.date) - new Date(a.date))
+            .forEach(s => {
+                const d   = new Date(s.date);
+                const key = d.toDateString();
+                const lbl = key === todayStr ? "📅 Aujourd'hui" :
+                            key === hierStr  ? '📅 Hier' :
+                            '📅 ' + d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long'});
+                if (!groups[lbl]) groups[lbl] = [];
+                groups[lbl].push(s);
+            });
+
+        if (!Object.keys(groups).length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray,#888);font-size:0.82rem;">📭 Aucune vente sur les ' + daysBack + ' dernier(s) jour(s)</div>';
+            return;
+        }
+
+        const fmtH = d => new Date(d).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        const fmtM = m => m==='cb'?'💳 CB':m==='mixed'?'💳💶 Mixte':'💶 Espèces';
+
+        let html = '';
+        Object.entries(groups).forEach(function([day, sales]) {
+            const caJour = sales.reduce((s,t) => s + parseFloat(t.total||0), 0);
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px 4px;">' +
+                '<span style="font-size:0.68rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">' + day + ' <span style="font-weight:400;opacity:0.7;">(' + sales.length + ' ticket' + (sales.length>1?'s':'') + ')</span></span>' +
+                '<span style="font-size:0.73rem;font-weight:800;color:#27ae60;">' + caJour.toFixed(2) + ' €</span>' +
+            '</div>';
+            sales.forEach(function(s, i) {
+                const nbArt = (s.items||[]).length;
+                const isLast = i === 0 && day.includes("Aujourd'hui");
+                const bg  = isLast ? 'rgba(39,174,96,0.08)' : 'var(--bg-card-2,#f8fafc)';
+                const bdr = isLast ? 'rgba(39,174,96,0.30)' : 'var(--border-color,#e0e0e0)';
+                const safeId = String(s.id).replace(/'/g,"\\'");
+                html += '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;margin-bottom:3px;' +
+                    'background:' + bg + ';border:1.5px solid ' + bdr + ';cursor:pointer;transition:all 0.15s;"' +
+                    ' onclick="_gdShowTicketDetail(\'' + safeId + '\')"' +
+                    ' onmouseenter="this.style.background=\'rgba(39,174,96,0.14)\';this.style.borderColor=\'rgba(39,174,96,0.55)\';this.style.transform=\'translateX(3px)\'"' +
+                    ' onmouseleave="this.style.background=\'' + bg + '\';this.style.borderColor=\'' + bdr + '\';this.style.transform=\'\'">' +
+                    '<div style="flex-shrink:0;width:30px;height:30px;border-radius:8px;background:rgba(39,174,96,0.12);display:flex;align-items:center;justify-content:center;font-size:0.9rem;">🧾</div>' +
+                    '<div style="flex:1;min-width:0;">' +
+                        '<div style="font-size:0.8rem;font-weight:700;color:var(--text-main);display:flex;align-items:center;gap:5px;">' +
+                            '<span>N°' + s.id + '</span>' +
+                            '<span style="font-size:0.65rem;font-weight:400;color:var(--text-muted);">' + fmtH(s.date) + '</span>' +
+                            (isLast ? '<span style="font-size:0.55rem;background:#27ae60;color:white;padding:1px 5px;border-radius:5px;font-weight:700;">DERNIER</span>' : '') +
+                        '</div>' +
+                        '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:1px;">' +
+                            (s.cashier||'—') + ' · ' + nbArt + ' art. · ' + fmtM(s.method) +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="text-align:right;flex-shrink:0;">' +
+                        '<div style="font-size:0.85rem;font-weight:800;color:#27ae60;">' + parseFloat(s.total||0).toFixed(2) + ' €</div>' +
+                    '</div>' +
+                '</div>';
+            });
+        });
+        listEl.innerHTML = html;
+    }
+
+    // Modal détail ticket cliquable
+    window._gdShowTicketDetail = function(saleId) {
+        const sale = (typeof salesHistory !== 'undefined') && salesHistory.find(s => String(s.id) === String(saleId));
+        if (!sale) { showScanToast('⚠️ Ticket introuvable', 'info'); return; }
+        const old = document.getElementById('gd-ticket-modal');
+        if (old) old.remove();
+        const fmtM = m => m==='cb'?'💳 Carte Bancaire':m==='mixed'?'💳💶 Mixte':'💶 Espèces';
+        const rows = (sale.items||[]).map(it =>
+            '<tr>' +
+            '<td style="padding:5px 8px;font-size:0.8rem;color:var(--text-main);">' + it.name + '</td>' +
+            '<td style="padding:5px 8px;text-align:center;font-size:0.78rem;color:var(--text-muted);">x' + it.quantity + '</td>' +
+            '<td style="padding:5px 8px;text-align:right;font-size:0.8rem;font-weight:700;color:var(--text-main);">' + parseFloat((it.price||0)*(it.quantity||1)).toFixed(2) + ' €</td>' +
+            '</tr>'
+        ).join('');
+        const m = document.createElement('div');
+        m.id = 'gd-ticket-modal';
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+        m.innerHTML = '<div style="background:var(--bg-card,#fff);border-radius:14px;width:92%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;">' +
+            '<div style="background:linear-gradient(135deg,#27ae60,#1e8449);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;">' +
+                '<div>' +
+                    '<div style="color:white;font-weight:800;font-size:0.92rem;">🧾 Ticket N°' + sale.id + '</div>' +
+                    '<div style="color:rgba(255,255,255,0.75);font-size:0.7rem;">' + new Date(sale.date).toLocaleString('fr-FR') + ' · ' + (sale.cashier||'—') + '</div>' +
+                '</div>' +
+                '<button onclick="document.getElementById(\'gd-ticket-modal\').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:26px;height:26px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>' +
+            '</div>' +
+            '<div style="padding:14px 16px;">' +
+                (rows ? '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">' +
+                    '<thead><tr style="background:var(--bg-card-2,#f8fafc);">' +
+                        '<th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">Article</th>' +
+                        '<th style="padding:5px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;">Qté</th>' +
+                        '<th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);font-weight:600;">Montant</th>' +
+                    '</tr></thead><tbody>' + rows + '</tbody></table>' :
+                    '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:0.8rem;">Aucun article enregistré</div>') +
+                '<div style="border-top:2px solid var(--border-color,#eee);padding-top:10px;display:flex;justify-content:space-between;align-items:center;">' +
+                    '<div style="font-size:0.78rem;color:var(--text-muted);">' + fmtM(sale.method) + '</div>' +
+                    '<div style="font-size:1.05rem;font-weight:900;color:#27ae60;">' + parseFloat(sale.total||0).toFixed(2) + ' €</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+        document.body.appendChild(m);
+        m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+    };
 
     function _gdGetType(f) {
         const n      = f.name   || '';
