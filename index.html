@@ -6831,11 +6831,6 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 
     // --- Choisir / lier un fichier ---
     async function pickCovoFile() {
-        // Liaison fichier FSA : Admin-Développeur uniquement
-        if (!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)) {
-            showScanToast('🔒 Liaison fichier réservée à l\'Admin-Développeur', 'error');
-            return;
-        }
         if (!('showSaveFilePicker' in window)) {
             showScanToast('⚠️ Votre navigateur ne supporte pas l\'API File System Access (utilisez Chrome/Edge)', 'info');
             return;
@@ -7242,11 +7237,6 @@ function toggleInfoSection(headerElement) {
     }
 
     async function awForceSave() {
-        // Sauvegarde manuelle réservée à l'Admin-Développeur
-        if (!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)) {
-            showScanToast('🔒 Sauvegarde réservée à l\'Admin-Développeur', 'error');
-            return;
-        }
         const btn = document.getElementById('aw-save-now-btn');
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Sauvegarde…'; }
         try {
@@ -10053,11 +10043,6 @@ function toggleInfoSection(headerElement) {
     }
 
     window._modulesSave = function() {
-        // Sauvegarde réservée à l'Admin-Développeur
-        if (!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)) {
-            showScanToast('🔒 Sauvegarde réservée à l\'Admin-Développeur', 'error');
-            return;
-        }
         _modulesApply();
         document.getElementById('modules-modal').style.display = 'none';
         showScanToast('✅ Configuration des modules sauvegardée', 'success');
@@ -10867,9 +10852,9 @@ function toggleInfoSection(headerElement) {
         // Barre Admin-Développeur dans le panneau admin
         const mqBar = document.getElementById('master-quick-bar');
         if (mqBar) mqBar.style.display = user.isMaster ? 'flex' : 'none';
-        // Bouton sauvegarde manuelle : visible uniquement pour l'Admin-Développeur
+        // Bouton sauvegarde manuelle : visible pour tous les rôles
         const _saveNowBtn = document.getElementById('aw-save-now-btn');
-        if (_saveNowBtn) _saveNowBtn.style.display = user.isMaster ? '' : 'none';
+        if (_saveNowBtn) _saveNowBtn.style.display = '';
         renderAll();
         maybeEnterFullscreenOnLogin();
         if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
@@ -15822,10 +15807,11 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_pending_sync',         JSON.stringify(pendingSync));
         localStorage.setItem('covo_cashier_permissions',  JSON.stringify(cashierPermissions));
         localStorage.setItem('covo_delivery_goal',        String(deliveryGoal));
-        // ── Sauvegarde fichier/Drive : Admin-Développeur uniquement (manuelle) ──
-        if (!(currentUser && currentUser.isMaster)) {
+        // ── Sauvegarde fichier/Drive : interdite automatiquement pour l'Admin-Développeur ──
+        // (l'Admin-Développeur sauvegarde uniquement via le bouton manuel)
+        if (currentUser && currentUser.isMaster) {
             renderProducts(); updateProgress(); renderLogo();
-            return; // Pas de sauvegarde fichier ni Drive pour les autres rôles
+            return;
         }
         const _now = new Date();
         const _ts = _now.toISOString();
@@ -15838,7 +15824,7 @@ logout = function(skipConfirmation = false) {
     }
 
     // Sauvegarde silencieuse en arrière-plan (sans dialog ni refresh visuel lourd)
-    // ⚠️ Sauvegarde fichier/Drive réservée à l'Admin-Développeur (manuelle uniquement)
+    // ⚠️ Sauvegarde automatique interdite pour l'Admin-Développeur — manuelle uniquement
     function autoSave() {
         // Persistance localStorage pour tous les rôles (nécessaire au fonctionnement)
         localStorage.setItem('covo_products',            JSON.stringify(products));
@@ -15851,8 +15837,8 @@ logout = function(skipConfirmation = false) {
         localStorage.setItem('covo_pending_sync',        JSON.stringify(pendingSync));
         localStorage.setItem('covo_cashier_permissions', JSON.stringify(cashierPermissions));
         localStorage.setItem('covo_delivery_goal',       String(deliveryGoal));
-        // Sauvegarde fichier/Drive : Admin-Développeur uniquement
-        if (!(currentUser && currentUser.isMaster)) return;
+        // Sauvegarde fichier/Drive interdite automatiquement pour l'Admin-Développeur
+        if (currentUser && currentUser.isMaster) return;
         const _now = new Date();
         localStorage.setItem('covo_last_save', _now.toISOString());
         _updateLastSaveDisplay(_now);
@@ -23285,8 +23271,8 @@ function initAdminSections() {
 
     let _gdDebounceTimer = null;
     function _gdDebouncedSave() {
-        // Sauvegarde automatique Drive désactivée — réservée à l'Admin-Développeur (manuelle uniquement)
-        if (!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)) return;
+        // Sauvegarde automatique Drive interdite pour l'Admin-Développeur (manuelle uniquement)
+        if (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster) return;
         if (!_gdConnected || !_gdFolderId || _gdRestoring) return;
         if (_gdDebounceTimer) clearTimeout(_gdDebounceTimer);
         _gdDebounceTimer = setTimeout(() => { _gdDoSave(); }, 5000); // 5s après dernière modif
@@ -23299,8 +23285,8 @@ function initAdminSections() {
             const orig = _updateLastSaveDisplay;
             window._updateLastSaveDisplay = function(date) {
                 orig(date);
-                // Sauvegarde Drive automatique désactivée — uniquement si Admin-Développeur (manuelle)
-                if (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster) {
+                // Sauvegarde Drive automatique interdite pour l'Admin-Développeur
+                if (!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)) {
                     _gdDebouncedSave();
                 }
             };
@@ -24236,8 +24222,8 @@ function initAdminSections() {
     // ── Sauvegarde PARAMÈTRES (déclenchée sur modif settings) ─────────
     let _gdParamsTimer = null;
     window._gdTriggerParamsSave = function() {
-        // Sauvegarde paramètres Drive : Admin-Développeur uniquement
-        if (!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)) return;
+        // Sauvegarde paramètres Drive interdite automatiquement pour l'Admin-Développeur
+        if (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster) return;
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdParamsTimer);
         _gdParamsTimer = setTimeout(async () => {
