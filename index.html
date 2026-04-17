@@ -4316,10 +4316,11 @@
             </div>
             <div class="admin-section-body" id="admin-sec-1">
             <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; padding:10px; background:#f0f8ff; border-radius:6px;">
-                <input type="checkbox" id="auto-fetch-barcode" checked style="width:20px; height:20px; cursor:pointer;">
+                <input type="checkbox" id="auto-fetch-barcode" style="width:20px; height:20px; cursor:pointer;">
                 <label for="auto-fetch-barcode" style="cursor:pointer; font-weight:bold; color:var(--primary);">
-                    🔍 Rechercher automatiquement les infos du produit via le code-barre
+                    ⚡ Import automatique (sans choisir les champs)
                 </label>
+                <span style="font-size:0.78rem; color:#666; margin-left:auto;">💡 Décoché = choisir les infos à importer</span>
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                 <input type="text" id="new-name" placeholder="Nom du produit">
@@ -4339,6 +4340,8 @@
                 <select id="new-category"></select>
                 <input type="date" id="new-expiry-date" placeholder="Date limite (optionnel)">
                 <input type="text" id="new-img-url" placeholder="URL image (optionnel)" style="grid-column: 1 / -1;">
+                <textarea id="new-description" placeholder="📝 Description du produit (optionnelle — peut être remplie automatiquement par le code-barre)" rows="3"
+                    style="grid-column: 1 / -1; padding:10px; border:1px solid #ddd; border-radius:5px; font-size:0.9rem; font-family:inherit; resize:vertical; min-height:60px;"></textarea>
             </div>
             <input type="file" id="new-img-file" accept="image/*" style="margin-top:10px;">
             <div id="barcode-search-result" style="margin-top:10px; padding:10px; border-radius:6px; display:none;"></div>
@@ -5474,6 +5477,10 @@
 
                 <!-- Bouton personnaliser + panels masqués -->
                 <div id="aw-customize-bar" style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:6px;flex-shrink:0;">
+                    <button onclick="_awManualRefresh(this)"
+                        style="background:rgba(46,204,113,0.15);border:1px solid rgba(46,204,113,0.4);color:#2ecc71;padding:4px 12px;border-radius:20px;font-size:0.72rem;cursor:pointer;font-weight:600;" title="Rafraîchir les informations">
+                        🔄 Actualiser
+                    </button>
                     <button onclick="_awToggleCustomize()" id="aw-customize-btn"
                         style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.7);padding:4px 12px;border-radius:20px;font-size:0.72rem;cursor:pointer;font-weight:600;">
                         ⚙️ Personnaliser
@@ -6059,6 +6066,58 @@
       </div>
     </div>
 
+    <!-- ===== MODALE SÉLECTION CHAMPS À IMPORTER (via code-barres) ===== -->
+    <div id="bc-import-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:20700;justify-content:center;align-items:center;">
+      <div style="background:var(--bg-card,#fff);border-radius:14px;width:94%;max-width:580px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,0.4);">
+        <div style="background:linear-gradient(135deg,#1976d2,#0d47a1);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+          <div style="color:white;font-weight:800;font-size:0.95rem;">📥 Choisir les informations à importer</div>
+          <button onclick="document.getElementById('bc-import-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>
+        </div>
+        <div style="overflow-y:auto;flex:1;padding:16px 20px;">
+          <div id="bc-import-preview" style="background:var(--bg-card-2,#f8fafc);padding:12px;border-radius:10px;margin-bottom:14px;border:1.5px solid var(--border-color,#e0e0e0);display:flex;gap:12px;align-items:flex-start;"></div>
+          <div style="font-weight:700;font-size:0.85rem;color:var(--text-main);margin-bottom:10px;">✓ Cochez les informations à importer :</div>
+          <div id="bc-import-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+            <button onclick="_bcSelectAllFields(true)" style="background:var(--input-bg,#f0f0f0);border:1px solid var(--border-color,#ddd);color:var(--text-main);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;">✓ Tout cocher</button>
+            <button onclick="_bcSelectAllFields(false)" style="background:var(--input-bg,#f0f0f0);border:1px solid var(--border-color,#ddd);color:var(--text-main);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;">☐ Tout décocher</button>
+          </div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;">
+          <button onclick="document.getElementById('bc-import-modal').style.display='none'" style="background:var(--input-bg,#f0f0f0);border:1px solid var(--border-color,#ddd);color:var(--text-main);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600;">Annuler</button>
+          <button onclick="_bcApplySelectedFields()" style="background:linear-gradient(135deg,#1976d2,#0d47a1);color:white;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;">📥 Importer les champs cochés</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== MODALE HISTORIQUE STOCK (par article) ===== -->
+    <div id="stock-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:20700;justify-content:center;align-items:center;">
+      <div style="background:var(--bg-card,#fff);border-radius:14px;width:94%;max-width:680px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,0.4);">
+        <div style="background:linear-gradient(135deg,#00897b,#00695c);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+          <div style="color:white;font-weight:800;font-size:0.95rem;" id="sh-title">📦 Historique du stock</div>
+          <button onclick="document.getElementById('stock-history-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>
+        </div>
+        <div style="padding:12px 18px;border-bottom:1px solid var(--border-color,#eee);background:var(--bg-card-2,#f8fafc);display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex-shrink:0;">
+          <div style="font-size:0.82rem;color:var(--text-muted,#666);">
+            <strong id="sh-product-name" style="color:var(--text-main);">—</strong> ·
+            Stock actuel : <strong id="sh-current-stock" style="color:#00897b;">—</strong>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:6px;">
+            <select id="sh-filter" onchange="_renderStockHistory()" style="padding:5px 10px;border:1px solid var(--border-color,#ddd);border-radius:6px;font-size:0.78rem;background:var(--bg-card,#fff);color:var(--text-main);">
+              <option value="all">Tous les mouvements</option>
+              <option value="sale">🛒 Ventes uniquement</option>
+              <option value="manual">✏️ Modifications manuelles</option>
+              <option value="retour">↩️ Retours</option>
+              <option value="import">📥 Imports</option>
+              <option value="defect">⚠️ Défauts</option>
+            </select>
+            <button onclick="_exportStockHistoryCSV()" style="background:var(--input-bg,#f0f0f0);border:1px solid var(--border-color,#ddd);color:var(--text-main);padding:5px 10px;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600;">⬇️ CSV</button>
+          </div>
+        </div>
+        <div id="sh-stats" style="padding:10px 18px;border-bottom:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0;"></div>
+        <div id="sh-list" style="overflow-y:auto;flex:1;padding:10px 18px;"></div>
+      </div>
+    </div>
+
     <!-- ===== MODALE HISTORIQUE CONNEXIONS (Admin-Développeur uniquement) ===== -->
     <div id="login-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:20500;justify-content:center;align-items:center;">
       <div style="background:var(--bg-card,#fff);border-radius:16px;width:95%;max-width:660px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.4);animation:adminWelcomeIn 0.25s ease;">
@@ -6295,6 +6354,33 @@
             dlcBlock.style.display = '';
         } else {
             dlcBlock.style.display = 'none';
+        }
+
+        // Description du produit
+        const descBlockA = document.getElementById('pd-description-block');
+        const descTextA  = document.getElementById('pd-description-text');
+        const descToggleA = document.getElementById('pd-desc-toggle');
+        if (descBlockA && descTextA) {
+            const descA = (p.description || '').trim();
+            if (descA) {
+                descTextA.textContent = descA;
+                descTextA.style.maxHeight = '120px';
+                descTextA.style.overflow = 'hidden';
+                descBlockA.style.display = '';
+                setTimeout(() => {
+                    if (descTextA.scrollHeight > descTextA.clientHeight + 4) {
+                        if (descToggleA) {
+                            descToggleA.style.display = '';
+                            descToggleA.textContent = 'Voir plus ▼';
+                            descToggleA.dataset.expanded = '0';
+                        }
+                    } else if (descToggleA) {
+                        descToggleA.style.display = 'none';
+                    }
+                }, 10);
+            } else {
+                descBlockA.style.display = 'none';
+            }
         }
 
         const btn = document.getElementById('pd-add-btn');
@@ -7254,6 +7340,77 @@ function toggleInfoSection(headerElement) {
     }
 
     // ===== FENÊTRE D'ACCUEIL ADMIN =====
+    // Rafraîchir uniquement les stats (réutilisable : auto-refresh + bouton)
+    // Rafraîchissement manuel déclenché par bouton
+    window._awManualRefresh = function(btn) {
+        if (typeof window._awRefreshStats === 'function') window._awRefreshStats();
+        if (typeof window._gdRefreshSaveStatus === 'function') { try { window._gdRefreshSaveStatus(); } catch(e) {} }
+        if (btn) {
+            const orig = btn.innerHTML;
+            btn.innerHTML = '✅ Actualisé';
+            btn.disabled = true;
+            setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 1200);
+        }
+        if (typeof showScanToast === 'function') showScanToast('✅ Informations mises à jour', 'success');
+    };
+
+    window._awRefreshStats = function() {
+        const awProductsEl = document.getElementById('aw-total-products');
+        if (!awProductsEl) return; // modale pas ouverte
+        let awProducts = [];
+        try { awProducts = JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch(e) {}
+        if (!awProducts.length && typeof products !== 'undefined' && Array.isArray(products)) awProducts = products;
+        awProductsEl.textContent = awProducts.length;
+
+        let awUsers = [];
+        try { awUsers = JSON.parse(localStorage.getItem('covo_users') || '[]'); } catch(e) {}
+        if (!awUsers.length && typeof users !== 'undefined' && Array.isArray(users)) awUsers = users;
+        document.getElementById('aw-total-users').textContent = awUsers.length;
+
+        let allSales = [];
+        try { allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch(e) {}
+        if (!allSales.length && typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) allSales = salesHistory;
+        const today = new Date().toDateString();
+        const todaySales = allSales.filter(s => new Date(s.date).toDateString() === today && !s.cancelled);
+        document.getElementById('aw-total-sales').textContent = todaySales.length;
+        const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
+        document.getElementById('aw-revenue-day').textContent = todayRevenue.toFixed(2) + ' €';
+
+        // Tarif nocturne
+        const nightEl = document.getElementById('aw-night-tariff');
+        let nightActive = false;
+        if (typeof isNightTariffCurrentlyActive === 'function') {
+            try { nightActive = isNightTariffCurrentlyActive(); } catch(e) {}
+        } else {
+            try {
+                const nt = JSON.parse(localStorage.getItem('covo_night_tariff') || '{}');
+                nightActive = !!(nt.mode && nt.mode !== 'off');
+            } catch(e) {}
+        }
+        if (nightEl) {
+            nightEl.textContent = nightActive ? '🌙 Actif' : '☀️ Inactif';
+            nightEl.style.color = nightActive ? '#a78bfa' : '#27ae60';
+        }
+
+        // Objectif journalier
+        const goalEl = document.getElementById('aw-daily-goal');
+        let dailyGoal = null;
+        if (typeof deliveryGoal !== 'undefined' && deliveryGoal && deliveryGoal > 0) {
+            dailyGoal = deliveryGoal;
+        } else {
+            const fromLS = parseFloat(localStorage.getItem('covo_delivery_goal'));
+            if (!isNaN(fromLS) && fromLS > 0) dailyGoal = fromLS;
+        }
+        if (goalEl) goalEl.textContent = dailyGoal ? dailyGoal.toFixed(2).replace(/\.00$/, '') + ' €' : 'Non défini';
+
+        // Mode sombre
+        const darkEl = document.getElementById('aw-dark-mode');
+        if (darkEl) {
+            const darkActive = document.body.classList.contains('dark-mode');
+            darkEl.textContent = darkActive ? '🌙 Activé' : '☀️ Désactivé';
+        }
+    };
+
     function openAdminWelcomeModal() {
         const modal = document.getElementById('admin-welcome-modal');
         if (!modal) return;
@@ -7261,28 +7418,51 @@ function toggleInfoSection(headerElement) {
         // Remplir le nom
         document.getElementById('admin-welcome-name').textContent = currentUser.username;
 
-        // Stats rapides
-        const products = JSON.parse(localStorage.getItem('covo_products') || '[]');
-        document.getElementById('aw-total-products').textContent = products.length;
-        document.getElementById('aw-total-users').textContent = users.length;
+        // Stats rapides — forcer lecture fraîche du localStorage + fallback global
+        let awProducts = [];
+        try { awProducts = JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch(e) {}
+        if (!awProducts.length && typeof products !== 'undefined' && Array.isArray(products)) awProducts = products;
+        document.getElementById('aw-total-products').textContent = awProducts.length;
 
-        // Ventes du jour
-        const allSales = JSON.parse(localStorage.getItem('covo_sales') || '[]');
+        let awUsers = [];
+        try { awUsers = JSON.parse(localStorage.getItem('covo_users') || '[]'); } catch(e) {}
+        if (!awUsers.length && typeof users !== 'undefined' && Array.isArray(users)) awUsers = users;
+        document.getElementById('aw-total-users').textContent = awUsers.length;
+
+        // Ventes du jour — BONNE clé : covo_sales_history (et non covo_sales)
+        let allSales = [];
+        try { allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch(e) {}
+        if (!allSales.length && typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) allSales = salesHistory;
         const today = new Date().toDateString();
         const todaySales = allSales.filter(s => new Date(s.date).toDateString() === today && !s.cancelled);
         document.getElementById('aw-total-sales').textContent = todaySales.length;
-        const todayRevenue = todaySales.reduce((sum, s) => sum + (s.total || 0), 0);
+        const todayRevenue = todaySales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
         document.getElementById('aw-revenue-day').textContent = todayRevenue.toFixed(2) + ' €';
 
-        // Paramètres
-        const settings = JSON.parse(localStorage.getItem('covo_settings') || '{}');
+        // Tarif nocturne — utiliser la vraie fonction + la vraie clé covo_night_tariff
         const nightEl = document.getElementById('aw-night-tariff');
-        const nightActive = settings.nightTariff || false;
+        let nightActive = false;
+        if (typeof isNightTariffCurrentlyActive === 'function') {
+            try { nightActive = isNightTariffCurrentlyActive(); } catch(e) {}
+        } else {
+            try {
+                const nt = JSON.parse(localStorage.getItem('covo_night_tariff') || '{}');
+                nightActive = !!(nt.mode && nt.mode !== 'off');
+            } catch(e) {}
+        }
         nightEl.textContent = nightActive ? '🌙 Actif' : '☀️ Inactif';
         nightEl.style.color = nightActive ? '#a78bfa' : '#27ae60';
 
+        // Objectif journalier — utiliser deliveryGoal (la vraie variable) + covo_delivery_goal
         const goalEl = document.getElementById('aw-daily-goal');
-        goalEl.textContent = settings.dailyGoal ? settings.dailyGoal + ' €' : 'Non défini';
+        let dailyGoal = null;
+        if (typeof deliveryGoal !== 'undefined' && deliveryGoal && deliveryGoal > 0) {
+            dailyGoal = deliveryGoal;
+        } else {
+            const fromLS = parseFloat(localStorage.getItem('covo_delivery_goal'));
+            if (!isNaN(fromLS) && fromLS > 0) dailyGoal = fromLS;
+        }
+        goalEl.textContent = dailyGoal ? dailyGoal.toFixed(2).replace(/\.00$/, '') + ' €' : 'Non défini';
 
         const darkEl = document.getElementById('aw-dark-mode');
         const darkActive = document.body.classList.contains('dark-mode');
@@ -7316,6 +7496,10 @@ function toggleInfoSection(headerElement) {
         // --- Liste des sauvegardes ---
         awLoadBackupList(driveConnected, gdState);
 
+        // Refresh supplémentaire après 500ms et 2s pour capter la fin de restauration Drive
+        setTimeout(function() { if (typeof window._awRefreshStats === 'function') window._awRefreshStats(); }, 500);
+        setTimeout(function() { if (typeof window._awRefreshStats === 'function') window._awRefreshStats(); }, 2000);
+
         // --- Messagerie ---
         _awPopulateMsgTo();
         _awRenderMsgList();
@@ -7326,6 +7510,21 @@ function toggleInfoSection(headerElement) {
         if (histBtn) histBtn.style.display = (currentUser && currentUser.isMaster) ? '' : 'none';
         const modulesBtn = document.getElementById('aw-modules-btn');
         if (modulesBtn) modulesBtn.style.display = (currentUser && currentUser.isMaster) ? '' : 'none';
+
+        // Auto-refresh : relire plusieurs fois les stats après ouverture
+        // (au cas où les données arrivent de Google Drive après coup)
+        if (window._awAutoRefreshInterval) clearInterval(window._awAutoRefreshInterval);
+        let _awTick = 0;
+        window._awAutoRefreshInterval = setInterval(function() {
+            _awTick++;
+            if (typeof window._awRefreshStats === 'function') window._awRefreshStats();
+            // Arrêter après 15 tours (~30s) ou si la modale est fermée
+            const m = document.getElementById('admin-welcome-modal');
+            if (_awTick >= 15 || !m || !m.classList.contains('active')) {
+                clearInterval(window._awAutoRefreshInterval);
+                window._awAutoRefreshInterval = null;
+            }
+        }, 2000);
 
         modal.classList.add('active');
     }
@@ -13289,11 +13488,13 @@ logout = function(skipConfirmation = false) {
         cart.forEach(item => {
             const product = products.find(p => p.id === item.id);
             if (product) {
+                const beforeStock = product.stock;
                 if (product.unitType === 'kg') {
                     product.stock = parseFloat((product.stock - item.quantity).toFixed(3));
                 } else {
                     product.stock -= item.quantity;
                 }
+                _logStockChange(product, beforeStock, product.stock, 'sale', 'Vente', { ticketId: sale.id, qty: item.quantity });
             }
         });
         
@@ -13654,6 +13855,152 @@ logout = function(skipConfirmation = false) {
         });
     }
 
+    // ========================================================================
+    // ===== Helper : parsing enrichi Open Food Facts =========================
+    // ========================================================================
+    function _parseOffProduct(offProduct) {
+        const p = offProduct || {};
+        const name = p.product_name_fr || p.product_name || '';
+        const brand = p.brands || '';
+        const fullName = brand ? (brand + ' - ' + name) : name;
+        const img = p.image_url || p.image_front_url || '';
+        const categories = p.categories ? p.categories.split(',').map(c => c.trim()).filter(Boolean) : [];
+        const firstCat = categories[0] || '';
+        // Description enrichie
+        const parts = [];
+        if (p.generic_name_fr || p.generic_name) parts.push(p.generic_name_fr || p.generic_name);
+        if (p.ingredients_text_fr || p.ingredients_text) parts.push('Ingrédients : ' + (p.ingredients_text_fr || p.ingredients_text));
+        if (p.quantity) parts.push('Quantité : ' + p.quantity);
+        if (p.nutrition_grade_fr) parts.push('Nutri-Score : ' + String(p.nutrition_grade_fr).toUpperCase());
+        if (p.nova_group) parts.push('Groupe NOVA : ' + p.nova_group);
+        if (p.labels) parts.push('Labels : ' + p.labels);
+        const description = parts.join('\n\n').trim();
+        return {
+            name: fullName,
+            brand,
+            description,
+            img,
+            categories,
+            firstCategory: firstCat,
+            quantity: p.quantity || '',
+            nutriScore: p.nutrition_grade_fr ? String(p.nutrition_grade_fr).toUpperCase() : '',
+            ingredients: p.ingredients_text_fr || p.ingredients_text || '',
+            raw: p
+        };
+    }
+
+    // ========================================================================
+    // ===== Modale de sélection des champs à importer =========================
+    // ========================================================================
+    // Contexte : { mode: 'add' | 'edit', productId?: id, offData: parsed }
+    window._bcImportContext = null;
+
+    function _openBcImportModal(offData, mode, productId) {
+        window._bcImportContext = { mode, productId, offData };
+        const preview = document.getElementById('bc-import-preview');
+        const fieldsEl = document.getElementById('bc-import-fields');
+        if (!preview || !fieldsEl) return;
+        preview.innerHTML = `
+            ${offData.img ? `<img src="${offData.img}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;flex-shrink:0;">` : '<div style="width:72px;height:72px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.8rem;flex-shrink:0;">📦</div>'}
+            <div style="flex:1;min-width:0;">
+                <div style="font-weight:800;font-size:0.9rem;color:var(--text-main);margin-bottom:3px;">${_escapeHtml(offData.name) || '(nom inconnu)'}</div>
+                ${offData.brand ? `<div style="font-size:0.72rem;color:var(--text-muted,#888);margin-bottom:3px;">🏷️ ${_escapeHtml(offData.brand)}</div>` : ''}
+                ${offData.firstCategory ? `<div style="font-size:0.72rem;color:var(--text-muted,#888);">📁 ${_escapeHtml(offData.firstCategory)}</div>` : ''}
+                ${offData.nutriScore ? `<div style="font-size:0.7rem;margin-top:4px;display:inline-block;background:#e8f5e9;color:#2e7d32;padding:1px 7px;border-radius:10px;font-weight:700;">Nutri-Score ${offData.nutriScore}</div>` : ''}
+            </div>`;
+
+        const fields = [
+            { key:'name',        icon:'🏷️', label:'Nom du produit',     value: offData.name,           show: !!offData.name },
+            { key:'description', icon:'📝', label:'Description complète', value: offData.description,   show: !!offData.description, truncate: 120 },
+            { key:'img',         icon:'🖼️', label:'Image',                value: offData.img,            show: !!offData.img, isImg: true },
+            { key:'category',    icon:'📁', label:'Catégorie',            value: offData.firstCategory,  show: !!offData.firstCategory },
+            { key:'ingredients', icon:'🥗', label:'Ingrédients',          value: offData.ingredients,    show: !!offData.ingredients, truncate: 100 }
+        ];
+        fieldsEl.innerHTML = fields.filter(f => f.show).map(f => {
+            let valPreview;
+            if (f.isImg) {
+                valPreview = '<img src="' + f.value + '" style="width:36px;height:36px;object-fit:cover;border-radius:5px;">';
+            } else {
+                const short = f.truncate && f.value.length > f.truncate ? f.value.substring(0, f.truncate) + '…' : f.value;
+                valPreview = '<span style="color:var(--text-muted,#888);font-size:0.78rem;">' + _escapeHtml(short) + '</span>';
+            }
+            return `<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg-card-2,#f8fafc);border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;cursor:pointer;" onmouseover="this.style.borderColor='#1976d2'" onmouseout="this.style.borderColor='var(--border-color,#e0e0e0)'">
+                <input type="checkbox" class="bc-field-cb" data-field="${f.key}" checked style="width:18px;height:18px;cursor:pointer;flex-shrink:0;">
+                <span style="font-size:1.1rem;flex-shrink:0;">${f.icon}</span>
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:0.82rem;color:var(--text-main);">${f.label}</div>
+                    <div style="margin-top:2px;line-height:1.3;">${valPreview}</div>
+                </div>
+            </label>`;
+        }).join('');
+        if (!fieldsEl.innerHTML) {
+            fieldsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted,#888);font-size:0.85rem;font-style:italic;">Aucune information disponible pour ce code-barres.</div>';
+        }
+        document.getElementById('bc-import-modal').style.display = 'flex';
+    }
+    window._bcSelectAllFields = function(select) {
+        document.querySelectorAll('.bc-field-cb').forEach(cb => { cb.checked = select; });
+    };
+    window._bcApplySelectedFields = function() {
+        const ctx = window._bcImportContext;
+        if (!ctx) { document.getElementById('bc-import-modal').style.display = 'none'; return; }
+        const selected = {};
+        document.querySelectorAll('.bc-field-cb:checked').forEach(cb => {
+            selected[cb.dataset.field] = true;
+        });
+
+        const off = ctx.offData;
+        if (ctx.mode === 'add') {
+            if (selected.name && off.name)               document.getElementById('new-name').value        = off.name;
+            if (selected.description && off.description) document.getElementById('new-description').value = off.description;
+            if (selected.img && off.img)                 document.getElementById('new-img-url').value     = off.img;
+            if (selected.category && off.firstCategory) {
+                // Essayer de sélectionner la catégorie si elle existe
+                const sel = document.getElementById('new-category');
+                if (sel) {
+                    const match = [...sel.options].find(o => o.value.toLowerCase() === off.firstCategory.toLowerCase() || o.text.toLowerCase().includes(off.firstCategory.toLowerCase()));
+                    if (match) sel.value = match.value;
+                }
+            }
+            if (selected.ingredients && off.ingredients) {
+                // Ajouter les ingrédients à la description si elle n'était pas sélectionnée
+                if (!selected.description) {
+                    const descEl = document.getElementById('new-description');
+                    const existing = descEl.value.trim();
+                    descEl.value = existing ? (existing + '\n\nIngrédients : ' + off.ingredients) : ('Ingrédients : ' + off.ingredients);
+                }
+            }
+        } else if (ctx.mode === 'edit' && ctx.productId != null) {
+            const id = ctx.productId;
+            if (selected.name && off.name) {
+                const el = document.getElementById('edit-name-' + id);
+                if (el) el.value = off.name;
+            }
+            if (selected.description && off.description) {
+                const el = document.getElementById('edit-desc-' + id);
+                if (el) el.value = off.description;
+            }
+            if (selected.img && off.img) {
+                const el = document.getElementById('edit-img-' + id);
+                if (el) el.value = off.img;
+            }
+            if (selected.category && off.firstCategory) {
+                const el = document.getElementById('edit-cat-' + id);
+                if (el) {
+                    const match = [...el.options].find(o => o.value.toLowerCase() === off.firstCategory.toLowerCase() || o.text.toLowerCase().includes(off.firstCategory.toLowerCase()));
+                    if (match) el.value = match.value;
+                }
+            }
+            if (selected.ingredients && off.ingredients && !selected.description) {
+                const el = document.getElementById('edit-desc-' + id);
+                if (el) el.value = (el.value ? el.value + '\n\n' : '') + 'Ingrédients : ' + off.ingredients;
+            }
+        }
+
+        document.getElementById('bc-import-modal').style.display = 'none';
+        showScanToast('✅ Informations importées', 'success');
+    };
+
     async function fetchProductByBarcode() {
         const barcode = document.getElementById('new-barcode').value.trim();
         const resultDiv = document.getElementById('barcode-search-result');
@@ -13675,38 +14022,46 @@ logout = function(skipConfirmation = false) {
             const data = await response.json();
             
             if (data.status === 1 && data.product) {
-                const product = data.product;
-                const productName = product.product_name || product.product_name_fr || 'Produit inconnu';
-                const productImage = product.image_url || product.image_front_url || '';
-                const brands = product.brands || '';
-                
-                // Vérifier si l'option de récupération automatique est cochée
+                const off = _parseOffProduct(data.product);
                 const autoFetch = document.getElementById('auto-fetch-barcode').checked;
-                
+
                 if (autoFetch) {
-                    // Remplir automatiquement les champs
-                    document.getElementById('new-name').value = brands ? `${brands} - ${productName}` : productName;
-                    if (productImage) {
-                        document.getElementById('new-img-url').value = productImage;
+                    // Remplir automatiquement tous les champs disponibles
+                    if (off.name) document.getElementById('new-name').value = off.name;
+                    if (off.description) document.getElementById('new-description').value = off.description;
+                    if (off.img) document.getElementById('new-img-url').value = off.img;
+                    if (off.firstCategory) {
+                        const sel = document.getElementById('new-category');
+                        if (sel) {
+                            const match = [...sel.options].find(o => o.value.toLowerCase() === off.firstCategory.toLowerCase() || o.text.toLowerCase().includes(off.firstCategory.toLowerCase()));
+                            if (match) sel.value = match.value;
+                        }
                     }
                 }
-                
-                // Afficher le résultat
+
+                // Afficher le résultat (résumé + bouton pour ouvrir la modale de sélection)
                 resultDiv.style.background = '#d4edda';
                 resultDiv.style.border = '2px solid #28a745';
                 resultDiv.innerHTML = `
                     <div style="color:#155724;">
                         <h4 style="margin:0 0 10px 0;">✅ Produit trouvé !</h4>
                         <div style="display:flex; gap:15px; align-items:start;">
-                            ${productImage ? `<img src="${productImage}" style="width:80px; height:80px; object-fit:cover; border-radius:8px;">` : ''}
+                            ${off.img ? `<img src="${off.img}" style="width:80px; height:80px; object-fit:cover; border-radius:8px;">` : ''}
                             <div style="flex:1;">
-                                <p style="margin:5px 0;"><strong>Nom:</strong> ${brands ? `${brands} - ` : ''}${productName}</p>
-                                ${product.categories ? `<p style="margin:5px 0; font-size:0.85rem; color:#666;">Catégories: ${product.categories.split(',').slice(0, 2).join(', ')}</p>` : ''}
-                                ${autoFetch ? '<p style="margin:10px 0; font-size:0.9rem; color:#28a745;"><strong>✓ Informations appliquées automatiquement</strong></p>' : '<p style="margin:10px 0; font-size:0.9rem;"><button onclick="applyBarcodeData(\'' + (brands ? brands + ' - ' + productName : productName).replace(/'/g, "\\'") + '\', \'' + productImage.replace(/'/g, "\\'") + '\')" style="background:var(--primary); color:white; padding:8px 15px; border-radius:5px;">📋 Appliquer ces informations</button></p>'}
+                                <p style="margin:5px 0;"><strong>Nom:</strong> ${_escapeHtml(off.name) || '—'}</p>
+                                ${off.brand ? `<p style="margin:5px 0; font-size:0.85rem; color:#666;">🏷️ ${_escapeHtml(off.brand)}</p>` : ''}
+                                ${off.firstCategory ? `<p style="margin:5px 0; font-size:0.85rem; color:#666;">📁 ${_escapeHtml(off.firstCategory)}</p>` : ''}
+                                ${off.nutriScore ? `<p style="margin:5px 0;"><span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-size:0.78rem;font-weight:700;">Nutri-Score ${off.nutriScore}</span></p>` : ''}
+                                ${autoFetch ? '<p style="margin:10px 0; font-size:0.9rem; color:#28a745;"><strong>✓ Informations appliquées automatiquement</strong></p>' : '<button id="bc-open-selector-btn" style="margin-top:8px;background:linear-gradient(135deg,#1976d2,#0d47a1); color:white; padding:8px 15px; border-radius:6px;border:none;cursor:pointer;font-weight:700;font-size:0.85rem;">📥 Choisir les informations à importer</button>'}
                             </div>
                         </div>
                     </div>
                 `;
+                // Attacher l'événement sans utiliser d'onclick inline (évite les pb d'échappement)
+                if (!autoFetch) {
+                    const btn = document.getElementById('bc-open-selector-btn');
+                    if (btn) btn.onclick = function() { _openBcImportModal(off, 'add'); };
+                }
             } else {
                 // Produit non trouvé
                 resultDiv.style.background = '#f8d7da';
@@ -13770,31 +14125,26 @@ logout = function(skipConfirmation = false) {
             const data = await response.json();
             
             if (data.status === 1 && data.product) {
-                const product = data.product;
-                const productName = product.product_name || product.product_name_fr || 'Produit inconnu';
-                const productImage = product.image_url || product.image_front_url || '';
-                const brands = product.brands || '';
-                
-                // Appliquer automatiquement les données
-                const fullName = brands ? `${brands} - ${productName}` : productName;
-                document.getElementById(`edit-name-${productId}`).value = fullName;
-                if (productImage) {
-                    document.getElementById(`edit-img-${productId}`).value = productImage;
-                }
-                
-                // Afficher le résultat et le bouton annuler
+                const off = _parseOffProduct(data.product);
+                // Sauvegarder la description actuelle avant modification
+                const descEl = document.getElementById(`edit-desc-${productId}`);
+                if (descEl) productSearchHistory[productId].description = descEl.value;
+
                 resultDiv.style.background = '#d4edda';
                 resultDiv.style.border = '1px solid #28a745';
                 resultDiv.innerHTML = `
                     <div style="color:#155724;">
-                        ✅ Infos appliquées: ${fullName}
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                            ${off.img ? `<img src="${off.img}" style="width:40px;height:40px;object-fit:cover;border-radius:5px;">` : ''}
+                            <div style="flex:1;"><strong>✅ ${_escapeHtml(off.name) || 'Produit trouvé'}</strong>${off.brand ? '<br><span style="font-size:0.75rem;color:#666;">🏷️ ' + _escapeHtml(off.brand) + '</span>' : ''}</div>
+                        </div>
+                        <button id="bc-edit-open-selector-${productId}" style="background:linear-gradient(135deg,#1976d2,#0d47a1);color:white;padding:6px 12px;border-radius:5px;border:none;cursor:pointer;font-size:0.8rem;font-weight:700;">📥 Choisir les champs à importer</button>
                     </div>
                 `;
-                
-                // Afficher le bouton annuler
+                const selBtn = document.getElementById(`bc-edit-open-selector-${productId}`);
+                if (selBtn) selBtn.onclick = function() { _openBcImportModal(off, 'edit', productId); };
                 document.getElementById(`undo-search-${productId}`).style.display = 'inline-block';
-                
-                showScanToast('✅ Informations trouvées et appliquées');
+                showScanToast('✅ Informations trouvées');
             } else {
                 resultDiv.style.background = '#f8d7da';
                 resultDiv.style.border = '1px solid #dc3545';
@@ -13836,6 +14186,143 @@ logout = function(skipConfirmation = false) {
             showScanToast('↩️ Recherche annulée');
         }
     }
+
+    // ---- Toggle "Voir plus/moins" pour la description du produit ----
+    window._pdToggleDescription = function() {
+        const text = document.getElementById('pd-description-text');
+        const btn  = document.getElementById('pd-desc-toggle');
+        if (!text || !btn) return;
+        const expanded = btn.dataset.expanded === '1';
+        if (expanded) {
+            text.style.maxHeight = '120px';
+            btn.textContent = 'Voir plus ▼';
+            btn.dataset.expanded = '0';
+        } else {
+            text.style.maxHeight = 'none';
+            btn.textContent = 'Voir moins ▲';
+            btn.dataset.expanded = '1';
+        }
+    };
+
+    // ========================================================================
+    // ===== HISTORIQUE DES STOCKS ============================================
+    // ========================================================================
+    // Helper : enregistrer un changement de stock dans l'historique du produit
+    window._logStockChange = function(product, before, after, type, reason, extra) {
+        if (!product) return;
+        if (!Array.isArray(product.stockHistory)) product.stockHistory = [];
+        const delta = (parseFloat(after) || 0) - (parseFloat(before) || 0);
+        const entry = {
+            date: new Date().toISOString(),
+            type: type || 'manual', // sale | manual | retour | import | defect | creation | restock
+            before: parseFloat(before) || 0,
+            after:  parseFloat(after)  || 0,
+            delta:  parseFloat(delta.toFixed(3)),
+            reason: reason || '',
+            user:   (typeof currentUser !== 'undefined' && currentUser?.username) || 'system'
+        };
+        if (extra) Object.assign(entry, extra);
+        product.stockHistory.push(entry);
+        // Conserver max 500 entrées par produit
+        if (product.stockHistory.length > 500) {
+            product.stockHistory = product.stockHistory.slice(-500);
+        }
+    };
+
+    // Ouvrir la modale d'historique pour un produit
+    window._openStockHistory = function(productId) {
+        const p = products.find(x => x.id === productId);
+        if (!p) { showScanToast('⚠️ Produit introuvable', 'info'); return; }
+        window._currentStockHistProduct = p;
+        document.getElementById('sh-title').textContent = '📦 Historique du stock — ' + p.name;
+        document.getElementById('sh-product-name').textContent = p.name;
+        const stockLabel = p.unitType === 'kg' ? (p.stock || 0).toFixed(3) + ' kg' : String(p.stock || 0) + ' u.';
+        document.getElementById('sh-current-stock').textContent = stockLabel;
+        document.getElementById('sh-filter').value = 'all';
+        _renderStockHistory();
+        document.getElementById('stock-history-modal').style.display = 'flex';
+    };
+
+    window._renderStockHistory = function() {
+        const p = window._currentStockHistProduct;
+        if (!p) return;
+        const filter = document.getElementById('sh-filter').value;
+        const rawHist = Array.isArray(p.stockHistory) ? p.stockHistory : [];
+        const hist = filter === 'all' ? rawHist : rawHist.filter(h => h.type === filter);
+        const listEl = document.getElementById('sh-list');
+        const statsEl = document.getElementById('sh-stats');
+
+        // Stats rapides
+        const totalIn  = rawHist.filter(h => h.delta > 0).reduce((s, h) => s + h.delta, 0);
+        const totalOut = rawHist.filter(h => h.delta < 0).reduce((s, h) => s + Math.abs(h.delta), 0);
+        const nbSales  = rawHist.filter(h => h.type === 'sale').length;
+        const nbManual = rawHist.filter(h => h.type === 'manual').length;
+        const unit = p.unitType === 'kg' ? 'kg' : 'u.';
+        statsEl.innerHTML = `
+            <div style="flex:1;min-width:120px;background:#e8f5e9;padding:8px 12px;border-radius:8px;"><div style="font-size:0.7rem;color:#2e7d32;">Total entrées</div><div style="font-weight:800;color:#2e7d32;">+${p.unitType==='kg'?totalIn.toFixed(3):Math.round(totalIn)} ${unit}</div></div>
+            <div style="flex:1;min-width:120px;background:#ffebee;padding:8px 12px;border-radius:8px;"><div style="font-size:0.7rem;color:#c62828;">Total sorties</div><div style="font-weight:800;color:#c62828;">−${p.unitType==='kg'?totalOut.toFixed(3):Math.round(totalOut)} ${unit}</div></div>
+            <div style="flex:1;min-width:100px;background:#e3f2fd;padding:8px 12px;border-radius:8px;"><div style="font-size:0.7rem;color:#0277bd;">Ventes</div><div style="font-weight:800;color:#0277bd;">${nbSales}</div></div>
+            <div style="flex:1;min-width:100px;background:#fff3e0;padding:8px 12px;border-radius:8px;"><div style="font-size:0.7rem;color:#e65100;">Modif. manuelles</div><div style="font-weight:800;color:#e65100;">${nbManual}</div></div>
+        `;
+
+        if (!hist.length) {
+            listEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-muted,#888);font-size:0.85rem;">Aucun mouvement enregistré pour ce filtre.</div>';
+            return;
+        }
+
+        const typeLabel = { sale:'🛒 Vente', manual:'✏️ Modification', retour:'↩️ Retour', import:'📥 Import', defect:'⚠️ Défaut', creation:'✨ Création', restock:'📦 Réappro' };
+        const reversed = [...hist].reverse(); // plus récent en premier
+        listEl.innerHTML = reversed.map(h => {
+            const d = new Date(h.date);
+            const dateStr = d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            const deltaColor = h.delta > 0 ? '#2e7d32' : (h.delta < 0 ? '#c62828' : '#666');
+            const deltaStr = (h.delta > 0 ? '+' : '') + (p.unitType === 'kg' ? parseFloat(h.delta).toFixed(3) : Math.round(h.delta));
+            const beforeStr = p.unitType === 'kg' ? parseFloat(h.before || 0).toFixed(3) : Math.round(h.before || 0);
+            const afterStr  = p.unitType === 'kg' ? parseFloat(h.after  || 0).toFixed(3) : Math.round(h.after  || 0);
+            return `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg-card-2,#f8fafc);border:1px solid var(--border-color,#e0e0e0);border-radius:8px;margin-bottom:5px;">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-weight:700;font-size:0.82rem;color:var(--text-main);">${typeLabel[h.type] || h.type}${h.reason?' — '+_escapeHtml(h.reason):''}</div>
+                    <div style="font-size:0.7rem;color:var(--text-muted,#888);margin-top:1px;">${dateStr}${h.user?' · 👤 '+_escapeHtml(h.user):''}${h.ticketId?' · 🧾 #'+h.ticketId:''}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-weight:900;font-size:0.95rem;color:${deltaColor};">${deltaStr} ${unit}</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:1px;">${beforeStr} → ${afterStr}</div>
+                </div>
+            </div>`;
+        }).join('');
+    };
+
+    window._exportStockHistoryCSV = function() {
+        const p = window._currentStockHistProduct;
+        if (!p || !Array.isArray(p.stockHistory) || !p.stockHistory.length) {
+            showScanToast('⚠️ Aucun mouvement à exporter', 'info');
+            return;
+        }
+        const rows = [['Date', 'Type', 'Avant', 'Après', 'Delta', 'Raison', 'Utilisateur', 'ID ticket']];
+        p.stockHistory.forEach(h => {
+            rows.push([
+                new Date(h.date).toLocaleString('fr-FR'),
+                h.type || '',
+                h.before || 0,
+                h.after  || 0,
+                h.delta  || 0,
+                (h.reason || '').replace(/[;\n\r]/g, ' '),
+                h.user   || '',
+                h.ticketId || ''
+            ]);
+        });
+        const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\n');
+        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'historique_stock_' + (p.name || 'produit').replace(/[^a-z0-9]/gi, '_') + '_' + new Date().toISOString().split('T')[0] + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showScanToast('✅ Historique exporté en CSV', 'success');
+    };
 
     function toggleUnitFields() {
         const isKg = document.getElementById('new-unit-type').value === 'kg';
@@ -13883,8 +14370,10 @@ logout = function(skipConfirmation = false) {
             ? parseFloat(parseFloat(stockRaw || 0).toFixed(3))
             : parseInt(stockRaw) || 0;
 
+        const description = (document.getElementById('new-description')?.value || '').trim();
+        const newProductId = Date.now();
         products.push({
-            id: Date.now(),
+            id: newProductId,
             name,
             price: unitType === 'kg' ? null : price,
             pricePerKg: unitType === 'kg' ? pricePerKg : null,
@@ -13894,9 +14383,19 @@ logout = function(skipConfirmation = false) {
             category: document.getElementById('new-category').value,
             promo: 0,
             img: finalImg || '',
+            description: description || '',
             active: true,
             dateCreated: new Date().toISOString(),
-            expiryDate: expiryDate || null
+            expiryDate: expiryDate || null,
+            stockHistory: [{
+                date: new Date().toISOString(),
+                type: 'creation',
+                before: 0,
+                after: stock,
+                delta: stock,
+                reason: 'Création du produit',
+                user: (currentUser?.username || 'system')
+            }]
         });
 
         saveAll();
@@ -13906,6 +14405,7 @@ logout = function(skipConfirmation = false) {
         document.getElementById('new-img-url').value = '';
         document.getElementById('new-img-file').value = '';
         document.getElementById('new-barcode').value = '';
+        if (document.getElementById('new-description')) document.getElementById('new-description').value = '';
         document.getElementById('new-stock').value = document.getElementById('new-unit-type').value === 'kg' ? '1' : '10';
         document.getElementById('new-expiry-date').value = '';
         document.getElementById('barcode-search-result').style.display = 'none';
@@ -14048,6 +14548,9 @@ logout = function(skipConfirmation = false) {
                         </div>
                         <label>Date limite de consommation</label>
                         <input type="date" id="edit-expiry-${p.id}" value="${p.expiryDate || ''}" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:5px;" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}">
+                        <label>📝 Description</label>
+                        <textarea id="edit-desc-${p.id}" placeholder="Description du produit (ingrédients, composition, notes…)" rows="3"
+                            style="width:100%;padding:8px;border:1px solid #ddd;border-radius:5px;font-family:inherit;font-size:0.88rem;resize:vertical;min-height:55px;">${(p.description || '').replace(/"/g,'&quot;').replace(/</g,'&lt;')}</textarea>
                         <label>Promo (%)</label>
                         <select id="edit-promo-${p.id}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}">
                             ${promoTypes.map(pt => `<option value="${pt}" ${disc == pt ? 'selected' : ''}>-${pt}%</option>`).join('')}
@@ -14062,6 +14565,7 @@ logout = function(skipConfirmation = false) {
                             <span style="font-size:0.8rem; color:#6d28d9; white-space:nowrap;">% majoration</span>
                         </div>
                         <button onclick="updateProductInfo(${p.id})" style="background:var(--primary);color:white;width:100%;margin-top:10px;padding:8px;border-radius:5px;">💾 SAUVEGARDER</button>
+                        <button onclick="_openStockHistory(${p.id})" style="background:linear-gradient(135deg,#00897b,#00695c);color:white;width:100%;margin-top:6px;padding:8px;border-radius:5px;border:none;cursor:pointer;font-size:0.85rem;font-weight:700;">📊 Historique du stock</button>
                         <button onclick="openDefectModal(${p.id})" style="background:linear-gradient(135deg,#e67e22,#d35400);color:white;width:100%;margin-top:6px;padding:8px;border-radius:5px;border:none;cursor:pointer;font-size:0.85rem;font-weight:700;">⚠️ Déclarer un défaut</button>
                         <div style="display:flex; gap:5px; margin-top:5px;">
                             <button onclick="toggleProductActive(${p.id})" style="flex:1; background:var(--gray); color:white; font-size:0.7rem;">${p.active ? '👁️ Désactiver' : '✅ Activer'}</button>
@@ -14127,15 +14631,26 @@ logout = function(skipConfirmation = false) {
     function updateProductInfo(id) {
         const p = products.find(x => x.id === id);
         if (p) {
+            const oldStock = p.stock;
             p.name = document.getElementById(`edit-name-${id}`).value;
             p.category = document.getElementById(`edit-cat-${id}`).value;
             p.barcode = document.getElementById(`edit-barcode-${id}`).value;
+            // Description
+            const descEl = document.getElementById(`edit-desc-${id}`);
+            if (descEl) p.description = descEl.value.trim();
+            let newStock;
             if (p.unitType === 'kg') {
                 p.pricePerKg = parseFloat(document.getElementById(`edit-price-${id}`).value);
-                p.stock = parseFloat(parseFloat(document.getElementById(`edit-stock-${id}`).value).toFixed(3));
+                newStock = parseFloat(parseFloat(document.getElementById(`edit-stock-${id}`).value).toFixed(3));
+                p.stock = newStock;
             } else {
                 p.price = parseFloat(document.getElementById(`edit-price-${id}`).value);
-                p.stock = parseInt(document.getElementById(`edit-stock-${id}`).value);
+                newStock = parseInt(document.getElementById(`edit-stock-${id}`).value);
+                p.stock = newStock;
+            }
+            // Enregistrer changement de stock manuel
+            if (!isNaN(newStock) && newStock !== oldStock) {
+                _logStockChange(p, oldStock, newStock, 'manual', 'Modification manuelle');
             }
             p.promo = parseInt(document.getElementById(`edit-promo-${id}`).value);
             p.expiryDate = document.getElementById(`edit-expiry-${id}`).value || null;
@@ -14878,6 +15393,33 @@ logout = function(skipConfirmation = false) {
             dlcBlock.style.display = '';
         } else {
             dlcBlock.style.display = 'none';
+        }
+
+        // Description
+        const descBlock = document.getElementById('pd-description-block');
+        const descText  = document.getElementById('pd-description-text');
+        const descToggle = document.getElementById('pd-desc-toggle');
+        if (descBlock && descText) {
+            const desc = (p.description || '').trim();
+            if (desc) {
+                descText.textContent = desc;
+                descText.style.maxHeight = '120px';
+                descText.style.overflow = 'hidden';
+                descBlock.style.display = '';
+                setTimeout(() => {
+                    if (descText.scrollHeight > descText.clientHeight + 4) {
+                        if (descToggle) {
+                            descToggle.style.display = '';
+                            descToggle.textContent = 'Voir plus ▼';
+                            descToggle.dataset.expanded = '0';
+                        }
+                    } else if (descToggle) {
+                        descToggle.style.display = 'none';
+                    }
+                }, 10);
+            } else {
+                descBlock.style.display = 'none';
+            }
         }
 
         // Bouton ajout
@@ -17705,7 +18247,9 @@ logout = function(skipConfirmation = false) {
         const product = products.find(p => p.id === item.id);
         if (product) {
             if (item.unitType === 'kg') {
+                const _beforeRet = product.stock;
                 product.stock = parseFloat((product.stock + item.quantity).toFixed(3));
+                _logStockChange(product, _beforeRet, product.stock, 'retour', 'Retour article', { qty: item.quantity });
             } else {
                 product.stock += item.quantity;
             }
@@ -18278,6 +18822,14 @@ logout = function(skipConfirmation = false) {
                     <div><div style="font-size:0.9rem;font-weight:700;color:#7f8c8d;" id="pd-benef-cost">—</div><div style="font-size:0.7rem;color:#7f8c8d;">💸 Prix d'achat</div></div>
                     <div><div style="font-size:0.9rem;font-weight:700;color:#27ae60;" id="pd-benef-stock">—</div><div style="font-size:0.7rem;color:#7f8c8d;">📦 Bénéf. sur stock</div></div>
                 </div>
+            </div>
+            <!-- Description du produit -->
+            <div id="pd-description-block" style="display:none;background:linear-gradient(135deg,rgba(52,152,219,0.05),rgba(41,128,185,0.03));border:1.5px solid rgba(52,152,219,0.2);border-radius:10px;padding:12px 14px;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <div style="font-size:0.7rem;font-weight:700;color:var(--primary,#2980b9);text-transform:uppercase;letter-spacing:0.04em;">📝 Description</div>
+                    <button id="pd-desc-toggle" type="button" onclick="_pdToggleDescription()" style="background:none;border:none;color:var(--primary,#2980b9);font-size:0.75rem;font-weight:700;cursor:pointer;padding:2px 6px;display:none;">Voir plus ▼</button>
+                </div>
+                <div id="pd-description-text" style="font-size:0.85rem;color:var(--text-main,#2c3e50);line-height:1.55;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:hidden;position:relative;"></div>
             </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:14px;display:none;"></div>
             <button class="pd-add-btn" id="pd-add-btn" onclick="pdAddToCart()">🛒 Ajouter au panier</button>
@@ -24449,6 +25001,7 @@ function initAdminSections() {
                     } else {
                         product.stock = Math.max(0, product.stock - qty);
                     }
+                    _logStockChange(product, before, product.stock, 'import', 'Ticket importé', { ticketId: s.id, qty });
                     stockChanges.push({ name: product.name, before, after: product.stock, qty });
                     stockUpdated++;
                 } else {
