@@ -6122,14 +6122,14 @@
 
     <!-- ===== MODALE SÉLECTION CHAMPS À IMPORTER (via code-barres) ===== -->
     <div id="bc-import-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:20700;justify-content:center;align-items:center;">
-      <div style="background:var(--bg-card,#fff);border-radius:14px;width:94%;max-width:580px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,0.4);">
+      <div style="background:var(--bg-card,#fff);border-radius:14px;width:94%;max-width:600px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 50px rgba(0,0,0,0.4);">
         <div style="background:linear-gradient(135deg,#1976d2,#0d47a1);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
           <div style="color:white;font-weight:800;font-size:0.95rem;">📥 Choisir les informations à importer</div>
           <button onclick="document.getElementById('bc-import-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>
         </div>
         <div style="overflow-y:auto;flex:1;padding:16px 20px;">
           <div id="bc-import-preview" style="background:var(--bg-card-2,#f8fafc);padding:12px;border-radius:10px;margin-bottom:14px;border:1.5px solid var(--border-color,#e0e0e0);display:flex;gap:12px;align-items:flex-start;"></div>
-          <div style="font-weight:700;font-size:0.85rem;color:var(--text-main);margin-bottom:10px;">✓ Cochez les informations à importer :</div>
+          <div style="font-weight:700;font-size:0.85rem;color:var(--text-main);margin-bottom:10px;">✓ Cochez les informations à importer (💡 Entrée = valider) :</div>
           <div id="bc-import-fields" style="display:flex;flex-direction:column;gap:8px;"></div>
           <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
             <button onclick="_bcSelectAllFields(true)" style="background:var(--input-bg,#f0f0f0);border:1px solid var(--border-color,#ddd);color:var(--text-main);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:0.78rem;font-weight:600;">✓ Tout cocher</button>
@@ -6138,9 +6138,15 @@
         </div>
         <div style="padding:12px 20px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0;">
           <button onclick="document.getElementById('bc-import-modal').style.display='none'" style="background:var(--input-bg,#f0f0f0);border:1px solid var(--border-color,#ddd);color:var(--text-main);padding:8px 16px;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:600;">Annuler</button>
-          <button onclick="_bcApplySelectedFields()" style="background:linear-gradient(135deg,#1976d2,#0d47a1);color:white;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;">📥 Importer les champs cochés</button>
+          <button id="bc-apply-btn" onclick="_bcApplySelectedFields()" style="background:linear-gradient(135deg,#1976d2,#0d47a1);color:white;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:0.82rem;font-weight:700;">📥 Importer (Entrée)</button>
         </div>
       </div>
+    </div>
+
+    <!-- ===== VIEWER IMAGE PLEIN ÉCRAN ===== -->
+    <div id="bc-img-viewer" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:20750;justify-content:center;align-items:center;cursor:zoom-out;" onclick="document.getElementById('bc-img-viewer').style.display='none'">
+      <button onclick="event.stopPropagation();document.getElementById('bc-img-viewer').style.display='none'" style="position:absolute;top:20px;right:20px;background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.3);color:white;width:40px;height:40px;border-radius:50%;cursor:pointer;font-size:1.1rem;z-index:2;">✕</button>
+      <img id="bc-img-viewer-img" src="" alt="" style="max-width:94vw;max-height:92vh;object-fit:contain;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,0.7);cursor:default;" onclick="event.stopPropagation()">
     </div>
 
     <!-- ===== MODALE HISTORIQUE STOCK (par article) ===== -->
@@ -14209,19 +14215,82 @@ logout = function(skipConfirmation = false) {
     // Contexte : { mode: 'add' | 'edit', productId?: id, offData: parsed }
     window._bcImportContext = null;
 
+    // Ouvre l'image en grand dans le viewer plein écran
+    window._bcOpenImageViewer = function(url) {
+        if (!url) return;
+        const img = document.getElementById('bc-img-viewer-img');
+        const viewer = document.getElementById('bc-img-viewer');
+        if (!img || !viewer) return;
+        img.src = url;
+        viewer.style.display = 'flex';
+    };
+
     function _openBcImportModal(offData, mode, productId) {
-        window._bcImportContext = { mode, productId, offData };
+        // Copie défensive : on modifie le nom/catégorie édités dans le contexte
+        window._bcImportContext = {
+            mode,
+            productId,
+            offData: Object.assign({}, offData)
+        };
         const preview = document.getElementById('bc-import-preview');
         const fieldsEl = document.getElementById('bc-import-fields');
         if (!preview || !fieldsEl) return;
+
+        // Preview avec image cliquable (zoom) + nom éditable + catégorie éditable
+        const existingCats = (typeof getEchCategories === 'function') ? getEchCategories() : ((typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : []);
+        const catOptions = existingCats.map(c => `<option value="${_escapeHtml(c)}" ${c === offData.firstCategory ? 'selected' : ''}>${_escapeHtml(c)}</option>`).join('');
+
         preview.innerHTML = `
-            ${offData.img ? `<img src="${offData.img}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;flex-shrink:0;">` : '<div style="width:72px;height:72px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.8rem;flex-shrink:0;">📦</div>'}
-            <div style="flex:1;min-width:0;">
-                <div style="font-weight:800;font-size:0.9rem;color:var(--text-main);margin-bottom:3px;">${_escapeHtml(offData.name) || '(nom inconnu)'}</div>
-                ${offData.brand ? `<div style="font-size:0.72rem;color:var(--text-muted,#888);margin-bottom:3px;">🏷️ ${_escapeHtml(offData.brand)}</div>` : ''}
-                ${offData.firstCategory ? `<div style="font-size:0.72rem;color:var(--text-muted,#888);">📁 ${_escapeHtml(offData.firstCategory)}</div>` : ''}
-                ${offData.nutriScore ? `<div style="font-size:0.7rem;margin-top:4px;display:inline-block;background:#e8f5e9;color:#2e7d32;padding:1px 7px;border-radius:10px;font-weight:700;">Nutri-Score ${offData.nutriScore}</div>` : ''}
+            <div style="position:relative;flex-shrink:0;">
+                ${offData.img ? `<img id="bc-preview-img" src="${offData.img}" style="width:86px;height:86px;object-fit:cover;border-radius:8px;cursor:zoom-in;border:1.5px solid var(--border-color,#e0e0e0);" title="Cliquez pour agrandir">
+                    <div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.65);color:white;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:0.75rem;pointer-events:none;">🔍</div>` 
+                : '<div style="width:86px;height:86px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:2rem;">📦</div>'}
+            </div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;">
+                <div>
+                    <label style="font-size:0.7rem;font-weight:700;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:0.03em;display:block;margin-bottom:2px;">✏️ Nom (éditable)</label>
+                    <input type="text" id="bc-edit-name" value="${_escapeHtml(offData.name || '')}" placeholder="Nom du produit"
+                        style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:0.88rem;font-weight:700;background:var(--bg-card,#fff);color:var(--text-main);box-sizing:border-box;">
+                </div>
+                ${offData.brand ? `<div style="font-size:0.72rem;color:var(--text-muted,#888);">🏷️ ${_escapeHtml(offData.brand)}</div>` : ''}
+                <div>
+                    <label style="font-size:0.7rem;font-weight:700;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:0.03em;display:block;margin-bottom:2px;">📁 Catégorie (éditable)</label>
+                    <div style="display:flex;gap:5px;">
+                        <select id="bc-edit-cat-select" onchange="_bcCatChange(this)" 
+                            style="flex:1;padding:6px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:0.82rem;background:var(--bg-card,#fff);color:var(--text-main);">
+                            <option value="">— Choisir —</option>
+                            ${catOptions}
+                            <option value="__new__" style="font-weight:700;color:#0d9488;">➕ Créer une nouvelle catégorie…</option>
+                        </select>
+                    </div>
+                    <input type="text" id="bc-edit-cat-new" placeholder="Nom de la nouvelle catégorie" 
+                        style="display:none;margin-top:5px;width:100%;padding:6px 10px;border:1.5px solid #0d9488;border-radius:7px;font-size:0.82rem;background:var(--bg-card,#fff);color:var(--text-main);box-sizing:border-box;">
+                </div>
+                ${offData.nutriScore ? `<div style="font-size:0.7rem;margin-top:2px;display:inline-block;background:#e8f5e9;color:#2e7d32;padding:1px 7px;border-radius:10px;font-weight:700;align-self:flex-start;">Nutri-Score ${offData.nutriScore}</div>` : ''}
             </div>`;
+
+        // Zoom image
+        if (offData.img) {
+            const imgEl = document.getElementById('bc-preview-img');
+            if (imgEl) imgEl.onclick = function() { window._bcOpenImageViewer(offData.img); };
+        }
+
+        // Pré-sélection de la catégorie si elle existe déjà
+        const catSel = document.getElementById('bc-edit-cat-select');
+        if (catSel && offData.firstCategory) {
+            const existingMatch = [...catSel.options].find(o => o.value && o.value !== '__new__' && o.value.toLowerCase() === offData.firstCategory.toLowerCase());
+            if (existingMatch) {
+                catSel.value = existingMatch.value;
+            } else if (offData.firstCategory) {
+                // La catégorie n'existe pas : passer en mode création avec pré-remplissage
+                catSel.value = '__new__';
+                const catNew = document.getElementById('bc-edit-cat-new');
+                if (catNew) {
+                    catNew.style.display = '';
+                    catNew.value = offData.firstCategory;
+                }
+            }
+        }
 
         const fields = [
             { key:'name',        icon:'🏷️', label:'Nom du produit',     value: offData.name,           show: !!offData.name },
@@ -14251,10 +14320,65 @@ logout = function(skipConfirmation = false) {
             fieldsEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted,#888);font-size:0.85rem;font-style:italic;">Aucune information disponible pour ce code-barres.</div>';
         }
         document.getElementById('bc-import-modal').style.display = 'flex';
+        // Focus sur le nom pour édition directe
+        setTimeout(() => {
+            const nameField = document.getElementById('bc-edit-name');
+            if (nameField) { nameField.focus(); nameField.select(); }
+        }, 100);
     }
+
+    // Listener global Entrée dans la modale d'import (attaché une seule fois)
+    if (!window._bcEnterListenerAttached) {
+        document.addEventListener('keydown', function(e) {
+            const modal = document.getElementById('bc-import-modal');
+            if (!modal || modal.style.display === 'none') return;
+            if (e.key !== 'Enter') return;
+            // Ignorer Entrée dans les textarea (saut de ligne normal)
+            if (e.target && e.target.tagName === 'TEXTAREA') return;
+            // Ignorer Shift+Entrée partout
+            if (e.shiftKey) return;
+            // Si on est dans un select ouvert, ne pas intercepter
+            if (e.target && e.target.tagName === 'SELECT' && e.target.value === '__new__') {
+                // Laisser le comportement natif pour confirmer la sélection
+                return;
+            }
+            e.preventDefault();
+            if (typeof window._bcApplySelectedFields === 'function') {
+                window._bcApplySelectedFields();
+            }
+        });
+        // Aussi : Echap ferme la modale
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Escape') return;
+            const modal = document.getElementById('bc-import-modal');
+            if (modal && modal.style.display !== 'none') {
+                modal.style.display = 'none';
+                return;
+            }
+            const viewer = document.getElementById('bc-img-viewer');
+            if (viewer && viewer.style.display !== 'none') {
+                viewer.style.display = 'none';
+            }
+        });
+        window._bcEnterListenerAttached = true;
+    }
+
     window._bcSelectAllFields = function(select) {
         document.querySelectorAll('.bc-field-cb').forEach(cb => { cb.checked = select; });
     };
+    // Gérer le changement du sélecteur de catégorie (afficher champ nouveau si __new__)
+    window._bcCatChange = function(sel) {
+        const newField = document.getElementById('bc-edit-cat-new');
+        if (!newField) return;
+        if (sel.value === '__new__') {
+            newField.style.display = '';
+            setTimeout(() => newField.focus(), 50);
+        } else {
+            newField.style.display = 'none';
+            newField.value = '';
+        }
+    };
+
     window._bcApplySelectedFields = function() {
         const ctx = window._bcImportContext;
         if (!ctx) { document.getElementById('bc-import-modal').style.display = 'none'; return; }
@@ -14264,55 +14388,101 @@ logout = function(skipConfirmation = false) {
         });
 
         const off = ctx.offData;
+        // Récupérer le nom édité
+        const editedNameEl = document.getElementById('bc-edit-name');
+        const editedName = editedNameEl ? editedNameEl.value.trim() : (off.name || '');
+
+        // Récupérer la catégorie (existante ou nouvelle)
+        const catSel = document.getElementById('bc-edit-cat-select');
+        const catNew = document.getElementById('bc-edit-cat-new');
+        let chosenCategory = '';
+        if (catSel) {
+            if (catSel.value === '__new__' && catNew) {
+                chosenCategory = catNew.value.trim();
+            } else if (catSel.value) {
+                chosenCategory = catSel.value;
+            }
+        }
+
+        // Si nouvelle catégorie saisie et pas encore dans la liste → créer
+        if (chosenCategory) {
+            const existingCats = (typeof getEchCategories === 'function') ? getEchCategories() : ((typeof categories !== 'undefined' && Array.isArray(categories)) ? categories : []);
+            const catExists = existingCats.some(c => c.toLowerCase() === chosenCategory.toLowerCase());
+            if (!catExists) {
+                const updated = [...existingCats, chosenCategory];
+                if (typeof saveEchCats === 'function') {
+                    try { saveEchCats(updated); showScanToast('➕ Catégorie « ' + chosenCategory + ' » créée', 'success'); } catch(e) {}
+                } else if (typeof window._syncCategories === 'function') {
+                    localStorage.setItem('covo_categories', JSON.stringify(updated));
+                    window._syncCategories(updated);
+                }
+            }
+        }
+
         if (ctx.mode === 'add') {
-            if (selected.name && off.name)               document.getElementById('new-name').value        = off.name;
+            if (selected.name && editedName)              document.getElementById('new-name').value        = editedName;
             if (selected.description && off.description) document.getElementById('new-description').value = off.description;
             if (selected.img && off.img)                 document.getElementById('new-img-url').value     = off.img;
-            if (selected.category && off.firstCategory) {
-                // Essayer de sélectionner la catégorie si elle existe
+            if (selected.category && chosenCategory) {
                 const sel = document.getElementById('new-category');
                 if (sel) {
-                    const match = [...sel.options].find(o => o.value.toLowerCase() === off.firstCategory.toLowerCase() || o.text.toLowerCase().includes(off.firstCategory.toLowerCase()));
+                    // Rafraîchir pour inclure la nouvelle catégorie créée
+                    if (typeof refreshEchCategorySelects === 'function') { try { refreshEchCategorySelects(); } catch(e) {} }
+                    const match = [...sel.options].find(o => o.value.toLowerCase() === chosenCategory.toLowerCase());
                     if (match) sel.value = match.value;
                 }
             }
-            if (selected.ingredients && off.ingredients) {
-                // Ajouter les ingrédients à la description si elle n'était pas sélectionnée
-                if (!selected.description) {
-                    const descEl = document.getElementById('new-description');
-                    const existing = descEl.value.trim();
-                    descEl.value = existing ? (existing + '\n\nIngrédients : ' + off.ingredients) : ('Ingrédients : ' + off.ingredients);
-                }
+            if (selected.ingredients && off.ingredients && !selected.description) {
+                const descEl = document.getElementById('new-description');
+                const existing = descEl.value.trim();
+                descEl.value = existing ? (existing + '\n\nIngrédients : ' + off.ingredients) : ('Ingrédients : ' + off.ingredients);
             }
         } else if (ctx.mode === 'edit' && ctx.productId != null) {
             const id = ctx.productId;
-            if (selected.name && off.name) {
+            const p = (typeof products !== 'undefined') ? products.find(x => x.id == id) : null;
+            if (selected.name && editedName) {
                 const el = document.getElementById('edit-name-' + id);
-                if (el) el.value = off.name;
+                if (el) el.value = editedName;
+                if (p) p.name = editedName;
             }
             if (selected.description && off.description) {
                 const el = document.getElementById('edit-desc-' + id);
                 if (el) el.value = off.description;
+                if (p) p.description = off.description;
             }
             if (selected.img && off.img) {
                 const el = document.getElementById('edit-img-' + id);
                 if (el) el.value = off.img;
+                if (p) p.img = off.img;
             }
-            if (selected.category && off.firstCategory) {
+            if (selected.category && chosenCategory) {
                 const el = document.getElementById('edit-cat-' + id);
                 if (el) {
-                    const match = [...el.options].find(o => o.value.toLowerCase() === off.firstCategory.toLowerCase() || o.text.toLowerCase().includes(off.firstCategory.toLowerCase()));
+                    if (typeof refreshEchCategorySelects === 'function') { try { refreshEchCategorySelects(); } catch(e) {} }
+                    const match = [...el.options].find(o => o.value.toLowerCase() === chosenCategory.toLowerCase());
                     if (match) el.value = match.value;
                 }
+                if (p) p.category = chosenCategory;
             }
             if (selected.ingredients && off.ingredients && !selected.description) {
                 const el = document.getElementById('edit-desc-' + id);
-                if (el) el.value = (el.value ? el.value + '\n\n' : '') + 'Ingrédients : ' + off.ingredients;
+                const currentVal = el ? el.value : '';
+                const newDesc = (currentVal ? currentVal + '\n\n' : '') + 'Ingrédients : ' + off.ingredients;
+                if (el) el.value = newDesc;
+                if (p) p.description = newDesc;
+            }
+            // Sauvegarde automatique du produit en mode édition
+            if (p && typeof saveAll === 'function') {
+                try {
+                    saveAll();
+                    if (typeof renderProducts === 'function') renderProducts();
+                } catch(e) { console.warn('saveAll after import failed:', e); }
             }
         }
 
         document.getElementById('bc-import-modal').style.display = 'none';
-        showScanToast('✅ Informations importées', 'success');
+        const savedMsg = (ctx.mode === 'edit') ? '✅ Informations importées et sauvegardées' : '✅ Informations importées';
+        showScanToast(savedMsg, 'success');
     };
 
     async function fetchProductByBarcode() {
