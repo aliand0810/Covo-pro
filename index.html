@@ -8246,6 +8246,24 @@ function toggleInfoSection(headerElement) {
     window._qmsgSelectTicket = function(ticketId) {
         const sale = (salesHistory || []).find(s => s.id === ticketId);
         if (!sale) { showScanToast('⚠️ Ticket introuvable', 'info'); return; }
+        // Mode réponse ? Rediriger vers le store de réponse
+        if (window._qmsgReplyMode === 'ticket' && window._qmsgReplyTargetId) {
+            const mid = window._qmsgReplyTargetId;
+            if (!window._qmsgReplyAttach[mid]) window._qmsgReplyAttach[mid] = {};
+            window._qmsgReplyAttach[mid].ticket = {
+                id: sale.id, date: sale.date, total: sale.total,
+                itemCount: (sale.items || []).reduce((s,it) => s + (it.qty || it.quantity || 1), 0),
+                cashier: sale.cashier || sale.cashierName || null,
+                paymentMethod: sale.paymentMethod || sale.payment || null,
+                cancelled: !!sale.cancelled,
+                _imported: !!sale._imported
+            };
+            window._qmsgReplyMode = null;
+            window._qmsgReplyTargetId = null;
+            document.getElementById('qmsg-ticket-picker-modal').style.display = 'none';
+            _qmsgReplyRenderPreview(mid);
+            return;
+        }
         if (window._qmsgSelectTicketForAdmin) {
             window._qmsgSelectTicketForAdmin = false;
             window._awSelectedTicket = sale;
@@ -9068,6 +9086,22 @@ function toggleInfoSection(headerElement) {
     };
 
     window._qmsgSelectArticle = function(p) {
+        // Mode réponse ? Rediriger vers le store de réponse
+        if (window._qmsgReplyMode === 'article' && window._qmsgReplyTargetId) {
+            const mid = window._qmsgReplyTargetId;
+            if (!window._qmsgReplyAttach[mid]) window._qmsgReplyAttach[mid] = {};
+            window._qmsgReplyAttach[mid].article = {
+                id: p.id, name: p.name, img: p.img || null,
+                price: p.price || p.pricePerKg || 0,
+                unitType: p.unitType, promo: p.promo || 0,
+                category: p.category || null
+            };
+            window._qmsgReplyMode = null;
+            window._qmsgReplyTargetId = null;
+            document.getElementById('qmsg-article-picker-modal').style.display = 'none';
+            _qmsgReplyRenderPreview(mid);
+            return;
+        }
         // Copie défensive (modification possible de nom/image sans toucher au produit source)
         window._qmsgSelectedArticle = {
             id: p.id, name: p.name, img: p.img,
@@ -9834,38 +9868,140 @@ function toggleInfoSection(headerElement) {
                 replies.forEach(function(r) {
                     var rDiv = document.createElement('div');
                     rDiv.className = 'qmsg-reply-block';
+                    if (r.urgent) {
+                        rDiv.style.borderLeft = '3px solid #e74c3c';
+                        rDiv.style.background = 'linear-gradient(90deg,rgba(231,76,60,0.08),transparent 60%)';
+                    }
                     var rName = r.fromName || r.from || '?';
                     var rRole = r.fromRole || 'caissier';
                     var rMeta = document.createElement('div');
                     rMeta.className = 'qmsg-reply-meta';
-                    rMeta.textContent = (rRole==='admin'?'👑':'💼')+' '+rName+' · '+_msgFmtDate(r.date);
-                    var rText = document.createElement('div');
-                    rText.className = 'qmsg-reply-text';
-                    rText.textContent = r.content || '';
+                    rMeta.innerHTML = (rRole==='admin'?'👑':'💼')+' '+_esc(rName)+' · '+_msgFmtDate(r.date)
+                        + (r.urgent ? ' <span style="background:#e74c3c;color:white;padding:1px 6px;border-radius:8px;font-size:0.62rem;font-weight:700;margin-left:4px;">⚡ URGENT</span>' : '');
                     rDiv.appendChild(rMeta);
-                    rDiv.appendChild(rText);
+                    if (r.content) {
+                        var rText = document.createElement('div');
+                        rText.className = 'qmsg-reply-text';
+                        rText.textContent = r.content;
+                        rDiv.appendChild(rText);
+                    }
+                    // Article joint à la réponse
+                    if (r.article) {
+                        var ra = r.article;
+                        var raPrice = ra.unitType === 'kg' ? parseFloat(ra.price||0).toFixed(2) + ' €/kg' : parseFloat(ra.price||0).toFixed(2) + ' €';
+                        var raDiv = document.createElement('div');
+                        raDiv.style.cssText = 'background:rgba(41,128,185,0.08);border:1.5px solid rgba(41,128,185,0.25);border-radius:8px;padding:6px 8px;margin-top:5px;display:flex;align-items:center;gap:7px;';
+                        var raImg = ra.img
+                            ? '<img src="' + ra.img + '" style="width:36px;height:36px;object-fit:cover;border-radius:5px;cursor:zoom-in;" onclick="_qmsgZoomImg(\'' + ra.img.replace(/'/g, "\\'") + '\')">'
+                            : '<div style="width:36px;height:36px;background:rgba(0,0,0,0.06);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:1rem;">📦</div>';
+                        raDiv.innerHTML = raImg
+                            + '<div style="flex:1;min-width:0;font-size:0.78rem;"><strong>' + _esc(ra.name) + '</strong>'
+                            + (ra.category ? ' · 📁 ' + _esc(ra.category) : '')
+                            + '<br><span style="color:#1976d2;font-weight:700;">' + raPrice + '</span>'
+                            + (ra.promo ? ' · 🏷️ -' + ra.promo + '%' : '')
+                            + '</div>';
+                        rDiv.appendChild(raDiv);
+                    }
+                    // Ticket joint à la réponse
+                    if (r.ticket) {
+                        var rt = r.ticket;
+                        var rtDiv = document.createElement('div');
+                        rtDiv.style.cssText = 'background:rgba(25,118,210,0.08);border:1.5px solid rgba(25,118,210,0.3);border-radius:8px;padding:6px 8px;margin-top:5px;display:flex;align-items:center;gap:7px;cursor:pointer;';
+                        (function(tk){ rtDiv.onclick = function() { if (typeof window._qmsgOpenTicketDetail === 'function') window._qmsgOpenTicketDetail(tk); }; })(rt);
+                        rtDiv.innerHTML = '<span style="font-size:1.1rem;">🎫</span><div style="flex:1;min-width:0;font-size:0.78rem;"><strong>Ticket #' + rt.id + '</strong> · '
+                            + parseFloat(rt.total||0).toFixed(2) + ' €'
+                            + (rt.cancelled ? ' <span style="color:#e74c3c;">(annulé)</span>' : '')
+                            + '</div><span style="font-size:0.7rem;color:#1976d2;">👁️</span>';
+                        rDiv.appendChild(rtDiv);
+                    }
+                    // Images jointes
+                    if (Array.isArray(r.images) && r.images.length) {
+                        var rImgBox = document.createElement('div');
+                        rImgBox.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;';
+                        r.images.forEach(function(src) {
+                            var rImg = document.createElement('img');
+                            rImg.src = src;
+                            rImg.style.cssText = 'width:54px;height:54px;object-fit:cover;border-radius:6px;cursor:pointer;';
+                            rImg.onclick = function(){ _qmsgZoomImg(src); };
+                            rImgBox.appendChild(rImg);
+                        });
+                        rDiv.appendChild(rImgBox);
+                    }
                     repliesWrap.appendChild(rDiv);
                 });
                 card.appendChild(repliesWrap);
             }
 
-            // Zone réponse
+            // Zone réponse enrichie (texte + pièces jointes)
+            var mid = m.id;
             var replyWrap = document.createElement('div');
             replyWrap.className = 'qmsg-reply-bar';
+            replyWrap.style.cssText = 'flex-direction:column;align-items:stretch;gap:6px;padding:8px;';
+
+            // 1. Input texte + bouton envoyer
+            var topRow = document.createElement('div');
+            topRow.style.cssText = 'display:flex;gap:6px;align-items:center;';
             var replyInput = document.createElement('input');
             replyInput.type = 'text';
             replyInput.placeholder = 'Répondre…';
             replyInput.className = 'qmsg-reply-input';
-            var mid = m.id;
+            replyInput.id = 'qmsg-reply-' + mid;
+            replyInput.style.flex = '1';
             replyInput.onkeydown = function(e){ if(e.key==='Enter' && typeof _qmsgReply==='function') _qmsgReply(mid); };
             var replyBtn = document.createElement('button');
             replyBtn.textContent = '↩️ Envoyer';
             replyBtn.className = 'qmsg-reply-btn';
             replyBtn.onclick = function(){ if(typeof _qmsgReply==='function') _qmsgReply(mid); };
-            // Stocker l'input pour _qmsgReply
-            replyInput.id = 'qmsg-reply-'+m.id;
-            replyWrap.appendChild(replyInput);
-            replyWrap.appendChild(replyBtn);
+            topRow.appendChild(replyInput);
+            topRow.appendChild(replyBtn);
+            replyWrap.appendChild(topRow);
+
+            // 2. Boutons pièces jointes (images, article, ticket, urgent)
+            var attachRow = document.createElement('div');
+            attachRow.style.cssText = 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;';
+
+            // Bouton image
+            var imgLabel = document.createElement('label');
+            imgLabel.style.cssText = 'cursor:pointer;background:var(--input-bg,#f0f2f5);border:1px solid var(--border-color,#ddd);color:var(--text-main,#2c3e50);padding:4px 10px;border-radius:16px;font-size:0.72rem;font-weight:600;display:flex;align-items:center;gap:4px;';
+            imgLabel.innerHTML = '📎 Image';
+            var imgInp = document.createElement('input');
+            imgInp.type = 'file'; imgInp.accept = 'image/*'; imgInp.multiple = true;
+            imgInp.id = 'qmsg-reply-img-' + mid;
+            imgInp.style.display = 'none';
+            imgInp.onchange = function() { _qmsgReplyPreviewImgs(mid); };
+            imgLabel.appendChild(imgInp);
+            attachRow.appendChild(imgLabel);
+
+            // Bouton article
+            var artBtn = document.createElement('button');
+            artBtn.type = 'button';
+            artBtn.style.cssText = 'cursor:pointer;background:var(--input-bg,#f0f2f5);border:1px solid var(--border-color,#ddd);color:var(--text-main,#2c3e50);padding:4px 10px;border-radius:16px;font-size:0.72rem;font-weight:600;';
+            artBtn.textContent = '📦 Article';
+            artBtn.onclick = function() { _qmsgReplyOpenArticlePicker(mid); };
+            attachRow.appendChild(artBtn);
+
+            // Bouton ticket
+            var tkBtn = document.createElement('button');
+            tkBtn.type = 'button';
+            tkBtn.style.cssText = 'cursor:pointer;background:var(--input-bg,#f0f2f5);border:1px solid var(--border-color,#ddd);color:var(--text-main,#2c3e50);padding:4px 10px;border-radius:16px;font-size:0.72rem;font-weight:600;';
+            tkBtn.textContent = '🎫 Ticket';
+            tkBtn.onclick = function() { _qmsgReplyOpenTicketPicker(mid); };
+            attachRow.appendChild(tkBtn);
+
+            // Toggle urgent
+            var urgLabel = document.createElement('label');
+            urgLabel.style.cssText = 'cursor:pointer;background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.35);color:#c0392b;padding:4px 10px;border-radius:16px;font-size:0.72rem;font-weight:700;display:flex;align-items:center;gap:5px;margin-left:auto;';
+            urgLabel.innerHTML = '<input type="checkbox" id="qmsg-reply-urgent-' + mid + '" style="width:14px;height:14px;cursor:pointer;accent-color:#e74c3c;margin:0;"> ⚡ Urgent';
+            attachRow.appendChild(urgLabel);
+
+            replyWrap.appendChild(attachRow);
+
+            // 3. Zone prévisualisation (images + carte article/ticket sélectionnés)
+            var prevRow = document.createElement('div');
+            prevRow.id = 'qmsg-reply-prev-' + mid;
+            prevRow.style.cssText = 'display:flex;flex-direction:column;gap:5px;';
+            replyWrap.appendChild(prevRow);
+
             card.appendChild(replyWrap);
 
             // ── Panneau modification (messages envoyés par moi) ─────────
@@ -10920,41 +11056,139 @@ function toggleInfoSection(headerElement) {
         });
     };
 
+    // Stockage temporaire des pièces jointes de réponse par message
+    window._qmsgReplyAttach = window._qmsgReplyAttach || {};
+
+    window._qmsgReplyPreviewImgs = async function(msgId) {
+        const inp = document.getElementById(`qmsg-reply-img-${msgId}`);
+        const prev = document.getElementById(`qmsg-reply-prev-${msgId}`);
+        if (!inp || !prev) return;
+        const files = [...(inp.files || [])];
+        if (!files.length) return;
+        const imgs = [];
+        for (const f of files) {
+            if (f.size > 2000000) { showScanToast('⚠️ Image trop lourde (max 2 Mo)', 'info'); continue; }
+            imgs.push(await _fileToB64(f));
+        }
+        if (!window._qmsgReplyAttach[msgId]) window._qmsgReplyAttach[msgId] = {};
+        window._qmsgReplyAttach[msgId].images = imgs;
+        _qmsgReplyRenderPreview(msgId);
+    };
+
+    window._qmsgReplyOpenArticlePicker = function(msgId) {
+        window._qmsgReplyTargetId = msgId;
+        window._qmsgReplyMode = 'article';
+        if (typeof window._qmsgOpenArticlePicker === 'function') window._qmsgOpenArticlePicker();
+    };
+    window._qmsgReplyOpenTicketPicker = function(msgId) {
+        window._qmsgReplyTargetId = msgId;
+        window._qmsgReplyMode = 'ticket';
+        if (typeof window._qmsgOpenTicketPicker === 'function') window._qmsgOpenTicketPicker();
+    };
+
+    window._qmsgReplyRenderPreview = function(msgId) {
+        const prev = document.getElementById(`qmsg-reply-prev-${msgId}`);
+        if (!prev) return;
+        const att = window._qmsgReplyAttach[msgId] || {};
+        prev.innerHTML = '';
+        // Images
+        if (att.images && att.images.length) {
+            const box = document.createElement('div');
+            box.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;';
+            att.images.forEach((src, i) => {
+                const imgWrap = document.createElement('div');
+                imgWrap.style.cssText = 'position:relative;';
+                imgWrap.innerHTML = `<img src="${src}" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1.5px solid var(--border-color,#ddd);">
+                    <button onclick="_qmsgReplyRemoveImg('${msgId}',${i})" style="position:absolute;top:-5px;right:-5px;background:#e74c3c;color:white;border:none;width:18px;height:18px;border-radius:50%;cursor:pointer;font-size:0.62rem;font-weight:700;padding:0;">✕</button>`;
+                box.appendChild(imgWrap);
+            });
+            prev.appendChild(box);
+        }
+        // Article
+        if (att.article) {
+            const a = att.article;
+            const priceA = a.unitType === 'kg' ? parseFloat(a.price||0).toFixed(2) + ' €/kg' : parseFloat(a.price||0).toFixed(2) + ' €';
+            const artDiv = document.createElement('div');
+            artDiv.style.cssText = 'background:rgba(41,128,185,0.08);border:1.5px solid rgba(41,128,185,0.3);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:8px;';
+            artDiv.innerHTML = `
+                ${a.img ? `<img src="${a.img}" style="width:32px;height:32px;object-fit:cover;border-radius:5px;">` : '<div style="width:32px;height:32px;background:rgba(0,0,0,0.08);border-radius:5px;display:flex;align-items:center;justify-content:center;">📦</div>'}
+                <div style="flex:1;min-width:0;font-size:0.76rem;"><strong>${_esc(a.name)}</strong> · ${priceA}</div>
+                <button onclick="_qmsgReplyRemoveArt('${msgId}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:0.85rem;">✕</button>`;
+            prev.appendChild(artDiv);
+        }
+        // Ticket
+        if (att.ticket) {
+            const t = att.ticket;
+            const tkDiv = document.createElement('div');
+            tkDiv.style.cssText = 'background:rgba(25,118,210,0.08);border:1.5px solid rgba(25,118,210,0.3);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:8px;';
+            tkDiv.innerHTML = `
+                <span style="font-size:1rem;">🎫</span>
+                <div style="flex:1;min-width:0;font-size:0.76rem;"><strong>Ticket #${t.id}</strong> · ${parseFloat(t.total||0).toFixed(2)} €</div>
+                <button onclick="_qmsgReplyRemoveTicket('${msgId}')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:0.85rem;">✕</button>`;
+            prev.appendChild(tkDiv);
+        }
+    };
+
+    window._qmsgReplyRemoveImg = function(msgId, idx) {
+        const att = window._qmsgReplyAttach[msgId];
+        if (att && att.images) {
+            att.images.splice(idx, 1);
+            _qmsgReplyRenderPreview(msgId);
+        }
+    };
+    window._qmsgReplyRemoveArt = function(msgId) {
+        if (window._qmsgReplyAttach[msgId]) { delete window._qmsgReplyAttach[msgId].article; _qmsgReplyRenderPreview(msgId); }
+    };
+    window._qmsgReplyRemoveTicket = function(msgId) {
+        if (window._qmsgReplyAttach[msgId]) { delete window._qmsgReplyAttach[msgId].ticket; _qmsgReplyRenderPreview(msgId); }
+    };
+
     window._qmsgReply = async function(msgId) {
         const input  = document.getElementById(`qmsg-reply-${msgId}`);
         const text   = (input?.value || '').trim();
-        const imgInp = document.getElementById(`qmsg-reply-img-${msgId}`);
-        const images = [];
-        if (imgInp?.files?.length) {
-            for (const f of imgInp.files) {
-                if (f.size > 2000000) continue;
-                images.push(await _fileToB64(f));
-            }
-        }
-        if (!text && !images.length) return;
+        const urgEl  = document.getElementById(`qmsg-reply-urgent-${msgId}`);
+        const isUrgent = !!(urgEl && urgEl.checked);
+
+        const att = window._qmsgReplyAttach[msgId] || {};
+        const images = att.images || [];
+        const article = att.article || null;
+        const ticket = att.ticket || null;
+
+        if (!text && !images.length && !article && !ticket) return;
+
         const msgs = _msgLoad();
         const m    = msgs.find(x => x.id === msgId);
         if (!m) return;
-        m.replies.push({
+
+        const reply = {
             fromName:   (typeof currentUser !== 'undefined' && currentUser)
                 ? (users.find(u => u.id === currentUser.id)?.username || currentUser.username || '?')
                 : '?',
+            fromId:     currentUser?.id,
             fromRole:   (typeof isAdmin !== 'undefined' && isAdmin) ? 'admin' : 'caissier',
             content:    text,
             images,
             date:       new Date().toISOString(),
-            readByAdmin: false
-        });
-        // Si message urgent → le rendre normal une fois répondu (arrêt clignotement)
-        if (m.visibility === 'blink') {
-            m.visibility = 'normal';
-        }
+            readByAdmin: false,
+            urgent: isUrgent
+        };
+        if (article) reply.article = article;
+        if (ticket)  reply.ticket  = ticket;
+        m.replies.push(reply);
+
+        // Si le message original est urgent, le désactiver (mais la réponse garde son flag urgent si marqué)
+        if (m.visibility === 'blink') m.visibility = 'normal';
+
         _msgSave(msgs);
+        // Nettoyer le formulaire
         if (input)  input.value  = '';
+        const imgInp = document.getElementById(`qmsg-reply-img-${msgId}`);
         if (imgInp) imgInp.value = '';
+        if (urgEl) urgEl.checked = false;
+        delete window._qmsgReplyAttach[msgId];
         const prev = document.getElementById(`qmsg-reply-prev-${msgId}`);
         if (prev) prev.innerHTML = '';
-        showScanToast('✅ Réponse envoyée', 'success');
+        showScanToast(isUrgent ? '⚡ Réponse urgente envoyée' : '✅ Réponse envoyée', 'success');
         _qmsgRefreshInbox();
         if (typeof _awRenderMsgList === 'function') _awRenderMsgList();
     };
@@ -11101,6 +11335,314 @@ function toggleInfoSection(headerElement) {
         }
     });
     setInterval(_qmsgUpdateHeaderDot, 15000);
+
+    // ========================================================================
+    // ===== DÉTECTION NOUVEAUX MESSAGES + NOTIFICATION FLOTTANTE ============
+    // ========================================================================
+    window._mfnSeenMessages = window._mfnSeenMessages || new Set();
+    window._mfnQueue = window._mfnQueue || [];
+    window._mfnCurrent = null;
+
+    function _mfnCheckNewMessages() {
+        if (!currentUser) return;
+        const userId = currentUser.id;
+        const _isAdmin = !!isAdmin;
+        const all = _msgLoad();
+
+        let newItems = [];
+
+        all.forEach(m => {
+            if (_mfnSeenMessages.has(m.id)) return;
+            const forMe = m.to === 'all' || m.to === userId
+                       || (m.to === 'admin' && _isAdmin)
+                       || m.visibility === 'all_visible';
+            const notMine = m.from !== userId;
+            const notRead = !(m.readBy || []).includes(userId);
+            const notAcked = !(m.ackBy || []).includes(userId);
+            if (forMe && notMine && notRead && notAcked) {
+                newItems.push({ type: 'msg', data: m });
+            }
+            _mfnSeenMessages.add(m.id);
+        });
+
+        all.forEach(m => {
+            const replies = m.replies || [];
+            replies.forEach((r, idx) => {
+                const rid = m.id + '-r' + idx;
+                if (_mfnSeenMessages.has(rid)) return;
+                if (m.from === userId && r.fromId !== userId && !r.seenByOrig) {
+                    newItems.push({ type: 'reply', data: { msg: m, reply: r, replyIdx: idx } });
+                }
+                _mfnSeenMessages.add(rid);
+            });
+        });
+
+        if (newItems.length) {
+            // Accumuler les nouveaux items dans la file d'attente (ne pas écraser)
+            _mfnQueue = _mfnQueue.concat(newItems);
+            _mfnShowAggregated();
+        }
+    }
+
+    // Afficher TOUS les nouveaux en un bloc agrégé avec compteur
+    function _mfnShowAggregated() {
+        if (!_mfnQueue.length) { _mfnCurrent = null; return; }
+
+        const notif = document.getElementById('msg-floating-notif');
+        const backdrop = document.getElementById('msg-floating-notif-backdrop');
+        if (!notif) return;
+
+        // Déduire urgence globale (au moins un urgent dans la file)
+        const anyUrgent = _mfnQueue.some(it => {
+            if (it.type === 'msg') return it.data.visibility === 'blink' || (it.data.article && it.data.article.urgent);
+            if (it.type === 'reply') return !!it.data.reply.urgent;
+            return false;
+        });
+
+        // Compter messages + réponses
+        const count = _mfnQueue.length;
+        const urgentCount = _mfnQueue.filter(it => {
+            if (it.type === 'msg') return it.data.visibility === 'blink' || (it.data.article && it.data.article.urgent);
+            if (it.type === 'reply') return !!it.data.reply.urgent;
+            return false;
+        }).length;
+
+        _mfnCurrent = { aggregated: true, items: [..._mfnQueue] };
+
+        notif.classList.toggle('urgent', anyUrgent);
+
+        document.getElementById('mfn-icon').textContent = anyUrgent ? '⚡' : '💬';
+        document.getElementById('mfn-title').textContent = anyUrgent
+            ? ('⚡ ' + urgentCount + ' message' + (urgentCount>1?'s':'') + ' urgent' + (urgentCount>1?'s':''))
+            : (count + ' nouveau' + (count>1?'x':'') + ' message' + (count>1?'s':''));
+        document.getElementById('mfn-from').textContent = anyUrgent
+            ? (urgentCount + ' / ' + count + ' en urgent')
+            : ('Vous avez ' + count + ' notification' + (count>1?'s':'') + ' non acquittée' + (count>1?'s':''));
+
+        // Construire le résumé (titre + extrait de chaque message)
+        const contentEl = document.getElementById('mfn-content');
+        contentEl.innerHTML = '';
+        const listBox = document.createElement('div');
+        listBox.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+        _mfnQueue.slice(0, 5).forEach(it => {
+            const isMsg = it.type === 'msg';
+            const d = isMsg ? it.data : it.data.reply;
+            const isUrg = isMsg ? (d.visibility === 'blink' || (d.article && d.article.urgent)) : !!d.urgent;
+            const fromName = isMsg ? (d.fromName || d.from || '?') : (d.fromName || '?');
+            const role = isMsg ? (d.fromRole || 'caissier') : (d.fromRole || 'caissier');
+            const preview = (d.content || '').substring(0, 60);
+            const hasArticle = isMsg ? !!d.article : !!d.article;
+            const hasTicket = isMsg ? !!d.ticket : !!d.ticket;
+            const hasImg = isMsg ? (d.images && d.images.length) : (d.images && d.images.length);
+            const extras = [hasArticle ? '📦' : '', hasTicket ? '🎫' : '', hasImg ? '📎' : ''].filter(Boolean).join(' ');
+            const row = document.createElement('div');
+            row.style.cssText = 'padding:8px 10px;border-radius:8px;background:' + (isUrg ? 'rgba(231,76,60,0.08)' : 'var(--bg-card-2,#f8fafc)') + ';border-left:3px solid ' + (isUrg ? '#e74c3c' : 'var(--primary,#3498db)') + ';';
+            row.innerHTML = '<div style="display:flex;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted,#888);margin-bottom:3px;">'
+                + (role==='admin'?'👑':'💼') + ' <strong style="color:var(--text-main,#2c3e50);">' + _esc(fromName) + '</strong>'
+                + (isUrg ? ' <span style="background:#e74c3c;color:white;padding:1px 5px;border-radius:8px;font-size:0.62rem;font-weight:700;">⚡</span>' : '')
+                + (extras ? ' <span style="margin-left:auto;">'+extras+'</span>' : '')
+                + '</div>'
+                + '<div style="font-size:0.86rem;color:var(--text-main,#2c3e50);line-height:1.4;">'
+                + (preview ? _esc(preview) + (d.content && d.content.length > 60 ? '…' : '') : '<em style="color:var(--text-muted,#888);">(pièces jointes uniquement)</em>')
+                + '</div>';
+            listBox.appendChild(row);
+        });
+        contentEl.appendChild(listBox);
+        if (_mfnQueue.length > 5) {
+            const more = document.createElement('div');
+            more.style.cssText = 'text-align:center;font-size:0.78rem;color:var(--text-muted,#888);margin-top:6px;font-style:italic;';
+            more.textContent = '… et ' + (_mfnQueue.length - 5) + ' autre' + (_mfnQueue.length - 5 > 1 ? 's' : '');
+            contentEl.appendChild(more);
+        }
+
+        // Masquer les anciens éléments (article, ticket, images individuels)
+        const artEl = document.getElementById('mfn-article');    if (artEl) artEl.innerHTML = '';
+        const tkEl = document.getElementById('mfn-ticket');      if (tkEl) tkEl.innerHTML = '';
+        const imgsEl = document.getElementById('mfn-images');    if (imgsEl) imgsEl.innerHTML = '';
+
+        // Mettre à jour le bouton acquitter avec le compte
+        const ackBtn = document.getElementById('mfn-ack-btn');
+        if (ackBtn) ackBtn.textContent = '✅ Tout acquitter (' + count + ')';
+
+        if (backdrop) backdrop.style.display = 'block';
+        notif.style.display = 'flex';
+    }
+
+    function _mfnShowNext() {
+        if (!_mfnQueue.length) { _mfnCurrent = null; return; }
+        const next = _mfnQueue.shift();
+        _mfnCurrent = next;
+
+        const notif = document.getElementById('msg-floating-notif');
+        const backdrop = document.getElementById('msg-floating-notif-backdrop');
+        if (!notif) return;
+
+        let isUrgent = false;
+        let fromLabel = '';
+        let content = '';
+        let article = null;
+        let ticket = null;
+        let images = [];
+        let titleText = 'Nouveau message';
+        let icon = '💬';
+
+        if (next.type === 'msg') {
+            const m = next.data;
+            isUrgent = m.visibility === 'blink';
+            fromLabel = (m.fromRole === 'admin' ? '👑 ' : '💼 ') + (m.fromName || m.from || '?') + ' — ' + _msgFmtDate(m.date);
+            content = m.content || '';
+            if (m.html) { content = null; } // on utilisera HTML ci-dessous
+            article = m.article || null;
+            ticket = m.ticket || null;
+            images = m.images || [];
+            titleText = isUrgent ? '⚡ Message urgent' : 'Nouveau message';
+            icon = isUrgent ? '⚡' : '💬';
+        } else if (next.type === 'reply') {
+            const r = next.data.reply;
+            const m = next.data.msg;
+            isUrgent = !!r.urgent;
+            fromLabel = (r.fromRole === 'admin' ? '👑 ' : '💼 ') + (r.fromName || '?') + ' — ' + _msgFmtDate(r.date);
+            content = r.content || '';
+            article = r.article || null;
+            ticket = r.ticket || null;
+            images = r.images || [];
+            titleText = isUrgent ? '⚡ Réponse urgente' : '💬 Nouvelle réponse';
+            icon = isUrgent ? '⚡' : '↩️';
+        }
+
+        notif.classList.toggle('urgent', isUrgent);
+        document.getElementById('mfn-icon').textContent = icon;
+        document.getElementById('mfn-title').textContent = titleText;
+        document.getElementById('mfn-from').textContent = fromLabel;
+
+        const contentEl = document.getElementById('mfn-content');
+        if (next.type === 'msg' && next.data.html) {
+            contentEl.innerHTML = next.data.html;
+        } else {
+            contentEl.textContent = content || '';
+        }
+
+        // Article
+        const artEl = document.getElementById('mfn-article');
+        artEl.innerHTML = '';
+        if (article) {
+            const a = article;
+            const priceA = a.unitType === 'kg' ? parseFloat(a.price||0).toFixed(2) + ' €/kg' : parseFloat(a.price||0).toFixed(2) + ' €';
+            const aUrg = !!a.urgent;
+            artEl.innerHTML = '<div style="' + (aUrg ? 'background:linear-gradient(135deg,rgba(231,76,60,0.15),rgba(192,57,43,0.08));border:2px solid #e74c3c;' : 'background:rgba(41,128,185,0.08);border:1.5px solid rgba(41,128,185,0.3);')
+                + 'border-radius:10px;padding:10px;display:flex;gap:10px;align-items:center;">'
+                + (a.img ? '<img src="' + a.img + '" style="width:64px;height:64px;object-fit:cover;border-radius:8px;">' : '<div style="width:64px;height:64px;background:rgba(0,0,0,0.08);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:2rem;">📦</div>')
+                + '<div style="flex:1;min-width:0;"><div style="font-weight:800;font-size:0.9rem;">' + _esc(a.name) + (aUrg ? ' <span style="color:#e74c3c;">⚡</span>' : '') + '</div>'
+                + '<div style="font-size:0.78rem;color:var(--text-muted,#888);margin-top:2px;">' + priceA + (a.promo ? ' · -' + a.promo + '%' : '') + '</div></div></div>';
+        }
+        // Ticket
+        const tkEl = document.getElementById('mfn-ticket');
+        tkEl.innerHTML = '';
+        if (ticket) {
+            tkEl.innerHTML = '<div style="background:rgba(25,118,210,0.08);border:1.5px solid rgba(25,118,210,0.3);border-radius:10px;padding:8px 10px;display:flex;align-items:center;gap:8px;">'
+                + '<span style="font-size:1.2rem;">🎫</span>'
+                + '<div style="flex:1;min-width:0;font-size:0.85rem;"><strong>Ticket #' + ticket.id + '</strong> · ' + parseFloat(ticket.total||0).toFixed(2) + ' €</div></div>';
+        }
+        // Images
+        const imgsEl = document.getElementById('mfn-images');
+        imgsEl.innerHTML = '';
+        images.forEach(src => {
+            const im = document.createElement('img');
+            im.src = src;
+            im.style.cssText = 'width:70px;height:70px;object-fit:cover;border-radius:8px;cursor:zoom-in;';
+            im.onclick = function() { if (typeof _qmsgZoomImg === 'function') _qmsgZoomImg(src); };
+            imgsEl.appendChild(im);
+        });
+
+        if (backdrop) backdrop.style.display = 'block';
+        notif.style.display = 'flex';
+    }
+
+    window._mfnClose = function() {
+        const notif = document.getElementById('msg-floating-notif');
+        const backdrop = document.getElementById('msg-floating-notif-backdrop');
+        if (notif) { notif.style.display = 'none'; notif.classList.remove('urgent'); }
+        if (backdrop) backdrop.style.display = 'none';
+        _mfnCurrent = null;
+        // Note : si on ferme sans acquitter, la file reste pour la prochaine vérification
+    };
+
+    window._mfnAcknowledge = function() {
+        const c = _mfnCurrent;
+        if (!c) { _mfnClose(); return; }
+        const userId = currentUser?.id;
+        if (!userId) { _mfnClose(); return; }
+
+        const msgs = _msgLoad();
+        const items = c.aggregated ? c.items : [c];
+        items.forEach(it => {
+            if (it.type === 'msg') {
+                const m = msgs.find(x => x.id === it.data.id);
+                if (m) {
+                    if (!Array.isArray(m.ackBy)) m.ackBy = [];
+                    if (!m.ackBy.includes(userId)) m.ackBy.push(userId);
+                    if (!Array.isArray(m.readBy)) m.readBy = [];
+                    if (!m.readBy.includes(userId)) m.readBy.push(userId);
+                }
+            } else if (it.type === 'reply') {
+                const m = msgs.find(x => x.id === it.data.msg.id);
+                if (m && m.replies && m.replies[it.data.replyIdx]) {
+                    m.replies[it.data.replyIdx].seenByOrig = true;
+                }
+            }
+        });
+        _msgSave(msgs);
+        const count = items.length;
+        showScanToast('✅ ' + count + ' notification' + (count>1?'s':'') + ' acquittée' + (count>1?'s':''), 'success');
+        // Vider la file
+        _mfnQueue = [];
+        if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
+        if (typeof _qmsgRefreshInbox === 'function') _qmsgRefreshInbox();
+        _mfnClose();
+    };
+
+    window._mfnOpenInbox = function() {
+        _mfnClose();
+        // Ouvrir la messagerie quick
+        if (typeof window._quickMsgOpen === 'function') {
+            window._quickMsgOpen();
+        } else {
+            const m = document.getElementById('quick-msg-modal');
+            if (m) m.style.display = 'flex';
+        }
+    };
+
+    // Marquer les messages existants comme "déjà vus" au login pour ne pas notifier rétroactivement
+    window._mfnInit = function() {
+        if (!currentUser) return;
+        const all = _msgLoad();
+        all.forEach(m => {
+            _mfnSeenMessages.add(m.id);
+            (m.replies || []).forEach((r, idx) => _mfnSeenMessages.add(m.id + '-r' + idx));
+        });
+    };
+
+    // Polling 5s : 1) synchro Drive messages  2) check nouveaux messages
+    let _mfnPollingInProgress = false;
+    async function _mfnPollTick() {
+        if (!currentUser || _mfnPollingInProgress) return;
+        _mfnPollingInProgress = true;
+        try {
+            // a) Synchroniser depuis Google Drive (récupérer nouveaux entrants)
+            if (typeof window._gdRestoreMessages === 'function') {
+                try { await window._gdRestoreMessages(); } catch(e) { /* silent */ }
+            }
+            // b) Détecter les nouveaux éléments à notifier
+            _mfnCheckNewMessages();
+            // c) Rafraîchir le point rouge du header
+            if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
+        } catch(e) {
+            console.warn('mfn poll:', e);
+        } finally {
+            _mfnPollingInProgress = false;
+        }
+    }
+    setInterval(_mfnPollTick, 5000);
 
     // =========================================================================
     // ===== HISTORIQUE CONNEXIONS (Admin-Développeur) ==========================
@@ -12433,6 +12975,8 @@ function toggleInfoSection(headerElement) {
         if (_saveNowBtn) _saveNowBtn.style.display = '';
         // FAB sauvegarde — visible seulement pour Admin-Développeur
         if (typeof window._updateMasterFabVisibility === 'function') window._updateMasterFabVisibility();
+        // Init détection nouveaux messages (éviter notifications rétroactives)
+        if (typeof window._mfnInit === 'function') window._mfnInit();
         renderAll();
         maybeEnterFullscreenOnLogin();
         if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
@@ -13331,6 +13875,10 @@ function toggleInfoSection(headerElement) {
         // Masquer le FAB sauvegarde Admin-Développeur
         const _fabSaveLogout = document.getElementById('fab-master-save-wrap');
         if (_fabSaveLogout) _fabSaveLogout.style.display = 'none';
+        // Fermer toute notification flottante
+        if (typeof window._mfnClose === 'function') window._mfnClose();
+        window._mfnSeenMessages = new Set();
+        window._mfnQueue = [];
         // Passer hors ligne avant de déconnecter
         if (typeof _presenceSetOfflineOnLogout === 'function') _presenceSetOfflineOnLogout();
         currentUser = null;
@@ -19815,6 +20363,98 @@ logout = function(skipConfirmation = false) {
       <div style="font-size:0.72rem;color:var(--text-muted,#888);margin-top:6px;">💡 Les 100 tickets les plus récents sont affichés. Triez du plus récent au plus ancien.</div>
     </div>
     <div id="qmsg-ticket-list" style="overflow-y:auto;flex:1;padding:10px;display:flex;flex-direction:column;gap:6px;"></div>
+  </div>
+</div>
+
+<!-- ===== NOTIFICATION FLOTTANTE NOUVEAU MESSAGE ===== -->
+<style>
+  @keyframes msgNotifSlideIn {
+    from { opacity: 0; transform: translate(-50%,-50%) scale(0.85); }
+    to   { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+  }
+  @keyframes msgNotifUrgentPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(231,76,60,0.9), 0 20px 60px rgba(231,76,60,0.5); border-color: #e74c3c; }
+    50%     { box-shadow: 0 0 0 20px rgba(231,76,60,0), 0 20px 60px rgba(231,76,60,0.3); border-color: #c0392b; }
+  }
+  @keyframes msgNotifUrgentShake {
+    0%,100% { transform: translate(-50%,-50%) rotate(0); }
+    15%     { transform: translate(-51%,-50%) rotate(-1deg); }
+    30%     { transform: translate(-49%,-50%) rotate(1deg); }
+    45%     { transform: translate(-51%,-50%) rotate(-0.5deg); }
+    60%     { transform: translate(-49%,-50%) rotate(0.5deg); }
+    75%     { transform: translate(-50%,-50%) rotate(0); }
+  }
+  #msg-floating-notif {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--bg-card, #fff);
+    border-radius: 18px;
+    min-width: 340px; max-width: 92vw; width: 440px;
+    max-height: 80vh;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    border: 3px solid var(--primary, #3498db);
+    z-index: 21000;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    animation: msgNotifSlideIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  #msg-floating-notif.urgent {
+    border-color: #e74c3c;
+    animation: msgNotifSlideIn 0.35s, msgNotifUrgentPulse 1.2s ease-in-out infinite 0.4s, msgNotifUrgentShake 2s ease-in-out infinite 0.4s;
+  }
+  #msg-floating-notif .mfn-header {
+    padding: 14px 18px;
+    background: linear-gradient(135deg, #3498db, #2980b9);
+    color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  #msg-floating-notif.urgent .mfn-header {
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+  }
+  #msg-floating-notif .mfn-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  #msg-floating-notif .mfn-actions {
+    padding: 12px 18px;
+    border-top: 1px solid var(--border-color, #eee);
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+    background: var(--bg-card-2, #f8fafc);
+  }
+  #msg-floating-notif-backdrop {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(3px);
+    z-index: 20999;
+  }
+</style>
+<div id="msg-floating-notif-backdrop"></div>
+<div id="msg-floating-notif">
+  <div class="mfn-header">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:900;font-size:0.95rem;">
+      <span id="mfn-icon" style="font-size:1.3rem;">💬</span>
+      <span id="mfn-title">Nouveau message</span>
+    </div>
+    <button onclick="_mfnClose()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+  </div>
+  <div class="mfn-body" id="mfn-body">
+    <div id="mfn-from" style="font-size:0.8rem;color:var(--text-muted,#888);margin-bottom:5px;"></div>
+    <div id="mfn-content" style="font-size:1.02rem;color:var(--text-main,#2c3e50);line-height:1.55;word-break:break-word;"></div>
+    <div id="mfn-article" style="margin-top:10px;"></div>
+    <div id="mfn-ticket" style="margin-top:10px;"></div>
+    <div id="mfn-images" style="display:flex;gap:5px;flex-wrap:wrap;margin-top:10px;"></div>
+  </div>
+  <div class="mfn-actions">
+    <button id="mfn-ack-btn" onclick="_mfnAcknowledge()" style="flex:1;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,#27ae60,#229954);color:white;font-weight:800;cursor:pointer;font-size:0.92rem;">✅ Acquitter</button>
+    <button onclick="_mfnOpenInbox()" style="padding:11px 14px;border:1.5px solid var(--border-color,#ddd);background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);border-radius:9px;font-weight:700;cursor:pointer;font-size:0.88rem;">📬 Inbox</button>
   </div>
 </div>
 
