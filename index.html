@@ -8128,9 +8128,26 @@ function toggleInfoSection(headerElement) {
     function _msgSave(msgs) {
         localStorage.setItem(MSG_KEY, JSON.stringify(msgs));
         if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
-        // Sauvegarde dans le dossier Messages dédié
+        // Sauvegarde dans le dossier Messages dédié (debounce 2s pour lectures/edits)
         if (typeof window._gdTriggerMsgSave === 'function') window._gdTriggerMsgSave();
     }
+
+    // Sauvegarde IMMÉDIATE sur Google Drive (sans debounce) — à appeler après chaque envoi
+    // pour que les destinataires puissent voir le message dès le prochain poll 5s
+    window._msgSaveAndSyncNow = async function(msgs) {
+        localStorage.setItem(MSG_KEY, JSON.stringify(msgs));
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+        // Sauvegarde Drive INSTANTANÉE (sans 2s de debounce)
+        if (typeof window._gdSaveMessages === 'function') {
+            try {
+                // Annuler un éventuel timer de debounce en attente
+                if (typeof _gdMsgSaveTimer !== 'undefined' && _gdMsgSaveTimer) {
+                    clearTimeout(_gdMsgSaveTimer);
+                }
+                await window._gdSaveMessages();
+            } catch(e) { console.warn('Drive msg save (immediate):', e); }
+        }
+    };
 
     // ── Format date courte ────────────────────────────────────────────────
     function _msgFmtDate(iso) {
@@ -8487,10 +8504,13 @@ function toggleInfoSection(headerElement) {
         const msgs   = _msgLoad();
         // Répondre à tous les messages non acquittés du caissier + arrêter le clignotement urgent
         msgs.filter(m => m.to === 'all' || m.to === userId).forEach(m => {
-            m.replies.push({ from: fromName, content: text, date: new Date().toISOString(), readByAdmin: false });
+            m.replies.push({ from: fromName, fromName: fromName, fromId: userId, fromRole: 'caissier', content: text, date: new Date().toISOString(), readByAdmin: false });
             if (m.visibility === 'blink') m.visibility = 'normal';
         });
         _msgSave(msgs);
+        if (typeof window._msgSaveAndSyncNow === 'function') {
+            window._msgSaveAndSyncNow(msgs);
+        }
         document.getElementById('covo-msg-reply').value = '';
         showScanToast('✅ Réponse envoyée à l\'admin', 'success');
         _msgClose();
@@ -9251,6 +9271,10 @@ function toggleInfoSection(headerElement) {
 
         msgs.push(msgObj);
         _msgSave(msgs);
+        // ↓ Sauvegarde Drive IMMÉDIATE (pour notifier tous les destinataires dès 5s)
+        if (typeof window._msgSaveAndSyncNow === 'function') {
+            window._msgSaveAndSyncNow(msgs);
+        }
 
         // Reset
         if (editor) editor.innerHTML = '';
@@ -11180,6 +11204,10 @@ function toggleInfoSection(headerElement) {
         if (m.visibility === 'blink') m.visibility = 'normal';
 
         _msgSave(msgs);
+        // ↓ Sauvegarde Drive IMMÉDIATE pour notifier le destinataire de la réponse
+        if (typeof window._msgSaveAndSyncNow === 'function') {
+            window._msgSaveAndSyncNow(msgs);
+        }
         // Nettoyer le formulaire
         if (input)  input.value  = '';
         const imgInp = document.getElementById(`qmsg-reply-img-${msgId}`);
@@ -11347,14 +11375,18 @@ function toggleInfoSection(headerElement) {
         if (!currentUser) return;
         const userId = currentUser.id;
         const _isAdmin = !!isAdmin;
+        const _isMaster = !!currentUser.isMaster;
         const all = _msgLoad();
 
         let newItems = [];
 
         all.forEach(m => {
             if (_mfnSeenMessages.has(m.id)) return;
-            const forMe = m.to === 'all' || m.to === userId
+            // Filtre destinataire : tous / moi / admin (si je suis admin) / USR-MASTER (si je suis dev) / visible par tous
+            const forMe = m.to === 'all'
+                       || m.to === userId
                        || (m.to === 'admin' && _isAdmin)
+                       || (m.to === 'USR-MASTER' && _isMaster)
                        || m.visibility === 'all_visible';
             const notMine = m.from !== userId;
             const notRead = !(m.readBy || []).includes(userId);
@@ -20402,6 +20434,15 @@ logout = function(skipConfirmation = false) {
   #msg-floating-notif.urgent {
     border-color: #e74c3c;
     animation: msgNotifSlideIn 0.35s, msgNotifUrgentPulse 1.2s ease-in-out infinite 0.4s, msgNotifUrgentShake 2s ease-in-out infinite 0.4s;
+  }
+  #msg-floating-notif.urgent #mfn-ack-btn {
+    background: linear-gradient(135deg, #e74c3c, #c0392b) !important;
+    animation: msgNotifUrgentPulse 1s ease-in-out infinite;
+    font-size: 1rem;
+    padding: 13px !important;
+  }
+  #msg-floating-notif.urgent #mfn-title {
+    font-size: 1.05rem;
   }
   #msg-floating-notif .mfn-header {
     padding: 14px 18px;
