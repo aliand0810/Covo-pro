@@ -3458,10 +3458,17 @@
                     <div class="stat-value" id="stat-period-sales">0€</div>
                     <span class="stat-change positive" id="stat-period-change"></span>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="border-left:4px solid #e67e22;">
                     <h3>💰 Ventes du jour</h3>
-                    <div class="stat-value" id="stat-today-sales">0€</div>
-                    <span class="stat-change positive" id="stat-today-change">+0%</span>
+                    <div class="stat-value" id="stat-today-sales" style="color:#e67e22;">0€</div>
+                    <span class="stat-change" id="stat-today-change" style="color:var(--text-muted,#888);">0 transaction(s)</span>
+                    <div style="font-size:0.7rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-today-detail"></div>
+                </div>
+                <div class="stat-card" style="border-left:4px solid #2980b9;">
+                    <h3>📆 Semaine en cours</h3>
+                    <div class="stat-value" id="stat-current-week-sales" style="color:#2980b9;">0€</div>
+                    <span class="stat-change" id="stat-current-week-change" style="color:var(--text-muted,#888);">0 transaction(s)</span>
+                    <div style="font-size:0.7rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-current-week-detail"></div>
                 </div>
                 <div class="stat-card">
                     <h3>🛍️ Transactions</h3>
@@ -3486,6 +3493,20 @@
                     <div class="stat-value" id="stat-benef-total" style="color:#27ae60;">—</div>
                     <span class="stat-change" id="stat-benef-marge" style="color:#27ae60;">Marge : —</span>
                     <div style="font-size:0.72rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-benef-detail"></div>
+                </div>
+                <!-- Carte Investissements -->
+                <div class="stat-card" style="border-left:4px solid #9b59b6;cursor:pointer;" onclick="switchTab && switchTab('retours')" title="Voir les investissements">
+                    <h3>💼 Investissements</h3>
+                    <div class="stat-value" id="stat-invest-total" style="color:#9b59b6;">0€</div>
+                    <span class="stat-change" id="stat-invest-count" style="color:var(--text-muted,#888);">0 achat(s)</span>
+                    <div style="font-size:0.72rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-invest-detail"></div>
+                </div>
+                <!-- Carte CA perdu -->
+                <div class="stat-card" style="border-left:4px solid #e74c3c;cursor:pointer;" onclick="switchTab && switchTab('retours')" title="Voir les défauts marchandise">
+                    <h3>📉 CA perdu</h3>
+                    <div class="stat-value" id="stat-lost-total" style="color:#e74c3c;">0€</div>
+                    <span class="stat-change" id="stat-lost-count" style="color:var(--text-muted,#888);">0 défaut(s)</span>
+                    <div style="font-size:0.72rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-lost-detail"></div>
                 </div>
             </div>
             
@@ -16231,6 +16252,25 @@ logout = function(skipConfirmation = false) {
         const todayRetours = todaySales.filter(s => s.type === 'retour_article');
         const todayTotal = todaySales.reduce((sum, s) => sum + (s.total || 0), 0);
 
+        // Semaine en cours (lundi → dimanche)
+        const curWeekStart = new Date(now);
+        const dayOfWeek = curWeekStart.getDay(); // 0=dim, 1=lun...
+        const daysFromMonday = (dayOfWeek + 6) % 7; // 0 si lundi
+        curWeekStart.setDate(curWeekStart.getDate() - daysFromMonday);
+        curWeekStart.setHours(0,0,0,0);
+        const curWeekEnd = new Date(curWeekStart);
+        curWeekEnd.setDate(curWeekEnd.getDate() + 6);
+        curWeekEnd.setHours(23,59,59,999);
+
+        const curWeekSales = salesHistory.filter(s => {
+            if (s.cancelled) return false;
+            const d = new Date(s.date);
+            return d >= curWeekStart && d <= curWeekEnd;
+        });
+        const curWeekNormal = curWeekSales.filter(s => s.type !== 'retour_article');
+        const curWeekRetours = curWeekSales.filter(s => s.type === 'retour_article');
+        const curWeekTotal = curWeekSales.reduce((sum, s) => sum + (s.total || 0), 0);
+
         // Ventes du mois courant (pour la 5e carte)
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
         const monthSales = salesHistory.filter(s => !s.cancelled && new Date(s.date) >= monthStart);
@@ -16263,7 +16303,118 @@ logout = function(skipConfirmation = false) {
         document.getElementById('stat-period-sales').textContent = periodTotal.toFixed(2) + '€';
         document.getElementById('stat-period-change').textContent = periodSales.filter(s => s.type !== 'retour_article').length + ' transaction(s)';
         document.getElementById('stat-today-sales').textContent = todayTotal.toFixed(2) + '€';
+        // Jour en cours — détails
+        const _todayChangeEl = document.getElementById('stat-today-change');
+        if (_todayChangeEl) {
+            const n = todayNormal.length;
+            _todayChangeEl.textContent = n + ' transaction' + (n > 1 ? 's' : '')
+                + (todayRetours.length ? ' · ↩️ ' + todayRetours.length + ' retour' + (todayRetours.length > 1 ? 's' : '') : '');
+        }
+        const _todayDetailEl = document.getElementById('stat-today-detail');
+        if (_todayDetailEl) {
+            const dateStr = now.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long' });
+            const avgT = todayNormal.length ? (todayTotal / todayNormal.length).toFixed(2) : '0.00';
+            _todayDetailEl.textContent = dateStr + ' · Panier moy. ' + avgT + '€';
+        }
+
+        // Semaine en cours
+        const _cwSalesEl  = document.getElementById('stat-current-week-sales');
+        if (_cwSalesEl) _cwSalesEl.textContent = curWeekTotal.toFixed(2) + '€';
+        const _cwChangeEl = document.getElementById('stat-current-week-change');
+        if (_cwChangeEl) {
+            const n = curWeekNormal.length;
+            _cwChangeEl.textContent = n + ' transaction' + (n > 1 ? 's' : '')
+                + (curWeekRetours.length ? ' · ↩️ ' + curWeekRetours.length + ' retour' + (curWeekRetours.length > 1 ? 's' : '') : '');
+        }
+        const _cwDetailEl = document.getElementById('stat-current-week-detail');
+        if (_cwDetailEl) {
+            const startStr = curWeekStart.toLocaleDateString('fr-FR', { day:'2-digit', month:'short' });
+            const endStr   = curWeekEnd.toLocaleDateString('fr-FR',   { day:'2-digit', month:'short' });
+            const avgW = curWeekNormal.length ? (curWeekTotal / curWeekNormal.length).toFixed(2) : '0.00';
+            _cwDetailEl.textContent = startStr + ' → ' + endStr + ' · Panier moy. ' + avgW + '€';
+        }
+
         document.getElementById('stat-month-sales').textContent = monthTotal.toFixed(2) + '€';
+
+        // ========================================================================
+        // Cartes INVESTISSEMENTS et CA PERDU (selon la période sélectionnée)
+        // ========================================================================
+        let investList = [];
+        try { investList = JSON.parse(localStorage.getItem('covo_investissements') || '[]'); } catch(e) {}
+        let marcList = [];
+        try { marcList = JSON.parse(localStorage.getItem('covo_marchandise') || '[]'); } catch(e) {}
+
+        // Filtrer selon la période statistique choisie
+        const _pStart = periodStart;
+        const _pEnd   = window._statsPeriodEnd || new Date();
+        const _inPeriod = (dateStr) => {
+            if (!dateStr) return false;
+            const d = new Date(dateStr);
+            return d >= _pStart && d <= _pEnd;
+        };
+
+        // Investissements sur la période
+        const investInPeriod = investList.filter(i => _inPeriod(i.date));
+        const investTotal = investInPeriod.reduce((s, i) => s + (parseFloat(i.montant) || 0), 0);
+
+        // Top catégorie d'investissement
+        const invByCat = {};
+        investInPeriod.forEach(i => {
+            const cat = i.categorie || i.category || 'Autre';
+            invByCat[cat] = (invByCat[cat] || 0) + (parseFloat(i.montant) || 0);
+        });
+        const topInvCat = Object.entries(invByCat).sort((a, b) => b[1] - a[1])[0];
+
+        const invEl = document.getElementById('stat-invest-total');
+        if (invEl) invEl.textContent = investTotal.toFixed(2) + '€';
+        const invCountEl = document.getElementById('stat-invest-count');
+        if (invCountEl) {
+            const n = investInPeriod.length;
+            invCountEl.textContent = n + ' achat' + (n > 1 ? 's' : '');
+        }
+        const invDetailEl = document.getElementById('stat-invest-detail');
+        if (invDetailEl) {
+            if (topInvCat && topInvCat[1] > 0) {
+                const pct = investTotal > 0 ? Math.round((topInvCat[1] / investTotal) * 100) : 0;
+                invDetailEl.textContent = 'Top : ' + topInvCat[0] + ' (' + pct + '%) · ' + periodLabel;
+            } else {
+                invDetailEl.textContent = periodLabel;
+            }
+        }
+
+        // CA perdu (défauts de marchandise) sur la période
+        const marcInPeriod = marcList.filter(m => _inPeriod(m.date));
+        const lostTotal = marcInPeriod.reduce((s, m) => s + (parseFloat(m.montant) || 0), 0);
+
+        // Avoirs reçus sur la période
+        let avoirsOnPeriod = 0;
+        marcInPeriod.forEach(m => {
+            if (m.statut === 'credited' || m.statut === 'archived') {
+                avoirsOnPeriod += (m._avoirMontant != null ? parseFloat(m._avoirMontant) : parseFloat(m.montant)) || 0;
+            }
+        });
+
+        const lostEl = document.getElementById('stat-lost-total');
+        if (lostEl) lostEl.textContent = lostTotal.toFixed(2) + '€';
+        const lostCountEl = document.getElementById('stat-lost-count');
+        if (lostCountEl) {
+            const n = marcInPeriod.length;
+            lostCountEl.textContent = n + ' défaut' + (n > 1 ? 's' : '');
+        }
+        const lostDetailEl = document.getElementById('stat-lost-detail');
+        if (lostDetailEl) {
+            const net = avoirsOnPeriod - lostTotal;
+            if (avoirsOnPeriod > 0) {
+                const sign = net >= 0 ? '+' : '';
+                lostDetailEl.innerHTML = 'Avoirs reçus : ' + avoirsOnPeriod.toFixed(2) + '€ · Net : <span style="color:' + (net >= 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700;">' + sign + net.toFixed(2) + '€</span>';
+            } else {
+                // Sans avoirs : impact sur le CA brut
+                const caImpact = periodTotal > 0 ? ((lostTotal / periodTotal) * 100).toFixed(1) : '0';
+                lostDetailEl.textContent = periodTotal > 0
+                    ? (caImpact + '% du CA · ' + periodLabel)
+                    : periodLabel;
+            }
+        }
         document.getElementById('stat-transactions').textContent = periodSales.filter(s => s.type !== 'retour_article').length + (periodSales.filter(s => s.type === 'retour_article').length ? ' (-' + periodSales.filter(s => s.type === 'retour_article').length + ' retour(s))' : '');
         document.getElementById('stat-trans-change').textContent = periodLabel;
         document.getElementById('stat-cash-total').textContent = cashTotal.toFixed(2) + '€';
