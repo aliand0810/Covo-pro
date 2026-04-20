@@ -4798,13 +4798,17 @@
                         <div id="gd-tree-audit-result" style="margin-top:8px; font-size:0.75rem; color:#888; font-style:italic;">Cliquez "Vérifier" pour un audit en direct</div>
                     </div>
 
-                    <!-- 3. Tickets du jour -->
+                    <!-- 3. Tickets de caisse : sync + import depuis Drive -->
                     <div style="background:var(--bg-card,#fff); border:1.5px solid var(--border-color,#e0e0e0); border-radius:12px; padding:14px 16px;">
-                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-                            <span style="font-weight:800; font-size:0.87rem; color:var(--text-main,#222);">🎫 Tickets du jour — Synchronisation</span>
-                            <button onclick="_gdSyncTicketsToday(this)" style="background:#00897b; color:white; border:none; padding:5px 13px; border-radius:8px; font-size:0.78rem; font-weight:700; cursor:pointer;">↑ Sync maintenant</button>
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                            <span style="font-weight:800; font-size:0.87rem; color:var(--text-main,#222);">🎫 Tickets de caisse — Synchronisation</span>
                         </div>
-                        <div id="gd-sync-tickets-info" style="font-size:0.78rem; color:var(--text-muted,#888);">Cliquez "Sync" pour comparer Drive et l'historique local.</div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+                            <button onclick="_gdSyncTicketsToday(this)" style="background:#00897b; color:white; border:none; padding:7px 10px; border-radius:8px; font-size:0.76rem; font-weight:700; cursor:pointer;">↑ Sync jour</button>
+                            <button onclick="_gdImportAllTickets(this)" style="background:linear-gradient(135deg,#1976d2,#0d47a1); color:white; border:none; padding:7px 10px; border-radius:8px; font-size:0.76rem; font-weight:700; cursor:pointer;">📥 Importer TOUS</button>
+                        </div>
+                        <div id="gd-sync-tickets-info" style="font-size:0.75rem; color:var(--text-muted,#888);">« Sync » envoie les tickets du jour vers Drive. « Importer TOUS » récupère l'intégralité depuis Drive.</div>
+                        <div id="gd-import-tickets-progress" style="display:none;margin-top:8px;font-size:0.78rem;color:var(--primary,#1976d2);"></div>
                     </div>
 
                     <!-- 4. Sauvegardes manuelles -->
@@ -27371,6 +27375,155 @@ function initAdminSections() {
     };
 
     // ---- 3. Synchroniser les tickets du jour ----
+    // =========================================================================
+    // ===== IMPORT COMPLET : tous les tickets présents sur Google Drive ========
+    // =========================================================================
+    // Parcourt récursivement le dossier Tickets_Caisse/YYYY/MM/DD/, télécharge
+    // chaque ticket JSON, fusionne avec salesHistory local (par ID).
+    window._gdImportAllTickets = async function(btn) {
+        if (!_gdConnected || !_gdFolderId) {
+            showScanToast('⚠️ Connectez-vous d\'abord à Google Drive', 'info');
+            return;
+        }
+        const progressEl = document.getElementById('gd-import-tickets-progress');
+        const origLabel  = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Import…'; }
+        if (progressEl) { progressEl.style.display = 'block'; progressEl.style.color = 'var(--primary,#1976d2)'; progressEl.textContent = '🔍 Recherche du dossier Tickets_Caisse…'; }
+
+        const _listChildren = async (parentId, mimeFilter) => {
+            // Pagination : récupérer TOUS les enfants (plus de 100 si nécessaire)
+            let pageToken = null;
+            const results = [];
+            do {
+                const qParts = [`'${parentId}' in parents`, 'trashed=false'];
+                if (mimeFilter === 'folder') qParts.push("mimeType='application/vnd.google-apps.folder'");
+                else if (mimeFilter === 'file')   qParts.push("mimeType!='application/vnd.google-apps.folder'");
+                const q = encodeURIComponent(qParts.join(' and '));
+                let url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType),nextPageToken&pageSize=1000&orderBy=name`;
+                if (pageToken) url += '&pageToken=' + encodeURIComponent(pageToken);
+                const resp = await _gdFetch(url);
+                const data = await resp.json();
+                if (data.files) results.push(...data.files);
+                pageToken = data.nextPageToken;
+            } while (pageToken);
+            return results;
+        };
+
+        try {
+            // 1. Trouver le dossier Tickets_Caisse sous la racine Drive du projet
+            const rootTickets = await _gdFolderEnsure(GD_ROOTS.tickets, _gdFolderId);
+            if (!rootTickets) throw new Error('Dossier Tickets_Caisse introuvable');
+
+            // 2. Lister années → mois → jours → fichiers
+            if (progressEl) progressEl.textContent = '📂 Exploration de l\'arborescence…';
+            const years = await _listChildren(rootTickets, 'folder');
+            if (!years.length) {
+                if (progressEl) { progressEl.textContent = 'ℹ️ Aucun ticket trouvé sur Drive'; progressEl.style.color = '#888'; }
+                showScanToast('ℹ️ Aucun ticket sur Drive', 'info');
+                return;
+            }
+
+            // Collecter tous les fichiers tickets (parallélisé par paliers)
+            const allTicketFiles = [];
+            for (const year of years) {
+                const months = await _listChildren(year.id, 'folder');
+                for (const month of months) {
+                    const days = await _listChildren(month.id, 'folder');
+                    for (const day of days) {
+                        const files = await _listChildren(day.id, 'file');
+                        for (const f of files) {
+                            // Filtrer seulement les fichiers JSON tickets
+                            if (f.name && f.name.toLowerCase().endsWith('.json') && /ticket/i.test(f.name)) {
+                                allTicketFiles.push(f);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!allTicketFiles.length) {
+                if (progressEl) { progressEl.textContent = 'ℹ️ Aucun fichier ticket trouvé'; progressEl.style.color = '#888'; }
+                showScanToast('ℹ️ Aucun ticket à importer', 'info');
+                return;
+            }
+
+            if (progressEl) progressEl.textContent = `📥 ${allTicketFiles.length} tickets trouvés — téléchargement…`;
+
+            // 3. Télécharger chaque ticket (par lots de 10 pour ne pas saturer)
+            const BATCH_SIZE = 10;
+            const driveSales = [];
+            let downloaded = 0, failed = 0;
+            for (let i = 0; i < allTicketFiles.length; i += BATCH_SIZE) {
+                const batch = allTicketFiles.slice(i, i + BATCH_SIZE);
+                const results = await Promise.all(batch.map(async (f) => {
+                    try {
+                        const resp = await _gdFetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`);
+                        const text = await resp.text();
+                        return JSON.parse(text);
+                    } catch(e) { failed++; return null; }
+                }));
+                results.forEach(r => { if (r && r.id) { driveSales.push(r); downloaded++; } });
+                if (progressEl) progressEl.textContent = `📥 ${downloaded}/${allTicketFiles.length} tickets téléchargés…`;
+            }
+
+            // 4. Fusionner avec salesHistory local (par ID, sans écraser les locaux modifiés récemment)
+            if (progressEl) progressEl.textContent = '🔀 Fusion avec l\'historique local…';
+            let localSales = [];
+            try { localSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch(e) {}
+
+            // Marquer tous les tickets importés (flag _imported pour le badge 📥)
+            driveSales.forEach(s => { if (s._imported === undefined) s._imported = true; });
+
+            // Fusion : union par ID, garder la version local si déjà présente
+            // (évite d'écraser les modifications locales type retours/annulations)
+            const mapById = {};
+            localSales.forEach(s => { if (s.id != null) mapById[s.id] = s; });
+            let added = 0, skipped = 0;
+            driveSales.forEach(s => {
+                if (!s || s.id == null) return;
+                if (mapById[s.id]) {
+                    // Déjà présent localement : ne pas écraser sauf si la version Drive est plus récente
+                    const localDate = new Date(mapById[s.id].date || 0);
+                    const driveDate = new Date(s.date || 0);
+                    if (driveDate > localDate && !mapById[s.id].cancelled) {
+                        mapById[s.id] = { ...mapById[s.id], ...s };
+                    } else {
+                        skipped++;
+                    }
+                } else {
+                    mapById[s.id] = s;
+                    added++;
+                }
+            });
+
+            const merged = Object.values(mapById).sort((a, b) => new Date(a.date) - new Date(b.date));
+            localStorage.setItem('covo_sales_history', JSON.stringify(merged));
+            // Synchroniser la variable globale
+            if (typeof salesHistory !== 'undefined') {
+                salesHistory.length = 0;
+                merged.forEach(s => salesHistory.push(s));
+            }
+
+            if (progressEl) {
+                progressEl.textContent = `✅ ${added} ajoutés · ${skipped} déjà présents · ${failed} échecs · Total local : ${merged.length}`;
+                progressEl.style.color = '#2e7d32';
+            }
+            showScanToast(`✅ Import terminé : ${added} nouveau(x) ticket(s)`, 'success');
+
+            // Rafraîchir UI
+            if (typeof renderHistory === 'function')          { try { renderHistory(); } catch(e) {} }
+            if (typeof renderCashierHistory === 'function')   { try { renderCashierHistory(); } catch(e) {} }
+            if (typeof renderAll === 'function')              { try { renderAll(); } catch(e) {} }
+
+        } catch(e) {
+            console.error('Import tickets:', e);
+            if (progressEl) { progressEl.textContent = '❌ Erreur : ' + (e.message || e); progressEl.style.color = '#c62828'; }
+            showScanToast('❌ Erreur lors de l\'import', 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = origLabel || '📥 Importer TOUS'; }
+        }
+    };
+
     window._gdSyncTicketsToday = async function(btn) {
         if (!_gdConnected || !_gdFolderId) {
             showScanToast('⚠️ Connectez-vous d\'abord à Google Drive', 'info');
