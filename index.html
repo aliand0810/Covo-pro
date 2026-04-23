@@ -3569,10 +3569,18 @@
             </div>
 
             <div class="stats-grid">
-                <div class="stat-card">
-                    <h3 id="stat-period-title-main">📊 CA de la semaine</h3>
+                <div class="stat-card" style="position:relative;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin:-4px 0 6px;">
+                        <button onclick="_statsPeriodShift(-1)" title="Période précédente" type="button"
+                            style="background:rgba(231,76,60,0.1);border:1.5px solid rgba(231,76,60,0.3);color:#e74c3c;width:26px;height:26px;border-radius:50%;cursor:pointer;font-size:0.82rem;font-weight:800;padding:0;line-height:1;flex-shrink:0;">◀</button>
+                        <h3 id="stat-period-title-main" style="margin:0;font-size:0.88rem;text-align:center;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">📊 CA de la semaine</h3>
+                        <button onclick="_statsPeriodShift(1)" title="Période suivante" type="button"
+                            style="background:rgba(231,76,60,0.1);border:1.5px solid rgba(231,76,60,0.3);color:#e74c3c;width:26px;height:26px;border-radius:50%;cursor:pointer;font-size:0.82rem;font-weight:800;padding:0;line-height:1;flex-shrink:0;">▶</button>
+                    </div>
                     <div class="stat-value" id="stat-period-sales">0€</div>
                     <span class="stat-change positive" id="stat-period-change"></span>
+                    <button onclick="_statsPeriodReset()" id="stat-period-reset-btn" title="Revenir à la période actuelle" type="button"
+                        style="display:none;position:absolute;top:6px;right:6px;background:#e74c3c;color:white;border:none;border-radius:10px;padding:2px 8px;cursor:pointer;font-size:0.66rem;font-weight:700;">↺ Aujourd'hui</button>
                 </div>
                 <div class="stat-card" style="border-left:4px solid #e67e22;">
                     <h3>💰 Ventes du jour</h3>
@@ -16351,7 +16359,20 @@ logout = function(skipConfirmation = false) {
     let _statsPeriod = 'week';
     let _statsYear   = new Date().getFullYear();
     let _statsMonth  = new Date().getMonth(); // 0-11
-    let _statsWeek   = 0; // index de semaine dans le mois (0 = S1)
+    // Calculer l'index de la semaine courante dans le mois
+    let _statsWeek   = (function() {
+        const now = new Date();
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+        let cur = new Date(firstDay);
+        let idx = 0;
+        while (cur <= now) {
+            const wEnd = new Date(cur); wEnd.setDate(wEnd.getDate() + 6);
+            if (now >= cur && now <= wEnd) return idx;
+            cur.setDate(cur.getDate() + 7);
+            idx++;
+        }
+        return Math.max(0, idx - 1);
+    })();
 
     const _MONTH_NAMES = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
     const _MONTH_SHORT = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
@@ -16453,6 +16474,58 @@ logout = function(skipConfirmation = false) {
         renderStatistics();
     }
     window.setStatsWeek = setStatsWeek;
+
+    // Navigation PÉRIODE par flèches ◀ ▶ (carte principale)
+    window._statsPeriodShift = function(delta) {
+        if (_statsPeriod === 'week') {
+            const weeks = _getWeeksOfMonth(_statsYear, _statsMonth);
+            _statsWeek += delta;
+            if (_statsWeek < 0) {
+                // Mois précédent
+                _statsMonth--;
+                if (_statsMonth < 0) { _statsMonth = 11; _statsYear--; }
+                const pw = _getWeeksOfMonth(_statsYear, _statsMonth);
+                _statsWeek = pw.length - 1;
+            } else if (_statsWeek >= weeks.length) {
+                // Mois suivant
+                _statsMonth++;
+                if (_statsMonth > 11) { _statsMonth = 0; _statsYear++; }
+                _statsWeek = 0;
+            }
+            _populateYearSelect(); _populateMonthSelect(); _populateWeekSelect();
+            const wsel = document.getElementById('stats-week-select');
+            if (wsel) wsel.value = String(_statsWeek);
+            const msel = document.getElementById('stats-month-select');
+            if (msel) msel.value = String(_statsMonth);
+        } else if (_statsPeriod === 'month') {
+            _statsMonth += delta;
+            if (_statsMonth < 0) { _statsMonth = 11; _statsYear--; }
+            else if (_statsMonth > 11) { _statsMonth = 0; _statsYear++; }
+            _populateYearSelect(); _populateMonthSelect();
+        } else {
+            _statsYear += delta;
+            _populateYearSelect();
+        }
+        renderStatistics();
+    };
+
+    window._statsPeriodReset = function() {
+        const now = new Date();
+        _statsYear  = now.getFullYear();
+        _statsMonth = now.getMonth();
+        // Recalculer la semaine courante
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+        let cur = new Date(firstDay);
+        let idx = 0;
+        while (cur <= now) {
+            const wEnd = new Date(cur); wEnd.setDate(wEnd.getDate() + 6);
+            if (now >= cur && now <= wEnd) { _statsWeek = idx; break; }
+            cur.setDate(cur.getDate() + 7);
+            idx++;
+        }
+        _populateYearSelect(); _populateMonthSelect(); _populateWeekSelect();
+        renderStatistics();
+    };
 
     // Navigation semaine par semaine dans la carte "📆 Semaine en cours"
     window._statsWeekShift = function(delta) {
@@ -16574,6 +16647,27 @@ logout = function(skipConfirmation = false) {
 
         document.getElementById('stat-period-sales').textContent = periodTotal.toFixed(2) + '€';
         document.getElementById('stat-period-change').textContent = periodSales.filter(s => s.type !== 'retour_article').length + ' transaction(s)';
+        // Bouton reset : affiché si la période ne correspond pas au moment actuel
+        const _resetPBtn = document.getElementById('stat-period-reset-btn');
+        if (_resetPBtn) {
+            const curYear = new Date().getFullYear();
+            const curMonth = new Date().getMonth();
+            let isCurrentPeriod = false;
+            if (_statsPeriod === 'year' && _statsYear === curYear) isCurrentPeriod = true;
+            if (_statsPeriod === 'month' && _statsYear === curYear && _statsMonth === curMonth) isCurrentPeriod = true;
+            if (_statsPeriod === 'week' && _statsYear === curYear && _statsMonth === curMonth) {
+                // Vérifier si la semaine contient aujourd'hui
+                const weeks = _getWeeksOfMonth(_statsYear, _statsMonth);
+                const w = weeks[_statsWeek];
+                if (w) {
+                    const td = new Date(); td.setHours(0,0,0,0);
+                    const ws = new Date(w.start); ws.setHours(0,0,0,0);
+                    const we = new Date(w.end);    we.setHours(23,59,59,999);
+                    if (td >= ws && td <= we) isCurrentPeriod = true;
+                }
+            }
+            _resetPBtn.style.display = isCurrentPeriod ? 'none' : '';
+        }
         document.getElementById('stat-today-sales').textContent = todayTotal.toFixed(2) + '€';
         // Jour en cours — détails
         const _todayChangeEl = document.getElementById('stat-today-change');
@@ -16681,86 +16775,84 @@ logout = function(skipConfirmation = false) {
         }
 
         // ========================================================================
-        // Cartes INVESTISSEMENTS et CA PERDU
-        // → Logique miroir de la section Gestion (onglet Retours) pour garantir
-        //   la cohérence absolue des chiffres entre les deux vues.
+        // Cartes INVESTISSEMENTS et CA PERDU — filtrés par la période sélectionnée
         // ========================================================================
         let investList = [];
         try { investList = JSON.parse(localStorage.getItem('covo_investissements') || '[]'); } catch(e) {}
         let marcList = [];
         try { marcList = JSON.parse(localStorage.getItem('covo_marchandise') || '[]'); } catch(e) {}
 
-        // ---- INVESTISSEMENTS ----
-        // Source de vérité : covo_investissements
-        //   - champ date : string "YYYY-MM-DD"
-        //   - champ montant : number
-        //   - champ cat : string (catégorie)
-        // On propose 3 totaux :
-        //   - "mois en cours" (miroir de la stat Retours)
-        //   - "total depuis toujours"
-        //   - "période stats sélectionnée"
-        const _curMonthISO = new Date().toISOString().substring(0, 7); // YYYY-MM
+        // Réutiliser les bornes de la période sélectionnée (periodStart / _statsPeriodEnd)
+        const _pS = periodStart;
+        const _pE = window._statsPeriodEnd || new Date();
+        const _inStatsPeriod = (dateStr) => {
+            if (!dateStr) return false;
+            const d = new Date(dateStr + 'T12:00:00'); // milieu de journée pour éviter les décalages UTC
+            return d >= _pS && d <= _pE;
+        };
 
-        const investInCurMonth = investList.filter(e => e.date && e.date.startsWith(_curMonthISO));
-        const investCurMonthTotal = investInCurMonth.reduce((s, e) => s + (parseFloat(e.montant) || 0), 0);
-
+        // ---- INVESTISSEMENTS sur la période ----
+        const investInPeriod = investList.filter(e => _inStatsPeriod(e.date));
+        const investPeriodTotal = investInPeriod.reduce((s, e) => s + (parseFloat(e.montant) || 0), 0);
         const investAllTotal = investList.reduce((s, e) => s + (parseFloat(e.montant) || 0), 0);
 
-        // Top catégorie (sur tous les investissements)
         const invByCat = {};
-        investList.forEach(e => {
+        investInPeriod.forEach(e => {
             const cat = e.cat || 'autre';
             invByCat[cat] = (invByCat[cat] || 0) + (parseFloat(e.montant) || 0);
         });
         const topInvCat = Object.entries(invByCat).sort((a, b) => b[1] - a[1])[0];
 
         const invEl = document.getElementById('stat-invest-total');
-        if (invEl) invEl.textContent = investCurMonthTotal.toFixed(2) + '€';
+        if (invEl) invEl.textContent = investPeriodTotal.toFixed(2) + '€';
         const invCountEl = document.getElementById('stat-invest-count');
         if (invCountEl) {
-            const n = investInCurMonth.length;
-            invCountEl.textContent = n + ' achat' + (n > 1 ? 's' : '') + ' ce mois';
+            const n = investInPeriod.length;
+            invCountEl.textContent = n + ' achat' + (n > 1 ? 's' : '') + ' · ' + periodLabel;
         }
         const invDetailEl = document.getElementById('stat-invest-detail');
         if (invDetailEl) {
             const parts = [];
-            parts.push('Total : ' + investAllTotal.toFixed(2) + '€');
-            if (topInvCat && topInvCat[1] > 0 && investAllTotal > 0) {
-                const pct = Math.round((topInvCat[1] / investAllTotal) * 100);
+            parts.push('Total global : ' + investAllTotal.toFixed(2) + '€');
+            if (topInvCat && topInvCat[1] > 0 && investPeriodTotal > 0) {
+                const pct = Math.round((topInvCat[1] / investPeriodTotal) * 100);
                 parts.push('Top : ' + topInvCat[0] + ' (' + pct + '%)');
             }
             invDetailEl.textContent = parts.join(' · ');
         }
 
-        // ---- CA PERDU (défauts marchandise) ----
-        // Source de vérité : covo_marchandise (miroir exact de updateRetourStats)
-        //   - CA perdu = somme de TOUS les montants (pas de filtre période)
-        //   - Avoirs reçus = uniquement les lignes avec statut 'credited' ou 'archived'
-        const lostTotal = marcList.reduce((s, m) => s + (parseFloat(m.montant) || 0), 0);
+        // ---- CA PERDU (défauts marchandise) sur la période ----
+        const marcInPeriod = marcList.filter(m => _inStatsPeriod(m.date));
+        const lostPeriodTotal = marcInPeriod.reduce((s, m) => s + (parseFloat(m.montant) || 0), 0);
+        const lostAllTotal = marcList.reduce((s, m) => s + (parseFloat(m.montant) || 0), 0);
 
-        let avoirsRecus = 0;
-        marcList.forEach(m => {
+        let avoirsPeriod = 0;
+        marcInPeriod.forEach(m => {
             if (m.statut === 'credited' || m.statut === 'archived') {
-                avoirsRecus += (m._avoirMontant != null ? parseFloat(m._avoirMontant) : parseFloat(m.montant)) || 0;
+                avoirsPeriod += (m._avoirMontant != null ? parseFloat(m._avoirMontant) : parseFloat(m.montant)) || 0;
             }
         });
 
         const lostEl = document.getElementById('stat-lost-total');
-        if (lostEl) lostEl.textContent = lostTotal.toFixed(2) + '€';
+        if (lostEl) lostEl.textContent = lostPeriodTotal.toFixed(2) + '€';
         const lostCountEl = document.getElementById('stat-lost-count');
         if (lostCountEl) {
-            const n = marcList.length;
-            lostCountEl.textContent = n + ' défaut' + (n > 1 ? 's' : '') + ' au total';
+            const n = marcInPeriod.length;
+            lostCountEl.textContent = n + ' défaut' + (n > 1 ? 's' : '') + ' · ' + periodLabel;
         }
         const lostDetailEl = document.getElementById('stat-lost-detail');
         if (lostDetailEl) {
-            if (avoirsRecus > 0 || lostTotal > 0) {
-                const net = avoirsRecus - lostTotal;
+            const parts2 = [];
+            if (avoirsPeriod > 0) {
+                const net = avoirsPeriod - lostPeriodTotal;
                 const sign = net >= 0 ? '+' : '';
-                lostDetailEl.innerHTML = 'Avoirs reçus : ' + avoirsRecus.toFixed(2) + '€ · Net : <span style="color:' + (net >= 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700;">' + sign + net.toFixed(2) + '€</span>';
-            } else {
-                lostDetailEl.textContent = 'Aucun défaut enregistré';
+                parts2.push('Avoirs : ' + avoirsPeriod.toFixed(2) + '€');
+                parts2.push('Net : <span style="color:' + (net >= 0 ? '#27ae60' : '#e74c3c') + ';font-weight:700;">' + sign + net.toFixed(2) + '€</span>');
             }
+            if (lostAllTotal !== lostPeriodTotal) {
+                parts2.push('Total global : ' + lostAllTotal.toFixed(2) + '€');
+            }
+            lostDetailEl.innerHTML = parts2.length ? parts2.join(' · ') : periodLabel;
         }
         document.getElementById('stat-transactions').textContent = periodSales.filter(s => s.type !== 'retour_article').length + (periodSales.filter(s => s.type === 'retour_article').length ? ' (-' + periodSales.filter(s => s.type === 'retour_article').length + ' retour(s))' : '');
         document.getElementById('stat-trans-change').textContent = periodLabel;
