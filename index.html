@@ -12025,27 +12025,63 @@ function toggleInfoSection(headerElement) {
             if (!el) return;
             el.innerHTML = '';
             list.forEach(m => {
-                const enabled = cfg[m.key] !== false;
+                const val     = cfg[m.key];
+                const enabled = (val !== false && val !== 'hidden');
+                const mode    = val === 'hidden' ? 'hidden' : 'grey'; // mode quand désactivé
                 const row = document.createElement('div');
-                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--bg-card,#fff);border-radius:8px;border:1px solid var(--border-color,#e0e0e0);gap:8px;';
+                row.style.cssText = 'display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--bg-card,#fff);border-radius:8px;border:1px solid var(--border-color,#e0e0e0);';
                 row.innerHTML = `
-                    <span style="font-size:0.83rem;color:var(--text-main);font-weight:600;display:flex;align-items:center;gap:6px;">
-                        <span>${m.icon}</span><span>${m.label}</span>
-                    </span>
-                    <label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0;cursor:pointer;">
-                        <input type="checkbox" data-mod="${m.key}" ${enabled?'checked':''} style="opacity:0;width:0;height:0;">
-                        <span style="position:absolute;inset:0;background:${enabled?'#0d9488':'#cbd5e1'};border-radius:11px;transition:background 0.2s;"></span>
-                        <span style="position:absolute;top:3px;left:${enabled?'21':'3'}px;width:16px;height:16px;background:white;border-radius:50%;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></span>
-                    </label>`;
-                // Toggle live
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                        <span style="font-size:0.83rem;color:var(--text-main);font-weight:600;display:flex;align-items:center;gap:6px;">
+                            <span>${m.icon}</span><span>${m.label}</span>
+                        </span>
+                        <label style="position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0;cursor:pointer;">
+                            <input type="checkbox" data-mod="${m.key}" ${enabled?'checked':''} style="opacity:0;width:0;height:0;">
+                            <span style="position:absolute;inset:0;background:${enabled?'#0d9488':'#cbd5e1'};border-radius:11px;transition:background 0.2s;"></span>
+                            <span style="position:absolute;top:3px;left:${enabled?'21':'3'}px;width:16px;height:16px;background:white;border-radius:50%;transition:left 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3);"></span>
+                        </label>
+                    </div>
+                    <!-- Sélecteur de mode (visible uniquement quand désactivé) -->
+                    <div class="mod-mode-row" style="display:${enabled?'none':'flex'};align-items:center;gap:6px;padding:5px 8px;background:var(--input-bg,#f5f5f5);border-radius:6px;border:1px dashed var(--border-color,#ddd);">
+                        <span style="font-size:0.7rem;color:var(--text-muted,#888);font-weight:600;flex-shrink:0;">Pour admin & caissiers :</span>
+                        <div style="display:flex;gap:4px;flex:1;">
+                            <button data-mode="grey"   class="mod-mode-btn ${mode==='grey'?'mod-mode-active':''}" style="flex:1;padding:4px 6px;border-radius:5px;font-size:0.7rem;font-weight:700;cursor:pointer;border:1.5px solid ${mode==='grey'?'#8e44ad':'var(--border-color,#ddd)'};background:${mode==='grey'?'rgba(142,68,173,0.12)':'var(--bg-card,#fff)'};color:${mode==='grey'?'#8e44ad':'var(--text-muted,#888)'};" title="Visible mais grisé et non cliquable">
+                                🔘 Mode gris
+                            </button>
+                            <button data-mode="hidden" class="mod-mode-btn ${mode==='hidden'?'mod-mode-active':''}" style="flex:1;padding:4px 6px;border-radius:5px;font-size:0.7rem;font-weight:700;cursor:pointer;border:1.5px solid ${mode==='hidden'?'#e74c3c':'var(--border-color,#ddd)'};background:${mode==='hidden'?'rgba(231,76,60,0.1)':'var(--bg-card,#fff)'};color:${mode==='hidden'?'#e74c3c':'var(--text-muted,#888)'};" title="Complètement masqué (invisible)">
+                                🙈 Masquer
+                            </button>
+                        </div>
+                    </div>`;
+
+                // Toggle actif/inactif
                 const cb = row.querySelector('input');
                 cb.onchange = function() {
                     const cfg2 = _modulesLoad();
-                    cfg2[m.key] = this.checked;
+                    if (this.checked) {
+                        cfg2[m.key] = true;
+                    } else {
+                        // Garder le mode précédent (grey par défaut)
+                        cfg2[m.key] = (cfg2['_mode_'+m.key] === 'hidden') ? 'hidden' : false;
+                    }
                     localStorage.setItem(MOD_KEY, JSON.stringify(cfg2));
                     _modulesApply();
-                    _modulesRender(); // re-render for color update
+                    _modulesRender();
                 };
+
+                // Boutons de mode
+                row.querySelectorAll('.mod-mode-btn').forEach(btn => {
+                    btn.onclick = function() {
+                        const modeVal = this.dataset.mode;
+                        const cfg2 = _modulesLoad();
+                        cfg2['_mode_'+m.key] = modeVal;
+                        cfg2[m.key] = modeVal === 'hidden' ? 'hidden' : false;
+                        localStorage.setItem(MOD_KEY, JSON.stringify(cfg2));
+                        _modulesApply();
+                        _modulesRender();
+                    };
+                });
+
                 el.appendChild(row);
             });
         }
@@ -12393,59 +12429,91 @@ function toggleInfoSection(headerElement) {
         const cfg    = _modulesLoad();
         const isMstr = !!(currentUser && currentUser.isMaster);
 
-        // Helper : appliquer l'état badge/disabled sur un élément
-        function applyEl(el, hidden, badgeId) {
+        // Helper principal : appliquer l'état d'un module sur un élément
+        // val : true (actif) | false (gris, non-op) | 'hidden' (masqué)
+        function applyEl(el, val, badgeId) {
             if (!el) return;
             const old = document.getElementById(badgeId);
             if (old) old.remove();
             el.style.opacity       = '';
             el.style.pointerEvents = '';
             el.style.filter        = '';
-            if (!hidden) return;
+            const disabled = (val === false || val === 'hidden');
+            if (!disabled) return; // actif → rien à faire
 
-            el.style.position = el.style.position || 'relative';
-            el.style.overflow = 'visible';
-            const b = document.createElement('span');
-            b.id = badgeId;
+            const fullyHidden = (val === 'hidden');
+
             if (isMstr) {
-                // Admin-Développeur : fonctionnel + badge rouge "Masqué"
-                b.textContent = '🚫 Masqué';
-                b.title = 'Masqué pour les autres utilisateurs — vous pouvez quand même l\'utiliser';
-                b.style.cssText = 'position:absolute;top:-7px;right:-4px;background:rgba(231,76,60,0.9);color:white;font-size:0.52rem;font-weight:800;padding:1px 5px;border-radius:5px;pointer-events:none;z-index:99;white-space:nowrap;line-height:1.5;box-shadow:0 1px 4px rgba(0,0,0,0.25);';
-                // Fonctionnel — aucune restriction
+                // Admin-Développeur : fonctionnel mais badgé
+                el.style.position = el.style.position || 'relative';
+                el.style.overflow = 'visible';
+                const b = document.createElement('span');
+                b.id = badgeId;
+                b.textContent = fullyHidden ? '🙈 Masqué' : '🔘 Grisé';
+                b.title = fullyHidden
+                    ? 'Complètement masqué pour admin & caissiers — visible uniquement pour vous'
+                    : 'Grisé pour admin & caissiers — vous pouvez quand même l\'utiliser';
+                b.style.cssText = 'position:absolute;top:-7px;right:-4px;color:white;font-size:0.52rem;font-weight:800;padding:1px 5px;border-radius:5px;pointer-events:none;z-index:99;white-space:nowrap;line-height:1.5;box-shadow:0 1px 4px rgba(0,0,0,0.25);background:'+(fullyHidden?'rgba(231,76,60,0.9)':'rgba(142,68,173,0.9)')+';';
+                el.appendChild(b);
+                // Fonctionnel — aucune restriction pour isMaster
             } else {
-                // Admin / Caissier : désactivé + badge gris "Désactivé"
-                el.style.opacity       = '0.38';
-                el.style.pointerEvents = 'none';
-                el.style.filter        = 'grayscale(0.55)';
-                b.textContent = '✖ Désactivé';
-                b.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(80,80,80,0.82);color:white;font-size:0.58rem;font-weight:800;padding:2px 8px;border-radius:6px;pointer-events:none;z-index:99;white-space:nowrap;letter-spacing:0.02em;';
+                // Admin / Caissier
+                if (fullyHidden) {
+                    // Mode 🙈 Masquer : complètement invisible
+                    el.style.display = 'none';
+                } else {
+                    // Mode 🔘 Gris : visible mais non-opérationnel
+                    el.style.opacity       = '0.38';
+                    el.style.pointerEvents = 'none';
+                    el.style.filter        = 'grayscale(0.55)';
+                    el.style.position      = el.style.position || 'relative';
+                    el.style.overflow      = 'visible';
+                    const b = document.createElement('span');
+                    b.id = badgeId;
+                    b.textContent = '✖ Désactivé';
+                    b.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(80,80,80,0.82);color:white;font-size:0.58rem;font-weight:800;padding:2px 8px;border-radius:6px;pointer-events:none;z-index:99;white-space:nowrap;letter-spacing:0.02em;';
+                    el.appendChild(b);
+                }
             }
-            el.appendChild(b);
         }
 
-        // Onglets principaux — toujours visibles, état variable
+        // Helper : la valeur du cfg pour un module (true = actif, false = gris, 'hidden' = masqué)
+        function modVal(key) {
+            const v = cfg[key];
+            if (v === true || v === undefined || v === null) return true;
+            if (v === 'hidden') return 'hidden';
+            return false; // false ou n'importe quoi d'autre = gris
+        }
+
+        // Onglets principaux
         MOD_TABS.forEach(m => {
             const btn = document.getElementById('tab-btn-' + m.key);
             if (!btn) return;
-            btn.style.display  = '';
-            btn.style.overflow = 'visible';
-            applyEl(btn, cfg[m.key] === false, 'modbadge-tab-' + m.key);
+            const v = modVal(m.key);
+            if (!isMstr && v === 'hidden') {
+                btn.style.display = 'none';
+            } else {
+                btn.style.display  = '';
+                btn.style.overflow = 'visible';
+                applyEl(btn, v, 'modbadge-tab-' + m.key);
+            }
         });
 
         // Sous-onglets gestion
         MOD_GESTION.forEach(m => {
-            const btn = document.querySelector('.retours-tab-btn[data-panel="' + m.key + '"]');
-            const hidden = cfg[m.key] === false;
-            if (btn) {
-                btn.style.display  = '';
-                btn.style.overflow = 'visible';
-                applyEl(btn, hidden, 'modbadge-gestion-' + m.key);
-            }
-            // Le panneau : accessible pour master, caché pour les autres si désactivé
+            const btn   = document.querySelector('.retours-tab-btn[data-panel="' + m.key + '"]');
             const panel = document.getElementById(m.key);
-            if (panel) {
-                panel.style.display = (hidden && !isMstr) ? 'none' : '';
+            const v = modVal(m.key);
+            if (!isMstr && v === 'hidden') {
+                if (btn)   btn.style.display   = 'none';
+                if (panel) panel.style.display  = 'none';
+            } else {
+                if (btn) {
+                    btn.style.display  = '';
+                    btn.style.overflow = 'visible';
+                    applyEl(btn, v, 'modbadge-gestion-' + m.key);
+                }
+                if (panel) panel.style.display = '';
             }
         });
 
@@ -12465,17 +12533,22 @@ function toggleInfoSection(headerElement) {
             try {
                 var el = featureEls[k]();
                 if (!el) return;
-                var hidden = cfg[k] === false;
-                // Affichage de base selon le type
+                var v = modVal(k);
+                var disabled = (v === false || v === 'hidden');
+
+                // Réinitialiser l'affichage de base
                 if (k === 'fab-msg') {
-                    el.style.display = currentUser ? 'flex' : 'none';
+                    el.style.display = (disabled && !isMstr && v === 'hidden') ? 'none' : (currentUser ? 'flex' : 'none');
                 } else if (k === 'badge-expired' || k === 'badge-masked') {
-                    el.style.display = el.textContent ? '' : 'none';
+                    el.style.display = (!disabled || isMstr) ? (el.textContent ? '' : 'none') : (v === 'hidden' ? 'none' : '');
                 } else {
-                    el.style.display = '';
+                    el.style.display = (!disabled || isMstr || v !== 'hidden') ? '' : 'none';
                 }
-                el.style.overflow = 'visible';
-                applyEl(el, hidden, 'modbadge-feat-' + k);
+
+                if (el.style.display !== 'none') {
+                    el.style.overflow = 'visible';
+                    applyEl(el, v, 'modbadge-feat-' + k);
+                }
             } catch(e) {}
         });
     }
