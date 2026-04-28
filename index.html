@@ -3244,6 +3244,7 @@
 }
 /* ===== FIN SECTIONS PLIABLES ===== */
 </style>
+<style id="covo-mod-hidden">/* Modules masqués — généré dynamiquement */</style>
 </head>
 <body>
     <!-- ===== BARRE STATUS UNIFIÉE ===== -->
@@ -12425,9 +12426,55 @@ function toggleInfoSection(headerElement) {
         }
     }
 
+    // Map clé → sélecteurs CSS pour le masquage via feuille de style
+    const MOD_CSS_SELECTORS = {
+        // Onglets
+        'stats':       '#tab-btn-stats',
+        'workhours':   '#tab-btn-workhours',
+        'predictions': '#tab-btn-predictions',
+        'retours':     '#tab-btn-retours',
+        'historique':  '#tab-btn-historique',
+        // Sous-onglets gestion
+        'rt-clients':          '.retours-tab-btn[data-panel="rt-clients"]',
+        'rt-marchandise':      '.retours-tab-btn[data-panel="rt-marchandise"]',
+        'rt-echeances':        '.retours-tab-btn[data-panel="rt-echeances"]',
+        'rt-historique':       '.retours-tab-btn[data-panel="rt-historique"]',
+        'rt-catalogue':        '.retours-tab-btn[data-panel="rt-catalogue"]',
+        'rt-investissements':  '.retours-tab-btn[data-panel="rt-investissements"]',
+        // Fonctionnalités
+        'dark-mode':     '#theme-btn',
+        'fullscreen':    '#fullscreen-btn',
+        'night-tariff':  '#night-tariff-btn',
+        'retour-client': '#retour-client-btn',
+        'fab-msg':       '#fab-msg',
+        'delivery-goal': '#delivery-goal',
+        'badge-expired': '#badge-expired',
+        'badge-masked':  '#badge-masked',
+    };
+
+    function _modulesUpdateHiddenCSS() {
+        // Construire la liste des sélecteurs masqués pour non-isMaster
+        const cfg = _modulesLoad();
+        const isMstr = !!(currentUser && currentUser.isMaster);
+        const rules = [];
+        Object.entries(MOD_CSS_SELECTORS).forEach(([key, selector]) => {
+            if (cfg[key] === 'hidden' && !isMstr) {
+                rules.push(selector + ' { display: none !important; }');
+            }
+        });
+        const styleEl = document.getElementById('covo-mod-hidden');
+        if (styleEl) {
+            styleEl.textContent = rules.length
+                ? '/* Modules masqués */\n' + rules.join('\n')
+                : '/* Aucun module masqué */';
+        }
+    }
+
     function _modulesApply() {
         const cfg    = _modulesLoad();
         const isMstr = !!(currentUser && currentUser.isMaster);
+        // Mettre à jour la feuille CSS de masquage (priorité max via !important)
+        _modulesUpdateHiddenCSS();
 
         // Helper principal : appliquer l'état d'un module sur un élément
         // val : true (actif) | false (gris, non-op) | 'hidden' (masqué)
@@ -13243,6 +13290,8 @@ function toggleInfoSection(headerElement) {
         if (typeof window._updateMasterFabVisibility === 'function') window._updateMasterFabVisibility();
         // Init détection nouveaux messages (éviter notifications rétroactives)
         if (typeof window._mfnInit === 'function') window._mfnInit();
+        // Appliquer immédiatement le CSS de masquage des modules
+        if (typeof _modulesUpdateHiddenCSS === 'function') _modulesUpdateHiddenCSS();
         renderAll();
         maybeEnterFullscreenOnLogin();
         if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
@@ -25518,40 +25567,26 @@ function getTabVisibility() {
 }
 
 function applyTabsVisibility() {
-    const admin  = currentUser && currentUser.role === 'admin';
-    const isMstr = !!(currentUser && currentUser.isMaster);
-    const tabs   = ['stats','predictions','retours','historique'];
+    // Le masquage via config modules est géré par CSS !important (_modulesUpdateHiddenCSS).
+    // Cette fonction gère uniquement la visibilité par rôle/permission utilisateur.
+    const admin = currentUser && currentUser.role === 'admin';
+    const tabs  = ['stats','predictions','retours','historique'];
 
-    // Lire la config modules pour respecter le masquage
-    let modCfg = {};
-    try { modCfg = JSON.parse(localStorage.getItem('covo_modules_config') || '{}'); } catch(e) {}
-    const modHidden = key => modCfg[key] === 'hidden';
-
-    if (admin || isMstr) {
+    if (admin) {
+        // Admin : tous les onglets visibles (le CSS de modules fait le masquage si besoin)
         tabs.forEach(t => {
             const btn = document.getElementById('tab-btn-'+t);
-            if (!btn) return;
-            // isMaster voit tout ; admin voit sauf si le module est masqué
-            if (isMstr) {
-                btn.style.display = '';
-            } else {
-                // Admin : masqué si la config modules dit 'hidden'
-                btn.style.display = modHidden(t) ? 'none' : '';
-            }
+            if (btn) btn.style.removeProperty('display');
         });
         return;
     }
 
-    // Caissier : combiner visibilité par-utilisateur ET config modules
+    // Caissier : visibilité par-utilisateur
     const userPerms = (currentUser && currentUser.permissions) || DEFAULT_USER_PERMS();
     const vis = userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true };
-
     tabs.forEach(t => {
         const btn = document.getElementById('tab-btn-'+t);
-        if (!btn) return;
-        // Masqué si : soit le module est 'hidden', soit la permission utilisateur l'interdit
-        const hidden = modHidden(t) || vis[t] === false;
-        btn.style.display = hidden ? 'none' : '';
+        if (btn) btn.style.display = vis[t] !== false ? '' : 'none';
     });
 }
 
