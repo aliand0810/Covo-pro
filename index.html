@@ -13858,7 +13858,14 @@ function toggleInfoSection(headerElement) {
         if (perms.image) product.image = document.getElementById('edit-image').value;
         if (perms.category) product.category = document.getElementById('edit-category').value;
         if (perms.barcode) product.barcode = document.getElementById('edit-barcode').value;
-        if (perms.stock) product.stock = parseInt(document.getElementById('edit-stock').value) || 0;
+        if (perms.stock) {
+            const _cieOldStock = product.stock;
+            product.stock = parseInt(document.getElementById('edit-stock').value) || 0;
+            if (_cieOldStock !== product.stock && typeof window._logStockChange === 'function') {
+                window._logStockChange(product, _cieOldStock, product.stock, 'manual',
+                    'Modification caissier', {});
+            }
+        }
         if (perms.price) product.price = parseFloat(document.getElementById('edit-price').value) || 0;
         if (perms.dlc) product.expiryDate = document.getElementById('edit-dlc').value;
         if (perms.promo) product.promo = parseInt(document.getElementById('edit-promo').value) || 0;
@@ -15723,18 +15730,8 @@ logout = function(skipConfirmation = false) {
             if (m) m.classList.remove('active');
         }
         // Ouvrir l'historique (fonction déjà présente dans le code)
-        if (typeof window._openStockHistoryModal === 'function') {
-            window._openStockHistoryModal(p);
-        } else if (typeof window._logStockChange === 'function') {
-            // Fallback : ouvrir directement la modale si elle existe
-            const modal = document.getElementById('stock-history-modal');
-            if (modal) {
-                // Peupler et ouvrir
-                const hist = p.stockHistory || [];
-                const titleEl = modal.querySelector('#sh-product-name');
-                if (titleEl) titleEl.textContent = p.name;
-                modal.style.display = 'flex';
-            }
+        if (typeof window._openStockHistory === 'function') {
+            window._openStockHistory(p.id);
         }
     };
 
@@ -15782,13 +15779,23 @@ logout = function(skipConfirmation = false) {
 
     // Ouvrir la modale d'historique pour un produit
     window._openStockHistory = function(productId) {
-        const p = products.find(x => x.id === productId);
+        // Relire depuis products[] pour avoir les données fraîches
+        let p = products.find(x => x.id === productId || x.id === parseInt(productId));
+        if (!p) {
+            // Fallback : recharger depuis localStorage
+            try {
+                const fresh = JSON.parse(localStorage.getItem('covo_products') || '[]');
+                p = fresh.find(x => x.id === productId || x.id === parseInt(productId));
+            } catch(e) {}
+        }
         if (!p) { showScanToast('⚠️ Produit introuvable', 'info'); return; }
         window._currentStockHistProduct = p;
-        document.getElementById('sh-title').textContent = '📦 Historique du stock — ' + p.name;
-        document.getElementById('sh-product-name').textContent = p.name;
+        const unit = p.unitType === 'kg' ? 'kg' : 'u.';
         const stockLabel = p.unitType === 'kg' ? (p.stock || 0).toFixed(3) + ' kg' : String(p.stock || 0) + ' u.';
+        document.getElementById('sh-product-name').textContent = p.name;
         document.getElementById('sh-current-stock').textContent = stockLabel;
+        const titleEl = document.getElementById('sh-title');
+        if (titleEl) titleEl.textContent = '📦 Historique du stock — ' + p.name;
         document.getElementById('sh-filter').value = 'all';
         _renderStockHistory();
         document.getElementById('stock-history-modal').style.display = 'flex';
@@ -15815,6 +15822,32 @@ logout = function(skipConfirmation = false) {
             <div style="flex:1;min-width:100px;background:#e3f2fd;padding:8px 12px;border-radius:8px;"><div style="font-size:0.7rem;color:#0277bd;">Ventes</div><div style="font-weight:800;color:#0277bd;">${nbSales}</div></div>
             <div style="flex:1;min-width:100px;background:#fff3e0;padding:8px 12px;border-radius:8px;"><div style="font-size:0.7rem;color:#e65100;">Modif. manuelles</div><div style="font-weight:800;color:#e65100;">${nbManual}</div></div>
         `;
+
+        // Alerte si stock réel ≠ stock calculé depuis l'historique
+        const alertEl = document.getElementById('sh-alert') || (() => {
+            const a = document.createElement('div');
+            a.id = 'sh-alert';
+            a.style.cssText = 'margin-bottom:8px;';
+            listEl.parentNode.insertBefore(a, listEl);
+            return a;
+        })();
+        if (rawHist.length) {
+            const lastEntry = rawHist[rawHist.length - 1];
+            const theoreticalStock = lastEntry.after;
+            const realStock = p.stock || 0;
+            const diff = parseFloat((realStock - theoreticalStock).toFixed(3));
+            if (Math.abs(diff) > 0.001) {
+                const sign = diff > 0 ? '+' : '';
+                alertEl.innerHTML = `<div style="background:rgba(231,76,60,0.1);border:1.5px solid #e74c3c;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#c0392b;display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:1rem;">⚠️</span>
+                    <span><strong>Écart détecté</strong> — Stock réel : <strong>${p.unitType==='kg'?realStock.toFixed(3):Math.round(realStock)} ${p.unitType==='kg'?'kg':'u.'}</strong> vs dernier log : <strong>${p.unitType==='kg'?theoreticalStock.toFixed(3):Math.round(theoreticalStock)} ${p.unitType==='kg'?'kg':'u.'}</strong> (${sign}${p.unitType==='kg'?diff.toFixed(3):Math.round(diff)})</span>
+                </div>`;
+            } else {
+                alertEl.innerHTML = '';
+            }
+        } else {
+            alertEl.innerHTML = '';
+        }
 
         if (!hist.length) {
             listEl.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-muted,#888);font-size:0.85rem;">Aucun mouvement enregistré pour ce filtre.</div>';
@@ -22908,7 +22941,15 @@ function catSaveInlineEdit(id) {
     const stockVal = p.unitType === 'kg'
         ? parseFloat(document.getElementById(`cie-stock-${id}`)?.value)
         : parseInt(document.getElementById(`cie-stock-${id}`)?.value);
-    if (!isNaN(stockVal)) p.stock = stockVal;
+    if (!isNaN(stockVal) && stockVal !== p.stock) {
+        const _cieStockBefore = p.stock;
+        p.stock = stockVal;
+        if (typeof window._logStockChange === 'function') {
+            window._logStockChange(p, _cieStockBefore, p.stock, 'manual', 'Modification inline catalogue', {});
+        }
+    } else if (!isNaN(stockVal)) {
+        p.stock = stockVal;
+    }
     p.category = document.getElementById(`cie-cat-${id}`)?.value || p.category;
     p.barcode = document.getElementById(`cie-barcode-${id}`)?.value || '';
     p.expiryDate = document.getElementById(`cie-expiry-${id}`)?.value || null;
@@ -23389,7 +23430,11 @@ async function saveCatalogueProduct() {
         p.unitType = unitType;
         if (unitType==='kg') { p.pricePerKg = priceRaw; p.price = null; }
         else { p.price = priceRaw; p.pricePerKg = null; }
+        const _formOldStock = p.stock;
         p.stock = stock;
+        if (_formOldStock !== stock && typeof window._logStockChange === 'function') {
+            window._logStockChange(p, _formOldStock, stock, 'manual', 'Modification formulaire produit', {});
+        }
         p.barcode = barcode;
         p.expiryDate = expiryDate;
         p.category = catVal;
@@ -24542,10 +24587,15 @@ function saveEditMarc() {
             const allP = typeof products !== 'undefined' ? products : (window._covoProducts || []);
             const prod = allP.find(x => x.id == list[idx]._fromProduct);
             if (prod) {
+                const _defEditBefore = prod.stock;
                 prod.stock = Math.max(0, parseFloat((prod.stock - diff).toFixed(3)));
                 localStorage.setItem('covo_products', JSON.stringify(allP));
                 if (typeof saveAll === 'function') saveAll();
                 if (typeof renderProducts === 'function') renderProducts();
+                if (typeof window._logStockChange === 'function') {
+                    window._logStockChange(prod, _defEditBefore, prod.stock, 'defect',
+                        'Modification quantité défaut', { defectId: list[idx].id });
+                }
                 const signe = diff > 0 ? '-' : '+';
                 const label = isKg ? Math.abs(diff).toFixed(3)+' kg' : Math.abs(diff)+' u.';
                 addRetourHist('modified','marchandise',
@@ -24734,7 +24784,18 @@ function confirmDelMarc(withRestock) {
     if (withRestock&&m._defect&&m._fromProduct) {
         const ap=typeof products!=='undefined'?products:(window._covoProducts||[]);
         const prod=ap.find(x=>x.id==m._fromProduct);
-        if (prod) { prod.stock=parseFloat((prod.stock+parseFloat(m.qty||0)).toFixed(3)); localStorage.setItem('covo_products',JSON.stringify(ap)); if (typeof saveAll==='function') saveAll(); if (typeof renderProducts==='function') renderProducts(); rToast(`↩️ Stock réapprovisionné : +${m.qty} → ${prod.name}`,'success'); }
+        if (prod) {
+            const _delMarcBefore = prod.stock;
+            prod.stock = parseFloat((prod.stock + parseFloat(m.qty||0)).toFixed(3));
+            localStorage.setItem('covo_products', JSON.stringify(ap));
+            if (typeof saveAll === 'function') saveAll();
+            if (typeof renderProducts === 'function') renderProducts();
+            if (typeof window._logStockChange === 'function') {
+                window._logStockChange(prod, _delMarcBefore, prod.stock, 'restock',
+                    'Stock restauré — défaut supprimé', { defectId: id, qty: parseFloat(m.qty||0) });
+            }
+            rToast(`↩️ Stock réapprovisionné : +${m.qty} → ${prod.name}`,'success');
+        }
     }
     rSave('marchandise',rLoad('marchandise').filter(x=>x.id!==id));
     addRetourHist('deleted','marchandise',`🗑️ Retour supprimé: ${id}${withRestock?' + stock restauré':''}`,`${m.fournisseur||'-'} · ${m.article||'-'}`);
@@ -24809,7 +24870,17 @@ function submitDefect() {
     list.push({id,date,fournisseur:'— À renseigner —',article:p.name,qty,montant:lostCA,motif:defectType,bl:'',br:'',statut:'pending',comment:comment||'',_fromProduct:productId,_defect:true,_lostCA:lostCA,_unitKg:isKg,_photo:window._defectPhotoBase64||null});
     rSave('marchandise',list);
     const prod=allProducts.find(x=>x.id==productId);
-    if(prod){prod.stock=Math.max(0,parseFloat((prod.stock-qty).toFixed(3)));localStorage.setItem('covo_products',JSON.stringify(allProducts));if(typeof saveAll==='function')saveAll();if(typeof renderProducts==='function')renderProducts();}
+    if(prod){
+        const _defectBefore = prod.stock;
+        prod.stock=Math.max(0,parseFloat((prod.stock-qty).toFixed(3)));
+        localStorage.setItem('covo_products',JSON.stringify(allProducts));
+        if(typeof saveAll==='function')saveAll();
+        if(typeof renderProducts==='function')renderProducts();
+        if(typeof window._logStockChange==='function'){
+            window._logStockChange(prod, _defectBefore, prod.stock, 'defect',
+                'Déclaration défaut — ' + (defectType||''), { qty: qty });
+        }
+    }
     addRetourHist('created','marchandise',`⚠️ Défaut déclaré: ${p.name}`,`Type: ${defectType} · Qté: ${qtyDisplay} · -${lostCA.toFixed(2)} €`);
     closeDefectModal(); refreshRetours();
     const btn=document.querySelector('[data-panel="rt-marchandise"]');
