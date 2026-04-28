@@ -6650,6 +6650,13 @@
             defectBtnPd.style.display = canDefect ? '' : 'none';
         }
         window._pdCurrentProductId = p.id;
+        // Bouton historique du stock — visible pour admin et isMaster
+        const stockHistBtn = document.getElementById('pd-stock-history-btn');
+        if (stockHistBtn) {
+            const canSeeHist = (typeof isAdmin !== 'undefined' && isAdmin) ||
+                               (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster);
+            stockHistBtn.style.display = canSeeHist ? 'flex' : 'none';
+        }
         modal.classList.add('active');
 
         // Stats de vente (admin toujours, caissier si autorisé)
@@ -15703,6 +15710,34 @@ logout = function(skipConfirmation = false) {
         }
     }
 
+    // Ouvrir l'historique du stock depuis la modale produit
+    window._pdOpenStockHistory = function() {
+        const pid = window._pdCurrentProductId;
+        if (pid == null) return;
+        const p = (typeof products !== 'undefined') ? products.find(x => x.id == pid) : null;
+        if (!p) return;
+        // Fermer la modale produit d'abord, ouvrir l'historique
+        if (typeof closeProductDetail === 'function') closeProductDetail();
+        else {
+            const m = document.querySelector('.product-detail-modal');
+            if (m) m.classList.remove('active');
+        }
+        // Ouvrir l'historique (fonction déjà présente dans le code)
+        if (typeof window._openStockHistoryModal === 'function') {
+            window._openStockHistoryModal(p);
+        } else if (typeof window._logStockChange === 'function') {
+            // Fallback : ouvrir directement la modale si elle existe
+            const modal = document.getElementById('stock-history-modal');
+            if (modal) {
+                // Peupler et ouvrir
+                const hist = p.stockHistory || [];
+                const titleEl = modal.querySelector('#sh-product-name');
+                if (titleEl) titleEl.textContent = p.name;
+                modal.style.display = 'flex';
+            }
+        }
+    };
+
     // ---- Toggle "Voir plus/moins" pour la description du produit ----
     window._pdToggleDescription = function() {
         const text = document.getElementById('pd-description-text');
@@ -20791,6 +20826,9 @@ logout = function(skipConfirmation = false) {
             </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:14px;display:none;"></div>
             <button class="pd-add-btn" id="pd-add-btn" onclick="pdAddToCart()">🛒 Ajouter au panier</button>
+            <button id="pd-stock-history-btn" onclick="_pdOpenStockHistory()" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#8e44ad,#7d3c98);color:white;font-size:0.88rem;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+                <span>📊</span><span>Historique du stock</span>
+            </button>
             <button id="pd-defect-btn" onclick="pdDeclareDefect()" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;font-size:0.9rem;font-weight:800;cursor:pointer;">⚠️ Déclarer un défaut</button>
         </div>
     </div>
@@ -24217,6 +24255,17 @@ function setRetourStatus(id, status) {
         });
         r._restockPending = false; // Marquer comme restauré
         r.comment = (r.comment || '') + ' | ✅ Stock restauré le ' + new Date().toLocaleString('fr-FR') + ' : ' + restockedNames.join(', ');
+        // ── Log dans l'historique du stock pour chaque article ──
+        if (typeof window._logStockChange === 'function') {
+            r._restockItems.forEach(item => {
+                const prod = products.find(p => p.id === item.id);
+                if (prod) {
+                    const before = prod.stock - item.quantity;
+                    window._logStockChange(prod, before, prod.stock, 'retour',
+                        'Retour client approuvé', { retourId: r.id, client: r.client, qty: item.quantity });
+                }
+            });
+        }
         localStorage.setItem('covo_products', JSON.stringify(products));
         if (typeof renderProducts === 'function') renderProducts();
         rToast('✅ Retour approuvé — stock remis à jour (' + restockedNames.length + ' article(s))', 'success');
@@ -24234,6 +24283,17 @@ function setRetourStatus(id, status) {
         });
         r._restockPending = true; // Remettre le flag
         r.comment = (r.comment || '') + ' | ↩️ Stock retiré le ' + new Date().toLocaleString('fr-FR') + ' (statut changé à ' + status + ')';
+        // ── Log dans l'historique du stock ──
+        if (typeof window._logStockChange === 'function') {
+            r._restockItems.forEach(item => {
+                const prod = products.find(p => p.id === item.id);
+                if (prod) {
+                    const before = prod.stock + item.quantity;
+                    window._logStockChange(prod, before, prod.stock, 'retour',
+                        'Retour client annulé (stock retiré)', { retourId: r.id, client: r.client, qty: -item.quantity });
+                }
+            });
+        }
         localStorage.setItem('covo_products', JSON.stringify(products));
         if (typeof renderProducts === 'function') renderProducts();
         rToast('↩️ Statut modifié — stock retiré (' + unrestockedNames.length + ' article(s))', 'info');
