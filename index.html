@@ -13591,6 +13591,7 @@ function toggleInfoSection(headerElement) {
         document.getElementById('user-display').innerText = `👤 ${user.username}`;
         updateAdminButton();
         applyTabsVisibility();
+        if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
         renderAll();
         showScanToast(`💼 Mode caissier activé — ${user.username}`, 'success');
     }
@@ -14096,6 +14097,7 @@ function toggleInfoSection(headerElement) {
             cashierPermissions.permissions = fields;
             localStorage.setItem('covo_current_user', JSON.stringify(currentUser));
             applyTabsVisibility();
+            if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
         }
 
         renderPermUserList();
@@ -19573,7 +19575,11 @@ logout = function(skipConfirmation = false) {
         loadPermissionsUI();
         updateAdminButton();
         if (typeof applyTabsVisibility === 'function') applyTabsVisibility();
+ if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
         if (isAdmin && typeof loadTabVisibilityUI === 'function') loadTabVisibilityUI();
+        // Réappliquer la config modules APRÈS applyTabsVisibility pour éviter qu'elle
+        // ne réaffiche des éléments que les modules ont masqués
+        if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
         updateRetourClientBtn();
         updateNightTariffButton();
         applyScannerSettings();
@@ -25252,6 +25258,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (eDateEl) eDateEl.value = new Date().toISOString().split('T')[0];
     // Apply tab visibility
     applyTabsVisibility();
+    if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
     loadTabVisibilityUI();
 });
 
@@ -25511,24 +25518,40 @@ function getTabVisibility() {
 }
 
 function applyTabsVisibility() {
-    const admin = currentUser && currentUser.role === 'admin';
-    const tabs = ['stats','predictions','retours','historique'];
+    const admin  = currentUser && currentUser.role === 'admin';
+    const isMstr = !!(currentUser && currentUser.isMaster);
+    const tabs   = ['stats','predictions','retours','historique'];
 
-    if (admin) {
+    // Lire la config modules pour respecter le masquage
+    let modCfg = {};
+    try { modCfg = JSON.parse(localStorage.getItem('covo_modules_config') || '{}'); } catch(e) {}
+    const modHidden = key => modCfg[key] === 'hidden';
+
+    if (admin || isMstr) {
         tabs.forEach(t => {
             const btn = document.getElementById('tab-btn-'+t);
-            if (btn) btn.style.display = '';
+            if (!btn) return;
+            // isMaster voit tout ; admin voit sauf si le module est masqué
+            if (isMstr) {
+                btn.style.display = '';
+            } else {
+                // Admin : masqué si la config modules dit 'hidden'
+                btn.style.display = modHidden(t) ? 'none' : '';
+            }
         });
         return;
     }
 
-    // Use per-user tab visibility
+    // Caissier : combiner visibilité par-utilisateur ET config modules
     const userPerms = (currentUser && currentUser.permissions) || DEFAULT_USER_PERMS();
     const vis = userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true };
 
     tabs.forEach(t => {
         const btn = document.getElementById('tab-btn-'+t);
-        if (btn) btn.style.display = vis[t] !== false ? '' : 'none';
+        if (!btn) return;
+        // Masqué si : soit le module est 'hidden', soit la permission utilisateur l'interdit
+        const hidden = modHidden(t) || vis[t] === false;
+        btn.style.display = hidden ? 'none' : '';
     });
 }
 
