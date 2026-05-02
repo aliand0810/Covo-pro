@@ -3258,6 +3258,12 @@
             <span id="badge-masked" title="Voir les articles masqués" onclick="_openMaskedModal()"
                 style="display:none;background:#7f8c8d;color:white;border-radius:10px;padding:3px 10px;cursor:pointer;transition:filter 0.15s;user-select:none;"
                 onmouseover="this.style.filter='brightness(1.2)'" onmouseout="this.style.filter=''"></span>
+            <!-- Badge Drive non sync (mode dev) -->
+            <span id="gd-dev-dirty-badge" title="Drive non synchronisé" onclick="window.gdriveSaveNow && window.gdriveSaveNow()"
+                style="display:none;align-items:center;gap:5px;background:linear-gradient(135deg,#4285F4,#34A853);color:white;border-radius:10px;padding:3px 10px;cursor:pointer;font-weight:800;font-size:0.72rem;white-space:nowrap;"
+                onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter=''">
+                ☁️ <span>Sync Drive</span>
+            </span>
             <!-- Bouton sauvegarde master (barre du haut) -->
             <span id="master-save-bar" onclick="window._masterManualSave()" title="Sauvegarder toutes les modifications"
                 style="display:none;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;border-radius:10px;padding:3px 12px;cursor:pointer;transition:all 0.15s;user-select:none;font-weight:800;font-size:0.72rem;white-space:nowrap;"
@@ -3922,6 +3928,9 @@
 
             <!-- Stats du mois -->
             <div id="inv-stats-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px;"></div>
+
+            <!-- Alertes crédits en attente -->
+            <div id="inv-credit-alerts" style="margin-bottom:14px;"></div>
 
             <!-- Bouton Nouvel achat -->
             <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
@@ -16064,10 +16073,15 @@ logout = function(skipConfirmation = false) {
     }
 
     // Sauvegarde manuelle depuis le FAB
-    window._masterManualSave = function() {
+    window._masterManualSave = async function() {
         _doSaveAll();
         _doSaveAllFull();
-        showScanToast('\ud83d\udcbe Sauvegarde effectu\u00e9e (' + new Date().toLocaleTimeString('fr-FR') + ')', 'success');
+        // Pousser aussi vers Drive si connecté
+        if (typeof window.gdriveSaveNow === 'function' && window._gdConnected) {
+            await window.gdriveSaveNow();
+        } else {
+            showScanToast('\ud83d\udcbe Sauvegarde locale effectu\u00e9e (' + new Date().toLocaleTimeString('fr-FR') + ')', 'success');
+        }
     };
 
     // Mettre à jour les boutons de sauvegarde (FAB flottant OU barre du haut)
@@ -17788,49 +17802,71 @@ logout = function(skipConfirmation = false) {
 </div>
 
 <!-- ===== MODALE MODIFICATION INVESTISSEMENT ===== -->
-<div id="inv-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:10002;justify-content:center;align-items:center;">
-    <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:480px;max-height:92vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.35);animation:adminWelcomeIn 0.25s ease;">
-        <div style="background:linear-gradient(135deg,#3498db,#2980b9);padding:16px 20px;display:flex;align-items:flex-start;justify-content:space-between;flex-shrink:0;">
-            <div>
-                <h3 style="margin:0;color:white;font-size:1rem;font-weight:700;">✏️ Détail de l'achat</h3>
-                <div id="inv-edit-summary" style="font-size:0.74rem;color:rgba(255,255,255,0.82);margin-top:3px;"></div>
-            </div>
-            <button onclick="invCloseEdit()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;flex-shrink:0;">✕</button>
-        </div>
-        <input type="hidden" id="inv-edit-id">
-        <div style="padding:18px;display:flex;flex-direction:column;gap:12px;overflow-y:auto;">
-            <!-- Note/commentaire en avant -->
-            <div style="background:var(--input-bg,#f0f8ff);border:2px solid #3498db;border-radius:10px;padding:12px 14px;">
-                <label style="font-size:0.75rem;font-weight:700;color:#2980b9;text-transform:uppercase;display:block;margin-bottom:5px;">💬 Commentaire / Note</label>
-                <textarea id="inv-edit-note" rows="3" placeholder="Fournisseur, référence, détails..." style="width:100%;padding:8px 10px;border:1.5px solid #bde0f7;border-radius:8px;font-size:0.88rem;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;resize:vertical;font-family:inherit;"></textarea>
-            </div>
-            <div>
-                <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Description</label>
-                <input id="inv-edit-desc" placeholder="Description de l'achat..." style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;" onkeydown="if(event.key==='Enter')invSaveEdit();">
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <div>
-                    <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Montant (€)</label>
-                    <input id="inv-edit-montant" type="number" step="0.01" min="0" placeholder="0.00" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;" onkeydown="if(event.key==='Enter')invSaveEdit();">
-                </div>
-                <div>
-                    <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Date</label>
-                    <input id="inv-edit-date" type="date" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;">
-                </div>
-            </div>
-            <div>
-                <label style="font-size:0.75rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Catégorie</label>
-                <select id="inv-edit-cat" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);box-sizing:border-box;"></select>
-            </div>
-        </div>
-        <div style="padding:12px 18px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:8px;background:var(--input-bg,#f8f9fa);flex-shrink:0;">
-            <button onclick="invDeleteFromEdit()" style="flex:0 0 auto;background:none;border:1.5px solid #e74c3c;color:#e74c3c;padding:9px 12px;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.88rem;" onmouseover="this.style.background='#e74c3c';this.style.color='white'" onmouseout="this.style.background='none';this.style.color='#e74c3c'">🗑️</button>
-            <button onclick="invCloseEdit()" style="flex:1;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);color:var(--text-main,#2c3e50);padding:9px;border-radius:8px;cursor:pointer;font-weight:600;font-size:0.85rem;">✖ Annuler</button>
-            <button onclick="invSaveEdit()" style="flex:2;background:linear-gradient(135deg,#3498db,#2980b9);color:white;border:none;padding:9px;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.9rem;">💾 Enregistrer</button>
-        </div>
+<div id="inv-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:20650;justify-content:center;align-items:center;padding:16px;">
+  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:660px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;">
+    <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div style="color:white;font-weight:800;font-size:1rem;">&#x270f;&#xfe0f; Modifier l&#x2019;achat</div>
+      <div id="inv-edit-summary" style="font-size:0.72rem;color:rgba(255,255,255,0.75);flex:1;text-align:right;margin:0 12px;"></div>
+      <button onclick="invCloseEdit()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">&#x2715;</button>
     </div>
+    <input type="hidden" id="inv-edit-id">
+    <div style="overflow-y:auto;flex:1;padding:20px 22px;display:flex;flex-direction:column;gap:12px;">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;">
+        <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">D&#xe9;signation *</label>
+          <input id="inv-edit-desc" placeholder="Description..." style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+        <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">Cat&#xe9;gorie</label>
+          <select id="inv-edit-cat" style="padding:10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.84rem;"></select></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f3e2; Fournisseur</label>
+          <input id="inv-edit-fournisseur" placeholder="Fournisseur..." style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+        <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4e6; Quantit&#xe9;</label>
+          <input id="inv-edit-qte" type="number" min="0" step="0.001" style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4b6; Montant total (&#x20ac;) *</label>
+          <input id="inv-edit-montant" type="number" step="0.01" min="0" style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.95rem;font-weight:700;color:#9b59b6;box-sizing:border-box;"></div>
+        <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4c5; Date</label>
+          <input id="inv-edit-date" type="date" style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+      </div>
+      <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4c6; DLC / DLUO</label>
+        <input id="inv-edit-dlc" type="date" style="width:100%;max-width:220px;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+      <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4ac; Commentaire</label>
+        <textarea id="inv-edit-note" rows="2" placeholder="Observations..." style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.84rem;box-sizing:border-box;resize:vertical;font-family:inherit;"></textarea></div>
+      <div>
+        <label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:8px;">&#x1f4b3; Mode de paiement</label>
+        <div id="inv-edit-pay-btns" style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button type="button" data-pay="comptant" onclick="invEditSelectPay(this)" style="flex:1;min-width:90px;padding:8px 6px;border-radius:8px;border:2px solid #ddd;background:#fff;color:#2c3e50;cursor:pointer;font-size:0.75rem;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:3px;"><span style="font-size:1.1rem;">&#x1f4b5;</span>Comptant</button>
+          <button type="button" data-pay="cb" onclick="invEditSelectPay(this)" style="flex:1;min-width:90px;padding:8px 6px;border-radius:8px;border:2px solid #ddd;background:#fff;color:#2c3e50;cursor:pointer;font-size:0.75rem;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:3px;"><span style="font-size:1.1rem;">&#x1f4b3;</span>CB</button>
+          <button type="button" data-pay="cheque" onclick="invEditSelectPay(this)" style="flex:1;min-width:90px;padding:8px 6px;border-radius:8px;border:2px solid #ddd;background:#fff;color:#2c3e50;cursor:pointer;font-size:0.75rem;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:3px;"><span style="font-size:1.1rem;">&#x1f4c4;</span>Ch&#xe8;que</button>
+          <button type="button" data-pay="credit" onclick="invEditSelectPay(this)" style="flex:1;min-width:90px;padding:8px 6px;border-radius:8px;border:2px solid #ddd;background:#fff;color:#2c3e50;cursor:pointer;font-size:0.75rem;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:3px;"><span style="font-size:1.1rem;">&#x1f504;</span>Cr&#xe9;dit</button>
+        </div>
+        <div id="inv-edit-credit-row" style="display:none;margin-top:8px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4b0; Acompte (&#x20ac;)</label>
+              <input id="inv-edit-acompte" type="number" step="0.01" min="0" oninput="invEditRecalcReste()" style="width:100%;padding:9px 12px;border:1.5px solid #e67e22;border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+            <div><label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:4px;">&#x1f4c5; &#xc9;ch&#xe9;ance</label>
+              <input id="inv-edit-echeance" type="date" style="width:100%;padding:9px 12px;border:1.5px solid #e67e22;border-radius:8px;font-size:0.88rem;box-sizing:border-box;"></div>
+          </div>
+        </div>
+      </div>
+      <div id="inv-edit-pay-history" style="display:none;">
+        <label style="font-size:0.72rem;font-weight:700;color:#7f8c8d;text-transform:uppercase;display:block;margin-bottom:6px;">&#x1f4dd; Historique des paiements</label>
+        <div id="inv-edit-pay-list" style="max-height:140px;overflow-y:auto;"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <input id="inv-edit-pay-amount" type="number" step="0.01" min="0" placeholder="Montant du paiement..." style="flex:1;padding:8px 10px;border:1.5px solid #27ae60;border-radius:7px;font-size:0.84rem;box-sizing:border-box;">
+          <button onclick="invEditAddPayment()" style="padding:8px 14px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:7px;font-size:0.82rem;font-weight:700;cursor:pointer;">+ Paiement</button>
+        </div>
+      </div>
+      <div id="inv-edit-due-alert" style="display:none;"></div>
+    </div>
+    <div style="padding:12px 22px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;flex-shrink:0;">
+      <button onclick="invDeleteFromEdit()" style="flex:0;background:none;border:1.5px solid #e74c3c;color:#e74c3c;padding:10px 12px;border-radius:8px;cursor:pointer;font-weight:700;" onmouseover="this.style.background='#e74c3c';this.style.color='white'" onmouseout="this.style.background='none';this.style.color='#e74c3c'">&#x1f5d1;&#xfe0f;</button>
+      <button onclick="invCloseEdit()" style="flex:1;padding:10px;border:1.5px solid #ddd;border-radius:8px;background:#fff;color:#2c3e50;font-weight:700;cursor:pointer;">Annuler</button>
+      <button onclick="invSaveEdit()" style="flex:2;padding:10px;border:none;border-radius:8px;background:linear-gradient(135deg,#9b59b6,#8e44ad);color:white;font-weight:800;cursor:pointer;font-size:0.92rem;">&#x1f4be; Enregistrer</button>
+    </div>
+  </div>
 </div>
-
 <!-- ===== MODALE GESTION CATÉGORIES INVESTISSEMENTS ===== -->
 <div id="inv-cat-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:20700;justify-content:center;align-items:center;">
     <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:460px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.35);animation:adminWelcomeIn 0.3s ease;">
@@ -19162,7 +19198,29 @@ function invRender() {
             h += '</div>';
         }
 
-        // Ligne 3 : note
+        // Ligne 3 : barre de progression crédit
+        if (e.paiement === 'credit' && e.resteADoit != null) {
+            var _tPaid = (e.acompte || 0) + (Array.isArray(e.paymentLogs) ? e.paymentLogs.reduce(function(s,p){return s+p.amount;},0) : 0);
+            var _pPct = e.montant > 0 ? Math.min(100, Math.round((_tPaid / e.montant) * 100)) : 0;
+            var _pClr = e.resteADoit <= 0 ? '#27ae60' : _pPct >= 50 ? '#3498db' : '#e67e22';
+            var _pLbl = e.resteADoit <= 0 ? '\u2705 Sold\u00e9' : _pPct + '% pay\u00e9 \u2014 Reste ' + e.resteADoit.toFixed(2) + ' \u20ac';
+            h += '<div style="margin-top:6px;">';
+            h += '<div style="display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:3px;">';
+            h += '<span style="color:' + _pClr + ';font-weight:700;">' + _pLbl + '</span>';
+            if (e.echeance) {
+                var _ed = new Date(e.echeance); _ed.setHours(0,0,0,0);
+                var _eToday = new Date(); _eToday.setHours(0,0,0,0);
+                var _eDays = Math.ceil((_ed - _eToday) / 86400000);
+                var _eDateStr = _ed.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
+                var _eClr = _eDays < 0 ? '#e74c3c' : _eDays <= 7 ? '#f39c12' : '#888';
+                h += '<span style="color:' + _eClr + ';font-weight:600;">\ud83d\udcc5 ' + (_eDays < 0 ? 'D\u00fb depuis ' + Math.abs(_eDays) + 'j' : '\u00c9ch. ' + _eDateStr) + '</span>';
+            }
+            h += '</div>';
+            h += '<div style="height:5px;background:var(--border-color,#eee);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + _pPct + '%;background:' + _pClr + ';border-radius:3px;transition:width 0.3s;"></div></div>';
+            h += '</div>';
+        }
+
+        // Ligne 4 : note
         if (e.note) {
             h += '<div style="margin-top:6px;padding:6px 10px;background:rgba(52,152,219,0.06);border-radius:7px;border-left:3px solid #3498db;font-size:0.72rem;color:#2980b9;font-style:italic;">\ud83d\udcac ' + e.note + '</div>';
         }
@@ -19173,7 +19231,70 @@ function invRender() {
 
     listEl.innerHTML = fournHtml + payHtml + '<div style="display:flex;flex-direction:column;gap:8px;">' + cardsHtml + '</div>';
     invUpdateStatsRow(filtered, month);
+    invRenderCreditAlerts();
 }
+
+// ============================================================================
+// ALERTES CRÉDITS EN ATTENTE — bannière globale
+// ============================================================================
+function invRenderCreditAlerts() {
+    var el = document.getElementById('inv-credit-alerts');
+    if (!el) return;
+    var list = invLoad();
+    var today = new Date(); today.setHours(0,0,0,0);
+    var credits = list.filter(function(e) {
+        return e.paiement === 'credit' && e.resteADoit != null && e.resteADoit > 0;
+    });
+    if (!credits.length) { el.innerHTML = ''; return; }
+    credits.sort(function(a, b) {
+        var da = a.echeance ? new Date(a.echeance) : new Date('2099-01-01');
+        var db = b.echeance ? new Date(b.echeance) : new Date('2099-01-01');
+        return da - db;
+    });
+    var overdue = [], urgent = [], upcoming = [];
+    credits.forEach(function(e) {
+        if (!e.echeance) { upcoming.push(e); return; }
+        var due = new Date(e.echeance); due.setHours(0,0,0,0);
+        var days = Math.ceil((due - today) / 86400000);
+        if (days < 0) overdue.push({ entry:e, days:Math.abs(days) });
+        else if (days <= 7) urgent.push({ entry:e, days:days });
+        else upcoming.push(e);
+    });
+    var totalDue = credits.reduce(function(s, e) { return s + (e.resteADoit || 0); }, 0);
+    var borderClr = overdue.length ? '#e74c3c' : urgent.length ? '#f39c12' : '#3498db';
+    var bgClr = overdue.length ? 'rgba(231,76,60,0.08)' : urgent.length ? 'rgba(243,156,18,0.08)' : 'rgba(52,152,219,0.05)';
+    var headClr = overdue.length ? '#c0392b' : urgent.length ? '#d35400' : '#2980b9';
+    var icon = overdue.length ? '\ud83d\udea8' : '\ud83d\udd04';
+    var html = '<div style="border-radius:12px;overflow:hidden;border:1.5px solid ' + borderClr + ';">';
+    html += '<div style="padding:10px 14px;background:' + bgClr + ';display:flex;align-items:center;justify-content:space-between;">';
+    html += '<div style="font-size:0.82rem;font-weight:700;color:' + headClr + ';">' + icon + ' ' + credits.length + ' cr\u00e9dit' + (credits.length > 1 ? 's' : '') + ' en attente</div>';
+    html += '<div style="font-size:0.85rem;font-weight:800;color:' + (overdue.length ? '#e74c3c' : '#e67e22') + ';">' + totalDue.toFixed(2) + ' \u20ac</div></div>';
+    html += '<div style="padding:6px 8px;">';
+    function _makeRow(e, clr, label, bgRow) {
+        var tp = (e.acompte || 0) + (Array.isArray(e.paymentLogs) ? e.paymentLogs.reduce(function(s,p){return s+p.amount;},0) : 0);
+        var pct = e.montant > 0 ? Math.round((tp / e.montant) * 100) : 0;
+        var r = '<div onclick="invOpenEdit(\'' + (e.id||'').replace(/\x27/g,"\\'") + '\')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin:4px 0;background:' + bgRow + ';border-radius:8px;cursor:pointer;border-left:3px solid ' + clr + ';">';
+        r += '<div style="flex:1;min-width:0;">';
+        r += '<div style="font-weight:700;font-size:0.8rem;color:' + clr + ';">' + label + ' ' + (e.desc || '-') + '</div>';
+        r += '<div style="font-size:0.68rem;color:#888;margin-top:2px;">' + (e.fournisseur || '') + ' \u00b7 Pay\u00e9 ' + pct + '%</div>';
+        r += '<div style="height:4px;background:' + clr + '18;border-radius:2px;margin-top:4px;"><div style="height:100%;width:' + pct + '%;background:' + clr + ';border-radius:2px;"></div></div>';
+        r += '</div><div style="text-align:right;flex-shrink:0;"><div style="font-weight:800;font-size:0.88rem;color:' + clr + ';">' + e.resteADoit.toFixed(2) + ' \u20ac</div></div></div>';
+        return r;
+    }
+    overdue.forEach(function(item) { html += _makeRow(item.entry, '#e74c3c', '\u26d4 Retard ' + item.days + 'j \u2014', 'rgba(231,76,60,0.04)'); });
+    urgent.forEach(function(item) { html += _makeRow(item.entry, '#f39c12', '\u26a0\ufe0f ' + item.days + 'j \u2014', 'rgba(243,156,18,0.04)'); });
+    if (upcoming.length && (overdue.length || urgent.length)) {
+        html += '<div style="font-size:0.68rem;color:#888;padding:4px 10px;margin-top:4px;">+ ' + upcoming.length + ' autre(s) cr\u00e9dit(s) en cours</div>';
+    } else {
+        upcoming.forEach(function(e) {
+            var dueStr = e.echeance ? new Date(e.echeance+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) : 'N/A';
+            html += _makeRow(e, '#3498db', '\ud83d\udd04 \u00c9ch. ' + dueStr + ' \u2014', 'rgba(52,152,219,0.03)');
+        });
+    }
+    html += '</div></div>';
+    el.innerHTML = html;
+}
+
 
 function invUpdateStatsRow(filtered, month) {
     const rowEl = document.getElementById('inv-stats-row');
@@ -19298,73 +19419,168 @@ function invDeleteCat(id) {
 }
 
 // ===== MODIFICATION D'UNE ENTRÉE =====
-function invOpenEdit(id) {
-    const list = invLoad();
-    const entry = list.find(e => e.id === id);
+// ---- Sélection paiement dans l'éditeur ----
+window._invEditSelectedPay = null;
+function invEditSelectPay(btn) {
+    document.querySelectorAll('#inv-edit-pay-btns button').forEach(function(b) {
+        b.style.border = '2px solid #ddd'; b.style.background = '#fff'; b.style.color = '#2c3e50';
+    });
+    btn.style.border = '2px solid #9b59b6'; btn.style.background = 'rgba(155,89,182,0.12)'; btn.style.color = '#8e44ad';
+    window._invEditSelectedPay = btn.getAttribute('data-pay');
+    var cr = document.getElementById('inv-edit-credit-row');
+    if (cr) cr.style.display = btn.getAttribute('data-pay') === 'credit' ? 'block' : 'none';
+    var ph = document.getElementById('inv-edit-pay-history');
+    if (ph) ph.style.display = btn.getAttribute('data-pay') === 'credit' ? 'block' : 'none';
+}
+
+function invEditAddPayment() {
+    var id = document.getElementById('inv-edit-id').value;
+    var amount = parseFloat(document.getElementById('inv-edit-pay-amount').value || 0);
+    if (!amount || amount <= 0) { showScanToast('Montant invalide', 'info'); return; }
+    var list = invLoad(); var entry = list.find(function(e) { return e.id === id; });
     if (!entry) return;
+    if (!Array.isArray(entry.paymentLogs)) entry.paymentLogs = [];
+    entry.paymentLogs.push({ date: new Date().toISOString(), amount: amount, user: (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser()) ? window._covoCurrentUser().name : 'admin' });
+    var totalPaid = (entry.acompte || 0) + entry.paymentLogs.reduce(function(s, p) { return s + p.amount; }, 0);
+    entry.resteADoit = parseFloat(Math.max(0, entry.montant - totalPaid).toFixed(2));
+    invSave(list);
+    document.getElementById('inv-edit-pay-amount').value = '';
+    invEditRenderPayHistory(entry);
+    showScanToast('Paiement de ' + amount.toFixed(2) + ' \u20ac enregistr\u00e9', 'success');
+}
 
-    const modal = document.getElementById('inv-edit-modal');
-    if (!modal) return;
+function invEditRecalcReste() {
+    var id = document.getElementById('inv-edit-id').value;
+    var list = invLoad(); var entry = list.find(function(e) { return e.id === id; });
+    if (!entry) return;
+    var montant = parseFloat(document.getElementById('inv-edit-montant').value || 0);
+    var acompte = parseFloat(document.getElementById('inv-edit-acompte').value || 0);
+    var logs = Array.isArray(entry.paymentLogs) ? entry.paymentLogs : [];
+    var logTotal = logs.reduce(function(s, p) { return s + p.amount; }, 0);
+    var totalPaid = acompte + logTotal;
+    var reste = Math.max(0, parseFloat((montant - totalPaid).toFixed(2)));
+    // Mettre à jour l'affichage dans le pay-list
+    var resteSpans = document.querySelectorAll('#inv-edit-pay-list strong');
+    // Refresh complet
+    entry.acompte = acompte;
+    entry.montant = montant;
+    invEditRenderPayHistory(entry);
+}
 
-    document.getElementById('inv-edit-id').value       = id;
-    document.getElementById('inv-edit-desc').value     = entry.desc || '';
-    document.getElementById('inv-edit-montant').value  = entry.montant || '';
-    document.getElementById('inv-edit-date').value     = entry.date || '';
-    document.getElementById('inv-edit-note').value     = entry.note || '';
-
-    // Résumé dans le header
-    const summary = document.getElementById('inv-edit-summary');
-    if (summary) {
-        const dateStr = new Date(entry.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'});
-        summary.textContent = `${entry.desc} · ${entry.montant.toFixed(2)} € · ${dateStr}`;
+function invEditRenderPayHistory(entry) {
+    var listEl = document.getElementById('inv-edit-pay-list'); if (!listEl) return;
+    var logs = Array.isArray(entry.paymentLogs) ? entry.paymentLogs : [];
+    var totalPaid = (entry.acompte || 0) + logs.reduce(function(s, p) { return s + p.amount; }, 0);
+    var reste = Math.max(0, parseFloat((entry.montant - totalPaid).toFixed(2)));
+    var html = '';
+    if (entry.acompte > 0) {
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(243,156,18,0.08);border-radius:6px;margin-bottom:4px;font-size:0.75rem;">';
+        html += '<span>\ud83d\udcb0</span><span style="flex:1;">Acompte initial</span><span style="font-weight:700;color:#e67e22;">+' + entry.acompte.toFixed(2) + ' \u20ac</span></div>';
     }
+    logs.forEach(function(p, idx) {
+        var d = new Date(p.date);
+        var ds = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(39,174,96,0.06);border-radius:6px;margin-bottom:4px;font-size:0.75rem;">';
+        html += '<span>\u2705</span><span style="flex:1;">' + ds + (p.user ? ' \u00b7 ' + p.user : '') + '</span>';
+        html += '<span style="font-weight:700;color:#27ae60;">+' + p.amount.toFixed(2) + ' \u20ac</span>';
+        html += '<button onclick="invEditDeletePayment(' + idx + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:0.8rem;padding:0 4px;">\u2716</button></div>';
+    });
+    html += '<div style="display:flex;justify-content:space-between;padding:8px 8px 0;border-top:1px dashed #ddd;margin-top:4px;font-size:0.78rem;">';
+    html += '<span style="color:#888;">Pay\u00e9 : <strong style="color:#27ae60;">' + totalPaid.toFixed(2) + ' \u20ac</strong></span>';
+    html += '<span style="color:#888;">Reste : <strong style="color:' + (reste > 0 ? '#e74c3c' : '#27ae60') + ';">' + reste.toFixed(2) + ' \u20ac</strong></span></div>';
+    listEl.innerHTML = html;
+    // Alerte
+    var alertEl = document.getElementById('inv-edit-due-alert');
+    if (alertEl && entry.echeance && reste > 0) {
+        var today = new Date(); today.setHours(0,0,0,0);
+        var due = new Date(entry.echeance); due.setHours(0,0,0,0);
+        var days = Math.ceil((due - today) / 86400000);
+        if (days < 0) { alertEl.innerHTML = '<div style="background:rgba(231,76,60,0.1);border:1.5px solid #e74c3c;border-radius:8px;padding:10px 12px;font-size:0.8rem;color:#c0392b;">\ud83d\udea8 <strong>\u00c9ch\u00e9ance d\u00e9pass\u00e9e</strong> depuis ' + Math.abs(days) + ' jour(s) \u2014 Reste : ' + reste.toFixed(2) + ' \u20ac</div>'; alertEl.style.display='block'; }
+        else if (days <= 7) { alertEl.innerHTML = '<div style="background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;border-radius:8px;padding:10px 12px;font-size:0.8rem;color:#d35400;">\u26a0\ufe0f <strong>\u00c9ch\u00e9ance dans ' + days + ' jour(s)</strong> \u2014 Reste : ' + reste.toFixed(2) + ' \u20ac</div>'; alertEl.style.display='block'; }
+        else { alertEl.innerHTML = '<div style="background:rgba(39,174,96,0.06);border:1.5px solid #27ae60;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#27ae60;">\u2705 \u00c9ch\u00e9ance dans ' + days + ' jours</div>'; alertEl.style.display='block'; }
+    } else if (alertEl) {
+        if (reste <= 0 && entry.paiement === 'credit') { alertEl.innerHTML = '<div style="background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:8px;padding:8px 12px;font-size:0.8rem;color:#27ae60;">\u2705 <strong>Enti\u00e8rement pay\u00e9</strong></div>'; alertEl.style.display='block'; }
+        else { alertEl.style.display='none'; }
+    }
+}
 
-    const catSel = document.getElementById('inv-edit-cat');
-    const cats = invLoadCats();
-    catSel.innerHTML = cats.map(c => `<option value="${c.id}"${c.id === entry.cat ? ' selected' : ''}>${c.icon} ${c.label}</option>`).join('');
+function invEditDeletePayment(idx) {
+    var id = document.getElementById('inv-edit-id').value;
+    var list = invLoad(); var entry = list.find(function(e) { return e.id === id; });
+    if (!entry || !Array.isArray(entry.paymentLogs)) return;
+    entry.paymentLogs.splice(idx, 1);
+    var totalPaid = (entry.acompte || 0) + entry.paymentLogs.reduce(function(s, p) { return s + p.amount; }, 0);
+    entry.resteADoit = parseFloat(Math.max(0, entry.montant - totalPaid).toFixed(2));
+    invSave(list);
+    invEditRenderPayHistory(entry);
+}
 
+function invOpenEdit(id) {
+    var list = invLoad(); var entry = list.find(function(e) { return e.id === id; });
+    if (!entry) return;
+    var modal = document.getElementById('inv-edit-modal'); if (!modal) return;
+    document.getElementById('inv-edit-id').value = id;
+    document.getElementById('inv-edit-desc').value = entry.desc || '';
+    document.getElementById('inv-edit-montant').value = entry.montant || '';
+    document.getElementById('inv-edit-date').value = entry.date || '';
+    document.getElementById('inv-edit-note').value = entry.note || '';
+    document.getElementById('inv-edit-fournisseur').value = entry.fournisseur || '';
+    document.getElementById('inv-edit-qte').value = entry.qte || '';
+    document.getElementById('inv-edit-dlc').value = entry.dlc || '';
+    document.getElementById('inv-edit-acompte').value = entry.acompte || '';
+    document.getElementById('inv-edit-echeance').value = entry.echeance || '';
+    var catSel = document.getElementById('inv-edit-cat');
+    var cats = invLoadCats();
+    catSel.innerHTML = cats.map(function(ct) { return '<option value="' + ct.id + '"' + (ct.id === entry.cat ? ' selected' : '') + '>' + ct.icon + ' ' + ct.label + '</option>'; }).join('');
+    window._invEditSelectedPay = entry.paiement || null;
+    document.querySelectorAll('#inv-edit-pay-btns button').forEach(function(b) {
+        var on = b.getAttribute('data-pay') === entry.paiement;
+        b.style.border = on ? '2px solid #9b59b6' : '2px solid #ddd';
+        b.style.background = on ? 'rgba(155,89,182,0.12)' : '#fff';
+        b.style.color = on ? '#8e44ad' : '#2c3e50';
+    });
+    var cr = document.getElementById('inv-edit-credit-row');
+    if (cr) cr.style.display = entry.paiement === 'credit' ? 'block' : 'none';
+    var ph = document.getElementById('inv-edit-pay-history');
+    if (ph) ph.style.display = entry.paiement === 'credit' ? 'block' : 'none';
+    invEditRenderPayHistory(entry);
+    var summary = document.getElementById('inv-edit-summary');
+    if (summary) { var ds = new Date(entry.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'}); summary.textContent = entry.montant.toFixed(2) + ' \u20ac \u00b7 ' + ds; }
     modal.style.display = 'flex';
-    setTimeout(() => document.getElementById('inv-edit-note')?.focus(), 80);
 }
 
-function invCloseEdit() {
-    const modal = document.getElementById('inv-edit-modal');
-    if (modal) modal.style.display = 'none';
-}
-
-function invDeleteFromEdit() {
-    const id = document.getElementById('inv-edit-id')?.value;
-    if (!id) return;
-    invCloseEdit();
-    invDelete(id);
-}
+function invCloseEdit() { var m = document.getElementById('inv-edit-modal'); if (m) m.style.display = 'none'; }
+function invDeleteFromEdit() { var id = document.getElementById('inv-edit-id').value; if (!id) return; invCloseEdit(); invDelete(id); }
 
 function invSaveEdit() {
-    const id      = document.getElementById('inv-edit-id')?.value;
-    const desc    = (document.getElementById('inv-edit-desc')?.value || '').trim();
-    const montant = parseFloat(document.getElementById('inv-edit-montant')?.value || 0);
-    const date    = document.getElementById('inv-edit-date')?.value || '';
-    const cat     = document.getElementById('inv-edit-cat')?.value || 'autre';
-    const note    = (document.getElementById('inv-edit-note')?.value || '').trim();
-
-    if (!desc)                         { showScanToast('⚠️ Description requise', 'info'); return; }
-    if (!montant || montant <= 0)      { showScanToast('⚠️ Montant invalide', 'info'); return; }
-    if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) { showScanToast('⚠️ Date invalide', 'info'); return; }
-
-    const list = invLoad();
-    const idx  = list.findIndex(e => e.id === id);
-    if (idx === -1) { showScanToast('❌ Entrée introuvable', 'error'); return; }
-
-    list[idx] = { ...list[idx], desc, montant, date, cat, note };
-    invSave(list);
-    invCloseEdit();
-    invRender();
-    invUpdateStats();
-    if (typeof addRetourHist === 'function') {
-        addRetourHist('modified','invest',`✏️ Achat modifié`,`${desc} · ${montant.toFixed(2)} €`);
-    }
-    showScanToast('✅ Achat modifié', 'success');
+    var id = document.getElementById('inv-edit-id').value;
+    var desc = (document.getElementById('inv-edit-desc').value || '').trim();
+    var montant = parseFloat(document.getElementById('inv-edit-montant').value || 0);
+    var date = document.getElementById('inv-edit-date').value || '';
+    var cat = document.getElementById('inv-edit-cat').value || 'autre';
+    var note = (document.getElementById('inv-edit-note').value || '').trim();
+    var fournisseur = (document.getElementById('inv-edit-fournisseur').value || '').trim();
+    var qte = parseFloat(document.getElementById('inv-edit-qte').value || 0) || null;
+    var dlc = document.getElementById('inv-edit-dlc').value || null;
+    var payMode = window._invEditSelectedPay;
+    var acompte = payMode === 'credit' ? (parseFloat(document.getElementById('inv-edit-acompte').value || 0) || null) : null;
+    var echeance = payMode === 'credit' ? (document.getElementById('inv-edit-echeance').value || null) : null;
+    var prixUnit = qte > 0 ? parseFloat((montant / qte).toFixed(4)) : null;
+    if (!desc) { showScanToast('D\u00e9signation requise', 'info'); return; }
+    if (!montant || montant <= 0) { showScanToast('Montant invalide', 'info'); return; }
+    var list = invLoad(); var idx = list.findIndex(function(e) { return e.id === id; });
+    if (idx === -1) { showScanToast('Entr\u00e9e introuvable', 'error'); return; }
+    list[idx] = Object.assign({}, list[idx], { desc:desc, montant:montant, date:date, cat:cat, note:note||null, fournisseur:fournisseur||null, qte:qte, prixUnit:prixUnit, dlc:dlc, paiement:payMode, acompte:acompte, echeance:echeance });
+    if (payMode === 'credit') {
+        var logs = list[idx].paymentLogs || [];
+        var totalPaid = (acompte || 0) + logs.reduce(function(s, p) { return s + p.amount; }, 0);
+        list[idx].resteADoit = parseFloat(Math.max(0, montant - totalPaid).toFixed(2));
+    } else { list[idx].resteADoit = null; list[idx].paymentLogs = null; }
+    invSave(list); invCloseEdit(); invRender(); invUpdateStats();
+    if (typeof addRetourHist === 'function') addRetourHist('modified','invest','Achat modifi\u00e9', desc + ' \u00b7 ' + montant.toFixed(2) + ' \u20ac');
+    showScanToast('Achat modifi\u00e9', 'success');
 }
+
 
 function invExportCSV() {
     const list = invLoad();
@@ -23917,6 +24133,26 @@ function initAdminSections() {
         showScanToast('☁️ Google Drive déconnecté', 'info');
     };
 
+    // ============================================================
+    // Drive Dev Mode — marquage "non synchronisé" + badge UI
+    // ============================================================
+    window._gdDriveDirty = false;
+
+    function _gdMarkDriveDirty() {
+        window._gdDriveDirty = true;
+        var badge = document.getElementById('gd-dev-dirty-badge');
+        if (badge) {
+            badge.style.display = 'inline-flex';
+            badge.title = 'Drive non synchronisé — cliquez sur "Sauvegarder Drive" pour pousser vos données';
+        }
+    }
+
+    function _gdClearDriveDirty() {
+        window._gdDriveDirty = false;
+        var badge = document.getElementById('gd-dev-dirty-badge');
+        if (badge) badge.style.display = 'none';
+    }
+
     // ---- Save now (manual) ----
     window.gdriveSaveNow = async function() {
         if (!_gdConnected) {
@@ -23928,17 +24164,25 @@ function initAdminSections() {
             return;
         }
         await _gdDoSave();
+        _gdClearDriveDirty();
         showScanToast('✅ Sauvegarde Google Drive effectuée · 📁 ' + _gdFolderName, 'success');
     };
 
     // ---- Sauvegarde périodique de secours toutes les 10 min (fallback si debounce raté) ----
     function _gdStartAutoSave() {
         if (window._gdAutoSaveInterval) clearInterval(window._gdAutoSaveInterval);
+        // isMaster : pas d'intervalle automatique Drive
+        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) {
+            _gdMarkDriveDirty();
+            return;
+        }
         window._gdAutoSaveInterval = setInterval(() => {
             if (_gdConnected && _gdFolderId && !_gdSaving && !_gdRestoring) {
+                // Re-vérifier au moment de l'exécution (login peut avoir changé)
+                if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) return;
                 _gdDoSave();
             }
-        }, 10 * 60 * 1000); // toutes les 10 minutes
+        }, 10 * 60 * 1000);
     }
 
     // ---- UI update ----
@@ -23973,10 +24217,14 @@ function initAdminSections() {
     let _gdDebounceTimer = null;
     function _gdDebouncedSave() {
         if (!_gdConnected || !_gdFolderId || _gdRestoring) return;
+        // isMaster : auto-save Drive désactivé — uniquement via bouton manuel
+        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) {
+            _gdMarkDriveDirty();
+            return;
+        }
         if (_gdDebounceTimer) clearTimeout(_gdDebounceTimer);
-        _gdDebounceTimer = setTimeout(() => { _gdDoSave(); }, 5000); // 5s après dernière modif
+        _gdDebounceTimer = setTimeout(() => { _gdDoSave(); }, 5000);
     }
-    // Exposer pour les modules externes (investissements, catégories…)
     window._gdTriggerAutoSave = _gdDebouncedSave;
 
     const __patchUpdateLastSave = setInterval(() => {
@@ -24700,6 +24948,7 @@ function initAdminSections() {
     // Déclencher la sauvegarde messages avec debounce (2s)
     let _gdMsgSaveTimer = null;
     window._gdTriggerMsgSave = function() {
+        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) { _gdMarkDriveDirty(); return; }
         clearTimeout(_gdMsgSaveTimer);
         _gdMsgSaveTimer = setTimeout(window._gdSaveMessages, 2000);
     };
@@ -24849,6 +25098,7 @@ function initAdminSections() {
     // Déclencher la sauvegarde historique avec debounce (3s)
     let _gdHistSaveTimer = null;
     window._gdTriggerHistSave = function() {
+        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) { _gdMarkDriveDirty(); return; }
         clearTimeout(_gdHistSaveTimer);
         _gdHistSaveTimer = setTimeout(window._gdSaveHistory, 3000);
     };
@@ -24900,6 +25150,7 @@ function initAdminSections() {
     // ── Sauvegarde VENTES (déclenchée à chaque vente) ─────────────────
     let _gdSalesTimer = null;
     window._gdTriggerSalesSave = function() {
+        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) { _gdMarkDriveDirty(); return; }
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdSalesTimer);
         _gdSalesTimer = setTimeout(async () => {
@@ -24918,6 +25169,7 @@ function initAdminSections() {
     // ── Sauvegarde PARAMÈTRES (déclenchée sur modif settings) ─────────
     let _gdParamsTimer = null;
     window._gdTriggerParamsSave = function() {
+        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) { _gdMarkDriveDirty(); return; }
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdParamsTimer);
         _gdParamsTimer = setTimeout(async () => {
