@@ -3363,13 +3363,16 @@
 
     <div class="tabs-container">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 15px; background: linear-gradient(135deg, #e8f4fd, #ffffff); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-            <h2 style="margin: 0; color: var(--primary); display: flex; align-items: center; gap: 10px;">
+            <h2 id="interface-title-bar" style="margin: 0; color: var(--primary); display: flex; align-items: center; gap: 10px; font-size:1.1rem;">
                 💼 Interface Caissier
             </h2>
             <button class="info-button" onclick="openInfoModal()">
                 ℹ️ Informations
             </button>
         </div>
+
+        <!-- ===== BARRE LIENS RAPIDES ===== -->
+        <div id="quick-links-bar" style="display:none;margin-bottom:12px;"></div>
         
         <div class="tabs">
             <button class="tab active" onclick="switchTab('products')">📦 Produits</button>
@@ -3382,6 +3385,7 @@
                 <span id="retours-badge" style="position:absolute;top:6px;right:10px;background:#e74c3c;color:white;font-size:0.6rem;padding:1px 5px;border-radius:8px;font-weight:700;display:none;">0</span>
             </button>
             <button class="tab" onclick="switchTab('historique')" id="tab-btn-historique">🧾 Historique</button>
+            <button class="tab" onclick="switchTab('clotures')" id="tab-btn-clotures">🗓️ Clôtures</button>
         </div>
         
         <div class="tab-content active" id="tab-products">
@@ -4160,9 +4164,32 @@
             <!-- Liste des tickets -->
             <div id="cashier-hist-list" style="max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
         </div>
-    </div>
 
-    <div class="container" id="product-list"></div>
+        <!-- ===== ONGLET HISTORIQUE DES CLÔTURES ===== -->
+        <div class="tab-content" id="tab-clotures">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+                <h3 style="margin:0;font-size:1.1rem;display:flex;align-items:center;gap:8px;">🗓️ Historique des clôtures de poste</h3>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <select id="cloture-filter-period" onchange="renderCloturesTab()" style="padding:7px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.83rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                        <option value="7">7 derniers jours</option>
+                        <option value="30" selected>30 derniers jours</option>
+                        <option value="90">3 mois</option>
+                        <option value="all">Tout</option>
+                    </select>
+                    <select id="cloture-filter-type" onchange="renderCloturesTab()" style="padding:7px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.83rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                        <option value="">Tous types</option>
+                        <option value="final">🏁 Finales</option>
+                        <option value="partiel">⏸️ Partielles</option>
+                    </select>
+                    <button onclick="exportCloturesCSV()" style="background:var(--bg-card,#fff);border:1.5px solid #27ae60;color:#27ae60;padding:7px 13px;border-radius:7px;font-size:0.83rem;cursor:pointer;font-weight:700;">⬇️ Export CSV</button>
+                </div>
+            </div>
+            <!-- Stats résumé -->
+            <div id="cloture-stats-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;"></div>
+            <!-- Liste des clôtures -->
+            <div id="cloture-hist-list" style="max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+    </div>
 
     <div id="admin-panel">
         <h2 style="margin-top:0;">⚙️ Panneau d'administration</h2>
@@ -4607,6 +4634,11 @@
                             <input type="checkbox" id="uvis-historique" onchange="saveUserPermissions()" checked>
                             <div class="tab-visibility-icon">🧾</div>
                             <div class="tab-visibility-info"><strong>Historique</strong><span>Historique des ventes</span></div>
+                        </label>
+                        <label class="tab-visibility-card" id="uvis-card-clotures">
+                            <input type="checkbox" id="uvis-clotures" onchange="saveUserPermissions()" checked>
+                            <div class="tab-visibility-icon">🗓️</div>
+                            <div class="tab-visibility-info"><strong>Clôtures</strong><span>Historique fin de poste</span></div>
                         </label>
                     </div>
                 </div>
@@ -5962,6 +5994,52 @@
           <div style="background:rgba(13,148,136,0.06);border:1.5px solid rgba(13,148,136,0.2);border-radius:10px;padding:10px 14px;font-size:0.78rem;color:var(--text-muted);">
             ⚠️ Les modifications s'appliquent immédiatement pour tous les utilisateurs. Rechargez l'application pour que les changements prennent effet chez les caissiers déjà connectés.
           </div>
+
+          <!-- ===== LIENS RAPIDES ===== -->
+          <div style="background:var(--bg-card-2,#f8fafc);border-radius:12px;padding:14px 16px;border:1.5px solid #3b82f6;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+              <div style="font-weight:800;font-size:0.85rem;color:#3b82f6;display:flex;align-items:center;gap:6px;">🔗 Liens rapides <span style="font-size:0.65rem;background:#dbeafe;color:#2563eb;padding:1px 8px;border-radius:8px;font-weight:600;" id="mod-links-count">0</span></div>
+              <button onclick="_modLinkAdd()" style="padding:5px 12px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:none;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">➕ Ajouter</button>
+            </div>
+            <!-- Formulaire d'ajout -->
+            <div id="mod-link-form" style="display:none;background:var(--bg-card,#fff);border:1.5px solid #93c5fd;border-radius:10px;padding:12px;margin-bottom:10px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                <div>
+                  <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Nom du lien</label>
+                  <input id="mod-link-name" type="text" placeholder="Ex: WhatsApp, Fournisseur..." style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
+                </div>
+                <div>
+                  <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Icône (emoji)</label>
+                  <input id="mod-link-icon" type="text" placeholder="🌐" maxlength="4" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">
+                </div>
+              </div>
+              <div style="margin-bottom:8px;">
+                <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">URL du lien</label>
+                <input id="mod-link-url" type="url" placeholder="https://..." style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                <div>
+                  <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Taille</label>
+                  <select id="mod-link-size" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main);">
+                    <option value="small">🔹 Petit</option>
+                    <option value="medium" selected>🔸 Moyen</option>
+                    <option value="large">🔶 Grand</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Couleur</label>
+                  <input id="mod-link-color" type="color" value="#3b82f6" style="width:100%;height:34px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;cursor:pointer;padding:2px;">
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button onclick="_modLinkSaveForm()" style="flex:2;padding:8px;background:linear-gradient(135deg,#3b82f6,#2563eb);color:white;border:none;border-radius:7px;font-weight:700;cursor:pointer;font-size:0.8rem;">✅ Enregistrer</button>
+                <button onclick="_modLinkCancelForm()" style="flex:1;padding:8px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#ddd);color:var(--text-main);border-radius:7px;font-weight:600;cursor:pointer;font-size:0.8rem;">Annuler</button>
+              </div>
+              <input type="hidden" id="mod-link-edit-id" value="">
+            </div>
+            <!-- Liste des liens -->
+            <div id="mod-links-list" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -7087,6 +7165,17 @@ function toggleInfoSection(headerElement) {
         inp.focus();
     }
 
+    // Génère le HTML pour le user-display dans le header
+    function _userDisplayHTML(u) {
+        if (!u) return '\ud83d\udc64 Utilisateur';
+        var isMaster = u.isMaster || u.id === 'USR-MASTER';
+        var icon = isMaster ? '\ud83d\udee0\ufe0f' : (u.role === 'admin' ? '\ud83d\udc51' : '\ud83d\udcbc');
+        var roleLbl = isMaster ? 'Dev' : (u.role === 'admin' ? 'Admin' : 'Caissier');
+        var color = isMaster ? '#0d9488' : (u.role === 'admin' ? '#3498db' : '#27ae60');
+        return icon + ' <span style="font-weight:700;">' + (u.username || 'Utilisateur') + '</span>' +
+            ' <span style="font-size:0.7rem;background:' + color + ';color:white;padding:1px 7px;border-radius:10px;font-weight:600;">' + roleLbl + '</span>';
+    }
+
     function attemptLogin() {
         const pin = document.getElementById('login-pin').value;
 
@@ -7146,7 +7235,7 @@ function toggleInfoSection(headerElement) {
             }
 
             document.getElementById('login-modal').style.display = 'none';
-            document.getElementById('user-display').innerText = `👤 ${user.username}`;
+            document.getElementById('user-display').innerHTML = _userDisplayHTML(user);
 
             // ── Lancer le splash de connexion ───────────────────────────
             _splashStart(user);
@@ -10189,9 +10278,187 @@ function toggleInfoSection(headerElement) {
     window._modulesSave = function() {
         _modulesApply();
         document.getElementById('modules-modal').style.display = 'none';
-        showScanToast('✅ Configuration des modules sauvegardée', 'success');
+        showScanToast('\u2705 Configuration des modules sauvegard\u00e9e', 'success');
         if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
     };
+
+    // ===== LIENS RAPIDES — GESTION COMPLÈTE =====
+    var LINKS_KEY = 'covo_quick_links';
+
+    function _linksLoad() {
+        try { return JSON.parse(localStorage.getItem(LINKS_KEY) || '[]'); } catch(e) { return []; }
+    }
+    function _linksSave(list) {
+        localStorage.setItem(LINKS_KEY, JSON.stringify(list));
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+    }
+
+    // Ouvrir le formulaire d'ajout
+    window._modLinkAdd = function() {
+        document.getElementById('mod-link-form').style.display = '';
+        document.getElementById('mod-link-name').value = '';
+        document.getElementById('mod-link-icon').value = '\ud83c\udf10';
+        document.getElementById('mod-link-url').value = '';
+        document.getElementById('mod-link-size').value = 'medium';
+        document.getElementById('mod-link-color').value = '#3b82f6';
+        document.getElementById('mod-link-edit-id').value = '';
+        document.getElementById('mod-link-name').focus();
+    };
+
+    window._modLinkCancelForm = function() {
+        document.getElementById('mod-link-form').style.display = 'none';
+    };
+
+    // Enregistrer un lien (ajout ou édition)
+    window._modLinkSaveForm = function() {
+        var name = (document.getElementById('mod-link-name').value || '').trim();
+        var icon = (document.getElementById('mod-link-icon').value || '\ud83c\udf10').trim();
+        var url  = (document.getElementById('mod-link-url').value || '').trim();
+        var size = document.getElementById('mod-link-size').value || 'medium';
+        var color = document.getElementById('mod-link-color').value || '#3b82f6';
+        var editId = document.getElementById('mod-link-edit-id').value;
+
+        if (!name) { showScanToast('\u26a0\ufe0f Saisissez un nom', 'info'); return; }
+        if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+            showScanToast('\u26a0\ufe0f URL invalide (doit commencer par https://)', 'info'); return;
+        }
+
+        var list = _linksLoad();
+        if (editId) {
+            var idx = list.findIndex(function(l) { return l.id === editId; });
+            if (idx >= 0) {
+                list[idx].name = name;
+                list[idx].icon = icon;
+                list[idx].url  = url;
+                list[idx].size = size;
+                list[idx].color = color;
+            }
+        } else {
+            list.push({ id: 'LNK-' + Date.now(), name: name, icon: icon, url: url, size: size, color: color, order: list.length });
+        }
+        _linksSave(list);
+        document.getElementById('mod-link-form').style.display = 'none';
+        _modLinksRender();
+        _quickLinksRender();
+        showScanToast('\u2705 Lien ' + (editId ? 'modifi\u00e9' : 'ajout\u00e9') + ' : ' + name, 'success');
+    };
+
+    // Éditer un lien
+    window._modLinkEdit = function(id) {
+        var list = _linksLoad();
+        var link = list.find(function(l) { return l.id === id; });
+        if (!link) return;
+        document.getElementById('mod-link-form').style.display = '';
+        document.getElementById('mod-link-name').value = link.name || '';
+        document.getElementById('mod-link-icon').value = link.icon || '\ud83c\udf10';
+        document.getElementById('mod-link-url').value = link.url || '';
+        document.getElementById('mod-link-size').value = link.size || 'medium';
+        document.getElementById('mod-link-color').value = link.color || '#3b82f6';
+        document.getElementById('mod-link-edit-id').value = id;
+        document.getElementById('mod-link-name').focus();
+    };
+
+    // Supprimer un lien
+    window._modLinkDelete = function(id) {
+        if (!confirm('Supprimer ce lien ?')) return;
+        var list = _linksLoad().filter(function(l) { return l.id !== id; });
+        _linksSave(list);
+        _modLinksRender();
+        _quickLinksRender();
+        showScanToast('\ud83d\uddd1\ufe0f Lien supprim\u00e9', 'success');
+    };
+
+    // Déplacer un lien
+    window._modLinkMove = function(id, dir) {
+        var list = _linksLoad();
+        var idx = list.findIndex(function(l) { return l.id === id; });
+        if (idx < 0) return;
+        var newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= list.length) return;
+        var tmp = list[idx];
+        list[idx] = list[newIdx];
+        list[newIdx] = tmp;
+        _linksSave(list);
+        _modLinksRender();
+        _quickLinksRender();
+    };
+
+    // Rendu de la liste des liens dans la modale modules
+    function _modLinksRender() {
+        var list = _linksLoad();
+        var el = document.getElementById('mod-links-list');
+        var countEl = document.getElementById('mod-links-count');
+        if (countEl) countEl.textContent = list.length;
+        if (!el) return;
+
+        if (!list.length) {
+            el.innerHTML = '<div style="text-align:center;padding:16px;color:var(--gray,#888);font-size:0.78rem;">Aucun lien ajout\u00e9. Cliquez sur \u00ab \u2795 Ajouter \u00bb pour cr\u00e9er un acc\u00e8s rapide.</div>';
+            return;
+        }
+
+        el.innerHTML = list.map(function(l, i) {
+            var sizeLabel = l.size === 'small' ? 'Petit' : l.size === 'large' ? 'Grand' : 'Moyen';
+            return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-card,#fff);border-radius:8px;border:1px solid var(--border-color,#e0e0e0);" data-link-id="' + l.id + '">' +
+                '<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0;">' +
+                    '<button onclick="_modLinkMove(\'' + l.id + '\',-1)" style="border:none;background:none;cursor:pointer;font-size:0.6rem;padding:0;line-height:1;color:var(--gray);" title="Monter">\u25b2</button>' +
+                    '<button onclick="_modLinkMove(\'' + l.id + '\',1)" style="border:none;background:none;cursor:pointer;font-size:0.6rem;padding:0;line-height:1;color:var(--gray);" title="Descendre">\u25bc</button>' +
+                '</div>' +
+                '<div style="width:28px;height:28px;border-radius:7px;background:' + (l.color || '#3b82f6') + ';display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">' + (l.icon || '\ud83c\udf10') + '</div>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:700;font-size:0.8rem;color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + l.name + '</div>' +
+                    '<div style="font-size:0.65rem;color:var(--gray);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">' + l.url + '</div>' +
+                '</div>' +
+                '<span style="font-size:0.6rem;background:#f1f5f9;color:#64748b;padding:1px 6px;border-radius:4px;font-weight:600;flex-shrink:0;">' + sizeLabel + '</span>' +
+                '<button onclick="_modLinkEdit(\'' + l.id + '\')" style="border:none;background:rgba(59,130,246,0.1);color:#3b82f6;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:0.7rem;flex-shrink:0;" title="Modifier">\u270f\ufe0f</button>' +
+                '<button onclick="_modLinkDelete(\'' + l.id + '\')" style="border:none;background:rgba(231,76,60,0.1);color:#e74c3c;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:0.7rem;flex-shrink:0;" title="Supprimer">\ud83d\uddd1\ufe0f</button>' +
+            '</div>';
+        }).join('');
+    }
+
+    // Rendu de la barre de liens dans l'interface principale
+    function _quickLinksRender() {
+        var list = _linksLoad();
+        var bar = document.getElementById('quick-links-bar');
+        if (!bar) return;
+
+        if (!list.length) { bar.style.display = 'none'; return; }
+        bar.style.display = '';
+
+        var sizes = { small: { w:'70px', h:'58px', fs:'1rem', lbl:'0.58rem' }, medium: { w:'90px', h:'68px', fs:'1.3rem', lbl:'0.65rem' }, large: { w:'115px', h:'78px', fs:'1.6rem', lbl:'0.72rem' } };
+
+        var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:8px 10px;background:var(--bg-card,#fff);border-radius:10px;border:1px solid var(--border-color,#e0e0e0);box-shadow:0 1px 4px rgba(0,0,0,0.04);align-items:center;">';
+        html += '<span style="font-size:0.72rem;font-weight:700;color:var(--gray,#888);margin-right:4px;">\ud83d\udd17</span>';
+
+        list.forEach(function(l) {
+            var s = sizes[l.size] || sizes.medium;
+            var c = l.color || '#3b82f6';
+            html += '<a href="' + l.url + '" target="_blank" rel="noopener noreferrer" style="' +
+                'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+                'width:' + s.w + ';height:' + s.h + ';' +
+                'background:linear-gradient(135deg,' + c + '18,' + c + '08);' +
+                'border:1.5px solid ' + c + '40;border-radius:10px;' +
+                'text-decoration:none;cursor:pointer;transition:all 0.15s;gap:3px;" ' +
+                'onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px ' + c + '30\'" ' +
+                'onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'" ' +
+                'title="' + l.url + '">' +
+                '<span style="font-size:' + s.fs + ';">' + (l.icon || '\ud83c\udf10') + '</span>' +
+                '<span style="font-size:' + s.lbl + ';font-weight:700;color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:calc(100% - 8px);text-align:center;">' + l.name + '</span>' +
+            '</a>';
+        });
+
+        html += '</div>';
+        bar.innerHTML = html;
+    }
+
+    // Hook dans l'ouverture du panel modules
+    var _origModulesRender = _modulesRender;
+    _modulesRender = function() {
+        _origModulesRender();
+        _modLinksRender();
+    };
+
+    // Afficher les liens au démarrage
+    setTimeout(_quickLinksRender, 500);
 
     // Ajouter/supprimer un badge "Masqué" sur un élément
     function _modBadge(el, show) {
@@ -10991,6 +11258,7 @@ function toggleInfoSection(headerElement) {
 
         showScanToast(`✅ Bienvenue ${user.username} !`);
         updateAdminButton();
+        updateInterfaceTitle();
         applyTabsVisibility();
         if (typeof window._modulesApply === 'function') window._modulesApply();
         // Barre Admin-Développeur dans le panneau admin
@@ -11341,8 +11609,9 @@ function toggleInfoSection(headerElement) {
         cashierPermissions.canRetourClient = userPerms.canRetourClient || false;
         cashierPermissions.canDeclareDefect = userPerms.canDeclareDefect || false;
 
-        document.getElementById('user-display').innerText = `👤 ${user.username}`;
+        document.getElementById('user-display').innerHTML = _userDisplayHTML(user);
         updateAdminButton();
+        updateInterfaceTitle();
         applyTabsVisibility();
         renderAll();
         showScanToast(`💼 Mode caissier activé — ${user.username}`, 'success');
@@ -11395,6 +11664,38 @@ function toggleInfoSection(headerElement) {
             btn.style.display = 'none';
             if (switchBtn) switchBtn.style.display = 'none';
         }
+    }
+
+    // ===== TITRE INTERFACE DYNAMIQUE =====
+    function updateInterfaceTitle() {
+        var el = document.getElementById('interface-title-bar');
+        if (!el) return;
+        if (!currentUser) {
+            el.innerHTML = '\ud83d\udd12 Non connect\u00e9';
+            el.parentElement.style.background = 'linear-gradient(135deg, #f5f5f5, #e0e0e0)';
+            return;
+        }
+        var name = currentUser.username || currentUser.name || 'Utilisateur';
+        var isMaster = currentUser.isMaster || currentUser.id === 'USR-MASTER';
+        var role = currentUser.role;
+        var icon, roleLabel, gradient;
+        if (isMaster) {
+            icon = '\ud83d\udee0\ufe0f';
+            roleLabel = 'Admin-D\u00e9veloppeur';
+            gradient = 'linear-gradient(135deg, rgba(13,148,136,0.12), rgba(13,148,136,0.04))';
+        } else if (role === 'admin') {
+            icon = '\ud83d\udc51';
+            roleLabel = 'Administrateur';
+            gradient = 'linear-gradient(135deg, rgba(52,152,219,0.12), rgba(52,152,219,0.04))';
+        } else {
+            icon = '\ud83d\udcbc';
+            roleLabel = 'Caissier';
+            gradient = 'linear-gradient(135deg, rgba(39,174,96,0.12), rgba(39,174,96,0.04))';
+        }
+        var badgeColor = isMaster ? '#0d9488' : role === 'admin' ? '#3498db' : '#27ae60';
+        el.innerHTML = icon + ' ' + roleLabel +
+            ' <span style="font-size:0.78rem;font-weight:800;background:' + badgeColor + ';color:white;padding:3px 12px;border-radius:20px;margin-left:4px;">' + name + '</span>';
+        el.parentElement.style.background = gradient;
     }
 
     function handleAdminOrEditButton() {
@@ -11696,7 +11997,7 @@ function toggleInfoSection(headerElement) {
     const DEFAULT_USER_PERMS = () => ({
         editEnabled: false,
         fields: { name:false, image:false, category:false, barcode:false, stock:false, price:false, dlc:false, promo:false },
-        tabVisibility: { stats:true, predictions:true, retours:true, historique:true },
+        tabVisibility: { stats:true, predictions:true, retours:true, historique:true, clotures:true },
         canRetourClient: false,
         canDeclareDefect: false
     });
@@ -11786,7 +12087,7 @@ function toggleInfoSection(headerElement) {
         });
 
         // Tab visibility
-        ['stats','predictions','retours','historique'].forEach(k => {
+        ['stats','predictions','retours','historique','clotures'].forEach(k => {
             const cb = document.getElementById('uvis-'+k);
             const card = document.getElementById('uvis-card-'+k);
             if (cb) cb.checked = perms.tabVisibility[k] !== false;
@@ -11813,7 +12114,7 @@ function toggleInfoSection(headerElement) {
         const fields = {};
         document.querySelectorAll('.uperm-field').forEach(cb => { fields[cb.dataset.f] = cb.checked; });
         const tabVisibility = {};
-        ['stats','predictions','retours','historique'].forEach(k => {
+        ['stats','predictions','retours','historique','clotures'].forEach(k => {
             tabVisibility[k] = document.getElementById('uvis-'+k)?.checked !== false;
         });
         const canRetourClient = document.getElementById('perm-retour-client')?.checked || false;
@@ -11827,7 +12128,7 @@ function toggleInfoSection(headerElement) {
         }
 
         // Update tab visibility cards
-        ['stats','predictions','retours','historique'].forEach(k => {
+        ['stats','predictions','retours','historique','clotures'].forEach(k => {
             const card = document.getElementById('uvis-card-'+k);
             if (card) card.classList.toggle('disabled-tab', !tabVisibility[k]);
         });
@@ -11904,6 +12205,7 @@ function toggleInfoSection(headerElement) {
         document.getElementById('admin-panel').style.display = 'none';
         document.getElementById('edit-mode-banner').classList.remove('active');
         document.body.classList.remove('edit-mode-active');
+        updateInterfaceTitle();
         const fabMsgOut = document.getElementById('fab-msg');
         if (fabMsgOut) fabMsgOut.style.display = 'none';
         updateCartUI();
@@ -12176,6 +12478,7 @@ function toggleInfoSection(headerElement) {
         if (tabName === 'predictions') renderPredictions();
         if (tabName === 'retours') refreshRetours();
         if (tabName === 'historique') { window._histTimeFilter = 'all'; renderCashierHistory(); }
+        if (tabName === 'clotures') { renderCloturesTab(); }
         if (tabName === 'workhours') { _whInit(); renderWorkHours(); }
     }
 
@@ -16653,6 +16956,8 @@ logout = function(skipConfirmation = false) {
         loadGradientSettings();
         loadPermissionsUI();
         updateAdminButton();
+        if (typeof updateInterfaceTitle === 'function') updateInterfaceTitle();
+        if (typeof _quickLinksRender === 'function') _quickLinksRender();
         if (typeof applyTabsVisibility === 'function') applyTabsVisibility();
         if (isAdmin && typeof loadTabVisibilityUI === 'function') loadTabVisibilityUI();
         updateRetourClientBtn();
@@ -16724,7 +17029,8 @@ logout = function(skipConfirmation = false) {
                 }
             }
             document.getElementById('login-modal').style.display = 'none';
-            document.getElementById('user-display').innerText = '👤 ' + currentUser.username;
+            document.getElementById('user-display').innerHTML = _userDisplayHTML(currentUser);
+            if (typeof updateInterfaceTitle === 'function') updateInterfaceTitle();
             // Renouveler le token (refresh de session)
             _sessionSave(currentUser);
             // Lancer le splash de reconnexion
@@ -19693,6 +19999,172 @@ window._renderCaisseHist = function() {
     listEl.innerHTML = html;
 };
 
+// ===== ONGLET CLÔTURES — RENDU COMPLET =====
+function renderCloturesTab() {
+    var hist = _loadCaisseHistorique();
+    var period = (document.getElementById('cloture-filter-period') || {}).value || '30';
+    var typeF  = (document.getElementById('cloture-filter-type') || {}).value || '';
+
+    // Filtrer par période
+    var now = new Date();
+    var filtered = hist;
+    if (period !== 'all') {
+        var days = parseInt(period);
+        var cutoff = new Date(now.getTime() - days * 86400000);
+        filtered = hist.filter(function(h) { return new Date(h.datetime) >= cutoff; });
+    }
+    // Filtrer par type
+    if (typeF === 'final') filtered = filtered.filter(function(h) { return !h.partiel; });
+    else if (typeF === 'partiel') filtered = filtered.filter(function(h) { return h.partiel; });
+
+    // Stats
+    var nbClotures = filtered.length;
+    var nbFinales  = filtered.filter(function(h) { return !h.partiel; }).length;
+    var totalCA    = filtered.reduce(function(s, h) { return s + (h.totalJour || 0); }, 0);
+    var totalVentes = filtered.reduce(function(s, h) { return s + (h.nbVentes || 0); }, 0);
+    var totalEcartEsp = 0, nbEcartEsp = 0;
+    var totalEcartCb  = 0, nbEcartCb  = 0;
+    filtered.forEach(function(h) {
+        if (h.ecartEsp != null) { totalEcartEsp += h.ecartEsp; nbEcartEsp++; }
+        if (h.ecartCb  != null) { totalEcartCb  += h.ecartCb;  nbEcartCb++;  }
+    });
+    var avgEcartEsp = nbEcartEsp > 0 ? totalEcartEsp / nbEcartEsp : 0;
+    var avgEcartCb  = nbEcartCb  > 0 ? totalEcartCb  / nbEcartCb  : 0;
+
+    var statsEl = document.getElementById('cloture-stats-row');
+    if (statsEl) {
+        var sh = '';
+        sh += _clotStatCard('\ud83d\udcc5', nbClotures, 'Cl\u00f4tures', '#3498db');
+        sh += _clotStatCard('\ud83c\udfc1', nbFinales, 'Finales', '#27ae60');
+        sh += _clotStatCard('\ud83d\udcb0', totalCA.toFixed(2) + ' \u20ac', 'CA total', '#9b59b6');
+        sh += _clotStatCard('\ud83d\uded2', totalVentes, 'Ventes', '#e67e22');
+        var ecEspCol = Math.abs(avgEcartEsp) < 0.5 ? '#27ae60' : avgEcartEsp > 0 ? '#f39c12' : '#e74c3c';
+        var ecCbCol  = Math.abs(avgEcartCb)  < 0.5 ? '#27ae60' : avgEcartCb  > 0 ? '#f39c12' : '#e74c3c';
+        sh += _clotStatCard('\ud83d\udcb6', (avgEcartEsp >= 0 ? '+' : '') + avgEcartEsp.toFixed(2) + ' \u20ac', '\u00c9cart esp. moy.', ecEspCol);
+        sh += _clotStatCard('\ud83d\udcb3', (avgEcartCb  >= 0 ? '+' : '') + avgEcartCb.toFixed(2)  + ' \u20ac', '\u00c9cart CB moy.', ecCbCol);
+        statsEl.innerHTML = sh;
+    }
+
+    // Liste des clôtures
+    var listEl = document.getElementById('cloture-hist-list');
+    if (!listEl) return;
+    if (!filtered.length) {
+        listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#888);font-size:0.85rem;">\ud83d\udcc2 Aucune cl\u00f4ture pour cette p\u00e9riode</div>';
+        return;
+    }
+
+    var html = filtered.map(function(h, idx) {
+        var d = new Date(h.datetime);
+        var dateStr = d.toLocaleDateString('fr-FR', {weekday:'short', day:'2-digit', month:'short', year:'numeric'});
+        var timeStr = d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+
+        var ecEsp = h.ecartEsp != null ? ((h.ecartEsp >= 0 ? '+' : '') + h.ecartEsp.toFixed(2) + ' \u20ac') : '\u2014';
+        var ecCb  = h.ecartCb  != null ? ((h.ecartCb  >= 0 ? '+' : '') + h.ecartCb.toFixed(2)  + ' \u20ac') : '\u2014';
+        var ecEspC = h.ecartEsp != null ? (Math.abs(h.ecartEsp) < 0.01 ? '#27ae60' : h.ecartEsp > 0 ? '#f39c12' : '#e74c3c') : '#aaa';
+        var ecCbC  = h.ecartCb  != null ? (Math.abs(h.ecartCb)  < 0.01 ? '#27ae60' : h.ecartCb  > 0 ? '#f39c12' : '#e74c3c') : '#aaa';
+
+        var typeBadge = h.partiel
+            ? '<span style="font-size:0.62rem;font-weight:800;background:#f39c12;color:white;padding:2px 8px;border-radius:5px;">PARTIELLE</span>'
+            : '<span style="font-size:0.62rem;font-weight:800;background:#27ae60;color:white;padding:2px 8px;border-radius:5px;">FINALE</span>';
+
+        var borderLeft = h.partiel ? '#f39c12' : '#27ae60';
+
+        var r = '<div style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-left:4px solid ' + borderLeft + ';border-radius:12px;padding:14px 16px;transition:all 0.15s;" onmouseover="this.style.boxShadow=\'0 4px 20px rgba(0,0,0,0.08)\'" onmouseout="this.style.boxShadow=\'none\'">';
+
+        // Ligne 1 : date + type + caissier
+        r += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">';
+        r += '<span style="font-weight:800;font-size:0.9rem;color:var(--text-main,#2c3e50);">\ud83d\udcc5 ' + dateStr + '</span>';
+        r += typeBadge;
+        r += '<span style="font-size:0.72rem;color:var(--gray,#888);">\u23f0 ' + timeStr + '</span>';
+        r += '<span style="margin-left:auto;font-size:0.75rem;font-weight:700;color:#8e44ad;">\ud83d\udc64 ' + (h.caissier || 'Inconnu') + '</span>';
+        r += '</div>';
+
+        // Ligne 2 : grille de détails
+        r += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;">';
+
+        // CA total
+        r += '<div style="background:rgba(155,89,182,0.06);border-radius:8px;padding:8px 10px;text-align:center;">';
+        r += '<div style="font-size:0.65rem;color:#8e44ad;font-weight:600;">CA du jour</div>';
+        r += '<div style="font-size:1.05rem;font-weight:900;color:#9b59b6;">' + (h.totalJour || 0).toFixed(2) + ' \u20ac</div>';
+        r += '</div>';
+
+        // Espèces
+        r += '<div style="background:rgba(39,174,96,0.06);border-radius:8px;padding:8px 10px;text-align:center;">';
+        r += '<div style="font-size:0.65rem;color:#27ae60;font-weight:600;">\ud83d\udcb6 Esp\u00e8ces</div>';
+        r += '<div style="font-size:0.82rem;font-weight:700;color:var(--text-main);">' + (h.theorEsp || 0).toFixed(2) + ' \u20ac</div>';
+        if (h.recuEsp != null) r += '<div style="font-size:0.68rem;color:var(--gray);">Re\u00e7u : ' + h.recuEsp.toFixed(2) + ' \u20ac</div>';
+        r += '<div style="font-size:0.72rem;font-weight:700;color:' + ecEspC + ';">\u00c9cart : ' + ecEsp + '</div>';
+        r += '</div>';
+
+        // CB
+        r += '<div style="background:rgba(52,152,219,0.06);border-radius:8px;padding:8px 10px;text-align:center;">';
+        r += '<div style="font-size:0.65rem;color:#3498db;font-weight:600;">\ud83d\udcb3 Carte bancaire</div>';
+        r += '<div style="font-size:0.82rem;font-weight:700;color:var(--text-main);">' + (h.theorCb || 0).toFixed(2) + ' \u20ac</div>';
+        if (h.recuCb != null) r += '<div style="font-size:0.68rem;color:var(--gray);">Re\u00e7u : ' + h.recuCb.toFixed(2) + ' \u20ac</div>';
+        r += '<div style="font-size:0.72rem;font-weight:700;color:' + ecCbC + ';">\u00c9cart : ' + ecCb + '</div>';
+        r += '</div>';
+
+        // Ventes
+        r += '<div style="background:rgba(230,126,34,0.06);border-radius:8px;padding:8px 10px;text-align:center;">';
+        r += '<div style="font-size:0.65rem;color:#e67e22;font-weight:600;">\ud83d\uded2 Activit\u00e9</div>';
+        r += '<div style="font-size:0.82rem;font-weight:700;color:var(--text-main);">' + (h.nbVentes || 0) + ' vente' + ((h.nbVentes || 0) > 1 ? 's' : '') + '</div>';
+        if (h.nbRetours) r += '<div style="font-size:0.68rem;color:var(--gray);">' + h.nbRetours + ' retour(s)</div>';
+        r += '</div>';
+
+        r += '</div>'; // fin grille
+
+        // Note
+        if (h.note) {
+            r += '<div style="margin-top:8px;padding:6px 10px;background:rgba(52,152,219,0.05);border-radius:7px;border-left:3px solid #3498db;font-size:0.72rem;color:#2980b9;font-style:italic;">\ud83d\udcac ' + h.note + '</div>';
+        }
+
+        r += '</div>';
+        return r;
+    }).join('');
+
+    listEl.innerHTML = html;
+}
+
+function _clotStatCard(icon, value, label, color) {
+    return '<div style="background:' + color + '10;border:1.5px solid ' + color + '30;border-radius:10px;padding:10px 12px;text-align:center;">' +
+        '<div style="font-size:0.75rem;">' + icon + '</div>' +
+        '<div style="font-size:1.05rem;font-weight:900;color:' + color + ';">' + value + '</div>' +
+        '<div style="font-size:0.65rem;font-weight:600;color:' + color + ';opacity:0.8;">' + label + '</div></div>';
+}
+
+function exportCloturesCSV() {
+    var hist = _loadCaisseHistorique();
+    if (!hist.length) { showScanToast('\u26a0\ufe0f Aucune cl\u00f4ture \u00e0 exporter', 'info'); return; }
+    var headers = ['Date','Heure','Caissier','Type','NbVentes','NbRetours','CA_Total','Theor_Especes','Recu_Especes','Ecart_Especes','Theor_CB','Recu_CB','Ecart_CB','Note'];
+    var rows = hist.map(function(h) {
+        var d = new Date(h.datetime);
+        return [
+            h.date || '',
+            d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),
+            '"' + (h.caissier || '').replace(/"/g,'""') + '"',
+            h.partiel ? 'Partielle' : 'Finale',
+            h.nbVentes || 0,
+            h.nbRetours || 0,
+            (h.totalJour || 0).toFixed(2),
+            (h.theorEsp || 0).toFixed(2),
+            h.recuEsp != null ? h.recuEsp.toFixed(2) : '',
+            h.ecartEsp != null ? h.ecartEsp.toFixed(2) : '',
+            (h.theorCb || 0).toFixed(2),
+            h.recuCb != null ? h.recuCb.toFixed(2) : '',
+            h.ecartCb != null ? h.ecartCb.toFixed(2) : '',
+            '"' + (h.note || '').replace(/"/g,'""') + '"'
+        ].join(';');
+    });
+    var csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n');
+    var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'clotures_poste_' + new Date().toISOString().split('T')[0] + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    showScanToast('\u2705 ' + hist.length + ' cl\u00f4ture(s) export\u00e9e(s)', 'success');
+}
 
 function invAddEntry() {
     const desc    = (document.getElementById('inv-desc')?.value || '').trim();
@@ -20369,24 +20841,24 @@ function _invDoExport(data, suffix) {
     showScanToast('✅ ' + data.length + ' investissement(s) exporté(s)', 'success');
 }
 
+// ========== IMPORT CSV AVEC PRÉVISUALISATION ET SÉLECTION ==========
+window._invImportParsed = [];
+window._invImportErrors = [];
+
 function invImportCSV(input) {
-    const file = input.files[0];
+    var file = input.files[0];
     if (!file) return;
-    const reader = new FileReader();
+    var reader = new FileReader();
     reader.onload = function(e) {
-        const text = e.target.result;
-        const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
-        if (!lines.length) { showScanToast('❌ Fichier vide ou invalide', 'error'); return; }
+        var text = e.target.result;
+        var lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(function(l) { return l.trim(); });
+        if (!lines.length) { showScanToast('\u274c Fichier vide ou invalide', 'error'); return; }
 
-        // Détecter séparateur (;  ou ,)
-        const sep = lines[0].includes(';') ? ';' : ',';
+        var sep = lines[0].includes(';') ? ';' : ',';
+        var firstLow = lines[0].toLowerCase();
+        var hasHeader = firstLow.includes('date') || firstLow.includes('description') || firstLow.includes('montant') || firstLow.includes('numero');
+        var dataLines = hasHeader ? lines.slice(1) : lines;
 
-        // Détecter si la première ligne est un en-tête
-        const firstLow = lines[0].toLowerCase();
-        const hasHeader = firstLow.includes('date') || firstLow.includes('description') || firstLow.includes('montant') || firstLow.includes('numero');
-        const dataLines = hasHeader ? lines.slice(1) : lines;
-
-        // Mapper les colonnes par en-tête si disponible
         var colMap = null;
         if (hasHeader) {
             var headerCols = _invParseCSVLine(lines[0], sep);
@@ -20411,125 +20883,199 @@ function invImportCSV(input) {
             });
         }
 
-        const cats = invLoadCats();
-        const imported = [];
-        const errors = [];
+        var cats = invLoadCats();
+        var parsed = [];
+        var errors = [];
 
         dataLines.forEach(function(line, i) {
             if (!line.trim()) return;
             var cols = _invParseCSVLine(line, sep);
             var lineNum = i + (hasHeader ? 2 : 1);
-
             var entry = {};
             if (colMap) {
-                // Mode colonnes mappées
-                entry.date        = _invGetCol(cols, colMap.date, '');
-                entry.desc        = _invGetCol(cols, colMap.desc, '');
-                entry.montantRaw  = _invGetCol(cols, colMap.montant, '0');
-                entry.cat         = _invGetCol(cols, colMap.cat, '');
+                entry.date = _invGetCol(cols, colMap.date, '');
+                entry.desc = _invGetCol(cols, colMap.desc, '');
+                entry.montantRaw = _invGetCol(cols, colMap.montant, '0');
+                entry.cat = _invGetCol(cols, colMap.cat, '');
                 entry.fournisseur = _invGetCol(cols, colMap.fournisseur, '');
-                entry.qte         = _invGetCol(cols, colMap.qte, '');
-                entry.unitType    = _invGetCol(cols, colMap.unitType, '');
-                entry.prixUnit    = _invGetCol(cols, colMap.prixUnit, '');
-                entry.paiement    = _invGetCol(cols, colMap.paiement, '');
-                entry.acompte     = _invGetCol(cols, colMap.acompte, '');
-                entry.reste       = _invGetCol(cols, colMap.reste, '');
-                entry.echeance    = _invGetCol(cols, colMap.echeance, '');
-                entry.dlc         = _invGetCol(cols, colMap.dlc, '');
-                entry.note        = _invGetCol(cols, colMap.note, '');
+                entry.qte = _invGetCol(cols, colMap.qte, '');
+                entry.unitType = _invGetCol(cols, colMap.unitType, '');
+                entry.prixUnit = _invGetCol(cols, colMap.prixUnit, '');
+                entry.paiement = _invGetCol(cols, colMap.paiement, '');
+                entry.acompte = _invGetCol(cols, colMap.acompte, '');
+                entry.reste = _invGetCol(cols, colMap.reste, '');
+                entry.echeance = _invGetCol(cols, colMap.echeance, '');
+                entry.dlc = _invGetCol(cols, colMap.dlc, '');
+                entry.note = _invGetCol(cols, colMap.note, '');
             } else {
-                // Mode positionnel simple : Date;Description;Montant;Catégorie;Note
                 if (cols.length >= 3) {
-                    entry.date       = cols[0] || '';
-                    entry.desc       = cols[1] || '';
-                    entry.montantRaw = cols[2] || '0';
-                    entry.cat        = cols[3] || '';
-                    entry.note       = cols[4] || '';
-                } else {
-                    errors.push('Ligne ' + lineNum + ' ignorée (pas assez de colonnes)');
-                    return;
-                }
+                    entry.date = cols[0] || ''; entry.desc = cols[1] || '';
+                    entry.montantRaw = cols[2] || '0'; entry.cat = cols[3] || ''; entry.note = cols[4] || '';
+                } else { errors.push('Ligne ' + lineNum + ' (pas assez de colonnes)'); return; }
             }
-
-            // Valider la date
             var date = (entry.date || '').trim();
             if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) {
                 var m = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
                 if (m) date = m[3] + '-' + m[2] + '-' + m[1];
-                else { errors.push('Ligne ' + lineNum + ' : date invalide « ' + date + ' »'); return; }
+                else { errors.push('Ligne ' + lineNum + ' : date invalide'); return; }
             }
-
             var desc = (entry.desc || '').trim();
             if (!desc) { errors.push('Ligne ' + lineNum + ' : description vide'); return; }
-
             var montant = parseFloat((entry.montantRaw || '0').replace(',', '.'));
             if (isNaN(montant) || montant <= 0) { errors.push('Ligne ' + lineNum + ' : montant invalide'); return; }
-
-            // Catégorie
             var cat = (entry.cat || '').trim().toLowerCase();
             var matchedCat = cats.find(function(c) { return c.id === cat || c.label.toLowerCase() === cat; });
             var finalCat = matchedCat ? matchedCat.id : (cats[0] ? cats[0].id : 'autre');
-
-            // Fournisseur
             var fournisseur = (entry.fournisseur || '').trim() || null;
-
-            // Quantité et unité
             var qte = parseFloat(entry.qte) || null;
             var unitType = (entry.unitType || '').trim() || 'unit';
             if (unitType !== 'unit' && unitType !== 'kg' && unitType !== 'pack') unitType = 'unit';
             var prixUnit = parseFloat(entry.prixUnit) || (qte > 0 ? parseFloat((montant / qte).toFixed(unitType === 'kg' ? 3 : 2)) : null);
-
-            // Paiement
             var paiement = (entry.paiement || '').trim().toLowerCase() || null;
             if (paiement && ['comptant','cb','cheque','credit'].indexOf(paiement) < 0) paiement = null;
-
             var acompte = paiement === 'credit' ? (parseFloat(entry.acompte) || null) : null;
             var resteADoit = paiement === 'credit' ? (parseFloat(entry.reste) || (acompte != null ? parseFloat((montant - acompte).toFixed(2)) : null)) : null;
             var echeance = (entry.echeance || '').trim() || null;
             var dlc = (entry.dlc || '').trim() || null;
             var note = (entry.note || '').trim() || null;
 
-            imported.push({
-                id: 'INV-' + Date.now() + '-' + i,
-                numero: invNextNumero(),
-                date: date,
-                datetime: date + 'T00:00:00.000Z',
-                desc: desc,
-                montant: montant,
-                cat: finalCat,
-                fournisseur: fournisseur,
-                qte: qte,
-                unitType: unitType,
-                prixUnit: prixUnit,
-                paiement: paiement,
-                acompte: acompte,
-                resteADoit: resteADoit,
-                echeance: echeance,
-                dlc: dlc,
-                note: note
+            parsed.push({ _lineNum: lineNum, date: date, desc: desc, montant: montant, cat: finalCat,
+                fournisseur: fournisseur, qte: qte, unitType: unitType, prixUnit: prixUnit,
+                paiement: paiement, acompte: acompte, resteADoit: resteADoit,
+                echeance: echeance, dlc: dlc, note: note });
+        });
+
+        if (!parsed.length) {
+            showScanToast('\u274c Aucune ligne valide' + (errors.length ? ' (' + errors.length + ' erreur(s))' : ''), 'error');
+            input.value = ''; return;
+        }
+
+        // Détecter les doublons
+        var existing = invLoad();
+        parsed.forEach(function(p) {
+            p._isDuplicate = existing.some(function(ex) {
+                return ex.date === p.date && (ex.desc || '').toLowerCase() === (p.desc || '').toLowerCase() && Math.abs(ex.montant - p.montant) < 0.01;
             });
         });
 
-        if (!imported.length) {
-            showScanToast('❌ Aucune ligne valide importée' + (errors.length ? ' (' + errors.length + ' erreur(s))' : ''), 'error');
-            console.warn('Erreurs import CSV:', errors);
-            input.value = '';
-            return;
-        }
-
-        // Fusion : ajouter sans dupliquer
-        var existing = invLoad();
-        var merged = imported.concat(existing).sort(function(a, b) { return b.date.localeCompare(a.date); });
-        invSave(merged);
-        invRender();
-        invUpdateStats();
-
-        var msg = '\u2705 ' + imported.length + ' achat(s) importé(s)' + (errors.length ? ' · \u26a0\ufe0f ' + errors.length + ' ligne(s) ignorée(s)' : '');
-        showScanToast(msg, 'success');
-        if (errors.length) console.warn('Lignes ignorées :', errors);
+        window._invImportParsed = parsed;
+        window._invImportErrors = errors;
+        _invShowImportPreview();
         input.value = '';
     };
     reader.readAsText(file, 'UTF-8');
+}
+
+function _invShowImportPreview() {
+    var parsed = window._invImportParsed;
+    var errors = window._invImportErrors;
+    var modal = document.getElementById('inv-import-preview-modal');
+    if (!modal) return;
+    var dupCount = parsed.filter(function(p) { return p._isDuplicate; }).length;
+    var totalMontant = parsed.reduce(function(s, p) { return s + p.montant; }, 0);
+
+    var statsHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+    statsHtml += '<div style="flex:1;min-width:80px;background:rgba(52,152,219,0.1);border-radius:9px;padding:8px 10px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#3498db;">' + parsed.length + '</div><div style="font-size:0.65rem;color:#2980b9;font-weight:600;">Lignes</div></div>';
+    if (dupCount > 0) {
+        statsHtml += '<div style="flex:1;min-width:80px;background:rgba(231,76,60,0.1);border-radius:9px;padding:8px 10px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#e74c3c;">' + dupCount + '</div><div style="font-size:0.65rem;color:#c0392b;font-weight:600;">\u26a0\ufe0f Doublon(s)</div></div>';
+    }
+    statsHtml += '<div style="flex:1;min-width:80px;background:rgba(155,89,182,0.1);border-radius:9px;padding:8px 10px;text-align:center;"><div style="font-size:1.1rem;font-weight:900;color:#9b59b6;" id="inv-import-total-display">' + totalMontant.toFixed(2) + ' \u20ac</div><div style="font-size:0.65rem;color:#8e44ad;font-weight:600;">Total</div></div>';
+    if (errors.length) {
+        statsHtml += '<div style="flex:1;min-width:80px;background:rgba(241,196,15,0.1);border-radius:9px;padding:8px 10px;text-align:center;"><div style="font-size:1.2rem;font-weight:900;color:#f39c12;">' + errors.length + '</div><div style="font-size:0.65rem;color:#e67e22;font-weight:600;">Erreur(s)</div></div>';
+    }
+    statsHtml += '</div>';
+
+    var actionsHtml = '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">';
+    actionsHtml += '<button onclick="_invImpCheckAll(true)" style="padding:5px 12px;border:1.5px solid #27ae60;background:rgba(39,174,96,0.06);color:#27ae60;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">\u2705 Tout cocher</button>';
+    actionsHtml += '<button onclick="_invImpCheckAll(false)" style="padding:5px 12px;border:1.5px solid #95a5a6;background:rgba(149,165,166,0.06);color:#95a5a6;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">\u2b1c Tout d\u00e9cocher</button>';
+    if (dupCount > 0) actionsHtml += '<button onclick="_invImpUncheckDup()" style="padding:5px 12px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.06);color:#e74c3c;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">\u26a0\ufe0f Exclure doublons</button>';
+    actionsHtml += '</div>';
+
+    var listHtml = '';
+    parsed.forEach(function(p, idx) {
+        var isDup = p._isDuplicate;
+        var border = isDup ? '#e74c3c' : 'var(--border-color,#e0e0e0)';
+        var bg = isDup ? 'rgba(231,76,60,0.04)' : 'var(--bg-card,#fff)';
+        var catL = invCatLabel(p.cat);
+        var ds = new Date(p.date + 'T12:00:00').toLocaleDateString('fr-FR', {day:'2-digit', month:'short'});
+
+        listHtml += '<div style="display:flex;align-items:center;gap:8px;padding:9px 10px;border:1.5px solid ' + border + ';border-radius:9px;background:' + bg + ';margin-bottom:6px;">';
+        listHtml += '<input type="checkbox" data-imp-idx="' + idx + '" ' + (isDup ? '' : 'checked') + ' onchange="_invImpUpdateTotal()" style="width:18px;height:18px;cursor:pointer;accent-color:#9b59b6;flex-shrink:0;">';
+        listHtml += '<div style="flex:1;min-width:0;">';
+        listHtml += '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">';
+        listHtml += '<span style="font-weight:700;font-size:0.85rem;color:var(--text-main,#2c3e50);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">' + p.desc + '</span>';
+        if (isDup) listHtml += '<span style="font-size:0.6rem;font-weight:800;background:#e74c3c;color:white;padding:1px 6px;border-radius:4px;animation:pulse 1.5s infinite;">DOUBLON</span>';
+        listHtml += '</div>';
+        listHtml += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;font-size:0.68rem;color:var(--gray,#888);">';
+        listHtml += '<span>\ud83d\udcc6 ' + ds + '</span><span>' + catL + '</span>';
+        if (p.fournisseur) listHtml += '<span>\ud83c\udfe2 ' + p.fournisseur + '</span>';
+        if (p.qte) listHtml += '<span>\ud83d\udce6 ' + p.qte + '</span>';
+        if (p.paiement) listHtml += '<span>\ud83d\udcb3 ' + p.paiement + '</span>';
+        listHtml += '</div></div>';
+        listHtml += '<div style="font-weight:800;font-size:0.95rem;color:#e74c3c;flex-shrink:0;">-' + p.montant.toFixed(2) + ' \u20ac</div>';
+        listHtml += '</div>';
+    });
+
+    var errHtml = '';
+    if (errors.length) {
+        errHtml = '<details style="margin-top:10px;"><summary style="font-size:0.75rem;font-weight:700;color:#e67e22;cursor:pointer;">\u26a0\ufe0f ' + errors.length + ' ligne(s) ignor\u00e9e(s)</summary>';
+        errHtml += '<div style="font-size:0.7rem;color:#c0392b;padding:6px 0;max-height:80px;overflow-y:auto;">';
+        errors.forEach(function(err) { errHtml += '<div>\u2022 ' + err + '</div>'; });
+        errHtml += '</div></details>';
+    }
+
+    document.getElementById('inv-imp-stats').innerHTML = statsHtml;
+    document.getElementById('inv-imp-actions').innerHTML = actionsHtml;
+    document.getElementById('inv-imp-list').innerHTML = listHtml;
+    document.getElementById('inv-imp-errors').innerHTML = errHtml;
+    _invImpUpdateTotal();
+    modal.style.display = 'flex';
+}
+
+function _invImpCheckAll(state) {
+    document.querySelectorAll('#inv-imp-list input[type=checkbox]').forEach(function(cb) { cb.checked = state; });
+    _invImpUpdateTotal();
+}
+function _invImpUncheckDup() {
+    var parsed = window._invImportParsed;
+    document.querySelectorAll('#inv-imp-list input[type=checkbox]').forEach(function(cb) {
+        var idx = parseInt(cb.getAttribute('data-imp-idx'));
+        if (parsed[idx] && parsed[idx]._isDuplicate) cb.checked = false;
+    });
+    _invImpUpdateTotal();
+}
+function _invImpUpdateTotal() {
+    var parsed = window._invImportParsed;
+    var count = 0, total = 0;
+    document.querySelectorAll('#inv-imp-list input[type=checkbox]').forEach(function(cb) {
+        if (cb.checked) { var idx = parseInt(cb.getAttribute('data-imp-idx')); if (parsed[idx]) { count++; total += parsed[idx].montant; } }
+    });
+    var btn = document.getElementById('inv-imp-btn-confirm');
+    if (btn) { btn.textContent = '\u2705 Importer ' + count + ' achat(s) \u2014 ' + total.toFixed(2) + ' \u20ac'; btn.disabled = count === 0; btn.style.opacity = count === 0 ? '0.4' : '1'; }
+    var td = document.getElementById('inv-import-total-display');
+    if (td) td.textContent = total.toFixed(2) + ' \u20ac';
+}
+function invConfirmImport() {
+    var parsed = window._invImportParsed;
+    var toImport = [];
+    document.querySelectorAll('#inv-imp-list input[type=checkbox]').forEach(function(cb) {
+        if (cb.checked) { var idx = parseInt(cb.getAttribute('data-imp-idx')); if (parsed[idx]) toImport.push(parsed[idx]); }
+    });
+    if (!toImport.length) { showScanToast('\u26a0\ufe0f Aucun achat s\u00e9lectionn\u00e9', 'info'); return; }
+    var finalList = toImport.map(function(p, i) {
+        return { id: 'INV-' + Date.now() + '-' + i, numero: invNextNumero(),
+            date: p.date, datetime: p.date + 'T00:00:00.000Z', desc: p.desc, montant: p.montant, cat: p.cat,
+            fournisseur: p.fournisseur, qte: p.qte, unitType: p.unitType, prixUnit: p.prixUnit,
+            paiement: p.paiement, acompte: p.acompte, resteADoit: p.resteADoit,
+            echeance: p.echeance, dlc: p.dlc, note: p.note };
+    });
+    var existing = invLoad();
+    var merged = finalList.concat(existing).sort(function(a, b) { return b.date.localeCompare(a.date); });
+    invSave(merged);
+    document.getElementById('inv-import-preview-modal').style.display = 'none';
+    invRender(); invUpdateStats();
+    showScanToast('\u2705 ' + toImport.length + ' achat(s) import\u00e9(s) avec succ\u00e8s !', 'success');
+    window._invImportParsed = []; window._invImportErrors = [];
 }
 
 // Parseur CSV avec gestion des guillemets
@@ -23510,13 +24056,13 @@ const TAB_VIS_KEY = 'covo_tabs_visibility';
 function getTabVisibility() {
     try {
         const v = JSON.parse(localStorage.getItem(TAB_VIS_KEY));
-        return Object.assign({stats:true, predictions:true, retours:true, historique:true}, v||{});
-    } catch { return {stats:true, predictions:true, retours:true, historique:true}; }
+        return Object.assign({stats:true, predictions:true, retours:true, historique:true, clotures:true}, v||{});
+    } catch { return {stats:true, predictions:true, retours:true, historique:true, clotures:true}; }
 }
 
 function applyTabsVisibility() {
     const admin = currentUser && currentUser.role === 'admin';
-    const tabs = ['stats','predictions','retours','historique'];
+    const tabs = ['stats','predictions','retours','historique','clotures'];
 
     if (admin) {
         tabs.forEach(t => {
@@ -23528,7 +24074,7 @@ function applyTabsVisibility() {
 
     // Use per-user tab visibility
     const userPerms = (currentUser && currentUser.permissions) || DEFAULT_USER_PERMS();
-    const vis = userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true };
+    const vis = userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true, clotures:true };
 
     tabs.forEach(t => {
         const btn = document.getElementById('tab-btn-'+t);
@@ -23538,10 +24084,10 @@ function applyTabsVisibility() {
 
 function getTabVisibility() {
     if (!currentUser || currentUser.role === 'admin') {
-        return { stats:true, predictions:true, retours:true, historique:true };
+        return { stats:true, predictions:true, retours:true, historique:true, clotures:true };
     }
     const userPerms = currentUser.permissions || DEFAULT_USER_PERMS();
-    return userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true };
+    return userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true, clotures:true };
 }
 
 function saveTabVisibility() {
@@ -26493,6 +27039,35 @@ setTimeout(_updatePwaInstallUI,1500);
     <div style="padding:14px 24px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
       <button onclick="document.getElementById('inv-add-modal').style.display='none'" style="flex:1;padding:12px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.88rem;">Annuler</button>
       <button onclick="window.invModalSubmit()" style="flex:2;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#9b59b6,#8e44ad);color:white;font-weight:800;cursor:pointer;font-size:0.92rem;">✅ Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== MODALE PRÉVISUALISATION IMPORT CSV INVESTISSEMENTS ===== -->
+<div id="inv-import-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(10px);z-index:20700;justify-content:center;align-items:center;padding:14px;">
+  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:700px;max-height:94vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.5);overflow:hidden;">
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#3498db,#2980b9);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div style="color:white;font-weight:800;font-size:1rem;display:flex;align-items:center;gap:8px;">
+        📥 Prévisualisation de l'import
+      </div>
+      <button onclick="document.getElementById('inv-import-preview-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
+    </div>
+    <!-- Contenu scrollable -->
+    <div style="overflow-y:auto;flex:1;padding:16px 18px;">
+      <div id="inv-imp-stats"></div>
+      <div id="inv-imp-actions"></div>
+      <div style="font-size:0.75rem;color:var(--gray,#888);margin-bottom:8px;font-style:italic;">
+        ✅ Cochez les investissements à importer. Les <span style="color:#e74c3c;font-weight:700;">DOUBLONS</span> détectés sont décochés par défaut.
+      </div>
+      <div id="inv-imp-list" style="display:flex;flex-direction:column;gap:0;max-height:380px;overflow-y:auto;"></div>
+      <div id="inv-imp-errors"></div>
+    </div>
+    <!-- Footer -->
+    <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
+      <button onclick="document.getElementById('inv-import-preview-modal').style.display='none'" style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">Annuler</button>
+      <button id="inv-imp-btn-confirm" onclick="invConfirmImport()" style="flex:2;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,#27ae60,#229954);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">✅ Importer 0 achat(s)</button>
     </div>
   </div>
 </div>
