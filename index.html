@@ -4028,11 +4028,15 @@
             <!-- Alertes crédits en attente -->
             <div id="inv-credit-alerts" style="margin-bottom:14px;"></div>
 
-            <!-- Bouton Nouvel achat -->
-            <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+            <!-- Bouton Nouvel achat — CHOIX MULTIPLE -->
+            <div style="display:flex;justify-content:flex-end;margin-bottom:14px;gap:8px;flex-wrap:wrap;">
                 <button onclick="window.invOpenAddModal()" style="background:linear-gradient(135deg,#9b59b6,#8e44ad);color:white;border:none;border-radius:10px;padding:11px 22px;font-weight:800;font-size:0.9rem;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 4px 14px rgba(155,89,182,0.35);">
-                    <span style="font-size:1.1rem;">➕</span> Nouvel achat / investissement
+                    <span style="font-size:1.1rem;">➕</span> Nouvel achat
                 </button>
+                <label style="background:linear-gradient(135deg,#3498db,#2980b9);color:white;border:none;border-radius:10px;padding:11px 22px;font-weight:800;font-size:0.9rem;cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 4px 14px rgba(52,152,219,0.35);white-space:nowrap;">
+                    <span style="font-size:1.1rem;">📥</span> Importer CSV
+                    <input type="file" id="inv-import-file-main" accept=".csv,.txt" style="display:none;" onchange="invImportCSV(this)">
+                </label>
             </div>
 
             <!-- ===== SECTION QUESTION / SONDAGE INVESTISSEMENTS ===== -->
@@ -4115,9 +4119,10 @@
                 <select id="inv-filter-cat" onchange="invRender()" style="padding:7px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.83rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
                     <option value="">Toutes catégories</option>
                 </select>
-                <button onclick="invExportCSV()" style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);color:var(--text-main,#2c3e50);padding:7px 13px;border-radius:7px;font-size:0.83rem;cursor:pointer;">⬇️ Exporter CSV</button>
-                <label style="background:var(--bg-card,#fff);border:1.5px solid #3498db;color:#3498db;padding:7px 13px;border-radius:7px;font-size:0.83rem;cursor:pointer;font-weight:600;white-space:nowrap;" title="Importer un fichier CSV (colonnes: Date;Description;Montant;Catégorie;Note)">
-                    📤 Importer CSV
+                <button onclick="invExportCSV()" style="background:var(--bg-card,#fff);border:1.5px solid #27ae60;color:#27ae60;padding:7px 13px;border-radius:7px;font-size:0.83rem;cursor:pointer;font-weight:700;white-space:nowrap;" title="Exporter les investissements du mois en CSV">⬇️ Export CSV</button>
+                <button onclick="invExportCSVFull()" style="background:var(--bg-card,#fff);border:1.5px solid #e67e22;color:#e67e22;padding:7px 13px;border-radius:7px;font-size:0.83rem;cursor:pointer;font-weight:700;white-space:nowrap;" title="Exporter TOUS les investissements (complet)">📊 Export complet</button>
+                <label style="background:var(--bg-card,#fff);border:1.5px solid #3498db;color:#3498db;padding:7px 13px;border-radius:7px;font-size:0.83rem;cursor:pointer;font-weight:600;white-space:nowrap;" title="Importer un fichier CSV">
+                    📤 Import CSV
                     <input type="file" id="inv-import-file" accept=".csv,.txt" style="display:none;" onchange="invImportCSV(this)">
                 </label>
                 <span id="inv-filter-total" style="margin-left:auto;font-weight:700;font-size:0.88rem;color:#e74c3c;"></span>
@@ -18102,7 +18107,7 @@ logout = function(skipConfirmation = false) {
 <div id="inv-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:20650;justify-content:center;align-items:center;padding:16px;">
   <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:660px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;">
     <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div style="color:white;font-weight:800;font-size:1rem;">&#x270f;&#xfe0f; Modifier l&#x2019;achat</div>
+      <div id="inv-edit-title" style="color:white;font-weight:800;font-size:1rem;">&#x270f;&#xfe0f; Modifier l&#x2019;achat</div>
       <div id="inv-edit-summary" style="font-size:0.72rem;color:rgba(255,255,255,0.75);flex:1;text-align:right;margin:0 12px;"></div>
       <button onclick="invCloseEdit()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">&#x2715;</button>
     </div>
@@ -18856,11 +18861,57 @@ function invRefreshCatSelects() {
 }
 
 function invLoad() {
-    try { return JSON.parse(localStorage.getItem(INV_KEY)) || []; } catch { return []; }
+    try {
+        var list = JSON.parse(localStorage.getItem(INV_KEY)) || [];
+        // Auto-migration : attribuer un numéro unique aux investissements existants
+        var needSave = false;
+        var usedNums = {};
+        // Collecter les numéros déjà attribués
+        list.forEach(function(e) {
+            if (e.numero) {
+                var n = parseInt(String(e.numero).replace(/\D/g, ''), 10);
+                if (!isNaN(n)) usedNums[n] = true;
+            }
+        });
+        // Trouver le max existant
+        var maxNum = 0;
+        Object.keys(usedNums).forEach(function(k) { var v = parseInt(k); if (v > maxNum) maxNum = v; });
+        // Trier les investissements sans numéro par date (plus ancien d'abord) pour attribution logique
+        var withoutNum = [];
+        list.forEach(function(e, i) { if (!e.numero) withoutNum.push({ idx: i, date: e.date || '', datetime: e.datetime || '' }); });
+        withoutNum.sort(function(a, b) {
+            var da = a.datetime || a.date || '';
+            var db = b.datetime || b.date || '';
+            return da < db ? -1 : da > db ? 1 : 0;
+        });
+        withoutNum.forEach(function(item) {
+            maxNum++;
+            list[item.idx].numero = String(maxNum).padStart(4, '0');
+            needSave = true;
+        });
+        if (needSave) {
+            localStorage.setItem(INV_KEY, JSON.stringify(list));
+        }
+        return list;
+    } catch(e) { return []; }
 }
 function invSave(list) {
     localStorage.setItem(INV_KEY, JSON.stringify(list));
     if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+}
+
+// Génère le prochain numéro unique séquentiel pour un investissement
+function invNextNumero() {
+    var list = [];
+    try { list = JSON.parse(localStorage.getItem(INV_KEY)) || []; } catch(e) {}
+    var max = 0;
+    list.forEach(function(e) {
+        if (e.numero) {
+            var n = parseInt(String(e.numero).replace(/\D/g, ''), 10);
+            if (!isNaN(n) && n > max) max = n;
+        }
+    });
+    return String(max + 1).padStart(4, '0');
 }
 
 function invSaveCats(cats) {
@@ -18900,7 +18951,7 @@ function invSaveCats(cats) {
                 invData.slice().reverse().slice(0, 30).forEach(inv => {
                     const opt = document.createElement('option');
                     opt.value = inv.id;
-                    opt.textContent = `${inv.date} · ${inv.description} · ${parseFloat(inv.montant||0).toFixed(2)} €`;
+                    opt.textContent = (inv.numero ? '#' + inv.numero + ' \u00b7 ' : '') + `${inv.date} · ${inv.description} · ${parseFloat(inv.montant||0).toFixed(2)} €`;
                     invSel.appendChild(opt);
                 });
             }
@@ -19301,7 +19352,7 @@ window.invModalSubmit = function() {
 
     var list = invLoad();
     list.unshift({
-        id: 'INV-' + Date.now(), date: dateVal, datetime: new Date().toISOString(),
+        id: 'INV-' + Date.now(), numero: invNextNumero(), date: dateVal, datetime: new Date().toISOString(),
         desc: desc, montant: montant, cat: cat,
         fournisseur: fournisseur || null, qte: qte, unitType: unitType, prixUnit: prixUnit,
         nbPacks: nbPacks, packSize: packSize, prixPack: prixPack,
@@ -19312,7 +19363,7 @@ window.invModalSubmit = function() {
     invSave(list);
     document.getElementById('inv-add-modal').style.display = 'none';
     invRender(); invUpdateStats();
-    showScanToast('Achat enregistr\u00e9 — ' + montant.toFixed(2) + ' \u20ac', 'success');
+    showScanToast('\u2705 Achat #' + list[0].numero + ' enregistr\u00e9 \u2014 ' + montant.toFixed(2) + ' \u20ac', 'success');
 };
 
 // ============================================================================
@@ -19655,6 +19706,7 @@ function invAddEntry() {
     const list = invLoad();
     list.unshift({
         id: 'INV-' + Date.now(),
+        numero: invNextNumero(),
         date: new Date().toISOString().split('T')[0],
         datetime: new Date().toISOString(),
         desc, montant, cat, note
@@ -19667,7 +19719,7 @@ function invAddEntry() {
 
     invRender();
     invUpdateStats();
-    showScanToast('✅ Achat enregistré : -' + montant.toFixed(2) + ' €', 'success');
+    showScanToast('✅ Achat #' + list[0].numero + ' enregistré : -' + montant.toFixed(2) + ' €', 'success');
 }
 
 function invGetMonthOptions() {
@@ -19795,11 +19847,23 @@ function invRender() {
             dlcHtml = '<span style="font-size:0.65rem;background:' + dlcColor + '20;color:' + dlcColor + ';border:1px solid ' + dlcColor + '40;padding:1px 6px;border-radius:4px;font-weight:600;">\ud83d\udcc5 DLC ' + dlcLabel + '</span>';
         }
 
-        var h = '<div onclick="invOpenEdit(\'' + safeId + '\')" style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s;color:var(--text-main,#2c3e50);" onmouseover="this.style.boxShadow=\'0 4px 20px rgba(0,0,0,0.1)\';this.style.transform=\'translateY(-1px)\'" onmouseout="this.style.boxShadow=\'none\';this.style.transform=\'none\'">';
+        // Numéro d'investissement
+        var numStr = e.numero || '—';
+
+        var h = '<div onclick="invOpenEdit(\'' + safeId + '\')" style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;overflow:hidden;cursor:pointer;transition:all 0.15s;color:var(--text-main,#2c3e50);display:flex;align-items:stretch;" onmouseover="this.style.boxShadow=\'0 4px 20px rgba(0,0,0,0.1)\';this.style.transform=\'translateY(-1px)\'" onmouseout="this.style.boxShadow=\'none\';this.style.transform=\'none\'">';
+
+        // ── BANDE GAUCHE : Numéro unique ──
+        h += '<div style="background:linear-gradient(180deg,#9b59b6,#8e44ad);min-width:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;padding:8px 4px;gap:2px;">';
+        h += '<div style="font-size:0.55rem;font-weight:700;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.5px;">N\u00b0</div>';
+        h += '<div style="font-size:0.95rem;font-weight:900;color:white;letter-spacing:0.5px;">' + numStr + '</div>';
+        h += '</div>';
+
+        // ── CONTENU DROITE ──
+        h += '<div style="flex:1;min-width:0;padding:12px 14px;">';
 
         // Ligne 1 : ic\u00f4ne + titre + montant
         h += '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:6px;">';
-        h += '<div style="width:38px;height:38px;border-radius:10px;background:linear-gradient(135deg,rgba(155,89,182,0.12),rgba(142,68,173,0.08));display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;">' + catIcon + '</div>';
+        h += '<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,rgba(155,89,182,0.12),rgba(142,68,173,0.08));display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">' + catIcon + '</div>';
         h += '<div style="flex:1;min-width:0;">';
         h += '<div style="font-weight:700;font-size:0.9rem;color:var(--text-main,#2c3e50);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (e.desc||'-') + '</div>';
         h += '<div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
@@ -19868,7 +19932,8 @@ function invRender() {
             h += '<div style="margin-top:6px;padding:6px 10px;background:rgba(52,152,219,0.06);border-radius:7px;border-left:3px solid #3498db;font-size:0.72rem;color:#2980b9;font-style:italic;">\ud83d\udcac ' + e.note + '</div>';
         }
 
-        h += '</div>';
+        h += '</div>'; // ferme contenu droite
+        h += '</div>'; // ferme carte principale
         return h;
     }).join('');
 
@@ -20163,6 +20228,8 @@ function invOpenEdit(id) {
     if (!entry) return;
     var modal = document.getElementById('inv-edit-modal'); if (!modal) return;
     document.getElementById('inv-edit-id').value = id;
+    var titleEl = document.getElementById('inv-edit-title');
+    if (titleEl) titleEl.innerHTML = '\u270f\ufe0f Modifier l\u2019achat' + (entry.numero ? ' <span style="background:rgba(255,255,255,0.25);padding:2px 10px;border-radius:6px;font-size:0.82rem;margin-left:8px;">#' + entry.numero + '</span>' : '');
     document.getElementById('inv-edit-desc').value = entry.desc || '';
     document.getElementById('inv-edit-montant').value = entry.montant || '';
     document.getElementById('inv-edit-date').value = entry.date || '';
@@ -20214,7 +20281,7 @@ function invOpenEdit(id) {
     if (ph) ph.style.display = entry.paiement === 'credit' ? 'block' : 'none';
     invEditRenderPayHistory(entry);
     var summary = document.getElementById('inv-edit-summary');
-    if (summary) { var ds = new Date(entry.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'}); summary.textContent = entry.montant.toFixed(2) + ' \u20ac \u00b7 ' + ds; }
+    if (summary) { var ds = new Date(entry.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'long',year:'numeric'}); summary.textContent = (entry.numero ? '#' + entry.numero + ' \u00b7 ' : '') + entry.montant.toFixed(2) + ' \u20ac \u00b7 ' + ds; }
     modal.style.display = 'flex';
 }
 
@@ -20258,13 +20325,48 @@ function invSaveEdit() {
 function invExportCSV() {
     const list = invLoad();
     const month = document.getElementById('inv-filter-month')?.value || '';
-    const rows = (month ? list.filter(e => e.date.startsWith(month)) : list)
-        .map(e => [e.id, e.date, `"${e.desc}"`, e.montant.toFixed(2), e.cat, `"${e.note||''}"`].join(';'));
-    const csv = 'ID;Date;Description;Montant;Catégorie;Note\n' + rows.join('\n');
+    const filtered = month ? list.filter(e => e.date.startsWith(month)) : list;
+    _invDoExport(filtered, month || 'mois');
+}
+
+function invExportCSVFull() {
+    const list = invLoad();
+    _invDoExport(list, 'complet');
+}
+
+function _invDoExport(data, suffix) {
+    if (!data.length) { showScanToast('⚠️ Aucun investissement à exporter', 'info'); return; }
+    const headers = ['Numero','Date','Description','Montant','Categorie','Fournisseur','Quantite','Unite','PrixUnitaire','Paiement','Acompte','Reste','Echeance','DLC','Note'];
+    const rows = data.map(e => {
+        var cols = [
+            e.numero || '',
+            e.date || '',
+            '"' + (e.desc || '').replace(/"/g, '""') + '"',
+            (e.montant || 0).toFixed(2),
+            e.cat || '',
+            '"' + (e.fournisseur || '').replace(/"/g, '""') + '"',
+            e.qte || '',
+            e.unitType || '',
+            e.prixUnit != null ? e.prixUnit : '',
+            e.paiement || '',
+            e.acompte != null ? e.acompte : '',
+            e.resteADoit != null ? e.resteADoit : '',
+            e.echeance || '',
+            e.dlc || '',
+            '"' + (e.note || '').replace(/"/g, '""') + '"'
+        ];
+        return cols.join(';');
+    });
+    const bom = '\uFEFF';
+    const csv = bom + headers.join(';') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-    a.download = 'investissements_' + (month || 'all') + '.csv';
+    a.href = url;
+    a.download = 'investissements_' + suffix + '_' + new Date().toISOString().split('T')[0] + '.csv';
     a.click();
+    URL.revokeObjectURL(url);
+    showScanToast('✅ ' + data.length + ' investissement(s) exporté(s)', 'success');
 }
 
 function invImportCSV(input) {
@@ -20273,7 +20375,7 @@ function invImportCSV(input) {
     const reader = new FileReader();
     reader.onload = function(e) {
         const text = e.target.result;
-        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
         if (!lines.length) { showScanToast('❌ Fichier vide ou invalide', 'error'); return; }
 
         // Détecter séparateur (;  ou ,)
@@ -20281,79 +20383,130 @@ function invImportCSV(input) {
 
         // Détecter si la première ligne est un en-tête
         const firstLow = lines[0].toLowerCase();
-        const hasHeader = firstLow.includes('date') || firstLow.includes('description') || firstLow.includes('montant');
+        const hasHeader = firstLow.includes('date') || firstLow.includes('description') || firstLow.includes('montant') || firstLow.includes('numero');
         const dataLines = hasHeader ? lines.slice(1) : lines;
 
+        // Mapper les colonnes par en-tête si disponible
+        var colMap = null;
+        if (hasHeader) {
+            var headerCols = _invParseCSVLine(lines[0], sep);
+            colMap = {};
+            headerCols.forEach(function(h, idx) {
+                var hl = h.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (hl === 'numero' || hl === 'no' || hl === 'n') colMap.numero = idx;
+                else if (hl === 'date') colMap.date = idx;
+                else if (hl === 'description' || hl === 'designation' || hl === 'desc') colMap.desc = idx;
+                else if (hl === 'montant' || hl === 'prix' || hl === 'prixdachattotal') colMap.montant = idx;
+                else if (hl === 'categorie' || hl === 'cat') colMap.cat = idx;
+                else if (hl === 'fournisseur') colMap.fournisseur = idx;
+                else if (hl === 'quantite' || hl === 'qte' || hl === 'qty') colMap.qte = idx;
+                else if (hl === 'unite' || hl === 'unittype' || hl === 'unit') colMap.unitType = idx;
+                else if (hl === 'prixunitaire' || hl === 'prixunit') colMap.prixUnit = idx;
+                else if (hl === 'paiement' || hl === 'modepaiement' || hl === 'payment') colMap.paiement = idx;
+                else if (hl === 'acompte') colMap.acompte = idx;
+                else if (hl === 'reste' || hl === 'resteadoit') colMap.reste = idx;
+                else if (hl === 'echeance') colMap.echeance = idx;
+                else if (hl === 'dlc' || hl === 'dluo') colMap.dlc = idx;
+                else if (hl === 'note' || hl === 'commentaire') colMap.note = idx;
+            });
+        }
+
         const cats = invLoadCats();
-        const existingIds = new Set(invLoad().map(e => e.id));
         const imported = [];
         const errors = [];
 
-        dataLines.forEach((line, i) => {
+        dataLines.forEach(function(line, i) {
             if (!line.trim()) return;
-            // Parser CSV avec gestion des guillemets
-            const cols = [];
-            let cur = '', inQ = false;
-            for (let c of line) {
-                if (c === '"') { inQ = !inQ; }
-                else if (c === sep && !inQ) { cols.push(cur.trim()); cur = ''; }
-                else cur += c;
-            }
-            cols.push(cur.trim());
+            var cols = _invParseCSVLine(line, sep);
+            var lineNum = i + (hasHeader ? 2 : 1);
 
-            // Format attendu: ID;Date;Description;Montant;Catégorie;Note (ID optionnel)
-            // Aussi accepter: Date;Description;Montant;Catégorie;Note (sans ID)
-            let id, date, desc, montantRaw, cat, note;
-
-            if (cols.length >= 5) {
-                // Détecter si col[0] ressemble à un ID (INV-xxx) ou à une date
-                const col0 = cols[0].replace(/"/g, '');
-                const looksLikeId = col0.startsWith('INV-') || col0.startsWith('cat_');
-                if (looksLikeId || (cols.length >= 6 && !col0.match(/^\d{4}-\d{2}/))) {
-                    // Format avec ID
-                    [id, date, desc, montantRaw, cat, note] = cols.map(c => c.replace(/"/g, ''));
-                } else {
-                    // Format sans ID
-                    [date, desc, montantRaw, cat, note] = cols.map(c => c.replace(/"/g, ''));
-                    id = null;
-                }
-            } else if (cols.length === 4) {
-                [date, desc, montantRaw, cat] = cols.map(c => c.replace(/"/g, ''));
-                id = null; note = '';
+            var entry = {};
+            if (colMap) {
+                // Mode colonnes mappées
+                entry.date        = _invGetCol(cols, colMap.date, '');
+                entry.desc        = _invGetCol(cols, colMap.desc, '');
+                entry.montantRaw  = _invGetCol(cols, colMap.montant, '0');
+                entry.cat         = _invGetCol(cols, colMap.cat, '');
+                entry.fournisseur = _invGetCol(cols, colMap.fournisseur, '');
+                entry.qte         = _invGetCol(cols, colMap.qte, '');
+                entry.unitType    = _invGetCol(cols, colMap.unitType, '');
+                entry.prixUnit    = _invGetCol(cols, colMap.prixUnit, '');
+                entry.paiement    = _invGetCol(cols, colMap.paiement, '');
+                entry.acompte     = _invGetCol(cols, colMap.acompte, '');
+                entry.reste       = _invGetCol(cols, colMap.reste, '');
+                entry.echeance    = _invGetCol(cols, colMap.echeance, '');
+                entry.dlc         = _invGetCol(cols, colMap.dlc, '');
+                entry.note        = _invGetCol(cols, colMap.note, '');
             } else {
-                errors.push('Ligne ' + (i + (hasHeader ? 2 : 1)) + ' ignorée (format invalide)');
-                return;
+                // Mode positionnel simple : Date;Description;Montant;Catégorie;Note
+                if (cols.length >= 3) {
+                    entry.date       = cols[0] || '';
+                    entry.desc       = cols[1] || '';
+                    entry.montantRaw = cols[2] || '0';
+                    entry.cat        = cols[3] || '';
+                    entry.note       = cols[4] || '';
+                } else {
+                    errors.push('Ligne ' + lineNum + ' ignorée (pas assez de colonnes)');
+                    return;
+                }
             }
 
             // Valider la date
-            date = (date || '').trim();
+            var date = (entry.date || '').trim();
             if (!date.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                // Essayer format DD/MM/YYYY
-                const m = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-                if (m) date = `${m[3]}-${m[2]}-${m[1]}`;
-                else { errors.push('Ligne ' + (i + (hasHeader ? 2 : 1)) + ' : date invalide « ' + date + ' »'); return; }
+                var m = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                if (m) date = m[3] + '-' + m[2] + '-' + m[1];
+                else { errors.push('Ligne ' + lineNum + ' : date invalide « ' + date + ' »'); return; }
             }
 
-            desc = (desc || '').trim();
-            if (!desc) { errors.push('Ligne ' + (i + (hasHeader ? 2 : 1)) + ' : description vide'); return; }
+            var desc = (entry.desc || '').trim();
+            if (!desc) { errors.push('Ligne ' + lineNum + ' : description vide'); return; }
 
-            const montant = parseFloat((montantRaw || '0').replace(',', '.'));
-            if (isNaN(montant) || montant <= 0) { errors.push('Ligne ' + (i + (hasHeader ? 2 : 1)) + ' : montant invalide'); return; }
+            var montant = parseFloat((entry.montantRaw || '0').replace(',', '.'));
+            if (isNaN(montant) || montant <= 0) { errors.push('Ligne ' + lineNum + ' : montant invalide'); return; }
 
-            // Catégorie : chercher par id ou par label
-            cat = (cat || '').trim().toLowerCase();
-            const matchedCat = cats.find(c => c.id === cat || c.label.toLowerCase() === cat);
-            const finalCat = matchedCat ? matchedCat.id : (cats[0]?.id || 'autre');
+            // Catégorie
+            var cat = (entry.cat || '').trim().toLowerCase();
+            var matchedCat = cats.find(function(c) { return c.id === cat || c.label.toLowerCase() === cat; });
+            var finalCat = matchedCat ? matchedCat.id : (cats[0] ? cats[0].id : 'autre');
 
-            const newId = (id && !existingIds.has(id)) ? id : 'INV-' + Date.now() + '-' + i;
+            // Fournisseur
+            var fournisseur = (entry.fournisseur || '').trim() || null;
+
+            // Quantité et unité
+            var qte = parseFloat(entry.qte) || null;
+            var unitType = (entry.unitType || '').trim() || 'unit';
+            if (unitType !== 'unit' && unitType !== 'kg' && unitType !== 'pack') unitType = 'unit';
+            var prixUnit = parseFloat(entry.prixUnit) || (qte > 0 ? parseFloat((montant / qte).toFixed(unitType === 'kg' ? 3 : 2)) : null);
+
+            // Paiement
+            var paiement = (entry.paiement || '').trim().toLowerCase() || null;
+            if (paiement && ['comptant','cb','cheque','credit'].indexOf(paiement) < 0) paiement = null;
+
+            var acompte = paiement === 'credit' ? (parseFloat(entry.acompte) || null) : null;
+            var resteADoit = paiement === 'credit' ? (parseFloat(entry.reste) || (acompte != null ? parseFloat((montant - acompte).toFixed(2)) : null)) : null;
+            var echeance = (entry.echeance || '').trim() || null;
+            var dlc = (entry.dlc || '').trim() || null;
+            var note = (entry.note || '').trim() || null;
 
             imported.push({
-                id: newId,
-                date, desc,
-                montant,
+                id: 'INV-' + Date.now() + '-' + i,
+                numero: invNextNumero(),
+                date: date,
+                datetime: date + 'T00:00:00.000Z',
+                desc: desc,
+                montant: montant,
                 cat: finalCat,
-                note: (note || '').trim(),
-                datetime: date + 'T00:00:00.000Z'
+                fournisseur: fournisseur,
+                qte: qte,
+                unitType: unitType,
+                prixUnit: prixUnit,
+                paiement: paiement,
+                acompte: acompte,
+                resteADoit: resteADoit,
+                echeance: echeance,
+                dlc: dlc,
+                note: note
             });
         });
 
@@ -20365,20 +20518,36 @@ function invImportCSV(input) {
         }
 
         // Fusion : ajouter sans dupliquer
-        const existing = invLoad();
-        const existingSet = new Set(existing.map(e => e.id));
-        const toAdd = imported.filter(e => !existingSet.has(e.id));
-        const merged = [...toAdd, ...existing].sort((a, b) => b.date.localeCompare(a.date));
+        var existing = invLoad();
+        var merged = imported.concat(existing).sort(function(a, b) { return b.date.localeCompare(a.date); });
         invSave(merged);
         invRender();
         invUpdateStats();
 
-        const msg = `✅ ${toAdd.length} achat(s) importé(s)` + (errors.length ? ` · ⚠️ ${errors.length} ligne(s) ignorée(s)` : '');
+        var msg = '\u2705 ' + imported.length + ' achat(s) importé(s)' + (errors.length ? ' · \u26a0\ufe0f ' + errors.length + ' ligne(s) ignorée(s)' : '');
         showScanToast(msg, 'success');
         if (errors.length) console.warn('Lignes ignorées :', errors);
         input.value = '';
     };
     reader.readAsText(file, 'UTF-8');
+}
+
+// Parseur CSV avec gestion des guillemets
+function _invParseCSVLine(line, sep) {
+    var cols = [], cur = '', inQ = false;
+    for (var ci = 0; ci < line.length; ci++) {
+        var c = line[ci];
+        if (c === '"') { inQ = !inQ; }
+        else if (c === sep && !inQ) { cols.push(cur.trim()); cur = ''; }
+        else cur += c;
+    }
+    cols.push(cur.trim());
+    return cols;
+}
+
+function _invGetCol(cols, idx, def) {
+    if (idx == null || idx >= cols.length) return def;
+    return (cols[idx] || '').replace(/"/g, '').trim() || def;
 }
 
 function switchRetourTab(e, id) {
