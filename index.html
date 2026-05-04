@@ -6039,6 +6039,7 @@
                 <select id="mod-link-access-mode" onchange="_modLinkAccessModeChange()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main);margin-bottom:6px;">
                   <option value="all">👥 Tous les utilisateurs</option>
                   <option value="admin">👑 Admins uniquement</option>
+                  <option value="master">🛠️ Admin-Développeur uniquement</option>
                   <option value="select">🎯 Utilisateurs spécifiques</option>
                 </select>
                 <div id="mod-link-users-wrap" style="display:none;max-height:100px;overflow-y:auto;border:1px solid var(--border-color,#e0e0e0);border-radius:7px;padding:6px 8px;background:var(--bg-card,#fff);">
@@ -10328,7 +10329,8 @@ function toggleInfoSection(headerElement) {
         _modulesApply();
         document.getElementById('modules-modal').style.display = 'none';
         showScanToast('\u2705 Configuration des modules sauvegard\u00e9e', 'success');
-        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+        // Sauvegarder UNIQUEMENT les liens et modules vers Drive (pas les tickets/ventes)
+        if (typeof window._gdTriggerLinksSave === 'function') window._gdTriggerLinksSave();
     };
 
     // ===== LIENS RAPIDES — GESTION COMPLÈTE =====
@@ -10339,7 +10341,8 @@ function toggleInfoSection(headerElement) {
     }
     function _linksSave(list) {
         localStorage.setItem(LINKS_KEY, JSON.stringify(list));
-        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+        // Sauvegarder UNIQUEMENT les liens vers Drive (pas les tickets/ventes)
+        if (typeof window._gdTriggerLinksSave === 'function') window._gdTriggerLinksSave();
     }
 
     // Popule la liste des utilisateurs dans le formulaire
@@ -10435,7 +10438,7 @@ function toggleInfoSection(headerElement) {
 
         // Restaurer le mode d'accès
         var acc = link.access || 'all';
-        if (acc === 'all' || acc === 'admin') {
+        if (acc === 'all' || acc === 'admin' || acc === 'master') {
             document.getElementById('mod-link-access-mode').value = acc;
             _modLinkAccessModeChange();
         } else if (Array.isArray(acc)) {
@@ -10477,6 +10480,7 @@ function toggleInfoSection(headerElement) {
     function _linkAccessLabel(acc) {
         if (!acc || acc === 'all') return '\ud83d\udc65 Tous';
         if (acc === 'admin') return '\ud83d\udc51 Admins';
+        if (acc === 'master') return '\ud83d\udee0\ufe0f Dev';
         if (Array.isArray(acc)) {
             var names = acc.map(function(uid) { var u = users.find(function(x) { return x.id === uid; }); return u ? u.username : uid; });
             return '\ud83c\udfaf ' + names.join(', ');
@@ -10489,7 +10493,9 @@ function toggleInfoSection(headerElement) {
         var acc = link.access;
         if (!acc || acc === 'all') return true;
         if (!currentUser) return false;
-        if (currentUser.isMaster || currentUser.id === 'USR-MASTER') return true;
+        var isMaster = currentUser.isMaster || currentUser.id === 'USR-MASTER';
+        if (acc === 'master') return isMaster;
+        if (isMaster) return true;
         if (acc === 'admin') return currentUser.role === 'admin';
         if (Array.isArray(acc)) return acc.indexOf(currentUser.id) >= 0;
         return true;
@@ -26041,6 +26047,129 @@ function initAdminSections() {
     }
     window._gdTriggerAutoSave = _gdDebouncedSave;
 
+    // ── NOTIFICATION FLOTTANTE : SAUVEGARDE DRIVE DISPONIBLE ──────────
+    let _gdCheckTimer = null;
+    let _gdBannerDismissed = false;
+
+    function _gdStartUpdateChecker() {
+        if (_gdCheckTimer) clearInterval(_gdCheckTimer);
+        // Première vérification après 30s, puis toutes les 5 minutes
+        setTimeout(_gdCheckForUpdate, 30000);
+        _gdCheckTimer = setInterval(_gdCheckForUpdate, 5 * 60 * 1000);
+    }
+
+    async function _gdCheckForUpdate() {
+        if (!_gdConnected || !_gdFolderId || !window._gdFetchPublic || _gdBannerDismissed) return;
+        try {
+            var q = encodeURIComponent(
+                "'" + _gdFolderId + "' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'"
+            );
+            var resp = await Promise.race([
+                window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=' + q + '&orderBy=modifiedTime+desc&pageSize=5&fields=files(id,name,modifiedTime,size)'),
+                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 8000); })
+            ]);
+            var data = await resp.json();
+            if (!data.files || !data.files.length) return;
+
+            var latestFile = data.files[0];
+            var driveDate = new Date(latestFile.modifiedTime);
+            var lastRestore = localStorage.getItem('gdrive_last_restore');
+            var lastLocalSave = localStorage.getItem('covo_last_save');
+
+            // Comparer avec la dernière restauration ou sauvegarde locale
+            var localRef = null;
+            if (lastRestore) localRef = new Date(lastRestore);
+            if (lastLocalSave) {
+                var lsd = new Date(lastLocalSave);
+                if (!localRef || lsd > localRef) localRef = lsd;
+            }
+
+            // S'il y a une sauvegarde Drive plus récente que la dernière activité locale
+            if (localRef && driveDate > localRef && (driveDate - localRef) > 60000) {
+                // Déterminer le type de fichier
+                var fileName = latestFile.name || '';
+                var typeIcon = '\ud83d\udce6';
+                var typeLabel = 'Sauvegarde';
+                if (fileName.includes('_VENTES_'))  { typeIcon = '\ud83d\udcb0'; typeLabel = 'Ventes'; }
+                else if (fileName.includes('_PARAMS_')) { typeIcon = '\u2699\ufe0f'; typeLabel = 'Param\u00e8tres'; }
+                else if (fileName.includes('_LIENS_'))  { typeIcon = '\ud83d\udd17'; typeLabel = 'Liens'; }
+
+                var driveStr = driveDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'short'}) + ' ' +
+                               driveDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+
+                _gdShowUpdateBanner(typeIcon, typeLabel, driveStr, latestFile);
+            } else {
+                _gdHideUpdateBanner();
+            }
+        } catch(e) { /* silencieux */ }
+    }
+
+    function _gdShowUpdateBanner(icon, typeLabel, dateStr, file) {
+        var banner = document.getElementById('gd-update-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'gd-update-banner';
+            banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:22000;display:none;';
+            document.body.appendChild(banner);
+        }
+        banner.innerHTML =
+            '<div style="background:linear-gradient(135deg,#1a73e8,#0d47a1);padding:10px 16px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 20px rgba(26,115,232,0.4);animation:gdSlideDown 0.4s ease;">' +
+                '<div style="font-size:1.3rem;flex-shrink:0;animation:gdPulse 2s infinite;">\u2601\ufe0f</div>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:800;font-size:0.85rem;color:white;">Mise \u00e0 jour disponible sur Google Drive</div>' +
+                    '<div style="font-size:0.73rem;color:rgba(255,255,255,0.8);margin-top:2px;">' + icon + ' ' + typeLabel + ' \u00b7 ' + dateStr + ' \u00b7 <span style="opacity:0.7;">' + (file.name || '') + '</span></div>' +
+                '</div>' +
+                '<button onclick="_gdRestoreFromBanner(\'' + file.id + '\',\'' + (file.name||'').replace(/'/g,"\\'") + '\')" style="padding:7px 16px;background:rgba(255,255,255,0.95);color:#1a73e8;border:none;border-radius:8px;font-weight:800;font-size:0.8rem;cursor:pointer;white-space:nowrap;flex-shrink:0;">\ud83d\udd04 Restaurer</button>' +
+                '<button onclick="_gdDismissBanner()" style="padding:7px 12px;background:rgba(255,255,255,0.15);color:white;border:1px solid rgba(255,255,255,0.3);border-radius:8px;font-weight:600;font-size:0.78rem;cursor:pointer;white-space:nowrap;flex-shrink:0;">Plus tard</button>' +
+                '<button onclick="_gdDismissBannerPerm()" style="background:none;border:none;color:rgba(255,255,255,0.5);cursor:pointer;font-size:1rem;flex-shrink:0;padding:4px;" title="Ignorer">\u2715</button>' +
+            '</div>';
+        banner.style.display = 'block';
+    }
+
+    function _gdHideUpdateBanner() {
+        var banner = document.getElementById('gd-update-banner');
+        if (banner) banner.style.display = 'none';
+    }
+
+    window._gdDismissBanner = function() {
+        _gdHideUpdateBanner();
+        // Réapparaîtra au prochain cycle de vérification
+    };
+
+    window._gdDismissBannerPerm = function() {
+        _gdHideUpdateBanner();
+        _gdBannerDismissed = true;
+        // Ne réapparaîtra plus pendant cette session
+    };
+
+    window._gdRestoreFromBanner = function(fileId, fileName) {
+        _gdHideUpdateBanner();
+        if (typeof window._gdSmartRestoreOpen === 'function') {
+            window._gdSmartRestoreOpen(fileId, fileName, null);
+        }
+    };
+
+    // Injecter le CSS d'animation une fois
+    (function() {
+        if (document.getElementById('gd-banner-css')) return;
+        var style = document.createElement('style');
+        style.id = 'gd-banner-css';
+        style.textContent = '@keyframes gdSlideDown{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}@keyframes gdPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}';
+        document.head.appendChild(style);
+    })();
+
+    // Démarrer le checker après connexion Drive
+    var _gdOrigConnect = window._gdOnConnectSuccess;
+    if (typeof _gdOrigConnect === 'function') {
+        window._gdOnConnectSuccess = function() {
+            _gdOrigConnect.apply(this, arguments);
+            _gdBannerDismissed = false;
+            _gdStartUpdateChecker();
+        };
+    }
+    // Aussi au chargement si déjà connecté
+    setTimeout(function() { if (_gdConnected && _gdFolderId) { _gdBannerDismissed = false; _gdStartUpdateChecker(); } }, 5000);
+
     const __patchUpdateLastSave = setInterval(() => {
         if (typeof _updateLastSaveDisplay === 'function' && !_updateLastSaveDisplay.__gdPatched) {
             const orig = _updateLastSaveDisplay;
@@ -27000,6 +27129,32 @@ function initAdminSections() {
         }, 2000);
     };
 
+    // ── Sauvegarde LIENS RAPIDES uniquement (ne touche PAS aux ventes/tickets) ──
+    let _gdLinksTimer = null;
+    window._gdTriggerLinksSave = function() {
+        if (!window._gdUploadToHierarchy) return;
+        clearTimeout(_gdLinksTimer);
+        _gdLinksTimer = setTimeout(async () => {
+            try {
+                const now = new Date();
+                const ts  = now.toISOString();
+                const ds  = ts.split('T')[0];
+                const tm  = now.toTimeString().split(' ')[0].replace(/:/g,'-');
+                const payload = JSON.stringify({
+                    covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links')    || '[]'),
+                    covo_modules_config: localStorage.getItem('covo_modules_config') || null,
+                    _type: 'liens_modules',
+                    _version: 1,
+                    _savedAt: ts,
+                    _source: 'google_drive_links_only'
+                }, null, 2);
+                await window._gdUploadToHierarchy('parametres', now, `covo_backup_LIENS_${ds}_${tm}.json`, payload, 'application/json');
+                localStorage.setItem('gdrive_last_links_save', ts);
+                console.log('\ud83d\udd17 Sauvegarde LIENS OK');
+            } catch(e) { console.warn('GDrive links save:', e); }
+        }, 2000);
+    };
+
     // ── Modale de restauration intelligente ──────────────────────────
     window._gdSmartRestoreOpen = async function(fileId, fileName, rawData) {
         let data = rawData;
@@ -27017,7 +27172,7 @@ function initAdminSections() {
         const nVentes = (data.salesHistory||[]).length;
         const nProd   = (data.products||[]).length;
         const nUsers  = (data.users||[]).length;
-        const typeCfg = { ventes:{label:'💰 Ventes uniquement',bg:'#e8f5e9',c:'#1b5e20'}, parametres:{label:'⚙️ Paramètres uniquement',bg:'#e8f0fe',c:'#1a237e'}, complet:{label:'📦 Sauvegarde complète',bg:'#fff3e0',c:'#e65100'} };
+        const typeCfg = { ventes:{label:'💰 Ventes uniquement',bg:'#e8f5e9',c:'#1b5e20'}, parametres:{label:'⚙️ Paramètres uniquement',bg:'#e8f0fe',c:'#1a237e'}, complet:{label:'📦 Sauvegarde complète',bg:'#fff3e0',c:'#e65100'}, liens_modules:{label:'🔗 Liens & modules',bg:'#ede9fe',c:'#5b21b6'} };
         const tc = typeCfg[type] || typeCfg.complet;
         const os = (bg,bc) => `display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1.5px solid ${bc}44;background:${bg};cursor:pointer;margin-bottom:6px;`;
 
@@ -27026,6 +27181,9 @@ function initAdminSections() {
             opts = `<label style="${os('#e8f5e9','#2e7d32')}"><input type="radio" name="sr-mode" value="ventes" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1b5e20;font-size:0.85rem;">💰 Restaurer les ventes uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nVentes} vente(s) · vos paramètres actuels sont conservés</div></div></label>`;
         } else if (type === 'parametres') {
             opts = `<label style="${os('#e8f0fe','#3949ab')}"><input type="radio" name="sr-mode" value="params" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#1a237e;font-size:0.85rem;">⚙️ Restaurer les paramètres uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nProd} article(s), ${nUsers} utilisateur(s) · ventes actuelles conservées</div></div></label>`;
+        } else if (type === 'liens_modules') {
+            const nLinks = (data.covo_quick_links||[]).length;
+            opts = `<label style="${os('#ede9fe','#5b21b6')}"><input type="radio" name="sr-mode" value="liens" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#5b21b6;font-size:0.85rem;">🔗 Restaurer les liens & modules uniquement</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">${nLinks} lien(s) rapide(s) · aucune autre donnée affectée</div></div></label>`;
         } else {
             opts = `
                 <label style="${os('#fff3e0','#e65100')}"><input type="radio" name="sr-mode" value="tout" checked style="margin-top:2px;flex-shrink:0;"><div><div style="font-weight:700;color:#e65100;font-size:0.85rem;">📦 Tout restaurer</div><div style="font-size:0.73rem;color:#555;margin-top:2px;">Ventes + paramètres — remplace toutes les données locales</div></div></label>
@@ -27067,6 +27225,16 @@ function initAdminSections() {
     };
 
     window._gdApplyRestore = function(data, mode) {
+        // Mode liens : restaurer UNIQUEMENT les liens rapides et config modules
+        if (mode === 'liens') {
+            if (data.covo_quick_links) localStorage.setItem('covo_quick_links', JSON.stringify(data.covo_quick_links));
+            if (data.covo_modules_config) localStorage.setItem('covo_modules_config', data.covo_modules_config);
+            if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
+            if (typeof _quickLinksRender === 'function') try { _quickLinksRender(); } catch(e) {}
+            showScanToast('\u2705 Restauration \ud83d\udd17 Liens & modules appliqu\u00e9e', 'success');
+            return;
+        }
+
         if (mode === 'ventes' || mode === 'tout') {
             if (data.salesHistory) { salesHistory = data.salesHistory; localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory)); }
             if (data.pendingSync)  { pendingSync  = data.pendingSync;  localStorage.setItem('covo_pending_sync',  JSON.stringify(pendingSync)); }
@@ -27101,7 +27269,7 @@ function initAdminSections() {
         try { if (typeof invRender === 'function') invRender(); } catch(e) {}
         try { if (typeof refreshRetours === 'function') refreshRetours(); } catch(e) {}
 
-        const modeLabel = mode === 'ventes' ? '💰 Ventes' : mode === 'params' ? '⚙️ Paramètres' : '📦 Tout';
+        const modeLabel = mode === 'ventes' ? '💰 Ventes' : mode === 'params' ? '⚙️ Paramètres' : mode === 'liens' ? '🔗 Liens' : '📦 Tout';
         showScanToast(`✅ Restauration ${modeLabel} appliquée avec succès`, 'success');
     };
 
