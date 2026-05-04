@@ -4191,6 +4191,8 @@
         </div>
     </div>
 
+    <div class="container" id="product-list"></div>
+
     <div id="admin-panel">
         <h2 style="margin-top:0;">⚙️ Panneau d'administration</h2>
 
@@ -6017,7 +6019,7 @@
                 <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">URL du lien</label>
                 <input id="mod-link-url" type="url" placeholder="https://..." style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
               </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                 <div>
                   <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Taille</label>
                   <select id="mod-link-size" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main);">
@@ -6029,6 +6031,17 @@
                 <div>
                   <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">Couleur</label>
                   <input id="mod-link-color" type="color" value="#3b82f6" style="width:100%;height:34px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;cursor:pointer;padding:2px;">
+                </div>
+              </div>
+              <!-- Accès utilisateurs -->
+              <div style="margin-bottom:10px;">
+                <label style="font-size:0.68rem;color:var(--gray);font-weight:600;display:block;margin-bottom:3px;">👥 Accès autorisé</label>
+                <select id="mod-link-access-mode" onchange="_modLinkAccessModeChange()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main);margin-bottom:6px;">
+                  <option value="all">👥 Tous les utilisateurs</option>
+                  <option value="admin">👑 Admins uniquement</option>
+                  <option value="select">🎯 Utilisateurs spécifiques</option>
+                </select>
+                <div id="mod-link-users-wrap" style="display:none;max-height:100px;overflow-y:auto;border:1px solid var(--border-color,#e0e0e0);border-radius:7px;padding:6px 8px;background:var(--bg-card,#fff);">
                 </div>
               </div>
               <div style="display:flex;gap:8px;">
@@ -6948,6 +6961,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_investissements: JSON.parse(localStorage.getItem('covo_investissements') || '[]'),
                 covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
                 covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
+                covo_quick_links:     JSON.parse(localStorage.getItem('covo_quick_links')     || '[]'),
                 _version: 17, _savedAt
             }, null, 2);
             const writable = await covoFileHandle.createWritable();
@@ -7007,6 +7021,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
+            if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
             if (typeof refreshRetours === 'function') setTimeout(() => refreshRetours(), 200);
             // Sync localStorage principal
             localStorage.setItem('covo_products',      JSON.stringify(products));
@@ -7256,6 +7271,51 @@ function toggleInfoSection(headerElement) {
     }
 
     // ===== FENÊTRE D'ACCUEIL ADMIN =====
+    // ===== ACTUALISATION STATS DASHBOARD EN TEMPS RÉEL =====
+    function _awRefreshStats() {
+        // Produits : utiliser la variable en mémoire (la plus à jour)
+        var nbProd = 0;
+        var nbProdActifs = 0;
+        try {
+            var prodList = (typeof products !== 'undefined' && Array.isArray(products)) ? products : JSON.parse(localStorage.getItem('covo_products') || '[]');
+            nbProd = prodList.length;
+            nbProdActifs = prodList.filter(function(p) { return p.active !== false; }).length;
+        } catch(e) {}
+
+        // Utilisateurs
+        var nbUsers = 0;
+        try { nbUsers = (typeof users !== 'undefined' && Array.isArray(users)) ? users.length : 0; } catch(e) {}
+
+        // Ventes du jour : utiliser salesHistory en mémoire + covo_sales_history en fallback
+        var todaySales = [];
+        var todayRevenue = 0;
+        try {
+            var allSales = [];
+            if (typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) {
+                allSales = salesHistory;
+            } else {
+                allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
+            }
+            var today = new Date().toDateString();
+            todaySales = allSales.filter(function(s) {
+                return s.date && new Date(s.date).toDateString() === today && !s.cancelled;
+            });
+            todayRevenue = todaySales.reduce(function(sum, s) { return sum + (s.total || 0); }, 0);
+        } catch(e) {}
+
+        // Mise à jour des éléments du dashboard
+        var elProd   = document.getElementById('aw-total-products');
+        var elUsers  = document.getElementById('aw-total-users');
+        var elSales  = document.getElementById('aw-total-sales');
+        var elCA     = document.getElementById('aw-revenue-day');
+
+        if (elProd)  elProd.textContent  = nbProdActifs + (nbProd !== nbProdActifs ? ' / ' + nbProd : '');
+        if (elUsers) elUsers.textContent = nbUsers;
+        if (elSales) elSales.textContent = todaySales.length;
+        if (elCA)    elCA.textContent    = todayRevenue.toFixed(2) + ' \u20ac';
+    }
+    window._awRefreshStats = _awRefreshStats;
+
     function openAdminWelcomeModal() {
         const modal = document.getElementById('admin-welcome-modal');
         if (!modal) return;
@@ -7263,18 +7323,8 @@ function toggleInfoSection(headerElement) {
         // Remplir le nom
         document.getElementById('admin-welcome-name').textContent = currentUser.username;
 
-        // Stats rapides
-        const products = JSON.parse(localStorage.getItem('covo_products') || '[]');
-        document.getElementById('aw-total-products').textContent = products.length;
-        document.getElementById('aw-total-users').textContent = users.length;
-
-        // Ventes du jour
-        const allSales = JSON.parse(localStorage.getItem('covo_sales') || '[]');
-        const today = new Date().toDateString();
-        const todaySales = allSales.filter(s => new Date(s.date).toDateString() === today && !s.cancelled);
-        document.getElementById('aw-total-sales').textContent = todaySales.length;
-        const todayRevenue = todaySales.reduce((sum, s) => sum + (s.total || 0), 0);
-        document.getElementById('aw-revenue-day').textContent = todayRevenue.toFixed(2) + ' €';
+        // Actualiser les stats
+        _awRefreshStats();
 
         // Paramètres
         const settings = JSON.parse(localStorage.getItem('covo_settings') || '{}');
@@ -10293,6 +10343,27 @@ function toggleInfoSection(headerElement) {
         if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
     }
 
+    // Popule la liste des utilisateurs dans le formulaire
+    window._modLinkAccessModeChange = function() {
+        var mode = document.getElementById('mod-link-access-mode').value;
+        var wrap = document.getElementById('mod-link-users-wrap');
+        if (!wrap) return;
+        if (mode === 'select') {
+            wrap.style.display = '';
+            var html = '';
+            users.forEach(function(u) {
+                var checked = '';
+                html += '<label style="display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:0.78rem;">' +
+                    '<input type="checkbox" class="mod-link-user-cb" value="' + u.id + '" ' + checked + ' style="accent-color:#3b82f6;">' +
+                    '<span>' + (u.role === 'admin' ? '\ud83d\udc51' : '\ud83d\udcbc') + ' ' + u.username + '</span>' +
+                '</label>';
+            });
+            wrap.innerHTML = html;
+        } else {
+            wrap.style.display = 'none';
+        }
+    };
+
     // Ouvrir le formulaire d'ajout
     window._modLinkAdd = function() {
         document.getElementById('mod-link-form').style.display = '';
@@ -10302,6 +10373,8 @@ function toggleInfoSection(headerElement) {
         document.getElementById('mod-link-size').value = 'medium';
         document.getElementById('mod-link-color').value = '#3b82f6';
         document.getElementById('mod-link-edit-id').value = '';
+        document.getElementById('mod-link-access-mode').value = 'all';
+        _modLinkAccessModeChange();
         document.getElementById('mod-link-name').focus();
     };
 
@@ -10309,7 +10382,17 @@ function toggleInfoSection(headerElement) {
         document.getElementById('mod-link-form').style.display = 'none';
     };
 
-    // Enregistrer un lien (ajout ou édition)
+    // Lire l'accès depuis le formulaire
+    function _modLinkReadAccess() {
+        var mode = document.getElementById('mod-link-access-mode').value;
+        if (mode === 'all') return 'all';
+        if (mode === 'admin') return 'admin';
+        var ids = [];
+        document.querySelectorAll('.mod-link-user-cb:checked').forEach(function(cb) { ids.push(cb.value); });
+        return ids.length ? ids : 'all';
+    }
+
+    // Enregistrer un lien
     window._modLinkSaveForm = function() {
         var name = (document.getElementById('mod-link-name').value || '').trim();
         var icon = (document.getElementById('mod-link-icon').value || '\ud83c\udf10').trim();
@@ -10317,6 +10400,7 @@ function toggleInfoSection(headerElement) {
         var size = document.getElementById('mod-link-size').value || 'medium';
         var color = document.getElementById('mod-link-color').value || '#3b82f6';
         var editId = document.getElementById('mod-link-edit-id').value;
+        var access = _modLinkReadAccess();
 
         if (!name) { showScanToast('\u26a0\ufe0f Saisissez un nom', 'info'); return; }
         if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
@@ -10326,15 +10410,9 @@ function toggleInfoSection(headerElement) {
         var list = _linksLoad();
         if (editId) {
             var idx = list.findIndex(function(l) { return l.id === editId; });
-            if (idx >= 0) {
-                list[idx].name = name;
-                list[idx].icon = icon;
-                list[idx].url  = url;
-                list[idx].size = size;
-                list[idx].color = color;
-            }
+            if (idx >= 0) { list[idx].name = name; list[idx].icon = icon; list[idx].url = url; list[idx].size = size; list[idx].color = color; list[idx].access = access; }
         } else {
-            list.push({ id: 'LNK-' + Date.now(), name: name, icon: icon, url: url, size: size, color: color, order: list.length });
+            list.push({ id: 'LNK-' + Date.now(), name: name, icon: icon, url: url, size: size, color: color, access: access, order: list.length });
         }
         _linksSave(list);
         document.getElementById('mod-link-form').style.display = 'none';
@@ -10355,6 +10433,21 @@ function toggleInfoSection(headerElement) {
         document.getElementById('mod-link-size').value = link.size || 'medium';
         document.getElementById('mod-link-color').value = link.color || '#3b82f6';
         document.getElementById('mod-link-edit-id').value = id;
+
+        // Restaurer le mode d'accès
+        var acc = link.access || 'all';
+        if (acc === 'all' || acc === 'admin') {
+            document.getElementById('mod-link-access-mode').value = acc;
+            _modLinkAccessModeChange();
+        } else if (Array.isArray(acc)) {
+            document.getElementById('mod-link-access-mode').value = 'select';
+            _modLinkAccessModeChange();
+            setTimeout(function() {
+                document.querySelectorAll('.mod-link-user-cb').forEach(function(cb) {
+                    cb.checked = acc.indexOf(cb.value) >= 0;
+                });
+            }, 50);
+        }
         document.getElementById('mod-link-name').focus();
     };
 
@@ -10375,79 +10468,374 @@ function toggleInfoSection(headerElement) {
         if (idx < 0) return;
         var newIdx = idx + dir;
         if (newIdx < 0 || newIdx >= list.length) return;
-        var tmp = list[idx];
-        list[idx] = list[newIdx];
-        list[newIdx] = tmp;
+        var tmp = list[idx]; list[idx] = list[newIdx]; list[newIdx] = tmp;
         _linksSave(list);
         _modLinksRender();
         _quickLinksRender();
     };
 
-    // Rendu de la liste des liens dans la modale modules
+    // Libellé d'accès
+    function _linkAccessLabel(acc) {
+        if (!acc || acc === 'all') return '\ud83d\udc65 Tous';
+        if (acc === 'admin') return '\ud83d\udc51 Admins';
+        if (Array.isArray(acc)) {
+            var names = acc.map(function(uid) { var u = users.find(function(x) { return x.id === uid; }); return u ? u.username : uid; });
+            return '\ud83c\udfaf ' + names.join(', ');
+        }
+        return '\ud83d\udc65 Tous';
+    }
+
+    // Vérifier si l'utilisateur courant a accès à un lien
+    function _linkCanAccess(link) {
+        var acc = link.access;
+        if (!acc || acc === 'all') return true;
+        if (!currentUser) return false;
+        if (currentUser.isMaster || currentUser.id === 'USR-MASTER') return true;
+        if (acc === 'admin') return currentUser.role === 'admin';
+        if (Array.isArray(acc)) return acc.indexOf(currentUser.id) >= 0;
+        return true;
+    }
+
+    // Rendu dans la modale modules
     function _modLinksRender() {
         var list = _linksLoad();
         var el = document.getElementById('mod-links-list');
         var countEl = document.getElementById('mod-links-count');
         if (countEl) countEl.textContent = list.length;
         if (!el) return;
-
         if (!list.length) {
-            el.innerHTML = '<div style="text-align:center;padding:16px;color:var(--gray,#888);font-size:0.78rem;">Aucun lien ajout\u00e9. Cliquez sur \u00ab \u2795 Ajouter \u00bb pour cr\u00e9er un acc\u00e8s rapide.</div>';
+            el.innerHTML = '<div style="text-align:center;padding:16px;color:var(--gray,#888);font-size:0.78rem;">Aucun lien. Cliquez \u00ab \u2795 Ajouter \u00bb.</div>';
             return;
         }
-
-        el.innerHTML = list.map(function(l, i) {
-            var sizeLabel = l.size === 'small' ? 'Petit' : l.size === 'large' ? 'Grand' : 'Moyen';
-            return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-card,#fff);border-radius:8px;border:1px solid var(--border-color,#e0e0e0);" data-link-id="' + l.id + '">' +
+        el.innerHTML = list.map(function(l) {
+            var sizeL = l.size === 'small' ? 'Petit' : l.size === 'large' ? 'Grand' : 'Moyen';
+            var accL = _linkAccessLabel(l.access);
+            return '<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg-card,#fff);border-radius:8px;border:1px solid var(--border-color,#e0e0e0);">' +
                 '<div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0;">' +
-                    '<button onclick="_modLinkMove(\'' + l.id + '\',-1)" style="border:none;background:none;cursor:pointer;font-size:0.6rem;padding:0;line-height:1;color:var(--gray);" title="Monter">\u25b2</button>' +
-                    '<button onclick="_modLinkMove(\'' + l.id + '\',1)" style="border:none;background:none;cursor:pointer;font-size:0.6rem;padding:0;line-height:1;color:var(--gray);" title="Descendre">\u25bc</button>' +
+                    '<button onclick="_modLinkMove(\'' + l.id + '\',-1)" style="border:none;background:none;cursor:pointer;font-size:0.6rem;padding:0;line-height:1;color:var(--gray);">\u25b2</button>' +
+                    '<button onclick="_modLinkMove(\'' + l.id + '\',1)" style="border:none;background:none;cursor:pointer;font-size:0.6rem;padding:0;line-height:1;color:var(--gray);">\u25bc</button>' +
                 '</div>' +
-                '<div style="width:28px;height:28px;border-radius:7px;background:' + (l.color || '#3b82f6') + ';display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">' + (l.icon || '\ud83c\udf10') + '</div>' +
+                '<div style="width:26px;height:26px;border-radius:6px;background:' + (l.color || '#3b82f6') + ';display:flex;align-items:center;justify-content:center;font-size:0.85rem;flex-shrink:0;">' + (l.icon || '\ud83c\udf10') + '</div>' +
                 '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-weight:700;font-size:0.8rem;color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + l.name + '</div>' +
-                    '<div style="font-size:0.65rem;color:var(--gray);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">' + l.url + '</div>' +
+                    '<div style="font-weight:700;font-size:0.78rem;color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + l.name + '</div>' +
+                    '<div style="font-size:0.62rem;color:var(--gray);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">' + l.url + '</div>' +
                 '</div>' +
-                '<span style="font-size:0.6rem;background:#f1f5f9;color:#64748b;padding:1px 6px;border-radius:4px;font-weight:600;flex-shrink:0;">' + sizeLabel + '</span>' +
-                '<button onclick="_modLinkEdit(\'' + l.id + '\')" style="border:none;background:rgba(59,130,246,0.1);color:#3b82f6;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:0.7rem;flex-shrink:0;" title="Modifier">\u270f\ufe0f</button>' +
-                '<button onclick="_modLinkDelete(\'' + l.id + '\')" style="border:none;background:rgba(231,76,60,0.1);color:#e74c3c;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:0.7rem;flex-shrink:0;" title="Supprimer">\ud83d\uddd1\ufe0f</button>' +
+                '<span style="font-size:0.58rem;background:#f1f5f9;color:#64748b;padding:1px 5px;border-radius:4px;font-weight:600;flex-shrink:0;">' + sizeL + '</span>' +
+                '<span style="font-size:0.58rem;background:#dbeafe;color:#2563eb;padding:1px 5px;border-radius:4px;font-weight:600;flex-shrink:0;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + accL + '">' + accL + '</span>' +
+                '<button onclick="_modLinkEdit(\'' + l.id + '\')" style="border:none;background:rgba(59,130,246,0.1);color:#3b82f6;width:24px;height:24px;border-radius:6px;cursor:pointer;font-size:0.65rem;flex-shrink:0;">\u270f\ufe0f</button>' +
+                '<button onclick="_modLinkDelete(\'' + l.id + '\')" style="border:none;background:rgba(231,76,60,0.1);color:#e74c3c;width:24px;height:24px;border-radius:6px;cursor:pointer;font-size:0.65rem;flex-shrink:0;">\ud83d\uddd1\ufe0f</button>' +
             '</div>';
         }).join('');
     }
 
-    // Rendu de la barre de liens dans l'interface principale
+    // Rendu barre liens dans l'interface principale (filtré par accès)
     function _quickLinksRender() {
         var list = _linksLoad();
         var bar = document.getElementById('quick-links-bar');
         if (!bar) return;
-
-        if (!list.length) { bar.style.display = 'none'; return; }
+        var visible = list.filter(_linkCanAccess);
+        if (!visible.length) { bar.style.display = 'none'; return; }
         bar.style.display = '';
 
-        var sizes = { small: { w:'70px', h:'58px', fs:'1rem', lbl:'0.58rem' }, medium: { w:'90px', h:'68px', fs:'1.3rem', lbl:'0.65rem' }, large: { w:'115px', h:'78px', fs:'1.6rem', lbl:'0.72rem' } };
+        var sizes = { small: { w:'70px', h:'56px', fs:'1rem', lbl:'0.58rem' }, medium: { w:'88px', h:'66px', fs:'1.25rem', lbl:'0.65rem' }, large: { w:'112px', h:'76px', fs:'1.5rem', lbl:'0.72rem' } };
 
         var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:8px 10px;background:var(--bg-card,#fff);border-radius:10px;border:1px solid var(--border-color,#e0e0e0);box-shadow:0 1px 4px rgba(0,0,0,0.04);align-items:center;">';
         html += '<span style="font-size:0.72rem;font-weight:700;color:var(--gray,#888);margin-right:4px;">\ud83d\udd17</span>';
 
-        list.forEach(function(l) {
+        visible.forEach(function(l) {
             var s = sizes[l.size] || sizes.medium;
             var c = l.color || '#3b82f6';
-            html += '<a href="' + l.url + '" target="_blank" rel="noopener noreferrer" style="' +
+            var safeId = (l.id || '').replace(/'/g, "\\'");
+            html += '<div onclick="_qlOpenWindow(\'' + safeId + '\')" style="' +
                 'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
                 'width:' + s.w + ';height:' + s.h + ';' +
                 'background:linear-gradient(135deg,' + c + '18,' + c + '08);' +
                 'border:1.5px solid ' + c + '40;border-radius:10px;' +
-                'text-decoration:none;cursor:pointer;transition:all 0.15s;gap:3px;" ' +
+                'text-decoration:none;cursor:pointer;transition:all 0.15s;gap:3px;user-select:none;" ' +
                 'onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 4px 12px ' + c + '30\'" ' +
                 'onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'" ' +
-                'title="' + l.url + '">' +
+                'title="' + (l.name || '') + ' — cliquer pour ouvrir">' +
                 '<span style="font-size:' + s.fs + ';">' + (l.icon || '\ud83c\udf10') + '</span>' +
                 '<span style="font-size:' + s.lbl + ';font-weight:700;color:' + c + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:calc(100% - 8px);text-align:center;">' + l.name + '</span>' +
-            '</a>';
+            '</div>';
         });
 
         html += '</div>';
         bar.innerHTML = html;
+    }
+
+    // ===== FENÊTRE INTÉGRÉE DRAGGABLE / RESIZABLE =====
+    var _qlWindows = {}; // fenêtres ouvertes par id
+    var _qlZIndex = 21000;
+
+    window._qlOpenWindow = function(linkId) {
+        var list = _linksLoad();
+        var link = list.find(function(l) { return l.id === linkId; });
+        if (!link) return;
+
+        // Si déjà ouverte, la mettre au premier plan
+        if (_qlWindows[linkId]) {
+            var existing = document.getElementById('ql-win-' + linkId);
+            if (existing) {
+                _qlZIndex++;
+                existing.style.zIndex = _qlZIndex;
+                existing.style.display = 'flex';
+                // Animation flash
+                existing.style.boxShadow = '0 0 0 3px ' + (link.color || '#3b82f6') + ', 0 20px 60px rgba(0,0,0,0.4)';
+                setTimeout(function() { existing.style.boxShadow = '0 12px 48px rgba(0,0,0,0.35)'; }, 400);
+                return;
+            }
+        }
+
+        _qlZIndex++;
+        var c = link.color || '#3b82f6';
+        var winId = 'ql-win-' + linkId;
+
+        // Taille par défaut selon la taille du lien
+        var defW, defH;
+        if (link.size === 'small') { defW = 420; defH = 340; }
+        else if (link.size === 'large') { defW = 900; defH = 620; }
+        else { defW = 650; defH = 480; }
+
+        // Centrer avec un léger décalage aléatoire pour les fenêtres multiples
+        var vw = window.innerWidth, vh = window.innerHeight;
+        defW = Math.min(defW, vw - 40);
+        defH = Math.min(defH, vh - 80);
+        var posX = Math.max(20, Math.floor((vw - defW) / 2) + Math.floor(Math.random() * 40 - 20));
+        var posY = Math.max(20, Math.floor((vh - defH) / 2) + Math.floor(Math.random() * 30 - 15));
+
+        var win = document.createElement('div');
+        win.id = winId;
+        win.setAttribute('data-link-id', linkId);
+        win.style.cssText = 'position:fixed;left:' + posX + 'px;top:' + posY + 'px;width:' + defW + 'px;height:' + defH + 'px;' +
+            'z-index:' + _qlZIndex + ';display:flex;flex-direction:column;' +
+            'background:var(--bg-card,#fff);border-radius:14px;overflow:hidden;' +
+            'box-shadow:0 12px 48px rgba(0,0,0,0.35);border:2px solid ' + c + '80;' +
+            'min-width:280px;min-height:200px;transition:box-shadow 0.3s;';
+
+        // ── BARRE DE TITRE (draggable) ──
+        var header = document.createElement('div');
+        header.style.cssText = 'background:linear-gradient(135deg,' + c + ',' + _qlDarken(c) + ');padding:0 6px;height:38px;display:flex;align-items:center;gap:6px;cursor:move;flex-shrink:0;user-select:none;';
+        header.innerHTML =
+            '<span style="font-size:0.95rem;">' + (link.icon || '\ud83c\udf10') + '</span>' +
+            '<span style="flex:1;font-size:0.8rem;font-weight:700;color:white;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + link.name + '</span>' +
+            // Boutons de contrôle
+            '<button onclick="_qlResizePreset(\'' + linkId + '\',\'small\')" title="Petit" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.6rem;font-weight:800;">S</button>' +
+            '<button onclick="_qlResizePreset(\'' + linkId + '\',\'medium\')" title="Moyen" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.6rem;font-weight:800;">M</button>' +
+            '<button onclick="_qlResizePreset(\'' + linkId + '\',\'large\')" title="Grand" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.6rem;font-weight:800;">L</button>' +
+            '<button onclick="_qlResizePreset(\'' + linkId + '\',\'full\')" title="Plein \u00e9cran" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.75rem;">⛶</button>' +
+            '<a href="' + link.url + '" target="_blank" rel="noopener" title="Ouvrir dans un nouvel onglet" style="background:rgba(255,255,255,0.15);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.7rem;display:flex;align-items:center;justify-content:center;text-decoration:none;">↗</a>' +
+            '<button onclick="_qlMinimize(\'' + linkId + '\')" title="R\u00e9duire" style="background:rgba(255,255,255,0.2);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.85rem;">−</button>' +
+            '<button onclick="_qlCloseWindow(\'' + linkId + '\')" title="Fermer" style="background:rgba(231,76,60,0.7);border:none;color:white;width:24px;height:24px;border-radius:5px;cursor:pointer;font-size:0.85rem;">✕</button>';
+        win.appendChild(header);
+
+        // ── IFRAME ──
+        var iframe = document.createElement('iframe');
+        iframe.src = link.url;
+        iframe.style.cssText = 'flex:1;border:none;width:100%;background:white;';
+        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox');
+        iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+        win.appendChild(iframe);
+
+        // ── POIGNÉE DE REDIMENSIONNEMENT (coin bas-droit) ──
+        var resizeHandle = document.createElement('div');
+        resizeHandle.style.cssText = 'position:absolute;bottom:0;right:0;width:18px;height:18px;cursor:nwse-resize;z-index:2;';
+        resizeHandle.innerHTML = '<svg width="18" height="18" style="opacity:0.4;"><path d="M14 18L18 14M10 18L18 10M6 18L18 6" stroke="' + c + '" stroke-width="1.5" fill="none"/></svg>';
+        win.appendChild(resizeHandle);
+
+        // ── POIGNÉE BORD DROIT ──
+        var resizeRight = document.createElement('div');
+        resizeRight.style.cssText = 'position:absolute;top:38px;right:0;width:6px;bottom:18px;cursor:ew-resize;z-index:2;';
+        win.appendChild(resizeRight);
+
+        // ── POIGNÉE BORD BAS ──
+        var resizeBottom = document.createElement('div');
+        resizeBottom.style.cssText = 'position:absolute;bottom:0;left:0;right:18px;height:6px;cursor:ns-resize;z-index:2;';
+        win.appendChild(resizeBottom);
+
+        document.body.appendChild(win);
+        _qlWindows[linkId] = { el: win, iframe: iframe, minimized: false };
+
+        // ── DRAG (barre de titre) ──
+        _qlMakeDraggable(win, header, iframe);
+
+        // ── RESIZE (coin + bords) ──
+        _qlMakeResizable(win, resizeHandle, iframe, 'both');
+        _qlMakeResizable(win, resizeRight, iframe, 'horizontal');
+        _qlMakeResizable(win, resizeBottom, iframe, 'vertical');
+
+        // Focus on click
+        win.addEventListener('mousedown', function() {
+            _qlZIndex++;
+            win.style.zIndex = _qlZIndex;
+        });
+    };
+
+    function _qlDarken(hex) {
+        var r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+        r = Math.max(0, r - 30); g = Math.max(0, g - 30); b = Math.max(0, b - 30);
+        return '#' + [r,g,b].map(function(v) { return v.toString(16).padStart(2,'0'); }).join('');
+    }
+
+    function _qlMakeDraggable(win, handle, iframe) {
+        var ox, oy, sx, sy, dragging = false;
+        handle.addEventListener('mousedown', function(e) {
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
+            dragging = true;
+            ox = e.clientX; oy = e.clientY;
+            sx = win.offsetLeft; sy = win.offsetTop;
+            iframe.style.pointerEvents = 'none';
+            _qlZIndex++; win.style.zIndex = _qlZIndex;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', function(e) {
+            if (!dragging) return;
+            var dx = e.clientX - ox, dy = e.clientY - oy;
+            var nx = Math.max(0, Math.min(window.innerWidth - 60, sx + dx));
+            var ny = Math.max(0, Math.min(window.innerHeight - 40, sy + dy));
+            win.style.left = nx + 'px'; win.style.top = ny + 'px';
+        });
+        document.addEventListener('mouseup', function() {
+            if (dragging) { dragging = false; iframe.style.pointerEvents = ''; }
+        });
+
+        // Touch support
+        handle.addEventListener('touchstart', function(e) {
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
+            var t = e.touches[0]; dragging = true;
+            ox = t.clientX; oy = t.clientY;
+            sx = win.offsetLeft; sy = win.offsetTop;
+            iframe.style.pointerEvents = 'none';
+            _qlZIndex++; win.style.zIndex = _qlZIndex;
+        }, {passive: true});
+        document.addEventListener('touchmove', function(e) {
+            if (!dragging) return;
+            var t = e.touches[0];
+            var dx = t.clientX - ox, dy = t.clientY - oy;
+            var nx = Math.max(0, Math.min(window.innerWidth - 60, sx + dx));
+            var ny = Math.max(0, Math.min(window.innerHeight - 40, sy + dy));
+            win.style.left = nx + 'px'; win.style.top = ny + 'px';
+        }, {passive: true});
+        document.addEventListener('touchend', function() {
+            if (dragging) { dragging = false; iframe.style.pointerEvents = ''; }
+        });
+    }
+
+    function _qlMakeResizable(win, handle, iframe, mode) {
+        var ox, oy, sw, sh, resizing = false;
+        handle.addEventListener('mousedown', function(e) {
+            resizing = true; ox = e.clientX; oy = e.clientY;
+            sw = win.offsetWidth; sh = win.offsetHeight;
+            iframe.style.pointerEvents = 'none';
+            e.preventDefault(); e.stopPropagation();
+        });
+        document.addEventListener('mousemove', function(e) {
+            if (!resizing) return;
+            if (mode === 'both' || mode === 'horizontal') {
+                var nw = Math.max(280, sw + (e.clientX - ox));
+                win.style.width = nw + 'px';
+            }
+            if (mode === 'both' || mode === 'vertical') {
+                var nh = Math.max(200, sh + (e.clientY - oy));
+                win.style.height = nh + 'px';
+            }
+        });
+        document.addEventListener('mouseup', function() {
+            if (resizing) { resizing = false; iframe.style.pointerEvents = ''; }
+        });
+
+        // Touch
+        handle.addEventListener('touchstart', function(e) {
+            var t = e.touches[0]; resizing = true;
+            ox = t.clientX; oy = t.clientY;
+            sw = win.offsetWidth; sh = win.offsetHeight;
+            iframe.style.pointerEvents = 'none';
+            e.stopPropagation();
+        }, {passive: true});
+        document.addEventListener('touchmove', function(e) {
+            if (!resizing) return;
+            var t = e.touches[0];
+            if (mode === 'both' || mode === 'horizontal') win.style.width = Math.max(280, sw + (t.clientX - ox)) + 'px';
+            if (mode === 'both' || mode === 'vertical') win.style.height = Math.max(200, sh + (t.clientY - oy)) + 'px';
+        }, {passive: true});
+        document.addEventListener('touchend', function() {
+            if (resizing) { resizing = false; iframe.style.pointerEvents = ''; }
+        });
+    }
+
+    window._qlResizePreset = function(linkId, preset) {
+        var w = _qlWindows[linkId];
+        if (!w) return;
+        var el = w.el;
+        var vw = window.innerWidth, vh = window.innerHeight;
+        if (preset === 'full') {
+            el.style.left = '0px'; el.style.top = '0px';
+            el.style.width = vw + 'px'; el.style.height = vh + 'px';
+            el.style.borderRadius = '0';
+        } else {
+            el.style.borderRadius = '14px';
+            var dims = { small: [420,340], medium: [650,480], large: [900,620] };
+            var d = dims[preset] || dims.medium;
+            var nw = Math.min(d[0], vw - 40), nh = Math.min(d[1], vh - 60);
+            el.style.width = nw + 'px'; el.style.height = nh + 'px';
+            el.style.left = Math.max(10, (vw - nw) / 2) + 'px';
+            el.style.top = Math.max(10, (vh - nh) / 2) + 'px';
+        }
+    };
+
+    window._qlMinimize = function(linkId) {
+        var w = _qlWindows[linkId];
+        if (!w) return;
+        w.el.style.display = 'none';
+        w.minimized = true;
+        _qlRenderTaskbar();
+    };
+
+    window._qlRestoreWindow = function(linkId) {
+        var w = _qlWindows[linkId];
+        if (!w) return;
+        w.el.style.display = 'flex';
+        w.minimized = false;
+        _qlZIndex++; w.el.style.zIndex = _qlZIndex;
+        _qlRenderTaskbar();
+    };
+
+    window._qlCloseWindow = function(linkId) {
+        var w = _qlWindows[linkId];
+        if (!w) return;
+        w.el.remove();
+        delete _qlWindows[linkId];
+        _qlRenderTaskbar();
+    };
+
+    // ── BARRE DES TÂCHES (fenêtres minimisées) ──
+    function _qlRenderTaskbar() {
+        var taskbar = document.getElementById('ql-taskbar');
+        if (!taskbar) {
+            taskbar = document.createElement('div');
+            taskbar.id = 'ql-taskbar';
+            taskbar.style.cssText = 'position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:21500;display:flex;gap:6px;padding:6px 10px;background:rgba(30,30,30,0.85);backdrop-filter:blur(12px);border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+            document.body.appendChild(taskbar);
+        }
+        var list = _linksLoad();
+        var minimized = [];
+        Object.keys(_qlWindows).forEach(function(id) {
+            if (_qlWindows[id].minimized) {
+                var link = list.find(function(l) { return l.id === id; });
+                if (link) minimized.push(link);
+            }
+        });
+        if (!minimized.length) { taskbar.style.display = 'none'; return; }
+        taskbar.style.display = 'flex';
+        taskbar.innerHTML = minimized.map(function(l) {
+            var c = l.color || '#3b82f6';
+            return '<div onclick="_qlRestoreWindow(\'' + l.id + '\')" style="display:flex;align-items:center;gap:5px;padding:5px 12px;background:' + c + '30;border:1px solid ' + c + '60;border-radius:8px;cursor:pointer;transition:all 0.15s;" ' +
+                'onmouseover="this.style.background=\'' + c + '50\'" onmouseout="this.style.background=\'' + c + '30\'">' +
+                '<span style="font-size:0.85rem;">' + (l.icon || '\ud83c\udf10') + '</span>' +
+                '<span style="font-size:0.72rem;font-weight:700;color:white;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + l.name + '</span>' +
+                '<span onclick="event.stopPropagation();_qlCloseWindow(\'' + l.id + '\')" style="font-size:0.65rem;color:rgba(255,255,255,0.6);cursor:pointer;margin-left:2px;">✕</span>' +
+            '</div>';
+        }).join('');
     }
 
     // Hook dans l'ouverture du panel modules
@@ -12206,6 +12594,7 @@ function toggleInfoSection(headerElement) {
         document.getElementById('edit-mode-banner').classList.remove('active');
         document.body.classList.remove('edit-mode-active');
         updateInterfaceTitle();
+        if (typeof _quickLinksRender === 'function') _quickLinksRender();
         const fabMsgOut = document.getElementById('fab-msg');
         if (fabMsgOut) fabMsgOut.style.display = 'none';
         updateCartUI();
@@ -13074,6 +13463,8 @@ logout = function(skipConfirmation = false) {
         updateCartUI();
         toggleCart();
         showScanToast('✅ Vente validée !');
+        // Actualiser les stats du dashboard
+        if (typeof window._awRefreshStats === 'function') window._awRefreshStats();
     }
 
     function showReceipt(sale) {
@@ -16273,6 +16664,7 @@ logout = function(skipConfirmation = false) {
             covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
             covo_presence:        localStorage.getItem('covo_presence')        || null,
             covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
+            covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
             _version: 20,
             _savedAt: new Date().toISOString()
         }, null, 2);
@@ -16345,6 +16737,7 @@ logout = function(skipConfirmation = false) {
             if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
+            if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
             saveAll(); renderAll();
             if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
             if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
@@ -16551,6 +16944,7 @@ logout = function(skipConfirmation = false) {
             if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
+            if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
                 saveAll();
                 renderAll();
                 closeImportModal();
@@ -16849,6 +17243,7 @@ logout = function(skipConfirmation = false) {
         renderStatistics();
         if (isAdmin) renderHistory();
         showScanToast('🚫 Ticket #' + sale.id + ' annulé — retour en attente d\'approbation dans Retours client');
+        if (typeof window._awRefreshStats === 'function') window._awRefreshStats();
     };
 
     // ===== CORRECTION MONTANT REÇU =====
@@ -16958,6 +17353,7 @@ logout = function(skipConfirmation = false) {
         updateAdminButton();
         if (typeof updateInterfaceTitle === 'function') updateInterfaceTitle();
         if (typeof _quickLinksRender === 'function') _quickLinksRender();
+        if (typeof _awRefreshStats === 'function') _awRefreshStats();
         if (typeof applyTabsVisibility === 'function') applyTabsVisibility();
         if (isAdmin && typeof loadTabVisibilityUI === 'function') loadTabVisibilityUI();
         updateRetourClientBtn();
@@ -25253,6 +25649,7 @@ function initAdminSections() {
                 covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
                 covo_presence:        localStorage.getItem('covo_presence')        || null,
                 covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
+                covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
                 _version: 20,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
@@ -25461,6 +25858,7 @@ function initAdminSections() {
             if (data.covo_night_tariff)  localStorage.setItem('covo_night_tariff',  data.covo_night_tariff);
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
+            if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
 
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
@@ -25483,6 +25881,8 @@ function initAdminSections() {
             if (typeof invUpdateStats === 'function')       invUpdateStats();
             // Bandeau DLC
             if (typeof _updateExpiryMarquee === 'function') _updateExpiryMarquee();
+            // Liens rapides
+            if (typeof _quickLinksRender === 'function') _quickLinksRender();
             // ────────────────────────────────────────────────────────────
 
             setTimeout(() => { _gdRestoring = false; }, 3000);
@@ -26531,6 +26931,7 @@ function initAdminSections() {
             covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
             covo_presence:        localStorage.getItem('covo_presence')        || null,
             covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
+            covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
             _type: 'parametres', _version: 20, _savedAt: ts, _source: 'google_drive_split',
         }, null, 2);
     }
