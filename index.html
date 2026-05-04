@@ -7235,8 +7235,7 @@ function toggleInfoSection(headerElement) {
                 });
                 // Garder les 500 dernières entrées
                 localStorage.setItem(HIST_KEY, JSON.stringify(hist.slice(0, 500)));
-                // Synchroniser vers Drive (sauvegarde globale + dossier dédié)
-                if (typeof window._gdTriggerAutoSave  === 'function') window._gdTriggerAutoSave();
+                // Synchroniser l'historique de connexion vers Drive (pas de sauvegarde globale au login)
                 if (typeof window._gdTriggerHistSave  === 'function') window._gdTriggerHistSave();
             } catch(e) {}
 
@@ -11638,9 +11637,8 @@ function toggleInfoSection(headerElement) {
                     device:   navigator.userAgent.slice(0, 80)
                 });
                 localStorage.setItem(HIST, JSON.stringify(hist.slice(0, 500)));
-                // Décaler les sauvegardes Drive au login pour éviter les doublons de dossiers
+                // Historique de connexion vers Drive uniquement (pas de sauvegarde globale au login)
                 if (typeof window._gdTriggerHistSave  === 'function') setTimeout(() => window._gdTriggerHistSave(),  1000);
-                if (typeof window._gdTriggerAutoSave  === 'function') setTimeout(() => window._gdTriggerAutoSave(),  2500);
             }
         } catch(e) {}
 
@@ -20074,18 +20072,32 @@ window.invModalSubmit = function() {
 window._logStockChange = function(product, before, after, type, reason, meta) {
     if (!product) return;
     if (!Array.isArray(product.stockHistory)) product.stockHistory = [];
+    var userName = 'system';
+    try {
+        if (typeof currentUser !== 'undefined' && currentUser && currentUser.username) userName = currentUser.username;
+        else if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser()) userName = window._covoCurrentUser().name || window._covoCurrentUser().id || 'system';
+    } catch(e) {}
     product.stockHistory.push({
         date:   new Date().toISOString(),
         type:   type || 'manual',
-        before: parseFloat(Number(before).toFixed(3)),
-        after:  parseFloat(Number(after).toFixed(3)),
-        delta:  parseFloat(Number(after - before).toFixed(3)),
+        before: before != null ? parseFloat(Number(before).toFixed(3)) : null,
+        after:  after  != null ? parseFloat(Number(after).toFixed(3))  : null,
+        delta:  (before != null && after != null) ? parseFloat(Number(after - before).toFixed(3)) : 0,
         reason: reason || '',
-        user:   (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser()) ? (window._covoCurrentUser().name || window._covoCurrentUser().id) : 'system',
+        user:   userName,
         meta:   meta || {}
     });
     // Garder les 500 dernières entrées max
     if (product.stockHistory.length > 500) product.stockHistory = product.stockHistory.slice(-500);
+    // Synchroniser immédiatement vers localStorage
+    try {
+        var allP = (typeof products !== 'undefined' && Array.isArray(products)) ? products : JSON.parse(localStorage.getItem('covo_products') || '[]');
+        var idx = allP.findIndex(function(p) { return p.id === product.id; });
+        if (idx >= 0) {
+            allP[idx].stockHistory = product.stockHistory;
+            localStorage.setItem('covo_products', JSON.stringify(allP));
+        }
+    } catch(e) {}
 };
 
 window._rebuildStockHistory = function(product) {
@@ -20094,7 +20106,10 @@ window._rebuildStockHistory = function(product) {
     var ticketIds = {};
     existing.forEach(function(e) { if (e.ticketId) ticketIds[e.ticketId] = true; });
     var allSales = [];
-    try { allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch(ee) {}
+    try {
+        if (typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) allSales = salesHistory;
+        else allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
+    } catch(ee) {}
     var toAdd = [];
     allSales.forEach(function(sale) {
         if (sale.cancelled) return;
@@ -20125,6 +20140,12 @@ window._rebuildStockHistory = function(product) {
             .sort(function(a, b) { return new Date(a.date) - new Date(b.date); })
             .slice(-500);
         try {
+            // Mettre à jour en mémoire
+            if (typeof products !== 'undefined' && Array.isArray(products)) {
+                var memIdx = products.findIndex(function(p) { return p.id === product.id; });
+                if (memIdx >= 0) products[memIdx].stockHistory = product.stockHistory;
+            }
+            // Sauvegarder dans localStorage
             var allP = JSON.parse(localStorage.getItem('covo_products') || '[]');
             var idx = allP.findIndex(function(p) { return p.id === product.id; });
             if (idx >= 0) { allP[idx].stockHistory = product.stockHistory; localStorage.setItem('covo_products', JSON.stringify(allP)); }
@@ -20136,10 +20157,15 @@ window._rebuildStockHistory = function(product) {
 window._shProduct = null;
 
 window._openStockHistory = function(productId) {
-    var allP;
-    try { allP = JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch(e) { allP = []; }
-    var p = allP.find(function(x) { return x.id == productId; });
-    if (!p) { if(typeof rToast==='function')rToast('Produit introuvable','info'); return; }
+    // Utiliser la variable en mémoire (la plus à jour), avec fallback localStorage
+    var p = null;
+    if (typeof products !== 'undefined' && Array.isArray(products)) {
+        p = products.find(function(x) { return x.id == productId; });
+    }
+    if (!p) {
+        try { var allP = JSON.parse(localStorage.getItem('covo_products') || '[]'); p = allP.find(function(x) { return x.id == productId; }); } catch(e) {}
+    }
+    if (!p) { if(typeof showScanToast==='function') showScanToast('Produit introuvable','info'); return; }
     // Fermer la modale produit
     var pdm = document.querySelector('.product-detail-modal');
     if (pdm) { pdm.classList.remove('active'); pdm.style.display = 'none'; }
