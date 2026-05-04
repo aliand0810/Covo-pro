@@ -20312,6 +20312,12 @@ window._openFinPoste = function() {
     document.getElementById('fp-recu-esp').value = '';
     document.getElementById('fp-recu-cb').value = '';
     document.getElementById('fp-note').value = '';
+    // Fond de caisse / prise de poste
+    var lastFond = localStorage.getItem('covo_fond_caisse') || '';
+    document.getElementById('fp-fond-caisse').value = lastFond;
+    var nowTime = today.toTimeString().slice(0,5);
+    var prisePoste = localStorage.getItem('covo_prise_poste') || nowTime;
+    document.getElementById('fp-prise-poste').value = prisePoste;
     document.getElementById('fp-ecart-esp').textContent = '—';
     document.getElementById('fp-ecart-cb').textContent = '—';
     document.getElementById('fp-ecart-esp').style.color = 'var(--text-main,#2c3e50)';
@@ -20345,6 +20351,11 @@ window._fpCalcEcart = function(field) {
     var ecEl  = document.getElementById('fp-ecart-' + field);
     var val   = parseFloat(inp.value);
     if (isNaN(val)) { ecEl.textContent = '—'; ecEl.style.color = 'var(--text-main)'; return; }
+    // Pour les espèces, ajouter le fond de caisse au théorique
+    if (field === 'esp') {
+        var fondCaisse = parseFloat(document.getElementById('fp-fond-caisse').value) || 0;
+        theor = theor + fondCaisse;
+    }
     var ecart = parseFloat((val - theor).toFixed(2));
     var sign  = ecart >= 0 ? '+' : '';
     ecEl.textContent = sign + ecart.toFixed(2) + ' €';
@@ -20355,13 +20366,21 @@ window._fpValider = function(estPartiel) {
     var recuEsp = document.getElementById('fp-recu-esp').value.trim();
     var recuCb  = document.getElementById('fp-recu-cb').value.trim();
     var note    = document.getElementById('fp-note').value.trim();
+    var fondCaisse = parseFloat(document.getElementById('fp-fond-caisse').value) || 0;
+    var prisePoste = document.getElementById('fp-prise-poste').value || null;
     var u       = typeof window._covoCurrentUser === 'function' ? window._covoCurrentUser() : null;
     var cashier = u ? (u.name || u.username || u.id) : 'Inconnu';
+
+    // Sauvegarder le fond de caisse pour la prochaine fois
+    localStorage.setItem('covo_fond_caisse', fondCaisse > 0 ? String(fondCaisse) : '');
+    localStorage.setItem('covo_prise_poste', prisePoste || '');
 
     var recuEspF = recuEsp !== '' ? parseFloat(recuEsp) : null;
     var recuCbF  = recuCb  !== '' ? parseFloat(recuCb)  : null;
 
-    var ecartEsp = recuEspF !== null ? parseFloat((recuEspF - window._fpTheorEsp).toFixed(2)) : null;
+    // Écart espèces : le fond de caisse s'ajoute au théorique (il était dans la caisse à l'ouverture)
+    var theorEspAvecFond = window._fpTheorEsp + fondCaisse;
+    var ecartEsp = recuEspF !== null ? parseFloat((recuEspF - theorEspAvecFond).toFixed(2)) : null;
     var ecartCb  = recuCbF  !== null ? parseFloat((recuCbF  - window._fpTheorCb ).toFixed(2)) : null;
 
     var entry = {
@@ -20372,6 +20391,8 @@ window._fpValider = function(estPartiel) {
         nbVentes:    window._fpNbTx,
         nbRetours:   window._fpNbRetours,
         totalJour:   window._fpTotalJour,
+        fondCaisse:  fondCaisse,
+        prisePoste:  prisePoste,
         theorEsp:    window._fpTheorEsp,
         theorCb:     window._fpTheorCb,
         recuEsp:     recuEspF,
@@ -20517,6 +20538,18 @@ function renderCloturesTab() {
         r += '<span style="margin-left:auto;font-size:0.75rem;font-weight:700;color:#8e44ad;">\ud83d\udc64 ' + (h.caissier || 'Inconnu') + '</span>';
         r += '</div>';
 
+        // Prise de poste / Fond de caisse
+        if (h.fondCaisse > 0 || h.prisePoste) {
+            r += '<div style="display:flex;gap:12px;margin-bottom:8px;flex-wrap:wrap;">';
+            if (h.prisePoste) {
+                r += '<span style="font-size:0.7rem;background:rgba(155,89,182,0.08);color:#8e44ad;padding:3px 10px;border-radius:6px;font-weight:600;">\u23f0 Prise de poste : ' + h.prisePoste + '</span>';
+            }
+            if (h.fondCaisse > 0) {
+                r += '<span style="font-size:0.7rem;background:rgba(155,89,182,0.08);color:#8e44ad;padding:3px 10px;border-radius:6px;font-weight:600;">\ud83e\ude99 Fond de caisse : ' + h.fondCaisse.toFixed(2) + ' \u20ac</span>';
+            }
+            r += '</div>';
+        }
+
         // Ligne 2 : grille de détails
         r += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;">';
 
@@ -20530,6 +20563,7 @@ function renderCloturesTab() {
         r += '<div style="background:rgba(39,174,96,0.06);border-radius:8px;padding:8px 10px;text-align:center;">';
         r += '<div style="font-size:0.65rem;color:#27ae60;font-weight:600;">\ud83d\udcb6 Esp\u00e8ces</div>';
         r += '<div style="font-size:0.82rem;font-weight:700;color:var(--text-main);">' + (h.theorEsp || 0).toFixed(2) + ' \u20ac</div>';
+        if (h.fondCaisse > 0) r += '<div style="font-size:0.62rem;color:#8e44ad;font-weight:600;">+ fond : ' + h.fondCaisse.toFixed(2) + ' \u20ac</div>';
         if (h.recuEsp != null) r += '<div style="font-size:0.68rem;color:var(--gray);">Re\u00e7u : ' + h.recuEsp.toFixed(2) + ' \u20ac</div>';
         r += '<div style="font-size:0.72rem;font-weight:700;color:' + ecEspC + ';">\u00c9cart : ' + ecEsp + '</div>';
         r += '</div>';
@@ -20573,7 +20607,7 @@ function _clotStatCard(icon, value, label, color) {
 function exportCloturesCSV() {
     var hist = _loadCaisseHistorique();
     if (!hist.length) { showScanToast('\u26a0\ufe0f Aucune cl\u00f4ture \u00e0 exporter', 'info'); return; }
-    var headers = ['Date','Heure','Caissier','Type','NbVentes','NbRetours','CA_Total','Theor_Especes','Recu_Especes','Ecart_Especes','Theor_CB','Recu_CB','Ecart_CB','Note'];
+    var headers = ['Date','Heure','Caissier','Type','PrisePoste','FondCaisse','NbVentes','NbRetours','CA_Total','Theor_Especes','Recu_Especes','Ecart_Especes','Theor_CB','Recu_CB','Ecart_CB','Note'];
     var rows = hist.map(function(h) {
         var d = new Date(h.datetime);
         return [
@@ -20581,6 +20615,8 @@ function exportCloturesCSV() {
             d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),
             '"' + (h.caissier || '').replace(/"/g,'""') + '"',
             h.partiel ? 'Partielle' : 'Finale',
+            h.prisePoste || '',
+            h.fondCaisse != null ? h.fondCaisse.toFixed(2) : '0.00',
             h.nbVentes || 0,
             h.nbRetours || 0,
             (h.totalJour || 0).toFixed(2),
@@ -25510,6 +25546,8 @@ function initAdminSections() {
                   ${row('💼 Investissements',     cur.inv,                      nw.inv)}
                   ${row('💬 Messages',            (JSON.parse(localStorage.getItem('covo_messages')||'[]')).length, (newData.covo_messages||[]).length)}
                   ${row('📋 Historique connexions',(JSON.parse(localStorage.getItem('covo_login_history')||'[]')).length, (newData.covo_login_history||[]).length)}
+                  ${row('🔗 Liens rapides',       (JSON.parse(localStorage.getItem('covo_quick_links')||'[]')).length, (newData.covo_quick_links||[]).length)}
+                  ${row('🗓️ Clôtures de poste',  (JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]')).length, (newData.covo_caisse_historique||[]).length)}
                 </tbody>
               </table>
 
@@ -27109,7 +27147,6 @@ function initAdminSections() {
     // ── Sauvegarde VENTES (déclenchée à chaque vente) ─────────────────
     let _gdSalesTimer = null;
     window._gdTriggerSalesSave = function() {
-        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) { _gdMarkDriveDirty(); return; }
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdSalesTimer);
         _gdSalesTimer = setTimeout(async () => {
@@ -27128,7 +27165,6 @@ function initAdminSections() {
     // ── Sauvegarde PARAMÈTRES (déclenchée sur modif settings) ─────────
     let _gdParamsTimer = null;
     window._gdTriggerParamsSave = function() {
-        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) { _gdMarkDriveDirty(); return; }
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdParamsTimer);
         _gdParamsTimer = setTimeout(async () => {
@@ -27798,6 +27834,27 @@ setTimeout(_updatePwaInstallUI,1500);
 
       <!-- Alerte déjà clôturé -->
       <div id="fp-alert" style="display:none;padding:8px 12px;border-radius:8px;font-size:0.78rem;font-weight:700;background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;color:#d35400;"></div>
+
+      <!-- Prise de poste / Fond de caisse -->
+      <div style="background:linear-gradient(135deg,rgba(155,89,182,0.08),rgba(142,68,173,0.04));border-radius:12px;padding:14px 16px;border:1.5px solid rgba(155,89,182,0.3);">
+        <div style="font-size:0.72rem;font-weight:700;color:#8e44ad;text-transform:uppercase;margin-bottom:10px;">🪙 Fond de caisse / Prise de poste</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">💰 Fond de caisse ouverture (€)</label>
+            <input id="fp-fond-caisse" type="number" step="0.01" min="0" placeholder="0.00"
+              oninput="window._fpCalcEcart('esp')"
+              style="width:100%;padding:10px 12px;border:2px solid rgba(155,89,182,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#8e44ad;box-sizing:border-box;background:var(--input-bg,#fff);">
+          </div>
+          <div>
+            <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">⏰ Heure prise de poste</label>
+            <input id="fp-prise-poste" type="time" value=""
+              style="width:100%;padding:10px 12px;border:2px solid rgba(155,89,182,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#8e44ad;box-sizing:border-box;background:var(--input-bg,#fff);">
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:0.68rem;color:var(--gray,#888);font-style:italic;">
+          💡 Saisissez le montant en espèces présent dans la caisse à l'ouverture. Il sera déduit du calcul d'écart.
+        </div>
+      </div>
 
       <!-- Récapitulatif du jour -->
       <div style="background:var(--bg-card-2,#f8fafc);border-radius:12px;padding:14px 16px;border:1.5px solid var(--border-color,#e0e0e0);">
