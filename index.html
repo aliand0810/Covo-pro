@@ -20616,18 +20616,50 @@ function _clotStatCard(icon, value, label, color) {
 function exportCloturesCSV() {
     var hist = _loadCaisseHistorique();
     if (!hist.length) { showScanToast('\u26a0\ufe0f Aucune cl\u00f4ture \u00e0 exporter', 'info'); return; }
+    var headers = ['Date','Heure','Caissier','Type','PrisePoste','FondCaisse','NbVentes','NbRetours','CA_Total','Theor_Especes','Recu_Especes','Ecart_Especes','Theor_CB','Recu_CB','Ecart_CB','Note'];
+    var rows = hist.map(function(h) {
+        var d = new Date(h.datetime);
+        return [
+            h.date || '',
+            d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),
+            '"' + (h.caissier || '').replace(/"/g,'""') + '"',
+            h.partiel ? 'Partielle' : 'Finale',
+            h.prisePoste || '',
+            h.fondCaisse != null ? h.fondCaisse.toFixed(2) : '0.00',
+            h.nbVentes || 0,
+            h.nbRetours || 0,
+            (h.totalJour || 0).toFixed(2),
+            (h.theorEsp || 0).toFixed(2),
+            h.recuEsp != null ? h.recuEsp.toFixed(2) : '',
+            h.ecartEsp != null ? h.ecartEsp.toFixed(2) : '',
+            (h.theorCb || 0).toFixed(2),
+            h.recuCb != null ? h.recuCb.toFixed(2) : '',
+            h.ecartCb != null ? h.ecartCb.toFixed(2) : '',
+            '"' + (h.note || '').replace(/"/g,'""') + '"'
+        ].join(';');
+    });
+    var csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n');
+    var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'clotures_poste_' + new Date().toISOString().split('T')[0] + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    showScanToast('\u2705 ' + hist.length + ' cl\u00f4ture(s) export\u00e9e(s)', 'success');
+}
 
 // ===== SUPPRESSION D'UNE CLÔTURE =====
 window._clotDelete = function(id) {
     if (!currentUser || (currentUser.role !== 'admin' && !currentUser.isMaster && currentUser.id !== 'USR-MASTER')) {
-        showScanToast('\u26d4 Accès réservé aux administrateurs', 'error'); return;
+        showScanToast('\u26d4 Acc\u00e8s r\u00e9serv\u00e9 aux administrateurs', 'error'); return;
     }
-    if (!confirm('Supprimer cette clôture de poste ?\nCette action est irréversible.')) return;
+    if (!confirm('Supprimer cette cl\u00f4ture de poste ?\nCette action est irr\u00e9versible.')) return;
     var hist = _loadCaisseHistorique();
     hist = hist.filter(function(h) { return h.id !== id; });
     _saveCaisseHistorique(hist);
     renderCloturesTab();
-    showScanToast('\ud83d\uddd1\ufe0f Clôture supprimée', 'success');
+    showScanToast('\ud83d\uddd1\ufe0f Cl\u00f4ture supprim\u00e9e', 'success');
 };
 
 // ===== MODIFICATION D'UNE CLÔTURE =====
@@ -20635,7 +20667,7 @@ window._clotEditId = null;
 
 window._clotOpenEdit = function(id) {
     if (!currentUser || (currentUser.role !== 'admin' && !currentUser.isMaster && currentUser.id !== 'USR-MASTER')) {
-        showScanToast('\u26d4 Accès réservé aux administrateurs', 'error'); return;
+        showScanToast('\u26d4 Acc\u00e8s r\u00e9serv\u00e9 aux administrateurs', 'error'); return;
     }
     var hist = _loadCaisseHistorique();
     var entry = hist.find(function(h) { return h.id === id; });
@@ -20656,7 +20688,6 @@ window._clotOpenEdit = function(id) {
     document.getElementById('clot-edit-recu-cb').value     = entry.recuCb != null ? entry.recuCb.toFixed(2) : '';
     document.getElementById('clot-edit-note').value        = entry.note || '';
 
-    // Titre avec date
     var d = new Date(entry.datetime);
     var dateLabel = d.toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
     document.getElementById('clot-edit-title-date').textContent = dateLabel;
@@ -20669,7 +20700,7 @@ window._clotSaveEdit = function() {
     if (!id) return;
     var hist = _loadCaisseHistorique();
     var idx = hist.findIndex(function(h) { return h.id === id; });
-    if (idx < 0) { showScanToast('\u274c Clôture introuvable', 'error'); return; }
+    if (idx < 0) { showScanToast('\u274c Cl\u00f4ture introuvable', 'error'); return; }
 
     var date      = document.getElementById('clot-edit-date').value.trim();
     var caissier  = document.getElementById('clot-edit-caissier').value.trim();
@@ -20710,40 +20741,8 @@ window._clotSaveEdit = function() {
     _saveCaisseHistorique(hist);
     document.getElementById('clot-edit-modal').style.display = 'none';
     renderCloturesTab();
-    showScanToast('\u2705 Clôture modifiée', 'success');
+    showScanToast('\u2705 Cl\u00f4ture modifi\u00e9e', 'success');
 };
-    var headers = ['Date','Heure','Caissier','Type','PrisePoste','FondCaisse','NbVentes','NbRetours','CA_Total','Theor_Especes','Recu_Especes','Ecart_Especes','Theor_CB','Recu_CB','Ecart_CB','Note'];
-    var rows = hist.map(function(h) {
-        var d = new Date(h.datetime);
-        return [
-            h.date || '',
-            d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}),
-            '"' + (h.caissier || '').replace(/"/g,'""') + '"',
-            h.partiel ? 'Partielle' : 'Finale',
-            h.prisePoste || '',
-            h.fondCaisse != null ? h.fondCaisse.toFixed(2) : '0.00',
-            h.nbVentes || 0,
-            h.nbRetours || 0,
-            (h.totalJour || 0).toFixed(2),
-            (h.theorEsp || 0).toFixed(2),
-            h.recuEsp != null ? h.recuEsp.toFixed(2) : '',
-            h.ecartEsp != null ? h.ecartEsp.toFixed(2) : '',
-            (h.theorCb || 0).toFixed(2),
-            h.recuCb != null ? h.recuCb.toFixed(2) : '',
-            h.ecartCb != null ? h.ecartCb.toFixed(2) : '',
-            '"' + (h.note || '').replace(/"/g,'""') + '"'
-        ].join(';');
-    });
-    var csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n');
-    var blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'clotures_poste_' + new Date().toISOString().split('T')[0] + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-    showScanToast('\u2705 ' + hist.length + ' cl\u00f4ture(s) export\u00e9e(s)', 'success');
-}
 
 function invAddEntry() {
     const desc    = (document.getElementById('inv-desc')?.value || '').trim();
