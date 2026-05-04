@@ -6963,6 +6963,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
                 covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
                 covo_quick_links:     JSON.parse(localStorage.getItem('covo_quick_links')     || '[]'),
+                covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
                 _version: 17, _savedAt
             }, null, 2);
             const writable = await covoFileHandle.createWritable();
@@ -7023,6 +7024,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
             if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
+            if (data.covo_caisse_historique) localStorage.setItem('covo_caisse_historique', JSON.stringify(data.covo_caisse_historique));
             if (typeof refreshRetours === 'function') setTimeout(() => refreshRetours(), 200);
             // Sync localStorage principal
             localStorage.setItem('covo_products',      JSON.stringify(products));
@@ -16669,6 +16671,7 @@ logout = function(skipConfirmation = false) {
             covo_presence:        localStorage.getItem('covo_presence')        || null,
             covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
             covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
+            covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
             _version: 20,
             _savedAt: new Date().toISOString()
         }, null, 2);
@@ -16742,11 +16745,13 @@ logout = function(skipConfirmation = false) {
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
             if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
+            if (data.covo_caisse_historique) localStorage.setItem('covo_caisse_historique', JSON.stringify(data.covo_caisse_historique));
             saveAll(); renderAll();
             if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
             if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
             if (typeof refreshRetours === 'function')         refreshRetours();
             if (typeof _updateExpiryMarquee === 'function')   _updateExpiryMarquee();
+            if (typeof renderCloturesTab === 'function')      renderCloturesTab();
             showScanToast('✅ Restauration réussie — '+nbProduits+' produit(s), '+nbVentes+' vente(s) chargée(s)' + (label?' depuis "'+label+'"':''), 'success');
         } catch(err) {
             showScanToast('❌ Erreur lors de la restauration', 'error');
@@ -16949,11 +16954,13 @@ logout = function(skipConfirmation = false) {
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
             if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
+            if (data.covo_caisse_historique) localStorage.setItem('covo_caisse_historique', JSON.stringify(data.covo_caisse_historique));
                 saveAll();
                 renderAll();
                 closeImportModal();
                 if (typeof invUpdateStats === 'function') invUpdateStats();
                 if (typeof refreshRetours === 'function') refreshRetours();
+                if (typeof renderCloturesTab === 'function') renderCloturesTab();
                 const nbP = (data.products||[]).length;
                 const nbV = (data.salesHistory||[]).filter(s=>!s.cancelled).length;
                 showScanToast(`✅ Restauration réussie — ${nbP} produit(s), ${nbV} vente(s) validée(s)`, 'success');
@@ -20255,7 +20262,8 @@ function _loadCaisseHistorique() {
 }
 function _saveCaisseHistorique(hist) {
     localStorage.setItem(_CAISSE_KEY, JSON.stringify(hist));
-    if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+    // Forcer la sauvegarde Drive des clôtures (même pour admin-dev)
+    if (typeof window._gdForceClotureSave === 'function') window._gdForceClotureSave();
 }
 
 window._openFinPoste = function() {
@@ -20383,6 +20391,8 @@ window._fpValider = function(estPartiel) {
     if (typeof window.showScanToast === 'function') window.showScanToast('🏁 ' + label, 'success');
 
     window._renderCaisseHist();
+    // Rafraîchir l'onglet clôtures si visible
+    if (typeof renderCloturesTab === 'function') renderCloturesTab();
 
     // Si clôture finale, masquer les champs de saisie
     if (!estPartiel) {
@@ -25682,6 +25692,7 @@ function initAdminSections() {
                 covo_presence:        localStorage.getItem('covo_presence')        || null,
                 covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
                 covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
+                covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
                 _version: 20,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
@@ -25891,6 +25902,7 @@ function initAdminSections() {
             if (data.covo_presence)        localStorage.setItem('covo_presence',        data.covo_presence);
             if (data.covo_inv_questions)  localStorage.setItem('covo_inv_questions',  data.covo_inv_questions);
             if (data.covo_quick_links)   localStorage.setItem('covo_quick_links',   JSON.stringify(data.covo_quick_links));
+            if (data.covo_caisse_historique) localStorage.setItem('covo_caisse_historique', JSON.stringify(data.covo_caisse_historique));
 
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
@@ -27089,6 +27101,7 @@ function initAdminSections() {
             covo_presence:        localStorage.getItem('covo_presence')        || null,
             covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
             covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
+            covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
             _type: 'parametres', _version: 20, _savedAt: ts, _source: 'google_drive_split',
         }, null, 2);
     }
@@ -27154,6 +27167,24 @@ function initAdminSections() {
                 localStorage.setItem('gdrive_last_links_save', ts);
                 console.log('\ud83d\udd17 Sauvegarde LIENS OK');
             } catch(e) { console.warn('GDrive links save:', e); }
+        }, 2000);
+    };
+
+    // ── Sauvegarde CLÔTURES (forcée — même pour admin-développeur) ────
+    let _gdClotureTimer = null;
+    window._gdForceClotureSave = function() {
+        if (!window._gdUploadToHierarchy) return;
+        clearTimeout(_gdClotureTimer);
+        _gdClotureTimer = setTimeout(async () => {
+            try {
+                const now = new Date();
+                const ts  = now.toISOString();
+                const ds  = ts.split('T')[0];
+                const tm  = now.toTimeString().split(' ')[0].replace(/:/g,'-');
+                await window._gdUploadToHierarchy('parametres', now, `covo_backup_PARAMS_${ds}_${tm}.json`, _gdBuildParamsPayload(ts), 'application/json');
+                localStorage.setItem('gdrive_last_params_save', ts);
+                console.log('\ud83c\udfc1 Sauvegarde CL\u00d4TURE OK (forc\u00e9e)');
+            } catch(e) { console.warn('GDrive cloture save:', e); }
         }, 2000);
     };
 
@@ -27250,7 +27281,7 @@ function initAdminSections() {
             if (data.nightTariffSettings) { Object.assign(nightTariffSettings, data.nightTariffSettings); localStorage.setItem('nightTariffSettings', JSON.stringify(nightTariffSettings)); }
             if (data.cashierPermissions)  { Object.assign(cashierPermissions, data.cashierPermissions); localStorage.setItem('cashierPermissions', JSON.stringify(cashierPermissions)); }
             if (data.deliveryGoal != null){ deliveryGoal = data.deliveryGoal; localStorage.setItem('deliveryGoal', String(deliveryGoal)); }
-            ['covo_retours','covo_marchandise','covo_echeances','covo_rhist','covo_hist','covo_investissements','covo_inv_categories','covo_ech_categories','covo_messages','covo_login_history','covo_settings','covo_aw_panels','covo_modules_config','covo_night_tariff','covo_presence','covo_inv_questions','covo_dark_mode'].forEach(k => {
+            ['covo_retours','covo_marchandise','covo_echeances','covo_rhist','covo_hist','covo_investissements','covo_inv_categories','covo_ech_categories','covo_messages','covo_login_history','covo_settings','covo_aw_panels','covo_modules_config','covo_night_tariff','covo_presence','covo_inv_questions','covo_dark_mode','covo_caisse_historique','covo_quick_links'].forEach(k => {
                 if (data[k] != null) localStorage.setItem(k, typeof data[k] === 'string' ? data[k] : JSON.stringify(data[k]));
             });
             // Appliquer le mode nuit immédiatement si restauré
@@ -27270,6 +27301,7 @@ function initAdminSections() {
         try { if (typeof renderStatsHistory === 'function') renderStatsHistory(); } catch(e) {}
         try { if (typeof invRender === 'function') invRender(); } catch(e) {}
         try { if (typeof refreshRetours === 'function') refreshRetours(); } catch(e) {}
+        try { if (typeof renderCloturesTab === 'function') renderCloturesTab(); } catch(e) {}
 
         const modeLabel = mode === 'ventes' ? '💰 Ventes' : mode === 'params' ? '⚙️ Paramètres' : mode === 'liens' ? '🔗 Liens' : '📦 Tout';
         showScanToast(`✅ Restauration ${modeLabel} appliquée avec succès`, 'success');
