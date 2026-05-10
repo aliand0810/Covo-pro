@@ -4263,6 +4263,27 @@
                 <div id="color-theme-grid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:10px;"></div>
             </div>
 
+            <!-- ===== PRISE DE POSTE / FIN DE POSTE ===== -->
+            <div style="margin-bottom:18px; padding:14px; background:var(--bg-card-2,#f8fafc); border-radius:10px; border:1.5px solid var(--border-color,#e0e0e0);">
+                <h4 style="margin:0 0 14px; color:var(--text-main,#1c1008); display:flex; align-items:center; gap:8px; font-size:0.92rem;">🌅 Prise de poste &amp; Fin de poste</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                    <div>
+                        <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--text-muted,#777);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px;">Affichage de (heure)</label>
+                        <input type="time" id="pp-hour-start" value="06:00" style="width:100%;padding:8px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.9rem;">
+                    </div>
+                    <div>
+                        <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--text-muted,#777);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px;">Affichage jusqu'à (heure)</label>
+                        <input type="time" id="pp-hour-end" value="11:00" style="width:100%;padding:8px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.9rem;">
+                    </div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="display:block;font-size:0.75rem;font-weight:700;color:var(--text-muted,#777);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px;">Heure de fin de poste (déclenchement auto)</label>
+                    <input type="time" id="pp-fin-hour" value="22:00" style="width:180px;padding:8px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.9rem;">
+                </div>
+                <button onclick="_savePrisePosteSettings()" style="padding:9px 20px;border:none;border-radius:8px;background:linear-gradient(135deg,#00bfa5,#0097a7);color:white;font-weight:700;cursor:pointer;font-size:0.85rem;">💾 Enregistrer</button>
+                <span id="pp-save-confirm" style="margin-left:10px;color:#00bfa5;font-size:0.8rem;display:none;">✓ Sauvegardé</span>
+            </div>
+
             <div style="display:flex; gap:10px; margin-bottom:10px;">
                 <input type="text" id="settings-logo-url" placeholder="Lien URL du logo (Format PNG/JPG)" style="flex:1;">
                 <button onclick="updateSettings()" style="background:var(--info); color:white;">💾 Mettre à jour Logo</button>
@@ -7447,6 +7468,121 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 
     window.applyColorTheme = applyColorTheme;
     window.renderColorThemeSelector = renderColorThemeSelector;
+
+    // ===== PRISE DE POSTE / FIN DE POSTE =====
+    var _ppFinPosteTimer = null;
+
+    function _ppGetSettings() {
+        var s = JSON.parse(localStorage.getItem('covo_pp_settings') || '{}');
+        return {
+            startH: s.startH || '06:00',
+            endH:   s.endH   || '11:00',
+            finH:   s.finH   || '22:00'
+        };
+    }
+
+    window._savePrisePosteSettings = function() {
+        var s = {
+            startH: document.getElementById('pp-hour-start').value || '06:00',
+            endH:   document.getElementById('pp-hour-end').value   || '11:00',
+            finH:   document.getElementById('pp-fin-hour').value   || '22:00'
+        };
+        localStorage.setItem('covo_pp_settings', JSON.stringify(s));
+        var conf = document.getElementById('pp-save-confirm');
+        if (conf) { conf.style.display = 'inline'; setTimeout(() => conf.style.display = 'none', 2000); }
+        _ppScheduleFinPoste();
+    };
+
+    function _ppLoadAdminUI() {
+        var s = _ppGetSettings();
+        var el;
+        el = document.getElementById('pp-hour-start'); if (el) el.value = s.startH;
+        el = document.getElementById('pp-hour-end');   if (el) el.value = s.endH;
+        el = document.getElementById('pp-fin-hour');   if (el) el.value = s.finH;
+    }
+
+    function _ppTimeToMinutes(hhmm) {
+        var parts = (hhmm || '').split(':');
+        return parseInt(parts[0] || 0) * 60 + parseInt(parts[1] || 0);
+    }
+
+    function _checkMorningPP() {
+        var s = _ppGetSettings();
+        var now = new Date();
+        var todayStr = now.toISOString().slice(0, 10);
+        var alreadyDone = localStorage.getItem('covo_pp_done_' + todayStr);
+        if (alreadyDone) return;
+        var nowMins  = now.getHours() * 60 + now.getMinutes();
+        var startMin = _ppTimeToMinutes(s.startH);
+        var endMin   = _ppTimeToMinutes(s.endH);
+        if (nowMins < startMin || nowMins > endMin) return;
+        _ppOpenMorningModal();
+    }
+
+    function _ppOpenMorningModal() {
+        var modal = document.getElementById('prise-poste-modal');
+        if (!modal) return;
+        var dateEl = document.getElementById('pp-modal-date');
+        if (dateEl) {
+            var d = new Date();
+            dateEl.textContent = d.toLocaleDateString('fr-FR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'});
+        }
+        var inp = document.getElementById('pp-fond-input');
+        if (inp) { inp.value = ''; }
+        modal.style.display = 'flex';
+        setTimeout(() => { var i = document.getElementById('pp-fond-input'); if(i) i.focus(); }, 100);
+    }
+
+    window._ppMorningConfirm = function() {
+        var inp = document.getElementById('pp-fond-input');
+        var val = parseFloat((inp ? inp.value : '') || 0);
+        // Save fond de caisse
+        localStorage.setItem('covo_fond_caisse', String(val));
+        // Sync to fin-poste modal field if it exists
+        var fpFond = document.getElementById('fp-fond-caisse');
+        if (fpFond) fpFond.value = val;
+        // Mark done for today
+        var todayStr = new Date().toISOString().slice(0, 10);
+        localStorage.setItem('covo_pp_done_' + todayStr, '1');
+        document.getElementById('prise-poste-modal').style.display = 'none';
+        showScanToast('🌅 Prise de poste enregistrée — Fond de caisse : ' + val.toFixed(2) + ' €', 'success');
+        _ppScheduleFinPoste();
+    };
+
+    window._ppMorningSkip = function() {
+        document.getElementById('prise-poste-modal').style.display = 'none';
+    };
+
+    function _ppScheduleFinPoste() {
+        if (_ppFinPosteTimer) { clearTimeout(_ppFinPosteTimer); _ppFinPosteTimer = null; }
+        var s = _ppGetSettings();
+        var now = new Date();
+        var finMin = _ppTimeToMinutes(s.finH);
+        var nowMin = now.getHours() * 60 + now.getMinutes();
+        var diffMs;
+        if (nowMin < finMin) {
+            diffMs = (finMin - nowMin) * 60000 - now.getSeconds() * 1000;
+        } else {
+            // Already past — schedule for tomorrow
+            var msToMidnight = (24 * 60 - nowMin) * 60000;
+            diffMs = msToMidnight + finMin * 60000;
+        }
+        _ppFinPosteTimer = setTimeout(function() {
+            var todayStr = new Date().toISOString().slice(0, 10);
+            var finDone = localStorage.getItem('covo_fp_done_' + todayStr);
+            if (!finDone && typeof window._openFinPoste === 'function') {
+                window._openFinPoste();
+            }
+        }, diffMs);
+    }
+
+    window._ppOpenMorningModal = _ppOpenMorningModal;
+
+    // Charger l'UI admin prise de poste au init
+    document.addEventListener('DOMContentLoaded', function() {
+        _ppLoadAdminUI();
+        _ppScheduleFinPoste();
+    });
 
     // ===== GESTION CONNEXION/DÉCONNEXION =====
     function openInfoModal() {
@@ -11964,6 +12100,9 @@ function toggleInfoSection(headerElement) {
         if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
         const _fabMsg = document.getElementById('fab-msg');
         if (_fabMsg) _fabMsg.style.display = 'flex';
+
+        // Vérifier prise de poste (matin)
+        setTimeout(() => _checkMorningPP(), 800);
 
         if (user.role === 'admin') {
             openAdminWelcomeModal();
@@ -20928,6 +21067,7 @@ window._openFinPoste = function() {
     // Stocker les théoriques pour calcul d'écart
     window._fpTheorEsp = totalEsp;
     window._fpTheorCb  = totalCb;
+    setTimeout(window._fpUpdateTotalCaisse, 50);
     window._fpTodaySales = todaySales;
     window._fpTodayStr   = todayStr;
     window._fpNbTx = nbTx;
@@ -20948,17 +21088,20 @@ window._openFinPoste = function() {
     setTimeout(function() { document.getElementById('fp-recu-esp').focus(); }, 80);
 };
 
+window._fpUpdateTotalCaisse = function() {
+    var esp  = window._fpTheorEsp || 0;
+    var fond = parseFloat(document.getElementById('fp-fond-caisse')?.value || 0) || 0;
+    var total = esp + fond;
+    var el = document.getElementById('fp-total-caisse');
+    if (el) el.textContent = total.toFixed(2) + ' €';
+};
+
 window._fpCalcEcart = function(field) {
     var theor = field === 'esp' ? window._fpTheorEsp : window._fpTheorCb;
     var inp   = document.getElementById('fp-recu-' + field);
     var ecEl  = document.getElementById('fp-ecart-' + field);
     var val   = parseFloat(inp.value);
     if (isNaN(val)) { ecEl.textContent = '—'; ecEl.style.color = 'var(--text-main)'; return; }
-    // Pour les espèces, ajouter le fond de caisse au théorique
-    if (field === 'esp') {
-        var fondCaisse = parseFloat(document.getElementById('fp-fond-caisse').value) || 0;
-        theor = theor + fondCaisse;
-    }
     var ecart = parseFloat((val - theor).toFixed(2));
     var sign  = ecart >= 0 ? '+' : '';
     ecEl.textContent = sign + ecart.toFixed(2) + ' €';
@@ -20981,9 +21124,7 @@ window._fpValider = function(estPartiel) {
     var recuEspF = recuEsp !== '' ? parseFloat(recuEsp) : null;
     var recuCbF  = recuCb  !== '' ? parseFloat(recuCb)  : null;
 
-    // Écart espèces : le fond de caisse s'ajoute au théorique (il était dans la caisse à l'ouverture)
-    var theorEspAvecFond = window._fpTheorEsp + fondCaisse;
-    var ecartEsp = recuEspF !== null ? parseFloat((recuEspF - theorEspAvecFond).toFixed(2)) : null;
+    var ecartEsp = recuEspF !== null ? parseFloat((recuEspF - window._fpTheorEsp).toFixed(2)) : null;
     var ecartCb  = recuCbF  !== null ? parseFloat((recuCbF  - window._fpTheorCb ).toFixed(2)) : null;
 
     var entry = {
@@ -21027,6 +21168,8 @@ window._fpValider = function(estPartiel) {
         document.getElementById('fp-alert').style.borderColor = '#27ae60';
         document.getElementById('fp-alert').style.color = '#27ae60';
         document.getElementById('fp-alert').innerHTML = '✅ Clôture enregistrée — ' + new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        // Marquer fin de poste fait pour aujourd'hui
+        localStorage.setItem('covo_fp_done_' + window._fpTodayStr, '1');
     }
 };
 
@@ -21418,8 +21561,7 @@ window._clotSaveEdit = function() {
 
     var recuEspF = recuEsp !== '' ? parseFloat(recuEsp) : null;
     var recuCbF  = recuCb  !== '' ? parseFloat(recuCb)  : null;
-    var theorEspAvecFond = theorEsp + fond;
-    var ecartEsp = recuEspF !== null ? parseFloat((recuEspF - theorEspAvecFond).toFixed(2)) : null;
+    var ecartEsp = recuEspF !== null ? parseFloat((recuEspF - theorEsp).toFixed(2)) : null;
     var ecartCb  = recuCbF  !== null ? parseFloat((recuCbF  - theorCb).toFixed(2)) : null;
 
     hist[idx].date       = date || hist[idx].date;
@@ -28839,6 +28981,34 @@ setTimeout(_updatePwaInstallUI,1500);
 </button>
 
 
+<!-- ===== MODALE PRISE DE POSTE (matin) ===== -->
+<div id="prise-poste-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);backdrop-filter:blur(10px);z-index:25000;justify-content:center;align-items:center;padding:16px;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:420px;box-shadow:0 24px 64px rgba(0,0,0,0.5);overflow:hidden;">
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#00bfa5,#0097a7);padding:18px 22px;display:flex;align-items:center;gap:12px;">
+      <span style="font-size:2rem;">🌅</span>
+      <div>
+        <div style="color:white;font-weight:800;font-size:1.1rem;">Prise de poste</div>
+        <div id="pp-modal-date" style="color:rgba(255,255,255,0.8);font-size:0.78rem;margin-top:2px;"></div>
+      </div>
+    </div>
+    <!-- Body -->
+    <div style="padding:22px 22px 18px;">
+      <p style="margin:0 0 16px;color:var(--text-main,#2c3e50);font-size:0.9rem;line-height:1.5;">Merci de saisir le montant disponible en caisse pour commencer la journée.</p>
+      <label style="display:block;font-size:0.8rem;font-weight:700;color:var(--text-muted,#777);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;">🪙 Fond de caisse (€)</label>
+      <input id="pp-fond-input" type="number" min="0" step="0.01" placeholder="0.00"
+        style="width:100%;box-sizing:border-box;padding:13px 14px;border:2px solid var(--border-color,#e0e0e0);border-radius:10px;font-size:1.2rem;font-weight:700;color:var(--text-main,#2c3e50);background:var(--bg-body,#f5f7fa);text-align:center;outline:none;transition:border-color .2s;"
+        onfocus="this.style.borderColor='#00bfa5'" onblur="this.style.borderColor='var(--border-color,#e0e0e0)'"
+        onkeydown="if(event.key==='Enter') _ppMorningConfirm()">
+    </div>
+    <!-- Footer -->
+    <div style="padding:0 22px 20px;display:flex;gap:10px;">
+      <button onclick="_ppMorningSkip()" style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:10px;background:transparent;color:var(--text-muted,#888);font-weight:700;cursor:pointer;font-size:0.85rem;">Plus tard</button>
+      <button onclick="_ppMorningConfirm()" style="flex:2;padding:11px;border:none;border-radius:10px;background:linear-gradient(135deg,#00bfa5,#0097a7);color:white;font-weight:800;cursor:pointer;font-size:0.9rem;">✅ Confirmer</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== MODALE FIN DE POSTE ===== -->
 <div id="fin-poste-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:21000;justify-content:center;align-items:center;padding:16px;">
   <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:680px;max-height:93vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.45);overflow:hidden;">
@@ -28865,7 +29035,7 @@ setTimeout(_updatePwaInstallUI,1500);
           <div>
             <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">💰 Fond de caisse ouverture (€)</label>
             <input id="fp-fond-caisse" type="number" step="0.01" min="0" placeholder="0.00"
-              oninput="window._fpCalcEcart('esp')"
+              oninput="window._fpCalcEcart('esp');window._fpUpdateTotalCaisse()"
               style="width:100%;padding:10px 12px;border:2px solid rgba(155,89,182,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#8e44ad;box-sizing:border-box;background:var(--input-bg,#fff);">
           </div>
           <div>
@@ -28893,15 +29063,24 @@ setTimeout(_updatePwaInstallUI,1500);
         </div>
 
         <!-- Grille théorique -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
           <div style="background:var(--bg-card,#fff);border-radius:9px;padding:10px 12px;border:1.5px solid rgba(39,174,96,0.3);">
-            <div style="font-size:0.68rem;color:#27ae60;font-weight:700;text-transform:uppercase;margin-bottom:4px;">💶 Espèces (théorique)</div>
+            <div style="font-size:0.68rem;color:#27ae60;font-weight:700;text-transform:uppercase;margin-bottom:4px;">💶 CA Espèces</div>
             <div id="fp-theor-esp" style="font-weight:800;font-size:1rem;color:#27ae60;"></div>
           </div>
           <div style="background:var(--bg-card,#fff);border-radius:9px;padding:10px 12px;border:1.5px solid rgba(52,152,219,0.3);">
-            <div style="font-size:0.68rem;color:#3498db;font-weight:700;text-transform:uppercase;margin-bottom:4px;">💳 CB (théorique)</div>
+            <div style="font-size:0.68rem;color:#3498db;font-weight:700;text-transform:uppercase;margin-bottom:4px;">💳 CA CB</div>
             <div id="fp-theor-cb" style="font-weight:800;font-size:1rem;color:#3498db;"></div>
           </div>
+        </div>
+
+        <!-- Total Caisse = CA Espèces + Fond de caisse -->
+        <div style="background:linear-gradient(135deg,rgba(39,174,96,0.12),rgba(39,174,96,0.04));border-radius:10px;padding:12px 14px;border:2px solid rgba(39,174,96,0.4);display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div style="font-size:0.68rem;font-weight:700;color:#27ae60;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;">🏦 Total Caisse</div>
+            <div style="font-size:0.68rem;color:var(--gray,#888);">CA Espèces + Fond de caisse</div>
+          </div>
+          <div id="fp-total-caisse" style="font-weight:900;font-size:1.3rem;color:#27ae60;">— €</div>
         </div>
       </div>
 
