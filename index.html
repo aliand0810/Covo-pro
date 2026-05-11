@@ -13038,12 +13038,31 @@ function toggleInfoSection(headerElement) {
                     const text = await resp.text();
                     const data = JSON.parse(text);
 
-                    if (data && (data.products || data.salesHistory)) {
+                    if (data) {
+                        // ── Stratégie de restauration par couches ────────────────────────
+                        // 1. Si le fichier principal est VENTES-only → chercher PARAMS pour les produits
+                        // 2. Restaurer PARAMS (produits + paramètres) en premier
+                        // 3. Superposer VENTES si plus récent (pour les ventes à jour)
+
+                        const isVentesOnly = latestFile.name.includes('_VENTES_');
+                        const isParamsOnly = latestFile.name.includes('_PARAMS_');
+
+                        // Cas 1 : fichier principal = VENTES → charger aussi PARAMS pour les produits
+                        if (isVentesOnly && latestParamsFile) {
+                            try {
+                                _splashStep('sync', '📦', 'Restauration des données', 'Produits & paramètres…', 'active');
+                                const rp = await window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${latestParamsFile.id}?alt=media`);
+                                const dp = JSON.parse(await rp.text());
+                                if (typeof window._doRestoreFromData === 'function') window._doRestoreFromData(dp, latestParamsFile.name);
+                            } catch(e) { console.warn('Params restore warning:', e); }
+                        }
+
+                        // Cas 2 : restauration du fichier principal (complet ou PARAMS ou VENTES)
                         if (typeof window._doRestoreFromData === 'function') {
                             window._doRestoreFromData(data, latestFile.name);
                         }
 
-                        // Si un fichier VENTES scindé est plus récent → l'appliquer par-dessus
+                        // Cas 3 : si un fichier VENTES est plus récent que le fichier principal → superposer
                         if (latestVentesFile && latestFile.id !== latestVentesFile.id) {
                             const ventesDate = new Date(latestVentesFile.modifiedTime);
                             const mainDate   = new Date(latestFile.modifiedTime);
@@ -13053,20 +13072,25 @@ function toggleInfoSection(headerElement) {
                                     const rv = await window._gdFetchPublic(`https://www.googleapis.com/drive/v3/files/${latestVentesFile.id}?alt=media`);
                                     const dv = JSON.parse(await rv.text());
                                     if (dv.salesHistory) {
+                                        salesHistory = dv.salesHistory;
                                         localStorage.setItem('covo_sales_history', JSON.stringify(dv.salesHistory));
                                     }
                                 } catch(e) { console.warn('Ventes restore warning:', e); }
                             }
                         }
 
+                        // ── Forcer la persistance de TOUS les produits en localStorage ──
+                        if (products && products.length > 0) {
+                            localStorage.setItem('covo_products', JSON.stringify(products));
+                        }
+
                         localStorage.setItem('gdrive_last_restore', new Date().toISOString());
-                        const nbProd  = (data.products||[]).length;
-                        const nbVente = (data.salesHistory||[]).length;
+                        const nbProd  = products.length;
+                        const nbVente = salesHistory.length;
                         const nbInv   = (data.covo_inventory||[]).filter(s=>s.status==='validated').length;
                         restoreOk    = true;
-                        restoreLabel = `${nbProd} produits · ${nbVente} ventes`;
-                        if (nbInv   > 0) restoreLabel += ` · ${nbInv} inv.`;
-                        if (latestVentesFile) restoreLabel += ' · 💰';
+                        restoreLabel = `${nbProd} produit${nbProd>1?'s':''} · ${nbVente} vente${nbVente>1?'s':''}`;
+                        if (nbInv > 0) restoreLabel += ` · ${nbInv} inv.`;
                     }
                 } catch(e) {
                     console.warn('Splash restore error:', e);
@@ -18516,17 +18540,24 @@ logout = function(skipConfirmation = false) {
     // ── Restauration pure depuis un objet JSON déjà parsé ─────────────────────
     function _doRestoreFromData(data, label) {
         try {
+            // ── Sécurité : ne remplacer que les champs PRÉSENTS dans le backup ──
+            // Évite d'écraser products avec [] si le fichier est un backup VENTES seul
+            // et d'écraser salesHistory avec [] si le fichier est un backup PARAMS seul.
             const nbProduits = (data.products     || []).length;
             const nbVentes   = (data.salesHistory || []).length;
 
-            products     = (data.products || []).map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
-            categories   = data.categories  || ["Général"];
-            users        = (data.users || users).map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
-            salesHistory = data.salesHistory || [];
-            promoTypes   = data.promoTypes   || [0, 5, 10, 15, 20, 25, 30, 50];
-            appSettings  = data.appSettings  || { logoUrl: '' };
-            if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
-            if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false;
+            if (data.products && data.products.length > 0) {
+                products = data.products.map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
+            }
+            if (data.categories)   categories   = data.categories;
+            if (data.users)        users = data.users.map((u,i) => u.id ? u : { ...u, id:'USR-'+String(i+1).padStart(4,'0') });
+            if (data.salesHistory) salesHistory = data.salesHistory;
+            if (data.promoTypes)   promoTypes   = data.promoTypes;
+            if (data.appSettings) {
+                appSettings = data.appSettings;
+                if (!appSettings.sessionTimeout) appSettings.sessionTimeout = 5;
+                if (appSettings.autoFullscreenOnLogin === undefined) appSettings.autoFullscreenOnLogin = false;
+            }
             if (data.nightTariffSettings)  nightTariffSettings  = data.nightTariffSettings;
             if (data.cashierPermissions)   cashierPermissions   = data.cashierPermissions;
             if (data.pendingSync)          pendingSync          = data.pendingSync;
