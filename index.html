@@ -4437,9 +4437,9 @@
 
         <!-- ===== ONGLET HISTORIQUE DES CLÔTURES ===== -->
         <div class="tab-content" id="tab-clotures">
-            
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px;">
-                <h3 style="font-size:1.1rem;display:flex;align-items:center;gap:8px;color:black;">🗓️ Historique des clôtures de poste</h3>
+
+            <div style="">
+                <h3 style="color:black;">🗓️ Historique des clôtures de poste</h3>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                     <select id="cloture-filter-period" onchange="_clotPeriodChange()" style="padding:7px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.83rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
                         <option value="7">7 derniers jours</option>
@@ -18173,8 +18173,9 @@ logout = function(skipConfirmation = false) {
     // ===== OBJECTIF & PROGRÈS =====
     function updateProgress() {
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        const todaySales = salesHistory.filter(s => { if (s.cancelled) return false; const saleDate = new Date(s.date); saleDate.setHours(0, 0, 0, 0); return saleDate.getTime() === today.getTime(); });
-        const total = todaySales.reduce((sum, s) => sum + s.total, 0);
+        let freshSales; try { freshSales = JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch { freshSales = []; }
+        const todaySales = freshSales.filter(s => { if (s.cancelled) return false; const saleDate = new Date(s.date); saleDate.setHours(0, 0, 0, 0); return saleDate.getTime() === today.getTime(); });
+        const total = todaySales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
         const percent = Math.min((total / deliveryGoal) * 100, 100);
         document.getElementById('progress-current').innerText = total.toFixed(2) + '€';
         document.getElementById('progress-percent').innerText = percent.toFixed(0) + '%';
@@ -22222,6 +22223,48 @@ window.invOpenAddModal = function() {
         var mainCat = document.getElementById('inv-cat');
         if (mainCat) catSel.innerHTML = mainCat.innerHTML;
     }
+    // Reset mode édition
+    window._invEditId = null;
+    var titleEl2 = document.getElementById('inv-add-modal-title');
+    if (titleEl2) titleEl2.textContent = '💼 Nouvel achat / investissement';
+    var submitBtn = document.getElementById('inv-add-submit-btn');
+    if (submitBtn) submitBtn.textContent = '✅ Enregistrer';
+    // Reset onglet → Achat par défaut
+    window._invActiveTab = 'achat';
+    window._invISelectedPay = null;
+    window.invSwitchTab('achat');
+    ['inv-i-desc','inv-i-fournisseur','inv-i-montant','inv-i-amort','inv-i-residuel','inv-i-comment',
+     'inv-i-acompte','inv-i-echeance','inv-i-serie-top','inv-i-garantie','inv-i-gain'].forEach(function(id) {
+        var el = document.getElementById(id); if (el) el.value = '';
+    });
+    var iDate = document.getElementById('inv-i-date');
+    if (iDate) iDate.value = new Date().toISOString().split('T')[0];
+    // Reset type chips
+    window._invISelectedType = 'equipement';
+    document.querySelectorAll('#inv-i-type-btns button').forEach(function(b) {
+        var active = b.getAttribute('data-type') === 'equipement';
+        b.style.background = active ? 'rgba(155,89,182,0.15)' : 'transparent';
+        b.style.borderColor = active ? '#9b59b6' : '#ddd';
+        b.style.color = active ? '#8e44ad' : '#888';
+        b.style.fontWeight = active ? '800' : '700';
+    });
+    var iAmortUnit = document.getElementById('inv-i-amort-unit');
+    if (iAmortUnit) iAmortUnit.value = 'ans';
+    var iGarUnit = document.getElementById('inv-i-garantie-unit');
+    if (iGarUnit) iGarUnit.value = 'ans';
+    var iCalc = document.getElementById('inv-i-amort-calc');
+    if (iCalc) iCalc.style.display = 'none';
+    var iCr = document.getElementById('inv-i-credit-row');
+    if (iCr) iCr.style.display = 'none';
+    var iRoiRes = document.getElementById('inv-i-roi-result');
+    if (iRoiRes) iRoiRes.style.display = 'none';
+    var iGarFin = document.getElementById('inv-i-garantie-fin');
+    if (iGarFin) { iGarFin.textContent = '—'; iGarFin.style.color = '#27ae60'; }
+    var iResteFin = document.getElementById('inv-i-reste-fin');
+    if (iResteFin) iResteFin.textContent = '—';
+    document.querySelectorAll('#inv-i-pay-btns button').forEach(function(b) {
+        b.style.border = '2px solid #ddd'; b.style.background = '#fff'; b.style.color = '#2c3e50';
+    });
     modal.style.display = 'flex';
     setTimeout(function() { var d = document.getElementById('inv-m-desc'); if (d) d.focus(); }, 80);
 };
@@ -22347,7 +22390,236 @@ window.invMSelectPay = function(btn) {
     if (creditRow) creditRow.style.display = (btn.getAttribute('data-pay') === 'credit') ? 'block' : 'none';
 };
 
+// ─── ONGLET INVESTISSEMENT ────────────────────────────────────────────────────
+window._invActiveTab = 'achat';
+window._invISelectedPay = null;
+
+window.invSwitchTab = function(tab) {
+    window._invActiveTab = tab;
+    var isAchat = tab === 'achat';
+    var achatPanel = document.getElementById('inv-tab-achat-panel');
+    var investPanel = document.getElementById('inv-tab-invest-panel');
+    var btnAchat = document.getElementById('inv-tab-btn-achat');
+    var btnInvest = document.getElementById('inv-tab-btn-invest');
+    if (achatPanel)  achatPanel.style.display  = isAchat ? 'flex' : 'none';
+    if (investPanel) investPanel.style.display = isAchat ? 'none' : 'flex';
+    if (btnAchat) {
+        btnAchat.style.color        = isAchat ? '#9b59b6' : '#888';
+        btnAchat.style.borderBottom = isAchat ? '3px solid #9b59b6' : '3px solid transparent';
+        btnAchat.style.fontWeight   = isAchat ? '800' : '600';
+    }
+    if (btnInvest) {
+        btnInvest.style.color        = isAchat ? '#888' : '#9b59b6';
+        btnInvest.style.borderBottom = isAchat ? '3px solid transparent' : '3px solid #9b59b6';
+        btnInvest.style.fontWeight   = isAchat ? '600' : '800';
+    }
+};
+
+window.invISelectPay = function(btn) {
+    document.querySelectorAll('#inv-i-pay-btns button').forEach(function(b) {
+        b.style.border = '2px solid #ddd'; b.style.background = '#fff'; b.style.color = '#2c3e50';
+    });
+    btn.style.border = '2px solid #9b59b6';
+    btn.style.background = 'rgba(155,89,182,0.12)';
+    btn.style.color = '#8e44ad';
+    window._invISelectedPay = btn.getAttribute('data-pay');
+    var cr = document.getElementById('inv-i-credit-row');
+    if (cr) cr.style.display = (btn.getAttribute('data-pay') === 'credit') ? 'block' : 'none';
+    window.invICalcCredit();
+};
+
+// Type chip selection
+window._invISelectedType = 'equipement';
+window.invISelectType = function(btn) {
+    window._invISelectedType = btn.getAttribute('data-type') || 'equipement';
+    document.querySelectorAll('#inv-i-type-btns button').forEach(function(b) {
+        var active = b === btn;
+        b.style.background = active ? 'rgba(155,89,182,0.15)' : 'transparent';
+        b.style.borderColor = active ? '#9b59b6' : '#ddd';
+        b.style.color = active ? '#8e44ad' : '#888';
+        b.style.fontWeight = active ? '800' : '700';
+    });
+};
+
+// Calcul central investissement
+window.invICalcAll = function() {
+    window.invICalcAmort();
+    window.invICalcGarantie();
+    window.invICalcROI();
+};
+
+window.invICalcAmort = function() {
+    var montant  = parseFloat(document.getElementById('inv-i-montant').value || 0);
+    var duree    = parseInt(document.getElementById('inv-i-amort').value || 0);
+    var unit     = document.getElementById('inv-i-amort-unit').value;
+    var residuel = parseFloat(document.getElementById('inv-i-residuel').value || 0);
+    var dateAcq  = document.getElementById('inv-i-date').value;
+    var calcBox  = document.getElementById('inv-i-amort-calc');
+    if (!calcBox) return;
+    if (montant > 0 && duree > 0) {
+        var moisTotal = unit === 'ans' ? duree * 12 : duree;
+        var base      = montant - residuel;
+        var parMois   = base / moisTotal;
+        var parAn     = parMois * 12;
+        document.getElementById('inv-i-amort-mois').textContent  = parMois.toFixed(2) + ' €';
+        document.getElementById('inv-i-amort-an').textContent    = parAn.toFixed(2) + ' €';
+        document.getElementById('inv-i-amort-duree').textContent = duree + ' ' + unit;
+        // Fin d'amortissement
+        var finEl = document.getElementById('inv-i-amort-fin');
+        if (dateAcq && finEl) {
+            var dFin = new Date(dateAcq);
+            dFin.setMonth(dFin.getMonth() + moisTotal);
+            finEl.textContent = dFin.toLocaleDateString('fr-FR', {month:'short', year:'numeric'});
+        } else if (finEl) { finEl.textContent = '—'; }
+        // VNC actuelle + % amorti
+        var vncEl   = document.getElementById('inv-i-vnc');
+        var pctEl   = document.getElementById('inv-i-amort-pct');
+        var resteEl = document.getElementById('inv-i-amort-reste');
+        if (dateAcq && vncEl) {
+            var now       = new Date();
+            var dAcq      = new Date(dateAcq);
+            var moisEcoules = Math.max(0, (now.getFullYear() - dAcq.getFullYear()) * 12 + (now.getMonth() - dAcq.getMonth()));
+            var moisRestants = Math.max(0, moisTotal - moisEcoules);
+            var pct       = Math.min(100, (moisEcoules / moisTotal * 100)).toFixed(1);
+            var vnc       = Math.max(residuel, montant - parMois * moisEcoules);
+            vncEl.textContent   = vnc.toFixed(2) + ' €';
+            if (pctEl)   pctEl.textContent   = pct + '%';
+            if (resteEl) resteEl.textContent = moisRestants + ' mois';
+        } else {
+            if (vncEl)   vncEl.textContent   = '—';
+            if (pctEl)   pctEl.textContent   = '—';
+            if (resteEl) resteEl.textContent = '—';
+        }
+        calcBox.style.display = 'block';
+    } else {
+        calcBox.style.display = 'none';
+    }
+};
+
+window.invISetAmortPreset = function(years) {
+    var el   = document.getElementById('inv-i-amort');
+    var unit = document.getElementById('inv-i-amort-unit');
+    if (el) el.value = years;
+    if (unit) unit.value = 'ans';
+    window.invICalcAll();
+};
+
+window.invICalcGarantie = function() {
+    var duree   = parseInt(document.getElementById('inv-i-garantie').value || 0);
+    var unit    = document.getElementById('inv-i-garantie-unit').value;
+    var dateAcq = document.getElementById('inv-i-date').value;
+    var finEl   = document.getElementById('inv-i-garantie-fin');
+    if (!finEl) return;
+    if (duree > 0 && dateAcq) {
+        var d = new Date(dateAcq);
+        if (unit === 'ans') d.setFullYear(d.getFullYear() + duree);
+        else                d.setMonth(d.getMonth() + duree);
+        var now      = new Date();
+        var expired  = d < now;
+        var opts     = {day:'2-digit', month:'short', year:'numeric'};
+        finEl.textContent = d.toLocaleDateString('fr-FR', opts) + (expired ? ' ⚠️ Expirée' : '');
+        finEl.style.color = expired ? '#e74c3c' : '#27ae60';
+    } else if (duree > 0) {
+        finEl.textContent = 'Saisissez la date d\'acquisition';
+        finEl.style.color = '#e67e22';
+    } else {
+        finEl.textContent = '—';
+        finEl.style.color = '#27ae60';
+    }
+};
+
+window.invICalcROI = function() {
+    var montant = parseFloat(document.getElementById('inv-i-montant').value || 0);
+    var gain    = parseFloat(document.getElementById('inv-i-gain').value || 0);
+    var dateAcq = document.getElementById('inv-i-date').value;
+    var resEl   = document.getElementById('inv-i-roi-result');
+    var moisEl  = document.getElementById('inv-i-roi-mois');
+    var dateEl  = document.getElementById('inv-i-roi-date');
+    if (!resEl) return;
+    if (montant > 0 && gain > 0) {
+        var mois = Math.ceil(montant / gain);
+        if (moisEl) moisEl.textContent = mois + ' mois' + (mois >= 12 ? ' (' + (mois / 12).toFixed(1) + ' ans)' : '');
+        if (dateEl && dateAcq) {
+            var d = new Date(dateAcq);
+            d.setMonth(d.getMonth() + mois);
+            dateEl.textContent = d.toLocaleDateString('fr-FR', {month:'short', year:'numeric'});
+        } else if (dateEl) { dateEl.textContent = '—'; }
+        resEl.style.display = 'block';
+    } else {
+        resEl.style.display = 'none';
+    }
+};
+
+window.invICalcCredit = function() {
+    var montant  = parseFloat(document.getElementById('inv-i-montant').value || 0);
+    var acompte  = parseFloat(document.getElementById('inv-i-acompte').value || 0);
+    var resteEl  = document.getElementById('inv-i-reste-fin');
+    if (resteEl) {
+        var reste = montant > 0 ? Math.max(0, montant - acompte) : 0;
+        resteEl.textContent = reste > 0 ? reste.toFixed(2) + ' €' : '—';
+    }
+};
+
 window.invModalSubmit = function() {
+    // \u2500\u2500 Onglet Investissement \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    if (window._invActiveTab === 'invest') {
+        var iDesc    = (document.getElementById('inv-i-desc').value || '').trim();
+        var iMontant = parseFloat(document.getElementById('inv-i-montant').value || 0);
+        if (!iDesc)               { showScanToast('La d\u00e9signation est obligatoire', 'info'); return; }
+        if (!iMontant || iMontant <= 0) { showScanToast('Le montant est obligatoire', 'info'); return; }
+        if (!window._invISelectedPay) { showScanToast('S\u00e9lectionnez un mode de paiement', 'info'); return; }
+        var iType       = window._invISelectedType || 'equipement';
+        var iAmort      = parseInt(document.getElementById('inv-i-amort').value || 0) || null;
+        var iAmortUnit  = document.getElementById('inv-i-amort-unit').value;
+        var iResiduel   = parseFloat(document.getElementById('inv-i-residuel').value || 0) || 0;
+        var iFourn      = (document.getElementById('inv-i-fournisseur').value || '').trim();
+        var iSerie      = (document.getElementById('inv-i-serie-top').value || '').trim();
+        var iDate       = document.getElementById('inv-i-date').value || new Date().toISOString().split('T')[0];
+        var iComment    = (document.getElementById('inv-i-comment').value || '').trim();
+        var iGarantie   = parseInt(document.getElementById('inv-i-garantie').value || 0) || null;
+        var iGarUnit    = document.getElementById('inv-i-garantie-unit').value;
+        var iGain       = parseFloat(document.getElementById('inv-i-gain').value || 0) || null;
+        var iPay        = window._invISelectedPay;
+        var iAcompte    = iPay === 'credit' ? (parseFloat(document.getElementById('inv-i-acompte').value || 0) || null) : null;
+        var iEcheance   = iPay === 'credit' ? (document.getElementById('inv-i-echeance').value || null) : null;
+        var iMoisTotal  = iAmort ? (iAmortUnit === 'ans' ? iAmort * 12 : iAmort) : null;
+        var iParMois    = (iMoisTotal && iMontant) ? parseFloat(((iMontant - iResiduel) / iMoisTotal).toFixed(2)) : null;
+        var iRoiMois    = (iGain && iMontant) ? Math.ceil(iMontant / iGain) : null;
+        var list = invLoad();
+        var record = {
+            date: iDate, datetime: new Date().toISOString(),
+            desc: iDesc, montant: iMontant, cat: 'investissement', typeInvest: iType,
+            fournisseur: iFourn || null, numeroSerie: iSerie || null,
+            amortDuree: iAmort, amortUnit: iAmortUnit, amortMois: iMoisTotal, amortParMois: iParMois,
+            valeurResiduelle: iResiduel || null,
+            garantieDuree: iGarantie, garantieUnit: iGarUnit,
+            gainMensuel: iGain, roiMois: iRoiMois,
+            paiement: iPay, acompte: iAcompte, echeance: iEcheance,
+            resteADoit: iAcompte != null ? parseFloat((iMontant - iAcompte).toFixed(2)) : null,
+            note: iComment || null, recordType: 'investissement'
+        };
+        if (window._invEditId) {
+            var idx = list.findIndex(function(e) { return e.id === window._invEditId; });
+            if (idx !== -1) {
+                list[idx] = Object.assign({}, list[idx], record);
+                invSave(list);
+                window._invEditId = null;
+                document.getElementById('inv-add-modal').style.display = 'none';
+                if (typeof invRefreshAll === 'function') invRefreshAll();
+                showScanToast('Investissement mis \u00e0 jour : ' + iDesc, 'success');
+                return;
+            }
+        }
+        record.id = 'INV-' + Date.now();
+        record.numero = invNextNumero();
+        list.unshift(record);
+        invSave(list);
+        document.getElementById('inv-add-modal').style.display = 'none';
+        if (typeof invRefreshAll === 'function') invRefreshAll();
+        showScanToast('Investissement enregistr\u00e9 : ' + iDesc, 'success');
+        return;
+    }
+    // \u2500\u2500 Onglet Achat (comportement original) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     var desc    = (document.getElementById('inv-m-desc').value || '').trim();
     var montant = parseFloat(document.getElementById('inv-m-montant').value || 0);
     if (!desc)               { showScanToast('La d\u00e9signation est obligatoire', 'info'); return; }
@@ -23700,6 +23972,8 @@ function invEditDeletePayment(idx) {
 function invOpenEdit(id) {
     var list = invLoad(); var entry = list.find(function(e) { return e.id === id; });
     if (!entry) return;
+    // Investissement → modal détail dédié
+    if (entry.recordType === 'investissement') { invOpenDetailInvest(entry); return; }
     var modal = document.getElementById('inv-edit-modal'); if (!modal) return;
     document.getElementById('inv-edit-id').value = id;
     var titleEl = document.getElementById('inv-edit-title');
@@ -23761,6 +24035,254 @@ function invOpenEdit(id) {
 
 function invCloseEdit() { var m = document.getElementById('inv-edit-modal'); if (m) m.style.display = 'none'; }
 function invDeleteFromEdit() { var id = document.getElementById('inv-edit-id').value; if (!id) return; invCloseEdit(); invDelete(id); }
+
+// ── Détail investissement ──────────────────────────────────────────────────
+var _invDetailCurrentId = null;
+var _typeIconMap = { equipement:'🔧', materiel:'📦', vehicule:'🚐', informatique:'💻', infrastructure:'🏗️', logiciel:'📱', autre:'📌' };
+var _typeLabelMap = { equipement:'Équipement', materiel:'Matériel', vehicule:'Véhicule', informatique:'Informatique', infrastructure:'Infrastructure', logiciel:'Logiciel', autre:'Autre' };
+var _payIconMap = { comptant:'💵', cb:'💳', cheque:'📄', credit:'🔄' };
+var _payLabelMap = { comptant:'Comptant', cb:'CB', cheque:'Chèque', credit:'Crédit' };
+var _payColorMap = { comptant:'#27ae60', cb:'#3498db', cheque:'#f39c12', credit:'#e74c3c' };
+
+function invOpenDetailInvest(entry) {
+    var m = document.getElementById('inv-detail-invest-modal'); if (!m) return;
+    _invDetailCurrentId = entry.id;
+
+    // Numéro
+    var numEl = document.getElementById('inv-dv-numero');
+    if (numEl) numEl.textContent = entry.numero ? '#' + entry.numero : entry.id;
+
+    // Type icon
+    var typeIcon = _typeIconMap[entry.typeInvest] || '💼';
+    var typeLabel = _typeLabelMap[entry.typeInvest] || (entry.typeInvest || '—');
+    var iconEl = document.getElementById('inv-dv-type-icon');
+    if (iconEl) iconEl.textContent = typeIcon;
+
+    // Désignation
+    var descEl = document.getElementById('inv-dv-desc');
+    if (descEl) descEl.textContent = entry.desc || '—';
+
+    // Type badge
+    var badgeEl = document.getElementById('inv-dv-type-badge');
+    if (badgeEl) badgeEl.textContent = typeIcon + ' ' + typeLabel;
+
+    // Fournisseur
+    var fEl = document.getElementById('inv-dv-fournisseur');
+    var fTxt = document.getElementById('inv-dv-fournisseur-text');
+    if (fEl && fTxt) {
+        if (entry.fournisseur) { fTxt.textContent = entry.fournisseur; fEl.style.display = 'flex'; }
+        else { fEl.style.display = 'none'; }
+    }
+
+    // Montant
+    var mEl = document.getElementById('inv-dv-montant');
+    if (mEl) mEl.textContent = (entry.montant || 0).toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' €';
+
+    // Date
+    var dEl = document.getElementById('inv-dv-date');
+    if (dEl && entry.date) {
+        var d = new Date(entry.date + 'T12:00:00');
+        dEl.textContent = d.toLocaleDateString('fr-FR', {day:'2-digit', month:'long', year:'numeric'});
+    }
+
+    // N° série
+    var srRow = document.getElementById('inv-dv-serie-row');
+    var srEl = document.getElementById('inv-dv-serie');
+    if (srRow && srEl) {
+        if (entry.numeroSerie) { srEl.textContent = entry.numeroSerie; srRow.style.display = 'block'; }
+        else { srRow.style.display = 'none'; }
+    }
+
+    // Amortissement
+    var amortBlock = document.getElementById('inv-dv-amort-block');
+    if (amortBlock) {
+        if (entry.amortMois && entry.amortParMois) {
+            amortBlock.style.display = 'block';
+            var pmEl = document.getElementById('inv-dv-par-mois');
+            if (pmEl) pmEl.textContent = entry.amortParMois.toFixed(2) + ' €';
+            // VNC et % amorti
+            var acqDate = entry.date ? new Date(entry.date + 'T12:00:00') : new Date();
+            var moisEcoules = Math.max(0, Math.floor((new Date() - acqDate) / (1000 * 60 * 60 * 24 * 30.44)));
+            var residuel = entry.valeurResiduelle || 0;
+            var vnc = Math.max(residuel, entry.montant - entry.amortParMois * moisEcoules);
+            var pctAmorti = Math.min(100, Math.round((moisEcoules / entry.amortMois) * 100));
+            var vncEl = document.getElementById('inv-dv-vnc');
+            if (vncEl) vncEl.textContent = vnc.toFixed(2) + ' €';
+            var pctEl = document.getElementById('inv-dv-pct-amorti');
+            if (pctEl) pctEl.textContent = pctAmorti + '%';
+            // Durée
+            var durEl = document.getElementById('inv-dv-duree');
+            if (durEl) durEl.textContent = entry.amortDuree + ' ' + (entry.amortUnit || 'ans');
+            // Fin amort
+            var finDate = new Date(acqDate);
+            finDate.setMonth(finDate.getMonth() + entry.amortMois);
+            var finEl = document.getElementById('inv-dv-fin-amort');
+            if (finEl) finEl.textContent = finDate.toLocaleDateString('fr-FR', {month:'short', year:'numeric'});
+            // Mois restants
+            var moisRest = Math.max(0, entry.amortMois - moisEcoules);
+            var mrEl = document.getElementById('inv-dv-mois-rest');
+            if (mrEl) mrEl.textContent = moisRest > 0 ? moisRest + ' mois restants' : 'Amortissement terminé';
+        } else {
+            amortBlock.style.display = 'none';
+        }
+    }
+
+    // Garantie
+    var garBlock = document.getElementById('inv-dv-gar-block');
+    if (garBlock) {
+        if (entry.garantieDuree) {
+            var acqD = entry.date ? new Date(entry.date + 'T12:00:00') : new Date();
+            var garMois = entry.garantieUnit === 'mois' ? entry.garantieDuree : entry.garantieDuree * 12;
+            var expDate = new Date(acqD); expDate.setMonth(expDate.getMonth() + garMois);
+            var expired = expDate < new Date();
+            var expStr = expDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'long', year:'numeric'});
+            garBlock.style.display = 'block';
+            garBlock.style.background = expired ? 'rgba(231,76,60,0.07)' : 'rgba(39,174,96,0.06)';
+            garBlock.style.border = '1.5px solid ' + (expired ? 'rgba(231,76,60,0.25)' : 'rgba(39,174,96,0.2)');
+            var garColor = expired ? '#e74c3c' : '#27ae60';
+            var garTitleEl = garBlock.querySelector('div');
+            if (garTitleEl) garTitleEl.style.color = garColor;
+            var durGarEl = document.getElementById('inv-dv-gar-duree');
+            if (durGarEl) { durGarEl.textContent = '🛡️ ' + entry.garantieDuree + ' ' + (entry.garantieUnit || 'ans'); durGarEl.style.color = garColor; }
+            var expEl = document.getElementById('inv-dv-gar-expiry');
+            if (expEl) {
+                expEl.textContent = expired ? '⚠️ Expirée le ' + expStr : '✅ Jusqu\'au ' + expStr;
+                expEl.style.background = expired ? 'rgba(231,76,60,0.12)' : 'rgba(39,174,96,0.12)';
+                expEl.style.color = garColor;
+            }
+        } else {
+            garBlock.style.display = 'none';
+        }
+    }
+
+    // ROI
+    var roiBlock = document.getElementById('inv-dv-roi-block');
+    if (roiBlock) {
+        if (entry.gainMensuel) {
+            roiBlock.style.display = 'block';
+            var gainEl = document.getElementById('inv-dv-gain');
+            if (gainEl) gainEl.textContent = entry.gainMensuel.toFixed(2) + ' €';
+            var roiMoisEl = document.getElementById('inv-dv-roi-mois');
+            var roiMois = entry.roiMois || Math.ceil(entry.montant / entry.gainMensuel);
+            if (roiMoisEl) roiMoisEl.textContent = roiMois + ' mois';
+            var roiDateRow = document.getElementById('inv-dv-roi-date-row');
+            var roiDateEl = document.getElementById('inv-dv-roi-date');
+            if (roiDateEl && entry.date) {
+                var acqRoi = new Date(entry.date + 'T12:00:00');
+                acqRoi.setMonth(acqRoi.getMonth() + roiMois);
+                roiDateEl.textContent = acqRoi.toLocaleDateString('fr-FR', {day:'2-digit', month:'long', year:'numeric'});
+                if (roiDateRow) roiDateRow.style.display = 'block';
+            } else if (roiDateRow) { roiDateRow.style.display = 'none'; }
+        } else {
+            roiBlock.style.display = 'none';
+        }
+    }
+
+    // Mode paiement
+    var payBadge = document.getElementById('inv-dv-pay-badge');
+    if (payBadge && entry.paiement) {
+        var pc = _payColorMap[entry.paiement] || '#888';
+        payBadge.innerHTML = (_payIconMap[entry.paiement] || '') + ' ' + (_payLabelMap[entry.paiement] || entry.paiement);
+        payBadge.style.background = pc + '18';
+        payBadge.style.color = pc;
+        payBadge.style.border = '1.5px solid ' + pc + '40';
+    }
+    var creditInfo = document.getElementById('inv-dv-credit-info');
+    if (creditInfo) {
+        if (entry.paiement === 'credit') {
+            creditInfo.style.display = 'grid';
+            var acEl = document.getElementById('inv-dv-acompte');
+            if (acEl) acEl.textContent = entry.acompte ? entry.acompte.toFixed(2) + ' €' : '—';
+            var echEl = document.getElementById('inv-dv-echeance');
+            if (echEl) echEl.textContent = entry.echeance ? new Date(entry.echeance + 'T12:00:00').toLocaleDateString('fr-FR') : '—';
+            var resteEl = document.getElementById('inv-dv-reste');
+            if (resteEl) resteEl.textContent = entry.resteADoit != null ? entry.resteADoit.toFixed(2) + ' €' : '—';
+        } else {
+            creditInfo.style.display = 'none';
+        }
+    }
+
+    // Note
+    var noteBlock = document.getElementById('inv-dv-note-block');
+    var noteEl = document.getElementById('inv-dv-note');
+    if (noteBlock && noteEl) {
+        if (entry.note) { noteEl.textContent = entry.note; noteBlock.style.display = 'block'; }
+        else { noteBlock.style.display = 'none'; }
+    }
+
+    m.style.display = 'flex';
+}
+
+function invDeleteFromDetailInvest() {
+    if (!_invDetailCurrentId) return;
+    if (!confirm('Supprimer cet investissement ?')) return;
+    document.getElementById('inv-detail-invest-modal').style.display = 'none';
+    invDelete(_invDetailCurrentId);
+    _invDetailCurrentId = null;
+}
+
+window._invEditId = null;
+function invOpenEditInvest(id) {
+    var list = invLoad(); var entry = list.find(function(e) { return e.id === id; });
+    if (!entry) return;
+    // Fermer détail, ouvrir formulaire en mode édition
+    document.getElementById('inv-detail-invest-modal').style.display = 'none';
+    window.invOpenAddModal(); // reset complet
+    // Basculer sur l'onglet investissement
+    window.invSwitchTab('invest');
+    window._invActiveTab = 'invest';
+    // Pré-remplir les champs
+    var set = function(id, val) { var el = document.getElementById(id); if (el && val != null) el.value = val; };
+    set('inv-i-desc',      entry.desc);
+    set('inv-i-fournisseur', entry.fournisseur || '');
+    set('inv-i-montant',   entry.montant);
+    set('inv-i-serie-top', entry.numeroSerie || '');
+    set('inv-i-date',      entry.date);
+    set('inv-i-amort',     entry.amortDuree || '');
+    set('inv-i-residuel',  entry.valeurResiduelle || '');
+    set('inv-i-garantie',  entry.garantieDuree || '');
+    set('inv-i-gain',      entry.gainMensuel || '');
+    set('inv-i-comment',   entry.note || '');
+    // Unité amortissement
+    var amortUnit = document.getElementById('inv-i-amort-unit');
+    if (amortUnit) amortUnit.value = entry.amortUnit || 'ans';
+    // Unité garantie
+    var garUnit = document.getElementById('inv-i-garantie-unit');
+    if (garUnit) garUnit.value = entry.garantieUnit || 'ans';
+    // Type chip
+    window._invISelectedType = entry.typeInvest || 'equipement';
+    document.querySelectorAll('#inv-i-type-btns button').forEach(function(b) {
+        var active = b.getAttribute('data-type') === window._invISelectedType;
+        b.style.background = active ? 'rgba(155,89,182,0.15)' : 'transparent';
+        b.style.borderColor = active ? '#9b59b6' : '#ddd';
+        b.style.color = active ? '#8e44ad' : '#888';
+        b.style.fontWeight = active ? '800' : '700';
+    });
+    // Mode paiement
+    if (entry.paiement) {
+        document.querySelectorAll('#inv-i-pay-btns button').forEach(function(b) {
+            var on = b.getAttribute('data-pay') === entry.paiement;
+            b.style.border = on ? '2px solid #9b59b6' : '2px solid #ddd';
+            b.style.background = on ? 'rgba(155,89,182,0.12)' : '#fff';
+            b.style.color = on ? '#8e44ad' : '#2c3e50';
+        });
+        window._invISelectedPay = entry.paiement;
+        var cr = document.getElementById('inv-i-credit-row');
+        if (cr) cr.style.display = entry.paiement === 'credit' ? 'block' : 'none';
+        if (entry.paiement === 'credit') {
+            set('inv-i-acompte',  entry.acompte || '');
+            set('inv-i-echeance', entry.echeance || '');
+        }
+    }
+    // Recalculer
+    window.invICalcAll();
+    // Passer en mode mise à jour
+    window._invEditId = id;
+    var titleEl = document.getElementById('inv-add-modal-title');
+    if (titleEl) titleEl.textContent = '✏️ Modifier l\'investissement';
+    var submitBtn = document.getElementById('inv-add-submit-btn');
+    if (submitBtn) submitBtn.textContent = '💾 Mettre à jour';
+}
 
 function invSaveEdit() {
     var id = document.getElementById('inv-edit-id').value;
@@ -30880,10 +31402,25 @@ setTimeout(_updatePwaInstallUI,1500);
 <div id="inv-add-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:20600;justify-content:center;align-items:center;padding:20px;">
   <div style="background:var(--bg-card,#1e2639);border-radius:16px;width:100%;max-width:640px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;">
     <div style="background:linear-gradient(135deg,#9b59b6,#8e44ad);padding:18px 22px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div style="color:white;font-weight:800;font-size:1rem;">💼 Nouvel achat / investissement</div>
+      <div id="inv-add-modal-title" style="color:white;font-weight:800;font-size:1rem;">💼 Nouvel achat / investissement</div>
       <button onclick="document.getElementById('inv-add-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
     </div>
-    <div style="overflow-y:auto;flex:1;padding:22px 24px;display:flex;flex-direction:column;gap:14px;background:var(--bg-card,#fff);">
+    <div style="overflow-y:auto;flex:1;display:flex;flex-direction:column;background:var(--bg-card,#fff);">
+
+      <!-- ONGLETS -->
+      <div style="display:flex;border-bottom:2px solid var(--border-color,#e0e0e0);flex-shrink:0;background:var(--bg-card,#fff);">
+        <button id="inv-tab-btn-achat" type="button" onclick="window.invSwitchTab('achat')"
+          style="flex:1;padding:13px 10px;border:none;background:none;cursor:pointer;font-size:0.88rem;font-weight:800;color:#9b59b6;border-bottom:3px solid #9b59b6;margin-bottom:-2px;transition:all 0.2s;">
+          🛒 Achat marchandise
+        </button>
+        <button id="inv-tab-btn-invest" type="button" onclick="window.invSwitchTab('invest')"
+          style="flex:1;padding:13px 10px;border:none;background:none;cursor:pointer;font-size:0.88rem;font-weight:800;color:var(--gray,#888);border-bottom:3px solid transparent;margin-bottom:-2px;transition:all 0.2s;">
+          📈 Investissement
+        </button>
+      </div>
+
+      <!-- PANEL ACHAT -->
+      <div id="inv-tab-achat-panel" style="display:flex;flex-direction:column;gap:14px;padding:22px 24px;">
       <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;">
         <div>
           <label style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Désignation *</label>
@@ -30986,389 +31523,4 @@ setTimeout(_updatePwaInstallUI,1500);
             </div>
             <div>
               <label style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:4px;">Échéance crédit</label>
-              <input id="inv-m-echeance" type="date" style="width:100%;padding:9px 12px;border:1.5px solid #e67e22;border-radius:8px;font-size:0.88rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div style="padding:14px 24px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('inv-add-modal').style.display='none'" style="flex:1;padding:12px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.88rem;">Annuler</button>
-      <button onclick="window.invModalSubmit()" style="flex:2;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#9b59b6,#8e44ad);color:white;font-weight:800;cursor:pointer;font-size:0.92rem;">✅ Enregistrer</button>
-    </div>
-  </div>
-</div>
-
-
-<!-- ===== MODALE PRÉVISUALISATION IMPORT CSV INVESTISSEMENTS ===== -->
-<div id="inv-import-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(10px);z-index:20700;justify-content:center;align-items:center;padding:14px;">
-  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:700px;max-height:94vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.5);overflow:hidden;">
-    <!-- Header -->
-    <div style="background:linear-gradient(135deg,#3498db,#2980b9);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div style="color:white;font-weight:800;font-size:1rem;display:flex;align-items:center;gap:8px;">
-        📥 Prévisualisation de l'import
-      </div>
-      <button onclick="document.getElementById('inv-import-preview-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
-    </div>
-    <!-- Contenu scrollable -->
-    <div style="overflow-y:auto;flex:1;padding:16px 18px;">
-      <div id="inv-imp-stats"></div>
-      <div id="inv-imp-actions"></div>
-      <div style="font-size:0.75rem;color:var(--gray,#888);margin-bottom:8px;font-style:italic;">
-        ✅ Cochez les investissements à importer. Les <span style="color:#e74c3c;font-weight:700;">DOUBLONS</span> détectés sont décochés par défaut.
-      </div>
-      <div id="inv-imp-list" style="display:flex;flex-direction:column;gap:0;max-height:380px;overflow-y:auto;"></div>
-      <div id="inv-imp-errors"></div>
-    </div>
-    <!-- Footer -->
-    <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('inv-import-preview-modal').style.display='none'" style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">Annuler</button>
-      <button id="inv-imp-btn-confirm" onclick="invConfirmImport()" style="flex:2;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,#27ae60,#229954);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">✅ Importer 0 achat(s)</button>
-    </div>
-  </div>
-</div>
-
-
-<!-- ===== MODALE HISTORIQUE DU STOCK ===== -->
-<div id="stock-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:21000;justify-content:center;align-items:center;padding:16px;">
-  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:680px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;">
-    <div style="background:linear-gradient(135deg,#8e44ad,#7d3c98);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div style="color:white;font-weight:800;font-size:0.95rem;" id="sh-title">📦 Historique du stock</div>
-      <button onclick="document.getElementById('stock-history-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>
-    </div>
-    <div style="padding:12px 18px;background:var(--bg-card-2,#f8fafc);border-bottom:1px solid var(--border-color,#eee);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span id="sh-product-name" style="font-weight:700;font-size:0.9rem;color:var(--text-main);"></span>
-      <span style="color:var(--gray);font-size:0.78rem;">Stock actuel :</span>
-      <span id="sh-current-stock" style="font-weight:800;color:#8e44ad;font-size:0.9rem;"></span>
-      <select id="sh-filter" onchange="window._renderStockHistory()" style="margin-left:auto;padding:6px 10px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:0.78rem;">
-        <option value="all">Tous</option>
-        <option value="sale">🛒 Ventes</option>
-        <option value="manual">✏️ Modif. manuelles</option>
-        <option value="defect">⚠️ Défauts</option>
-        <option value="restock">📦 Réapprovisionnement</option>
-        <option value="retour">↩️ Retours</option>
-      </select>
-      <button onclick="window._rebuildStockHistory(window._shProduct)" title="Reconstruire depuis les ventes" style="padding:5px 10px;border:1.5px solid #8e44ad;border-radius:7px;background:rgba(142,68,173,0.08);color:#8e44ad;cursor:pointer;font-size:0.75rem;font-weight:700;">🔄 Reconstruire</button>
-    </div>
-    <div id="sh-alert-zone" style="padding:0 18px;"></div>
-    <div id="sh-list" style="flex:1;overflow-y:auto;padding:12px 18px;"></div>
-  </div>
-</div>
-
-
-<!-- ===== BOUTON FLOTTANT SAUVEGARDE MASTER ===== -->
-<style>
-@keyframes masterFabPulse {
-    0%, 100% { box-shadow: 0 4px 20px rgba(231,76,60,0.4); }
-    50% { box-shadow: 0 4px 30px rgba(231,76,60,0.7), 0 0 0 8px rgba(231,76,60,0.1); }
-}
-#master-save-fab {
-    position: fixed;
-    top: 18px;
-    left: 18px;
-    z-index: 19999;
-    display: none;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 18px;
-    background: linear-gradient(135deg, #e74c3c, #c0392b);
-    color: white;
-    border: none;
-    border-radius: 28px;
-    font-size: 0.85rem;
-    font-weight: 800;
-    cursor: pointer;
-    box-shadow: 0 4px 20px rgba(231,76,60,0.4);
-    font-family: inherit;
-    transition: transform 0.15s;
-    user-select: none;
-}
-#master-save-fab:hover { transform: scale(1.05); }
-#master-save-fab:active { transform: scale(0.95); }
-.msf-badge {
-    background: white;
-    color: #e74c3c;
-    font-size: 0.7rem;
-    font-weight: 900;
-    min-width: 18px;
-    height: 18px;
-    border-radius: 9px;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    padding: 0 5px;
-    line-height: 1;
-}
-</style>
-<button id="master-save-fab" onclick="window._masterManualSave()" oncontextmenu="event.preventDefault();window._toggleMasterSavePosition();" title="Sauvegarder · Clic droit = changer position">
-    <span style="font-size:1.1rem;">💾</span>
-    <span>Sauvegarder</span>
-    <span class="msf-badge">0</span>
-</button>
-
-
-<!-- ===== MODALE PRISE DE POSTE (matin) ===== -->
-<div id="prise-poste-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);backdrop-filter:blur(10px);z-index:25000;justify-content:center;align-items:center;padding:16px;">
-  <div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:420px;box-shadow:0 24px 64px rgba(0,0,0,0.5);overflow:hidden;">
-    <!-- Header -->
-    <div style="background:linear-gradient(135deg,#00bfa5,#0097a7);padding:18px 22px;display:flex;align-items:center;gap:12px;">
-      <span style="font-size:2rem;">🌅</span>
-      <div>
-        <div style="color:white;font-weight:800;font-size:1.1rem;">Prise de poste</div>
-        <div id="pp-modal-date" style="color:rgba(255,255,255,0.8);font-size:0.78rem;margin-top:2px;"></div>
-      </div>
-    </div>
-    <!-- Body -->
-    <div style="padding:22px 22px 18px;">
-      <p style="margin:0 0 16px;color:var(--text-main,#2c3e50);font-size:0.9rem;line-height:1.5;">Merci de saisir le montant disponible en caisse pour commencer la journée.</p>
-      <label style="display:block;font-size:0.8rem;font-weight:700;color:var(--text-muted,#777);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;">🪙 Fond de caisse (€)</label>
-      <input id="pp-fond-input" type="number" min="0" step="0.01" placeholder="0.00"
-        style="width:100%;box-sizing:border-box;padding:13px 14px;border:2px solid var(--border-color,#e0e0e0);border-radius:10px;font-size:1.2rem;font-weight:700;color:var(--text-main,#2c3e50);background:var(--bg-body,#f5f7fa);text-align:center;outline:none;transition:border-color .2s;"
-        onfocus="this.style.borderColor='#00bfa5'" onblur="this.style.borderColor='var(--border-color,#e0e0e0)'"
-        onkeydown="if(event.key==='Enter') _ppMorningConfirm()">
-    </div>
-    <!-- Footer -->
-    <div style="padding:0 22px 20px;display:flex;gap:10px;">
-      <button onclick="_ppMorningSkip()" style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:10px;background:transparent;color:var(--text-muted,#888);font-weight:700;cursor:pointer;font-size:0.85rem;">Plus tard</button>
-      <button onclick="_ppMorningConfirm()" style="flex:2;padding:11px;border:none;border-radius:10px;background:linear-gradient(135deg,#00bfa5,#0097a7);color:white;font-weight:800;cursor:pointer;font-size:0.9rem;">✅ Confirmer</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== MODALE FIN DE POSTE ===== -->
-<div id="fin-poste-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:21000;justify-content:center;align-items:center;padding:16px;">
-  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:680px;max-height:93vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.45);overflow:hidden;">
-
-    <!-- Header -->
-    <div style="background:linear-gradient(135deg,#e74c3c,#c0392b);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div>
-        <div style="color:white;font-weight:800;font-size:1rem;">🏁 Clôture de poste</div>
-        <div id="fp-date" style="color:rgba(255,255,255,0.8);font-size:0.75rem;margin-top:2px;"></div>
-      </div>
-      <button onclick="document.getElementById('fin-poste-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
-    </div>
-
-    <!-- Contenu scrollable -->
-    <div style="flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:14px;">
-
-      <!-- Alerte déjà clôturé -->
-      <div id="fp-alert" style="display:none;padding:8px 12px;border-radius:8px;font-size:0.78rem;font-weight:700;background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;color:#d35400;"></div>
-
-      <!-- Prise de poste / Fond de caisse -->
-      <div style="background:linear-gradient(135deg,rgba(155,89,182,0.08),rgba(142,68,173,0.04));border-radius:12px;padding:14px 16px;border:1.5px solid rgba(155,89,182,0.3);">
-        <div style="font-size:0.72rem;font-weight:700;color:#8e44ad;text-transform:uppercase;margin-bottom:10px;">🪙 Fond de caisse / Prise de poste</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-          <div>
-            <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">💰 Fond de caisse ouverture (€)</label>
-            <input id="fp-fond-caisse" type="number" step="0.01" min="0" placeholder="0.00"
-              oninput="window._fpCalcEcart('esp');window._fpUpdateTotalCaisse()"
-              style="width:100%;padding:10px 12px;border:2px solid rgba(155,89,182,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#8e44ad;box-sizing:border-box;background:var(--input-bg,#fff);">
-          </div>
-          <div>
-            <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">⏰ Heure prise de poste</label>
-            <input id="fp-prise-poste" type="time" value=""
-              style="width:100%;padding:10px 12px;border:2px solid rgba(155,89,182,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#8e44ad;box-sizing:border-box;background:var(--input-bg,#fff);">
-          </div>
-        </div>
-        <div style="margin-top:8px;font-size:0.68rem;color:var(--gray,#888);font-style:italic;">
-          💡 Saisissez le montant en espèces présent dans la caisse à l'ouverture. Il sera déduit du calcul d'écart.
-        </div>
-      </div>
-
-      <!-- Récapitulatif du jour -->
-      <div style="background:var(--bg-card-2,#f8fafc);border-radius:12px;padding:14px 16px;border:1.5px solid var(--border-color,#e0e0e0);">
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:10px;">📊 Recette du jour</div>
-
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-          <span style="font-size:0.8rem;color:var(--gray,#888);">Transactions</span>
-          <span id="fp-nb-tx" style="font-weight:700;font-size:0.85rem;color:var(--text-main);"></span>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-          <span style="font-size:0.8rem;color:var(--gray,#888);">Total encaissé</span>
-          <span id="fp-total-jour" style="font-weight:800;font-size:1.1rem;color:#e74c3c;"></span>
-        </div>
-
-        <!-- Grille théorique -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-          <div style="background:var(--bg-card,#fff);border-radius:9px;padding:10px 12px;border:1.5px solid rgba(39,174,96,0.3);">
-            <div style="font-size:0.68rem;color:#27ae60;font-weight:700;text-transform:uppercase;margin-bottom:4px;">💶 CA Espèces</div>
-            <div id="fp-theor-esp" style="font-weight:800;font-size:1rem;color:#27ae60;"></div>
-          </div>
-          <div style="background:var(--bg-card,#fff);border-radius:9px;padding:10px 12px;border:1.5px solid rgba(52,152,219,0.3);">
-            <div style="font-size:0.68rem;color:#3498db;font-weight:700;text-transform:uppercase;margin-bottom:4px;">💳 CA CB</div>
-            <div id="fp-theor-cb" style="font-weight:800;font-size:1rem;color:#3498db;"></div>
-          </div>
-        </div>
-
-        <!-- Total Caisse = CA Espèces + Fond de caisse -->
-        <div style="background:linear-gradient(135deg,rgba(39,174,96,0.12),rgba(39,174,96,0.04));border-radius:10px;padding:12px 14px;border:2px solid rgba(39,174,96,0.4);display:flex;align-items:center;justify-content:space-between;">
-          <div>
-            <div style="font-size:0.68rem;font-weight:700;color:#27ae60;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;">🏦 Total Caisse</div>
-            <div style="font-size:0.68rem;color:var(--gray,#888);">CA Espèces + Fond de caisse</div>
-          </div>
-          <div id="fp-total-caisse" style="font-weight:900;font-size:1.3rem;color:#27ae60;">— €</div>
-        </div>
-      </div>
-
-      <!-- Contrôle stock léger avant clôture -->
-      <div id="fp-stock-alert-zone"></div>
-
-      <!-- Saisie des montants reçus -->
-      <div id="fp-saisie-zone">
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">✏️ Saisie du montant compté</div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-          <!-- Espèces -->
-          <div>
-            <label style="font-size:0.72rem;font-weight:700;color:#27ae60;text-transform:uppercase;display:block;margin-bottom:5px;">💶 Espèces comptées (€)</label>
-            <input id="fp-recu-esp" type="number" step="0.01" min="0" placeholder="0.00"
-              oninput="window._fpCalcEcart('esp')"
-              style="width:100%;padding:11px 13px;border:2px solid rgba(39,174,96,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#27ae60;box-sizing:border-box;background:var(--input-bg,#fff);">
-            <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:0.72rem;">
-              <span style="color:var(--gray,#888);">Écart :</span>
-              <span id="fp-ecart-esp" style="font-weight:700;">—</span>
-            </div>
-          </div>
-          <!-- CB -->
-          <div>
-            <label style="font-size:0.72rem;font-weight:700;color:#3498db;text-transform:uppercase;display:block;margin-bottom:5px;">💳 CB comptées (€)</label>
-            <input id="fp-recu-cb" type="number" step="0.01" min="0" placeholder="0.00"
-              oninput="window._fpCalcEcart('cb')"
-              style="width:100%;padding:11px 13px;border:2px solid rgba(52,152,219,0.4);border-radius:9px;font-size:1rem;font-weight:700;color:#3498db;box-sizing:border-box;background:var(--input-bg,#fff);">
-            <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:0.72rem;">
-              <span style="color:var(--gray,#888);">Écart :</span>
-              <span id="fp-ecart-cb" style="font-weight:700;">—</span>
-            </div>
-          </div>
-        </div>
-
-        <div style="margin-bottom:12px;">
-          <label style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;display:block;margin-bottom:5px;">📝 Commentaire (optionnel)</label>
-          <textarea id="fp-note" placeholder="Incident, remarque, fonds de caisse laissé..." rows="2"
-            style="width:100%;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.84rem;box-sizing:border-box;resize:vertical;font-family:inherit;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);"></textarea>
-        </div>
-      </div>
-
-      <!-- Historique -->
-      <div>
-        <div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">🗓️ Historique des clôtures</div>
-        <div id="fp-hist-list" style="max-height:220px;overflow-y:auto;"></div>
-      </div>
-    </div>
-
-    <!-- Footer boutons -->
-    <div style="padding:12px 20px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('fin-poste-modal').style.display='none'" style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">Fermer</button>
-      <button onclick="window._fpValider(true)" style="flex:1;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,#f39c12,#e67e22);color:white;font-weight:700;cursor:pointer;font-size:0.85rem;">📋 Clôture intermédiaire</button>
-      <button id="fp-btn-valider" onclick="window._fpValider(false)" style="flex:2;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">🏁 Valider la clôture</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== MODALE ÉDITION CLÔTURE DE POSTE ===== -->
-<div id="clot-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(10px);z-index:21100;justify-content:center;align-items:center;padding:14px;">
-  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:600px;max-height:93vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.45);overflow:hidden;">
-    <!-- Header -->
-    <div style="background:linear-gradient(135deg,#3498db,#2980b9);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div style="color:white;font-weight:800;font-size:0.95rem;display:flex;align-items:center;gap:8px;">
-        ✏️ Modifier la clôture
-        <span id="clot-edit-title-date" style="font-size:0.75rem;background:rgba(255,255,255,0.2);padding:2px 10px;border-radius:8px;"></span>
-      </div>
-      <button onclick="document.getElementById('clot-edit-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>
-    </div>
-    <!-- Contenu scrollable -->
-    <div style="flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;">
-
-      <!-- Ligne 1 : Date + Caissier + Type -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">📅 Date</label>
-          <input id="clot-edit-date" type="date" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">👤 Caissier</label>
-          <input id="clot-edit-caissier" type="text" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">🏁 Type</label>
-          <select id="clot-edit-type" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main);">
-            <option value="final">🏁 Finale</option>
-            <option value="partiel">📋 Partielle</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Ligne 2 : Prise de poste + Fond de caisse -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">⏰ Prise de poste</label>
-          <input id="clot-edit-prise" type="time" style="width:100%;padding:7px 10px;border:1.5px solid rgba(155,89,182,0.4);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:#8e44ad;">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">🪙 Fond de caisse (€)</label>
-          <input id="clot-edit-fond" type="number" step="0.01" min="0" style="width:100%;padding:7px 10px;border:1.5px solid rgba(155,89,182,0.4);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:#8e44ad;">
-        </div>
-      </div>
-
-      <!-- Ligne 3 : Ventes + Retours + CA -->
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">🛒 Nb ventes</label>
-          <input id="clot-edit-nb-ventes" type="number" min="0" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">↩️ Nb retours</label>
-          <input id="clot-edit-nb-retours" type="number" min="0" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:#e74c3c;display:block;margin-bottom:3px;">💰 CA total (€)</label>
-          <input id="clot-edit-total" type="number" step="0.01" min="0" style="width:100%;padding:7px 10px;border:1.5px solid rgba(231,76,60,0.4);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:#e74c3c;font-weight:700;">
-        </div>
-      </div>
-
-      <!-- Ligne 4 : Espèces -->
-      <div style="background:rgba(39,174,96,0.05);border:1px solid rgba(39,174,96,0.2);border-radius:9px;padding:10px 12px;">
-        <div style="font-size:0.68rem;font-weight:700;color:#27ae60;margin-bottom:6px;">💶 Espèces</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Théorique (€)</label>
-            <input id="clot-edit-theor-esp" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Reçu (€)</label>
-            <input id="clot-edit-recu-esp" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-        </div>
-      </div>
-
-      <!-- Ligne 5 : CB -->
-      <div style="background:rgba(52,152,219,0.05);border:1px solid rgba(52,152,219,0.2);border-radius:9px;padding:10px 12px;">
-        <div style="font-size:0.68rem;font-weight:700;color:#3498db;margin-bottom:6px;">💳 Carte bancaire</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Théorique (€)</label>
-            <input id="clot-edit-theor-cb" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Reçu (€)</label>
-            <input id="clot-edit-recu-cb" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-        </div>
-      </div>
-
-      <!-- Note -->
-      <div>
-        <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">📝 Note</label>
-        <textarea id="clot-edit-note" rows="2" style="width:100%;padding:8px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;resize:vertical;font-family:inherit;background:var(--input-bg,#fff);color:var(--text-main);"></textarea>
-      </div>
-    </div>
-
-    <!-- Footer -->
-    <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('clot-edit-modal').style.display='none'" style="flex:1;padding:10px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">Annuler</button>
-      <button onclick="_clotSaveEdit()" style="flex:2;padding:10px;border:none;border-radius:9px;background:linear-gradient(135deg,#3498db,#2980b9);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">✅ Enregistrer les modifications</button>
-    </div>
-  </div>
-</div>
-
-</html>
+              <input id="inv-m-echeance" type="date" style="width:100%;padding:9px 12px;border:1.5px
