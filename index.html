@@ -18748,6 +18748,7 @@ logout = function(skipConfirmation = false) {
             if (typeof window._covoRefreshAll === 'function') window._covoRefreshAll();
             else { renderAll(); if (typeof renderCatalogueTab === 'function') renderCatalogueTab(); if (typeof refreshRetours === 'function') refreshRetours(); }
             showScanToast('✅ Restauration réussie — '+nbProduits+' produit(s), '+nbVentes+' vente(s) chargée(s)' + (label?' depuis "'+label+'"':''), 'success');
+            setTimeout(function() { if (typeof window._showPostRestorePopup === 'function') window._showPostRestorePopup(); }, 400);
         } catch(err) {
             showScanToast('❌ Erreur lors de la restauration', 'error');
             console.error(err);
@@ -19389,6 +19390,52 @@ logout = function(skipConfirmation = false) {
         }
     }
     
+    // ── Popup CA du jour post-restauration ───────────────────────────────────
+    window._showPostRestorePopup = function() {
+        var existing = document.getElementById('_post-restore-popup');
+        if (existing) existing.remove();
+
+        var sales = [];
+        try { sales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch(e) {}
+        var todayStr = new Date().toDateString();
+        var todaySales = sales.filter(function(s) { return !s.cancelled && s.date && new Date(s.date).toDateString() === todayStr; });
+        var caToday = todaySales.reduce(function(sum, s) { return sum + parseFloat(s.total || 0); }, 0);
+        var goal = parseFloat(localStorage.getItem('covo_delivery_goal') || '0') || (typeof deliveryGoal !== 'undefined' ? deliveryGoal : 0);
+        var pct = goal > 0 ? Math.min(100, Math.round((caToday / goal) * 100)) : null;
+        var barColor = !pct ? '#3498db' : pct < 30 ? '#e74c3c' : pct < 70 ? '#e67e22' : '#27ae60';
+        var dateLabel = new Date().toLocaleDateString('fr-FR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'});
+
+        var overlay = document.createElement('div');
+        overlay.id = '_post-restore-popup';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(6px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;animation:_prFadeIn 0.25s ease';
+
+        var style = document.createElement('style');
+        style.textContent = '@keyframes _prFadeIn{from{opacity:0;transform:scale(0.94)}to{opacity:1;transform:scale(1)}}';
+        document.head.appendChild(style);
+
+        overlay.innerHTML = '<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:420px;overflow:hidden;box-shadow:0 28px 70px rgba(0,0,0,0.45);">'
+            + '<div style="background:linear-gradient(135deg,#27ae60,#1e8449);padding:18px 22px;display:flex;align-items:center;gap:12px;">'
+            +   '<div style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:1.5rem;">✅</div>'
+            +   '<div><div style="color:white;font-weight:900;font-size:1rem;">Restauration réussie</div><div style="color:rgba(255,255,255,0.75);font-size:0.75rem;margin-top:2px;">' + dateLabel + '</div></div>'
+            + '</div>'
+            + '<div style="padding:20px 22px;display:flex;flex-direction:column;gap:14px;">'
+            +   '<div style="text-align:center;">'
+            +     '<div style="font-size:0.68rem;font-weight:700;color:#27ae60;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">CA réalisé aujourd\'hui</div>'
+            +     '<div style="font-size:2.4rem;font-weight:900;color:' + barColor + ';">' + caToday.toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' €</div>'
+            +     (goal > 0 ? '<div style="font-size:0.8rem;color:var(--gray,#888);margin-top:4px;">sur ' + goal.toFixed(2) + ' € d\'objectif</div>' : '')
+            +   '</div>'
+            +   (goal > 0 ? '<div><div style="height:8px;background:var(--border-color,#eee);border-radius:4px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:4px;transition:width 0.6s ease;"></div></div><div style="display:flex;justify-content:space-between;margin-top:4px;font-size:0.72rem;color:var(--gray,#888);"><span>' + pct + '% atteint</span><span>' + todaySales.length + ' ticket' + (todaySales.length>1?'s':'') + ' aujourd\'hui</span></div></div>' : '<div style="text-align:center;font-size:0.8rem;color:var(--gray,#888);">' + todaySales.length + ' ticket' + (todaySales.length>1?'s':'') + ' validé' + (todaySales.length>1?'s':'') + ' aujourd\'hui</div>')
+            + '</div>'
+            + '<div style="padding:12px 22px 18px;display:flex;gap:10px;">'
+            +   '<button id="_pr-close-btn" style="flex:1;padding:12px;border:none;border-radius:9px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;font-weight:800;cursor:pointer;font-size:0.92rem;">Fermer</button>'
+            + '</div>'
+            + '</div>';
+
+        document.body.appendChild(overlay);
+        document.getElementById('_pr-close-btn').onclick = function() { overlay.remove(); };
+        overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+    };
+
     // ── Refresh universel post-restore / post-sync ───────────────────────────
     window._covoRefreshAll = function() {
         try { if (typeof renderAll              === 'function') renderAll();              } catch(e) {}
@@ -29185,6 +29232,8 @@ function initAdminSections() {
 
             // ── Rafraîchissement complet de l'interface ─────────────────
             if (typeof window._covoRefreshAll === 'function') window._covoRefreshAll();
+            // ── Popup CA du jour ─────────────────────────────────────────
+            setTimeout(function() { if (typeof window._showPostRestorePopup === 'function') window._showPostRestorePopup(); }, 400);
             // ────────────────────────────────────────────────────────────
 
             setTimeout(() => { _gdRestoring = false; }, 3000);
@@ -32172,57 +32221,4 @@ setTimeout(_updatePwaInstallUI,1500);
       <!-- Ligne 3 : Ventes + Retours + CA -->
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
         <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">🛒 Nb ventes</label>
-          <input id="clot-edit-nb-ventes" type="number" min="0" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">↩️ Nb retours</label>
-          <input id="clot-edit-nb-retours" type="number" min="0" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-        </div>
-        <div>
-          <label style="font-size:0.65rem;font-weight:700;color:#e74c3c;display:block;margin-bottom:3px;">💰 CA total (€)</label>
-          <input id="clot-edit-total" type="number" step="0.01" min="0" style="width:100%;padding:7px 10px;border:1.5px solid rgba(231,76,60,0.4);border-radius:7px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:#e74c3c;font-weight:700;">
-        </div>
-      </div>
-
-      <!-- Ligne 4 : Espèces -->
-      <div style="background:rgba(39,174,96,0.05);border:1px solid rgba(39,174,96,0.2);border-radius:9px;padding:10px 12px;">
-        <div style="font-size:0.68rem;font-weight:700;color:#27ae60;margin-bottom:6px;">💶 Espèces</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Théorique (€)</label>
-            <input id="clot-edit-theor-esp" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Reçu (€)</label>
-            <input id="clot-edit-recu-esp" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-        </div>
-      </div>
-
-      <!-- Ligne 5 : CB -->
-      <div style="background:rgba(52,152,219,0.05);border:1px solid rgba(52,152,219,0.2);border-radius:9px;padding:10px 12px;">
-        <div style="font-size:0.68rem;font-weight:700;color:#3498db;margin-bottom:6px;">💳 Carte bancaire</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Théorique (€)</label>
-            <input id="clot-edit-theor-cb" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-          <div>
-            <label style="font-size:0.62rem;color:var(--gray);display:block;margin-bottom:2px;">Reçu (€)</label>
-            <input id="clot-edit-recu-cb" type="number" step="0.01" min="0" style="width:100%;padding:6px 8px;border:1px solid var(--border-color);border-radius:6px;font-size:0.82rem;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
-          </div>
-        </div>
-      </div>
-
-      <!-- Note -->
-      <div>
-        <label style="font-size:0.65rem;font-weight:700;color:var(--gray);display:block;margin-bottom:3px;">📝 Note</label>
-        <textarea id="clot-edit-note" rows="2" style="width:100%;padding:8px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;box-sizing:border-box;resize:vertical;font-family:inherit;background:var(--input-bg,#fff);color:var(--text-main);"></textarea>
-      </div>
-    </div>
-
-    <!-- Footer -->
-    <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('clot-edit-modal').style.display='none'" style="flex:1;padding:10px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">Annuler</button>
-      <button onclick="_clotSaveEdit()" style="flex:2;padding:10px;border:none;border-radius:9px;background:linear-gradient(135deg,#3498db,#2980b9);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">✅ Enregistrer les modifications</bu
+          <label style="font-size:0.65rem;font-weight:700;color:var(--gray);d
