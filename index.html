@@ -7575,6 +7575,8 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
     // --- Écriture auto dans le fichier FSA ---
     async function writeToCovoFile() {
         if (!covoFileHandle || _fsaSaving) return;
+        // isMaster : auto-save FSA désactivé — uniquement via bouton manuel (_masterSavingNow)
+        if (!window._masterSavingNow && typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster) return;
         _fsaSaving = true;
         try {
             // Vérifier la permission silencieusement — jamais de dialog au milieu d'une action
@@ -20046,13 +20048,19 @@ logout = function(skipConfirmation = false) {
 
     // Sauvegarde manuelle depuis le FAB
     window._masterManualSave = async function() {
-        _doSaveAll();
-        _doSaveAllFull();
-        // Pousser aussi vers Drive si connecté
-        if (typeof window.gdriveSaveNow === 'function' && window._gdConnected) {
-            await window.gdriveSaveNow();
-        } else {
-            showScanToast('\ud83d\udcbe Sauvegarde locale effectu\u00e9e (' + new Date().toLocaleTimeString('fr-FR') + ')', 'success');
+        // Autoriser temporairement l'écriture même pour isMaster
+        window._masterSavingNow = true;
+        try {
+            _doSaveAll();
+            _doSaveAllFull();
+            // Pousser aussi vers Drive si connecté
+            if (typeof window.gdriveSaveNow === 'function' && window._gdConnected) {
+                await window.gdriveSaveNow();
+            } else {
+                showScanToast('\ud83d\udcbe Sauvegarde locale effectu\u00e9e (' + new Date().toLocaleTimeString('fr-FR') + ')', 'success');
+            }
+        } finally {
+            window._masterSavingNow = false;
         }
     };
 
@@ -29629,6 +29637,11 @@ function initAdminSections() {
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
     async function _gdDoSave() {
         if (!_gdConnected || !_gdAccessToken || _gdSaving) return;
+        // isMaster : auto-save Drive désactivé — uniquement via bouton manuel (_masterSavingNow)
+        if (!window._masterSavingNow && typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster) {
+            _gdMarkDriveDirty();
+            return;
+        }
         if (!_gdFolderId) {
             console.warn('GDrive save: aucun dossier sélectionné');
             return;
@@ -32133,10 +32146,4 @@ setTimeout(_updatePwaInstallUI,1500);
 
     <!-- Footer -->
     <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('clot-edit-modal').style.display='none'" style="flex:1;padding:10px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">Annuler</button>
-      <button onclick="_clotSaveEdit()" style="flex:2;padding:10px;border:none;border-radius:9px;background:linear-gradient(135deg,#3498db,#2980b9);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">✅ Enregistrer les modifications</button>
-    </div>
-  </div>
-</div>
-
-</html>
+      <button onclick="document.getElementById('clot-edit-m
