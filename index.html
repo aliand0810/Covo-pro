@@ -90,7 +90,17 @@ const _store = {
     var deferredPrompt=null;
     </script>
     <style>
-        :root { 
+        :root {
+        /* ── Typographie — contrôlables via le panel Thème ── */
+        --font-size-scale:    1;          /* multiplicateur global (0.85 – 1.25) */
+        --font-weight-heading:800;        /* h1 / h2 / h3 */
+        --font-weight-label:  700;        /* labels, en-têtes tableaux */
+        --font-weight-body:   400;        /* texte courant */
+        --font-weight-btn:    700;        /* boutons */
+        --font-weight-price:  800;        /* montants, prix */
+        --text-heading:       var(--text-main);   /* couleur titres */
+        --text-price:         var(--primary);     /* couleur prix/montants */
+ 
             --primary: #e67e22; --success: #27ae60; --danger: #e74c3c; 
             --dark: #2c1a06; --gray: #9a8878; --promo: #d35400; --excel: #217346;
             --info: #8e44ad; --warning: #f39c12;
@@ -3313,6 +3323,37 @@ const _store = {
 }
 /* ===== FIN SECTIONS PLIABLES ===== */
 </style>
+
+<style id="covo-typo-overrides">
+/* ══ TYPOGRAPHIE DYNAMIQUE — contrôlée par le panel Thème ══ */
+
+/* Échelle globale : agit sur tous les rem */
+html { font-size: calc(16px * var(--font-size-scale, 1)); }
+
+/* Graisses par rôle */
+h1, h2, h3, h4 {
+    font-weight: var(--font-weight-heading, 800);
+    color: var(--text-heading, var(--text-main, #1c1008));
+}
+th, label, .stat-label, .card-label {
+    font-weight: var(--font-weight-label, 700);
+}
+p, td, .text-body, .description {
+    font-weight: var(--font-weight-body, 400);
+}
+button, .btn, .retours-btn {
+    font-weight: var(--font-weight-btn, 700);
+}
+
+/* Couleur prix et montants */
+.price, .amount, .montant, .total-amount,
+[id*="total"], [id*="prix"], [id*="montant"],
+[class*="price"], [class*="amount"], [class*="montant"] {
+    color: var(--text-price, var(--primary));
+    font-weight: var(--font-weight-price, 800);
+}
+</style>
+
 </head>
 <body>
     <!-- ===== BARRE STATUS UNIFIÉE ===== -->
@@ -7505,6 +7546,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_quick_links:     JSON.parse(localStorage.getItem('covo_quick_links')     || '[]'),
                 covo_charges_fixes:   JSON.parse(localStorage.getItem('covo_charges_fixes')   || '[]'),
                 covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
+                covo_charges_fixes:     JSON.parse(localStorage.getItem('covo_charges_fixes')     || '[]'),
                 covo_paiements:         JSON.parse(localStorage.getItem('covo_paiements')         || '[]'),
                 covo_dettes:            JSON.parse(localStorage.getItem('covo_dettes')            || '[]'),
                 covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
@@ -7775,6 +7817,18 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         if (!theme) return;
         Object.entries(theme.vars).forEach(([k, v]) => document.body.style.setProperty(k, v));
         document.body.classList.toggle('dark-mode', theme.dark);
+        // Forcer le fond directement — neutralise tout dégradé clair appliqué avant
+        if (theme.dark) {
+            document.body.style.background = theme.vars['--bg-body'] || '#12151f';
+            document.body.style.backgroundAttachment = '';
+        } else {
+            // Thème clair : relancer le dégradé sauvegardé si disponible
+            const c1  = (typeof appSettings !== 'undefined' && appSettings.bgGradientColor1) || '#f4f7f6';
+            const c2  = (typeof appSettings !== 'undefined' && appSettings.bgGradientColor2) || '#e8f4f8';
+            const dir = (typeof appSettings !== 'undefined' && appSettings.bgGradientDirection) || '135deg';
+            document.body.style.background = 'linear-gradient('+dir+', '+c1+' 0%, '+c2+' 100%)';
+            document.body.style.backgroundAttachment = 'fixed';
+        }
         localStorage.setItem('covo_color_theme', id);
         localStorage.setItem('covo_dark_mode', String(theme.dark));
         renderColorThemeSelector();
@@ -7929,6 +7983,614 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 })();
 // ===== FIN SYSTÈME DE THÈMES UNIFIÉ =====
 
+
+// ===== MODULE TEXTE & CONTRASTE =====
+(function() {
+
+    // ── Constantes ───────────────────────────────────────────────
+    var WEIGHT_ROLES = [
+        { key:'--font-weight-heading', label:'Titres (h1-h4)',    default:800 },
+        { key:'--font-weight-label',   label:'Labels / En-têtes', default:700 },
+        { key:'--font-weight-body',    label:'Corps du texte',    default:400 },
+        { key:'--font-weight-btn',     label:'Boutons',           default:700 },
+        { key:'--font-weight-price',   label:'Prix / Montants',   default:800 },
+    ];
+    var WEIGHT_OPTIONS = [
+        {v:300,l:'Fin'},
+        {v:400,l:'Normal'},
+        {v:600,l:'Semi'},
+        {v:700,l:'Gras'},
+        {v:800,l:'Extra'},
+    ];
+    var COLOR_ROLES = [
+        { key:'--text-main',      inputId:'covo-color-main',      label:'Principal'  },
+        { key:'--text-secondary', inputId:'covo-color-secondary', label:'Secondaire' },
+        { key:'--text-muted',     inputId:'covo-color-muted',     label:'Discret'    },
+        { key:'--text-price',     inputId:'covo-color-price',     label:'Prix'       },
+        { key:'--text-heading',   inputId:'covo-color-heading',   label:'Titres'     },
+    ];
+    var CONTRAST_PAIRS = [
+        { text:'--text-main',      bg:'--bg-card',   label:'Principal / Carte'  },
+        { text:'--text-main',      bg:'--bg-body',   label:'Principal / Fond'   },
+        { text:'--text-secondary', bg:'--bg-card',   label:'Secondaire / Carte' },
+        { text:'--text-muted',     bg:'--bg-card',   label:'Discret / Carte'    },
+        { text:'--text-price',     bg:'--bg-card',   label:'Prix / Carte'       },
+        { text:'--text-heading',   bg:'--bg-body',   label:'Titres / Fond'      },
+    ];
+    var LS_KEY = 'covo_typo_settings';
+
+    // ══════════════════════════════════════════════════════════════
+    // ── COLOR PICKER CANVAS (HSV) ─────────────────────────────────
+    // ══════════════════════════════════════════════════════════════
+
+    var _cpActive      = null;   // { key, inputId, label }
+    var _cpH = 0, _cpS = 1, _cpV = 1;
+    var _cpHueReady    = false;
+
+    // HSV → RGB
+    function _hsvToRgb(h, s, v) {
+        h = ((h % 360) + 360) % 360;
+        var c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c, r, g, b;
+        if      (h < 60)  { r=c; g=x; b=0; }
+        else if (h < 120) { r=x; g=c; b=0; }
+        else if (h < 180) { r=0; g=c; b=x; }
+        else if (h < 240) { r=0; g=x; b=c; }
+        else if (h < 300) { r=x; g=0; b=c; }
+        else              { r=c; g=0; b=x; }
+        return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+    }
+
+    // RGB → HSV
+    function _rgbToHsv(r, g, b) {
+        r/=255; g/=255; b/=255;
+        var max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min, h, s=max?d/max:0, v=max;
+        if (!d) { h=0; }
+        else if (max===r) { h=((g-b)/d+6)%6*60; }
+        else if (max===g) { h=((b-r)/d+2)*60;   }
+        else              { h=((r-g)/d+4)*60;   }
+        return [h, s, v];
+    }
+
+    // Hex → [r,g,b]
+    function _hexToRgb(hex) {
+        var m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+        return m ? [parseInt(m[1],16), parseInt(m[2],16), parseInt(m[3],16)] : null;
+    }
+
+    // [r,g,b] → hex
+    function _rgbToHex(r, g, b) {
+        return '#' + [r,g,b].map(function(v){
+            return ('0'+Math.max(0,Math.min(255,v)).toString(16)).slice(-2);
+        }).join('');
+    }
+
+    // Dessiner la barre arc-en-ciel (teinte)
+    function _cpRenderHue() {
+        var c = document.getElementById('covo-cp-hue');
+        if (!c) return;
+        var ctx = c.getContext('2d'), w=c.width, h=c.height;
+        var g = ctx.createLinearGradient(0,0,w,0);
+        for (var i=0; i<=12; i++) {
+            var rgb = _hsvToRgb(i*30,1,1);
+            g.addColorStop(i/12,'rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')');
+        }
+        ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+        _cpHueReady = true;
+    }
+
+    // Dessiner le gradient Saturation × Valeur
+    function _cpRenderSV() {
+        var c = document.getElementById('covo-cp-canvas');
+        if (!c) return;
+        var ctx = c.getContext('2d'), w=c.width, h=c.height;
+        var rgb = _hsvToRgb(_cpH,1,1);
+        // Horizontal : blanc → teinte pure
+        var gH = ctx.createLinearGradient(0,0,w,0);
+        gH.addColorStop(0,'#fff');
+        gH.addColorStop(1,'rgb('+rgb[0]+','+rgb[1]+','+rgb[2]+')');
+        ctx.fillStyle=gH; ctx.fillRect(0,0,w,h);
+        // Vertical : transparent → noir
+        var gV = ctx.createLinearGradient(0,0,0,h);
+        gV.addColorStop(0,'rgba(0,0,0,0)');
+        gV.addColorStop(1,'rgba(0,0,0,1)');
+        ctx.fillStyle=gV; ctx.fillRect(0,0,w,h);
+    }
+
+    // Positionner les curseurs sur les canvas
+    function _cpUpdateCursors() {
+        var cur    = document.getElementById('covo-cp-cursor');
+        var hueCur = document.getElementById('covo-cp-hue-cursor');
+        if (cur) {
+            cur.style.left = (_cpS * 100) + '%';
+            cur.style.top  = ((1 - _cpV) * 100) + '%';
+        }
+        if (hueCur) {
+            hueCur.style.left = (_cpH / 360 * 100) + '%';
+        }
+    }
+
+    // Mettre à jour hex, preview, CSS var, swatch depuis HSV courant
+    function _cpUpdateFromHSV(live) {
+        var rgb = _hsvToRgb(_cpH, _cpS, _cpV);
+        var hex = _rgbToHex(rgb[0], rgb[1], rgb[2]);
+        var hexEl = document.getElementById('covo-cp-hex');
+        if (hexEl) hexEl.value = hex.toUpperCase();
+        var prev = document.getElementById('covo-cp-preview');
+        if (prev) prev.style.background = hex;
+        _cpUpdateCursors();
+        if (live && _cpActive) {
+            document.documentElement.style.setProperty(_cpActive.key, hex);
+            var inp = document.getElementById(_cpActive.inputId);
+            if (inp) inp.value = hex;
+            _cpUpdateSwatchDot(_cpActive.key, hex);
+            _contrastUpdate();
+        }
+    }
+
+    // Mettre à jour le point coloré d'un swatch
+    function _cpUpdateSwatchDot(cssVar, hex) {
+        var dot = document.querySelector('.covo-swatch-dot[data-key="'+cssVar+'"]');
+        if (dot) dot.style.background = hex;
+    }
+
+    // Interaction : plan SV
+    function _cpSVEvent(e) {
+        var c = document.getElementById('covo-cp-canvas');
+        if (!c) return;
+        var r = c.getBoundingClientRect();
+        var cx = e.touches ? e.touches[0].clientX : e.clientX;
+        var cy = e.touches ? e.touches[0].clientY : e.clientY;
+        _cpS = Math.max(0, Math.min(1, (cx - r.left) / r.width));
+        _cpV = Math.max(0, Math.min(1, 1 - (cy - r.top) / r.height));
+        _cpUpdateFromHSV(true);
+    }
+
+    // Interaction : barre teinte
+    function _cpHueEvent(e) {
+        var c = document.getElementById('covo-cp-hue');
+        if (!c) return;
+        var r = c.getBoundingClientRect();
+        var cx = e.touches ? e.touches[0].clientX : e.clientX;
+        _cpH = Math.max(0, Math.min(360, (cx - r.left) / r.width * 360));
+        _cpRenderSV();
+        _cpUpdateFromHSV(true);
+    }
+
+    // Attacher drag SV
+    window._cpSVDown = function(e) {
+        e.preventDefault();
+        _cpSVEvent(e);
+        function mv(ev) { _cpSVEvent(ev); }
+        function up() {
+            document.removeEventListener('mousemove',mv);
+            document.removeEventListener('mouseup',up);
+            document.removeEventListener('touchmove',mv);
+            document.removeEventListener('touchend',up);
+        }
+        document.addEventListener('mousemove',mv);
+        document.addEventListener('mouseup',up);
+        document.addEventListener('touchmove',mv,{passive:false});
+        document.addEventListener('touchend',up);
+    };
+
+    // Attacher drag Hue
+    window._cpHueDown = function(e) {
+        e.preventDefault();
+        _cpHueEvent(e);
+        function mv(ev) { _cpHueEvent(ev); }
+        function up() {
+            document.removeEventListener('mousemove',mv);
+            document.removeEventListener('mouseup',up);
+            document.removeEventListener('touchmove',mv);
+            document.removeEventListener('touchend',up);
+        }
+        document.addEventListener('mousemove',mv);
+        document.addEventListener('mouseup',up);
+        document.addEventListener('touchmove',mv,{passive:false});
+        document.addEventListener('touchend',up);
+    };
+
+    // Charger une couleur hex dans le picker
+    function _cpSetColor(hex) {
+        var rgb = _hexToRgb(hex);
+        if (!rgb) return;
+        var hsv = _rgbToHsv(rgb[0], rgb[1], rgb[2]);
+        _cpH = hsv[0]; _cpS = hsv[1]; _cpV = hsv[2];
+        _cpRenderSV();
+        _cpUpdateFromHSV(false);
+    }
+
+    // Ouvrir le picker pour un rôle
+    window._cpOpen = function(key, inputId, label) {
+        _cpActive = { key:key, inputId:inputId, label:label };
+        var lbl = document.getElementById('covo-cp-role-label');
+        if (lbl) lbl.textContent = label;
+        var wrap = document.getElementById('covo-cp-wrap');
+        if (wrap) wrap.style.display = 'block';
+        if (!_cpHueReady) _cpRenderHue();
+        var hex = _colorToHex(_getCssVar(key)) || '#888888';
+        _cpSetColor(hex);
+        // Surligner le swatch actif
+        document.querySelectorAll('.covo-swatch-item').forEach(function(el) {
+            el.style.outline = (el.dataset.key === key)
+                ? '2.5px solid var(--primary,#e67e22)'
+                : 'none';
+        });
+    };
+
+    // Fermer le picker
+    window._cpClose = function() {
+        var wrap = document.getElementById('covo-cp-wrap');
+        if (wrap) wrap.style.display = 'none';
+        document.querySelectorAll('.covo-swatch-item').forEach(function(el) {
+            el.style.outline = 'none';
+        });
+        _cpActive = null;
+    };
+
+    // Saisie hex directe
+    window._cpHexInput = function(val) {
+        val = val.trim().replace(/^#+/,'');
+        if (/^[0-9a-f]{6}$/i.test(val)) {
+            var rgb = _hexToRgb('#'+val);
+            if (rgb) {
+                var hsv = _rgbToHsv(rgb[0],rgb[1],rgb[2]);
+                _cpH=hsv[0]; _cpS=hsv[1]; _cpV=hsv[2];
+                _cpRenderSV();
+                _cpUpdateFromHSV(true);
+            }
+        }
+    };
+
+    window._cpHexCommit = function() {
+        var el = document.getElementById('covo-cp-hex');
+        if (el) _cpHexInput(el.value);
+    };
+
+    // Rendre les swatches cliquables
+    function _cpRenderSwatches() {
+        var cont = document.getElementById('covo-color-swatches');
+        if (!cont) return;
+        cont.innerHTML = '';
+        COLOR_ROLES.forEach(function(role) {
+            var hex = _colorToHex(_getCssVar(role.key)) || '#888888';
+            var item = document.createElement('div');
+            item.className = 'covo-swatch-item';
+            item.dataset.key = role.key;
+            item.title = 'Modifier : ' + role.label;
+            item.style.cssText = 'display:flex;flex-direction:column;align-items:center;'
+                + 'gap:4px;cursor:pointer;padding:6px 4px;border-radius:8px;'
+                + 'transition:outline .15s;outline:none;';
+            item.setAttribute('onclick',
+                '_cpOpen("'+role.key+'","'+role.inputId+'","'+role.label+'")');
+            var dot = document.createElement('div');
+            dot.className = 'covo-swatch-dot';
+            dot.dataset.key = role.key;
+            dot.style.cssText = 'width:40px;height:40px;border-radius:50%;'
+                + 'border:2px solid var(--border-color,#ddd);background:'+hex+';'
+                + 'box-shadow:inset 0 1px 4px rgba(0,0,0,.18);'
+                + 'transition:transform .15s;';
+            dot.onmouseenter = function(){ this.style.transform='scale(1.12)'; };
+            dot.onmouseleave = function(){ this.style.transform='scale(1)'; };
+            var lbl = document.createElement('span');
+            lbl.style.cssText = 'font-size:0.68rem;font-weight:600;'
+                + 'color:var(--text-secondary,#666);white-space:nowrap;';
+            lbl.textContent = role.label;
+            item.appendChild(dot);
+            item.appendChild(lbl);
+            cont.appendChild(item);
+        });
+    }
+
+    // ── Onglets ──────────────────────────────────────────────────
+    window._themeTab = function(tab) {
+        var panes  = ['themes','typo'];
+        var btnOn  = 'background:var(--primary,#e67e22);color:white;';
+        var btnOff = 'background:var(--bg-card-2,#f5f5f5);color:var(--text-secondary,#666);';
+        panes.forEach(function(p) {
+            var pane = document.getElementById('covo-pane-'+p);
+            var btn  = document.getElementById('covo-tab-'+p);
+            if (!pane||!btn) return;
+            var active = p === tab;
+            pane.style.display = active ? 'block' : 'none';
+            btn.style.cssText  = btn.style.cssText
+                .replace(/background:[^;]+;/g,'').replace(/color:[^;]+;/g,'')
+                + (active ? btnOn : btnOff);
+            btn.setAttribute('aria-selected', String(active));
+        });
+        if (tab === 'typo') {
+            _typoRenderWeightGrid();
+            _typoSyncInputs();
+            _contrastUpdate();
+            if (!_cpHueReady) _cpRenderHue();
+        }
+    };
+
+    // ── Aperçu taille (live) ─────────────────────────────────────
+    window._typoPreviewScale = function(val) {
+        var scale = val / 100;
+        var labels = {85:'Très petite',90:'Petite',95:'Réduite',100:'Normale',
+                      105:'Légèrement grande',110:'Grande',115:'Très grande',
+                      120:'Très grande',125:'Maximum'};
+        var lbl  = document.getElementById('covo-scale-label');
+        var prev = document.getElementById('covo-scale-preview');
+        if (lbl)  lbl.textContent = (labels[parseInt(val)] || val+'%') + ' (' + val + '%)';
+        if (prev) prev.style.fontSize = scale + 'rem';
+        document.documentElement.style.setProperty('--font-size-scale', String(scale));
+    };
+
+    // ── Rendu grille de graisse ───────────────────────────────────
+    window._typoRenderWeightGrid = function() {
+        var grid = document.getElementById('covo-weight-grid');
+        if (!grid) return;
+        var saved = _typoLoad();
+        grid.innerHTML = WEIGHT_ROLES.map(function(role) {
+            var cur = (saved.weights && saved.weights[role.key] != null)
+                      ? saved.weights[role.key] : role.default;
+            var btns = WEIGHT_OPTIONS.map(function(opt) {
+                var on = opt.v === cur;
+                return '<button onclick="_typoSetWeight(\''+role.key+'\','+opt.v+')"'
+                    +' style="flex:1;padding:5px 2px;border:1.5px solid '
+                    +(on?'var(--primary,#e67e22)':'var(--border-color,#ddd)')+';'
+                    +'border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:'+opt.v+';'
+                    +'background:'+(on?'var(--primary,#e67e22)':'var(--bg-card,#fff)')+';'
+                    +'color:'+(on?'white':'var(--text-main,#333)')+';transition:all .15s;">'
+                    +opt.l+'</button>';
+            }).join('');
+            return '<div style="display:flex;align-items:center;gap:8px;">'
+                +'<span style="min-width:116px;font-size:0.78rem;font-weight:600;'
+                +'color:var(--text-secondary,#555);">'+role.label+'</span>'
+                +'<div style="display:flex;gap:3px;flex:1;">'+btns+'</div></div>';
+        }).join('');
+    };
+
+    // ── Appliquer une graisse ─────────────────────────────────────
+    window._typoSetWeight = function(cssVar, value) {
+        document.documentElement.style.setProperty(cssVar, String(value));
+        var saved = _typoLoad();
+        if (!saved.weights) saved.weights = {};
+        saved.weights[cssVar] = value;
+        _typoStore(saved);
+        _typoRenderWeightGrid();
+    };
+
+    // ── Couleur live ─────────────────────────────────────────────
+    window._typoLiveColor = function(cssVar, value) {
+        document.documentElement.style.setProperty(cssVar, value);
+        var hex = _colorToHex(value) || value;
+        COLOR_ROLES.forEach(function(r) {
+            if (r.key === cssVar) {
+                var inp = document.getElementById(r.inputId);
+                if (inp) inp.value = hex;
+            }
+        });
+        _cpUpdateSwatchDot(cssVar, hex);
+        _contrastUpdate();
+    };
+
+    // ── Réinitialiser les couleurs du thème ──────────────────────
+    window._typoResetColors = function() {
+        var theme    = localStorage.getItem('covo_color_theme') || 'neobank';
+        var themeObj = (typeof COVO_THEMES !== 'undefined') ? COVO_THEMES[theme] : null;
+        COLOR_ROLES.forEach(function(role) {
+            var val = (themeObj && themeObj.vars && themeObj.vars[role.key])
+                      ? themeObj.vars[role.key]
+                      : getComputedStyle(document.documentElement)
+                          .getPropertyValue(role.key).trim();
+            if (!val) return;
+            document.documentElement.style.setProperty(role.key, val);
+            var hex = _colorToHex(val);
+            var inp = document.getElementById(role.inputId);
+            if (inp && hex) inp.value = hex;
+            _cpUpdateSwatchDot(role.key, hex || val);
+        });
+        // Resync picker si ouvert
+        if (_cpActive) {
+            var h = _colorToHex(_getCssVar(_cpActive.key)) || '#888888';
+            _cpSetColor(h);
+        }
+        _contrastUpdate();
+        if (typeof showScanToast === 'function') showScanToast('Couleurs réinitialisées', 'info');
+    };
+
+    // ── Synchroniser le picker/swatches avec les vars courantes ──
+    window._typoSyncInputs = function() {
+        var saved = _typoLoad();
+        var scaleEl = document.getElementById('covo-font-scale');
+        var scale   = saved.scale || 100;
+        if (scaleEl) { scaleEl.value = scale; _typoPreviewScale(scale); }
+        COLOR_ROLES.forEach(function(role) {
+            var val = (saved.colors && saved.colors[role.key])
+                ? saved.colors[role.key] : _getCssVar(role.key);
+            var hex = _colorToHex(val);
+            if (hex) {
+                var inp = document.getElementById(role.inputId);
+                if (inp) inp.value = hex;
+                _cpUpdateSwatchDot(role.key, hex);
+            }
+        });
+        _cpRenderSwatches();
+    };
+
+    // ── Sauvegarder ──────────────────────────────────────────────
+    window._typoSave = function() {
+        var scaleEl = document.getElementById('covo-font-scale');
+        var scale   = scaleEl ? parseInt(scaleEl.value) : 100;
+        var colors  = {};
+        COLOR_ROLES.forEach(function(role) {
+            var hex = _colorToHex(_getCssVar(role.key));
+            if (hex) colors[role.key] = hex;
+        });
+        var saved = _typoLoad();
+        saved.scale  = scale;
+        saved.colors = colors;
+        _typoStore(saved);
+        document.documentElement.style.setProperty('--font-size-scale', String(scale/100));
+        COLOR_ROLES.forEach(function(role) {
+            if (colors[role.key]) document.documentElement.style.setProperty(role.key, colors[role.key]);
+        });
+        if (typeof showScanToast === 'function') showScanToast('✓ Réglages texte sauvegardés', 'success');
+        var panel = document.getElementById('covo-theme-panel');
+        var btn   = document.getElementById('covo-theme-btn');
+        if (panel) panel.style.display = 'none';
+        if (btn)   btn.setAttribute('aria-expanded','false');
+    };
+
+    // ── Restaurer au chargement ───────────────────────────────────
+    function _typoRestore() {
+        var saved = _typoLoad();
+        if (saved.scale) {
+            document.documentElement.style.setProperty('--font-size-scale', String(saved.scale/100));
+        }
+        if (saved.weights) {
+            Object.keys(saved.weights).forEach(function(k) {
+                document.documentElement.style.setProperty(k, String(saved.weights[k]));
+            });
+        }
+        if (saved.colors) {
+            Object.keys(saved.colors).forEach(function(k) {
+                if (saved.colors[k]) document.documentElement.style.setProperty(k, saved.colors[k]);
+            });
+        }
+        // Init swatches après que les CSS vars sont prêtes
+        var _init = function() { _cpRenderSwatches(); };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _init);
+        } else {
+            setTimeout(_init, 0);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // ── CONTRASTE WCAG ────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════
+
+    function _relLuminance(hex) {
+        hex = hex.replace('#','');
+        if (hex.length===3) hex=hex.split('').map(function(x){return x+x;}).join('');
+        if (hex.length!==6) return 0.5;
+        var r=parseInt(hex.slice(0,2),16)/255;
+        var g=parseInt(hex.slice(2,4),16)/255;
+        var b=parseInt(hex.slice(4,6),16)/255;
+        function lin(v){ return v<=0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055,2.4); }
+        return 0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b);
+    }
+
+    function _contrastRatio(h1,h2) {
+        var l1=_relLuminance(h1), l2=_relLuminance(h2);
+        var hi=Math.max(l1,l2), lo=Math.min(l1,l2);
+        return (hi+0.05)/(lo+0.05);
+    }
+
+    function _getCssVar(n) {
+        return getComputedStyle(document.documentElement).getPropertyValue(n).trim()
+            || document.documentElement.style.getPropertyValue(n).trim();
+    }
+
+    function _colorToHex(val) {
+        if (!val) return null;
+        val=val.trim();
+        if (/^#[0-9a-f]{6}$/i.test(val)) return val;
+        if (/^#[0-9a-f]{3}$/i.test(val))
+            return '#'+val[1]+val[1]+val[2]+val[2]+val[3]+val[3];
+        var m=val.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        if (m) return '#'+[m[1],m[2],m[3]].map(function(n){
+            return ('0'+parseInt(n).toString(16)).slice(-2);
+        }).join('');
+        return null;
+    }
+
+    window._contrastUpdate = function() {
+        var grid = document.getElementById('covo-contrast-grid');
+        if (!grid) return;
+        grid.innerHTML = CONTRAST_PAIRS.map(function(pair) {
+            var tHex = _colorToHex(_getCssVar(pair.text));
+            var bHex = _colorToHex(_getCssVar(pair.bg));
+            if (!tHex||!bHex) return '';
+            var ratio = _contrastRatio(tHex, bHex);
+            var rStr  = ratio.toFixed(1)+':1';
+            var badge = ratio>=7
+                ? '<span style="background:#16a34a;color:#fff;border-radius:4px;padding:1px 6px;font-size:0.65rem;font-weight:700;">AAA ✓</span>'
+                : ratio>=4.5
+                ? '<span style="background:#2563eb;color:#fff;border-radius:4px;padding:1px 6px;font-size:0.65rem;font-weight:700;">AA ✓</span>'
+                : '<span style="background:#dc2626;color:#fff;border-radius:4px;padding:1px 6px;font-size:0.65rem;font-weight:700;">✗ Échec</span>';
+            var dots='<span style="display:inline-flex;gap:3px;align-items:center;">'
+                +'<span style="width:12px;height:12px;border-radius:2px;background:'+tHex+';border:1px solid #ccc;"></span>'
+                +'<span style="width:12px;height:12px;border-radius:2px;background:'+bHex+';border:1px solid #ccc;"></span>'
+                +'</span>';
+            return '<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;'
+                +'background:var(--bg-card-2,#f5f5f5);border-radius:6px;">'
+                +dots
+                +'<span style="flex:1;font-size:0.75rem;color:var(--text-secondary,#555);">'+pair.label+'</span>'
+                +'<span style="font-size:0.78rem;font-weight:700;color:var(--text-main,#333);">'+rStr+'</span>'
+                +badge+'</div>';
+        }).filter(Boolean).join('');
+    };
+
+    // ── Auto-corriger les contrastes insuffisants ─────────────────
+    window._typoAutoContrast = function() {
+        var fixed = 0;
+        CONTRAST_PAIRS.forEach(function(pair) {
+            var tHex = _colorToHex(_getCssVar(pair.text));
+            var bHex = _colorToHex(_getCssVar(pair.bg));
+            if (!tHex||!bHex||_contrastRatio(tHex,bHex)>=4.5) return;
+            var bgLum = _relLuminance(bHex);
+            var darken = bgLum > 0.5;
+            var best = tHex, lo=0, hi=1;
+            for (var i=0; i<20; i++) {
+                var mid=(lo+hi)/2;
+                var cand = darken ? _shiftLightness(tHex,-mid) : _shiftLightness(tHex,mid);
+                if (_contrastRatio(cand,bHex)>=4.5) { best=cand; hi=mid; }
+                else { lo=mid; }
+            }
+            document.documentElement.style.setProperty(pair.text, best);
+            COLOR_ROLES.forEach(function(r) {
+                if (r.key===pair.text) {
+                    var inp=document.getElementById(r.inputId);
+                    if (inp) inp.value=best;
+                    _cpUpdateSwatchDot(r.key, best);
+                }
+            });
+            if (_cpActive && _cpActive.key===pair.text) _cpSetColor(best);
+            fixed++;
+        });
+        _contrastUpdate();
+        if (typeof showScanToast === 'function') {
+            showScanToast(fixed>0
+                ? '⚡ '+fixed+' couleur(s) corrigée(s) — WCAG AA'
+                : '✓ Tous les contrastes sont déjà conformes', fixed>0?'success':'info');
+        }
+    };
+
+    function _shiftLightness(hex, t) {
+        hex=hex.replace('#','');
+        if (hex.length===3) hex=hex.split('').map(function(x){return x+x;}).join('');
+        var r=parseInt(hex.slice(0,2),16);
+        var g=parseInt(hex.slice(2,4),16);
+        var b=parseInt(hex.slice(4,6),16);
+        function cl(v){return Math.max(0,Math.min(255,Math.round(v)));}
+        if (t<0) {
+            var f=1+t;
+            return '#'+[cl(r*f),cl(g*f),cl(b*f)].map(function(n){return('0'+n.toString(16)).slice(-2);}).join('');
+        }
+        return '#'+[cl(r+(255-r)*t),cl(g+(255-g)*t),cl(b+(255-b)*t)].map(function(n){return('0'+n.toString(16)).slice(-2);}).join('');
+    }
+
+    // ── Stockage ──────────────────────────────────────────────────
+    function _typoLoad() {
+        try { return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); } catch(e) { return {}; }
+    }
+    function _typoStore(obj) {
+        try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch(e) {}
+    }
+
+    // ── Init ──────────────────────────────────────────────────────
+    _typoRestore();
+
+})();
+// ===== FIN MODULE TEXTE & CONTRASTE =====
+
+
     // ===== PRISE DE POSTE / FIN DE POSTE =====
     var _ppFinPosteTimer = null;
 
@@ -8057,8 +8719,16 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 
     function _payLoad()  { return JSON.parse(localStorage.getItem(_PAY_KEY)  || '[]'); }
     function _detteLoad(){ return JSON.parse(localStorage.getItem(_DETTE_KEY) || '[]'); }
-    function _paySave(d) { localStorage.setItem(_PAY_KEY,   JSON.stringify(d)); }
-    function _detteSave(d){ localStorage.setItem(_DETTE_KEY, JSON.stringify(d)); }
+    function _paySave(d) {
+        localStorage.setItem(_PAY_KEY, JSON.stringify(d));
+        if (typeof window._covoAutoSave   === 'function') setTimeout(function(){ window._covoAutoSave(); }, 0);
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+    }
+    function _detteSave(d) {
+        localStorage.setItem(_DETTE_KEY, JSON.stringify(d));
+        if (typeof window._covoAutoSave   === 'function') setTimeout(function(){ window._covoAutoSave(); }, 0);
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+    }
 
     window._payAdd = function() {
         var cat    = document.getElementById('pay-cat').value;
@@ -8168,6 +8838,8 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 
     function _cfSave(list) {
         localStorage.setItem(CF_KEY, JSON.stringify(list));
+        if (typeof window._covoAutoSave      === 'function') setTimeout(function(){ window._covoAutoSave(); }, 0);
+        if (typeof window._gdTriggerAutoSave  === 'function') window._gdTriggerAutoSave();
         if (typeof window._gdTriggerLinksSave === 'function') window._gdTriggerLinksSave();
     }
 
@@ -8535,9 +9207,17 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
     var _CAGNOTTE_KEY = 'covo_cagnotte';
 
     function _paieLoad() { return JSON.parse(localStorage.getItem(_PAIE_KEY) || '[]'); }
-    function _paieSave(d) { localStorage.setItem(_PAIE_KEY, JSON.stringify(d)); }
+    function _paieSave(d) {
+        localStorage.setItem(_PAIE_KEY, JSON.stringify(d));
+        if (typeof window._covoAutoSave   === 'function') setTimeout(function(){ window._covoAutoSave(); }, 0);
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+    }
     function _cagnotteLoad() { return JSON.parse(localStorage.getItem(_CAGNOTTE_KEY) || '{"solde":0,"mouvements":[]}'); }
-    function _cagnotteSave(d) { localStorage.setItem(_CAGNOTTE_KEY, JSON.stringify(d)); }
+    function _cagnotteSave(d) {
+        localStorage.setItem(_CAGNOTTE_KEY, JSON.stringify(d));
+        if (typeof window._covoAutoSave   === 'function') setTimeout(function(){ window._covoAutoSave(); }, 0);
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+    }
 
     function _paieGetPeriode() {
         var el = document.getElementById('paie-periode');
@@ -14733,6 +15413,11 @@ function toggleInfoSection(headerElement) {
     }
 
     function loadGradientSettings() {
+        // Ne pas appliquer le dégradé si un thème sombre est actif
+        const _activeThemeId = localStorage.getItem('covo_color_theme') || 'neobank';
+        const _activeTheme   = (typeof COVO_THEMES !== 'undefined') ? COVO_THEMES[_activeThemeId] : null;
+        const _isDark = _activeTheme ? _activeTheme.dark : false;
+
         // Charger les valeurs sauvegardées
         const color1 = appSettings.bgGradientColor1 || '#f4f7f6';
         const color2 = appSettings.bgGradientColor2 || '#e8f4f8';
@@ -14744,11 +15429,13 @@ function toggleInfoSection(headerElement) {
             document.getElementById('bg-gradient-color2').value = color2;
             document.getElementById('bg-gradient-direction').value = direction;
             
-            // Appliquer le dégradé
-            setBackgroundGradient(color1, color2, direction);
+            // Appliquer le dégradé seulement si thème clair actif
+            if (!_isDark) {
+                setBackgroundGradient(color1, color2, direction);
+            }
             updateGradientPreview();
             
-            // Ajouter les event listeners pour la prévisualisation en temps réel
+            // Event listeners pour la prévisualisation en temps réel
             document.getElementById('bg-gradient-color1').addEventListener('input', updateGradientPreview);
             document.getElementById('bg-gradient-color2').addEventListener('input', updateGradientPreview);
             document.getElementById('bg-gradient-direction').addEventListener('change', updateGradientPreview);
@@ -18728,6 +19415,7 @@ logout = function(skipConfirmation = false) {
             covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
             covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
             covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
+            covo_charges_fixes:     JSON.parse(localStorage.getItem('covo_charges_fixes')     || '[]'),
             covo_paiements:         JSON.parse(localStorage.getItem('covo_paiements')         || '[]'),
             covo_dettes:            JSON.parse(localStorage.getItem('covo_dettes')            || '[]'),
             covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
@@ -21856,47 +22544,239 @@ logout = function(skipConfirmation = false) {
 
 <!-- ===== PANEL THÈME FLOTTANT ===== -->
 <div id="covo-theme-panel"
-     role="dialog" aria-modal="false" aria-label="Sélecteur de thème"
+     role="dialog" aria-modal="false" aria-label="Personnalisation du thème"
      style="display:none;position:fixed;top:64px;right:16px;z-index:99999;
-            width:340px;background:var(--bg-card,#fff);border-radius:14px;
+            width:360px;max-height:calc(100vh - 80px);overflow-y:auto;
+            background:var(--bg-card,#fff);border-radius:14px;
             border:1.5px solid var(--border-color,#e0e0e0);
-            box-shadow:0 8px 32px rgba(0,0,0,0.22);padding:18px 16px 16px;
+            box-shadow:0 8px 32px rgba(0,0,0,0.22);
             font-family:inherit;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-    <span style="font-weight:800;font-size:0.97rem;color:var(--text-main,#1c1008);display:flex;align-items:center;gap:6px;">🎨 Thème de couleurs</span>
+
+  <!-- En-tête fixe -->
+  <div style="display:flex;align-items:center;justify-content:space-between;
+              padding:14px 16px 0;position:sticky;top:0;
+              background:var(--bg-card,#fff);z-index:1;border-radius:14px 14px 0 0;">
+    <span style="font-weight:800;font-size:0.97rem;color:var(--text-main,#1c1008);">🎨 Thème</span>
     <button onclick="_themeTogglePanel()" aria-label="Fermer"
-            style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted,#888);padding:2px 8px;border-radius:4px;">✕</button>
+            style="background:none;border:none;cursor:pointer;font-size:1.1rem;
+                   color:var(--text-muted,#888);padding:2px 8px;border-radius:4px;">✕</button>
   </div>
-  <div id="color-theme-grid-header"
-       style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;margin-bottom:14px;">
+
+  <!-- Onglets -->
+  <div style="display:flex;gap:4px;padding:10px 16px 0;" role="tablist">
+    <button id="covo-tab-themes" role="tab" aria-selected="true"
+            onclick="_themeTab('themes')"
+            style="flex:1;padding:7px 4px;border:none;border-radius:8px 8px 0 0;
+                   font-size:0.8rem;font-weight:700;cursor:pointer;transition:all .15s;
+                   background:var(--primary,#e67e22);color:white;">
+      🎨 Couleurs
+    </button>
+    <button id="covo-tab-typo" role="tab" aria-selected="false"
+            onclick="_themeTab('typo')"
+            style="flex:1;padding:7px 4px;border:none;border-radius:8px 8px 0 0;
+                   font-size:0.8rem;font-weight:700;cursor:pointer;transition:all .15s;
+                   background:var(--bg-card-2,#f5f5f5);color:var(--text-secondary,#666);">
+      Aa Texte
+    </button>
   </div>
-  <hr style="border:none;border-top:1px solid var(--border-color,#e0e0e0);margin:0 0 12px;">
-  <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);margin:0 0 10px;letter-spacing:.04em;text-transform:uppercase;">Personnaliser</p>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-    <div>
-      <label for="covo-custom-accent" style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-main,#333);margin-bottom:4px;">Accentuation</label>
-      <input type="color" id="covo-custom-accent" value="#e67e22"
-             style="width:100%;height:40px;border:2px solid var(--border-color,#ddd);border-radius:8px;cursor:pointer;padding:2px;">
+
+  <div style="border-top:2px solid var(--primary,#e67e22);margin:0 16px;"></div>
+
+  <!-- ═══ PANNEAU COULEURS ═══ -->
+  <div id="covo-pane-themes" style="padding:14px 16px 16px;">
+    <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);
+              margin:0 0 8px;letter-spacing:.04em;text-transform:uppercase;">Thèmes prédéfinis</p>
+    <div id="color-theme-grid-header"
+         style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));
+                gap:8px;margin-bottom:14px;">
     </div>
-    <div>
-      <label for="covo-custom-bg" style="display:block;font-size:0.8rem;font-weight:600;color:var(--text-main,#333);margin-bottom:4px;">Fond</label>
-      <input type="color" id="covo-custom-bg" value="#fdf6ee"
-             style="width:100%;height:40px;border:2px solid var(--border-color,#ddd);border-radius:8px;cursor:pointer;padding:2px;">
+    <hr style="border:none;border-top:1px solid var(--border-color,#e0e0e0);margin:0 0 12px;">
+    <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);
+              margin:0 0 10px;letter-spacing:.04em;text-transform:uppercase;">Personnaliser</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+      <div>
+        <label for="covo-custom-accent"
+               style="display:block;font-size:0.8rem;font-weight:600;
+                      color:var(--text-main,#333);margin-bottom:4px;">Accentuation</label>
+        <input type="color" id="covo-custom-accent" value="#e67e22"
+               style="width:100%;height:40px;border:2px solid var(--border-color,#ddd);
+                      border-radius:8px;cursor:pointer;padding:2px;">
+      </div>
+      <div>
+        <label for="covo-custom-bg"
+               style="display:block;font-size:0.8rem;font-weight:600;
+                      color:var(--text-main,#333);margin-bottom:4px;">Fond</label>
+        <input type="color" id="covo-custom-bg" value="#fdf6ee"
+               style="width:100%;height:40px;border:2px solid var(--border-color,#ddd);
+                      border-radius:8px;cursor:pointer;padding:2px;">
+      </div>
     </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+      <span style="font-size:0.8rem;font-weight:600;color:var(--text-main,#333);">Mode sombre</span>
+      <label style="position:relative;display:inline-block;width:44px;height:24px;
+                    flex-shrink:0;cursor:pointer;"
+             onclick="var cb=document.getElementById('covo-custom-dark');cb.checked=!cb.checked;_themeUpdateDarkToggle(cb.checked);">
+        <input type="checkbox" id="covo-custom-dark" style="opacity:0;width:0;height:0;">
+        <span id="covo-dark-track" style="position:absolute;inset:0;background:var(--border-color,#ccc);
+               border-radius:999px;transition:background .25s;"></span>
+        <span id="covo-dark-thumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;
+               background:white;border-radius:50%;transition:transform .25s;pointer-events:none;"></span>
+      </label>
+    </div>
+    <button onclick="_themeApplyCustom()"
+            style="width:100%;padding:10px;background:var(--primary,#e67e22);color:white;
+                   border:none;border-radius:8px;font-weight:700;font-size:0.9rem;cursor:pointer;">
+      ✓ Appliquer ce thème
+    </button>
   </div>
-  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-    <span style="font-size:0.8rem;font-weight:600;color:var(--text-main,#333);">Mode sombre</span>
-    <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;cursor:pointer;"
-           onclick="var cb=document.getElementById('covo-custom-dark');cb.checked=!cb.checked;_themeUpdateDarkToggle(cb.checked);">
-      <input type="checkbox" id="covo-custom-dark" style="opacity:0;width:0;height:0;">
-      <span id="covo-dark-track" style="position:absolute;inset:0;background:var(--border-color,#ccc);border-radius:999px;transition:background .25s;"></span>
-      <span id="covo-dark-thumb" style="position:absolute;left:3px;top:3px;width:18px;height:18px;background:white;border-radius:50%;transition:transform .25s;pointer-events:none;"></span>
-    </label>
+
+  <!-- ═══ PANNEAU TEXTE & CONTRASTE ═══ -->
+  <div id="covo-pane-typo" style="display:none;padding:14px 16px 16px;">
+
+    <!-- 1. Taille de base -->
+    <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);
+              margin:0 0 8px;letter-spacing:.04em;text-transform:uppercase;">Taille du texte</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+      <span style="font-size:0.75rem;color:var(--text-muted,#888);">A</span>
+      <input type="range" id="covo-font-scale" min="85" max="125" value="100" step="5"
+             oninput="_typoPreviewScale(this.value)"
+             style="flex:1;accent-color:var(--primary,#e67e22);cursor:pointer;">
+      <span style="font-size:1rem;color:var(--text-muted,#888);font-weight:700;">A</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+      <span id="covo-scale-label"
+            style="font-size:0.78rem;color:var(--text-secondary,#555);font-weight:600;text-align:center;width:100%;">
+        Normale (100%)
+      </span>
+    </div>
+    <div style="background:var(--bg-card-2,#f5f5f5);border-radius:8px;padding:8px 12px;
+                margin-bottom:14px;border:1px solid var(--border-color,#e0e0e0);">
+      <span id="covo-scale-preview"
+            style="color:var(--text-main,#1c1008);transition:font-size .2s;">
+        Texte d'aperçu — 42,50 €
+      </span>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border-color,#e0e0e0);margin:0 0 12px;">
+
+    <!-- 2. Graisse par rôle -->
+    <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);
+              margin:0 0 10px;letter-spacing:.04em;text-transform:uppercase;">Graisse par rôle</p>
+
+    <div id="covo-weight-grid" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+      <!-- rempli par JS -->
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border-color,#e0e0e0);margin:0 0 12px;">
+
+    <!-- 3. Couleur par rôle -->
+    <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);
+              margin:0 0 10px;letter-spacing:.04em;text-transform:uppercase;">Couleur par rôle</p>
+
+    <!-- Swatches cliquables — rendu par JS (_cpRenderSwatches) -->
+    <div id="covo-color-swatches"
+         style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-bottom:12px;">
+    </div>
+
+    <!-- Inputs cachés (compat. save/load) -->
+    <input type="hidden" id="covo-color-main"      value="#1c1008">
+    <input type="hidden" id="covo-color-secondary" value="#5a3e28">
+    <input type="hidden" id="covo-color-muted"     value="#8c6a50">
+    <input type="hidden" id="covo-color-price"     value="#e67e22">
+    <input type="hidden" id="covo-color-heading"   value="#1c1008">
+
+    <!-- ── Picker canvas inline (caché par défaut) ── -->
+    <div id="covo-cp-wrap"
+         style="display:none;border:1.5px solid var(--border-color,#ddd);border-radius:10px;
+                padding:10px 12px;margin-bottom:12px;background:var(--bg-card,#fff);">
+
+      <!-- Titre rôle actif + fermer -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <span style="font-size:0.78rem;font-weight:700;color:var(--text-secondary,#666);">
+          ✏ <span id="covo-cp-role-label">—</span>
+        </span>
+        <button onclick="_cpClose()"
+                aria-label="Fermer le sélecteur de couleur"
+                style="background:none;border:none;cursor:pointer;font-size:1.1rem;
+                       color:var(--text-muted,#888);line-height:1;padding:2px 6px;
+                       border-radius:4px;">✕</button>
+      </div>
+
+      <!-- Canvas SV (saturation × valeur) -->
+      <div style="position:relative;margin-bottom:8px;border-radius:7px;overflow:hidden;
+                  box-shadow:0 1px 4px rgba(0,0,0,.12);">
+        <canvas id="covo-cp-canvas" width="280" height="160"
+                onmousedown="_cpSVDown(event)"
+                ontouchstart="_cpSVDown(event)"
+                style="display:block;width:100%;cursor:crosshair;touch-action:none;"></canvas>
+        <div id="covo-cp-cursor"
+             style="position:absolute;width:14px;height:14px;border-radius:50%;
+                    border:2.5px solid white;box-shadow:0 0 0 1.5px rgba(0,0,0,.45);
+                    pointer-events:none;transform:translate(-50%,-50%);
+                    top:50%;left:50%;transition:none;"></div>
+      </div>
+
+      <!-- Barre teinte (hue rainbow) -->
+      <div style="position:relative;margin-bottom:10px;">
+        <canvas id="covo-cp-hue" width="280" height="16"
+                onmousedown="_cpHueDown(event)"
+                ontouchstart="_cpHueDown(event)"
+                style="display:block;width:100%;border-radius:8px;cursor:pointer;
+                       touch-action:none;box-shadow:0 1px 3px rgba(0,0,0,.15);"></canvas>
+        <div id="covo-cp-hue-cursor"
+             style="position:absolute;top:50%;width:18px;height:18px;border-radius:50%;
+                    border:2.5px solid white;box-shadow:0 0 0 1.5px rgba(0,0,0,.4);
+                    pointer-events:none;transform:translate(-50%,-50%);left:0%;"></div>
+      </div>
+
+      <!-- Preview + hex input + reset -->
+      <div style="display:flex;gap:8px;align-items:center;">
+        <div id="covo-cp-preview"
+             style="width:38px;height:38px;flex-shrink:0;border-radius:7px;
+                    border:2px solid var(--border-color,#ddd);
+                    box-shadow:inset 0 1px 3px rgba(0,0,0,.1);"></div>
+        <input type="text" id="covo-cp-hex" maxlength="7" placeholder="#RRGGBB"
+               oninput="_cpHexInput(this.value)"
+               onblur="_cpHexCommit()"
+               style="flex:1;padding:7px 10px;border:1.5px solid var(--border-color,#ddd);
+                      border-radius:7px;font-family:monospace;font-size:0.9rem;font-weight:600;
+                      color:var(--text-main,#333);background:var(--bg-input,#fff);
+                      text-transform:uppercase;letter-spacing:.05em;">
+        <button onclick="_typoResetColors()"
+                title="Réinitialiser toutes les couleurs du thème actif"
+                style="flex-shrink:0;padding:6px 10px;background:none;
+                       border:1.5px solid var(--border-color,#ddd);border-radius:7px;
+                       cursor:pointer;font-size:0.82rem;color:var(--text-secondary,#666);
+                       font-weight:700;white-space:nowrap;">↺</button>
+      </div>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border-color,#e0e0e0);margin:0 0 12px;">
+
+    <!-- 4. Contraste WCAG -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <p style="font-size:0.75rem;font-weight:700;color:var(--text-secondary,#666);
+                margin:0;letter-spacing:.04em;text-transform:uppercase;">Contraste WCAG</p>
+      <button onclick="_typoAutoContrast()"
+              style="padding:4px 10px;background:var(--primary,#e67e22);color:white;
+                     border:none;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;">
+        ⚡ Auto-corriger
+      </button>
+    </div>
+
+    <div id="covo-contrast-grid" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+      <!-- rempli par JS -->
+    </div>
+
+    <!-- Bouton sauvegarder -->
+    <button onclick="_typoSave()"
+            style="width:100%;padding:10px;background:var(--primary,#e67e22);color:white;
+                   border:none;border-radius:8px;font-weight:700;font-size:0.9rem;cursor:pointer;
+                   margin-top:4px;">
+      ✓ Sauvegarder les réglages texte
+    </button>
   </div>
-  <button onclick="_themeApplyCustom()"
-          style="width:100%;padding:10px;background:var(--primary,#e67e22);color:white;border:none;border-radius:8px;font-weight:700;font-size:0.9rem;cursor:pointer;">
-    ✓ Appliquer ce thème
-  </button>
+
 </div>
 <!-- ===== FIN PANEL THÈME ===== -->
 
@@ -28167,6 +29047,8 @@ function initAdminSections() {
     function _gdBuildSnapshot(data) {
         const sales = Array.isArray(data.salesHistory) ? data.salesHistory : (data.covo_sales || []);
         const valid = sales.filter(s => !s.cancelled);
+        const pays  = (data.covo_paiements || []);
+        const dettes= pays.filter(p => p.dette && !p.paye);
         return {
             prods:    (data.products || []).length,
             tickets:  sales.length,
@@ -28174,6 +29056,9 @@ function initAdminSections() {
             retours:  (data.covo_retours || []).length,
             marc:     (data.covo_marchandise || []).length,
             inv:      (data.covo_investissements || []).length,
+            paiements:(data.covo_paiements || []).length,
+            dettes:   dettes.length,
+            charges:  (data.covo_charges_fixes || []).length,
             savedAt:  data._savedAt || null,
             source:   data._source || 'local'
         };
