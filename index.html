@@ -3473,7 +3473,7 @@ button, .btn, .retours-btn {
                 🌙 Tarif Nuit
             </button>
             
-            <button onclick="logout(true)" style="background:var(--danger); color:white; padding:8px 15px; font-size:0.9rem;">
+            <button onclick="_masterCheckLogout()" style="background:var(--danger); color:white; padding:8px 15px; font-size:0.9rem;">
                 🚪 Déconnexion
             </button>
         </div>
@@ -3874,36 +3874,62 @@ button, .btn, .retours-btn {
             </div>
         </div>
 
-        <div class="tab-content" id="tab-predictions">
-            <div class="prediction-card">
-                <h3>☔ Prédictions de stock</h3>
-                <p style="margin:5px 0 0 0; opacity:0.9;">Basées sur les ventes des 30 derniers jours</p>
-                <div class="prediction-list" id="predictions-list"></div>
-            </div>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <h3>⚠️ Alertes stock</h3>
-                    <div class="stat-value" id="alert-count">0</div>
-                    <span class="stat-change">Produits < 5 unités</span>
-                </div>
-                
-                <div class="stat-card">
-                    <h3>📅 Jours de stock moyen</h3>
-                    <div class="stat-value" id="avg-days-stock">0</div>
-                    <span class="stat-change">Jours restants</span>
-                </div>
-                
-                <div class="stat-card">
-                    <h3>💡 Suggestion réappro</h3>
-                    <div class="stat-value" id="reorder-count">0</div>
-                    <span class="stat-change">Produits à commander</span>
+        <div class="tab-content" id="tab-predictions" style="padding:0;background:var(--bg-body,#f4f7f6);">
+
+            <!-- ══ HEADER BANNER ══════════════════════════════════════════════ -->
+            <div style="background:linear-gradient(135deg,#6c3483 0%,#8e44ad 55%,#2980b9 100%);padding:18px 20px 16px;position:relative;overflow:hidden;">
+                <div style="position:absolute;top:-30px;right:-20px;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,0.06);pointer-events:none;"></div>
+                <div style="position:absolute;bottom:-20px;right:90px;width:75px;height:75px;border-radius:50%;background:rgba(255,255,255,0.04);pointer-events:none;"></div>
+                <div style="position:absolute;top:12px;left:-18px;width:60px;height:60px;border-radius:50%;background:rgba(142,68,173,0.22);pointer-events:none;"></div>
+                <div style="position:relative;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                    <div>
+                        <div style="font-size:1.25rem;font-weight:900;color:#fff;letter-spacing:-0.3px;">☂ Prédictions de stock</div>
+                        <div style="font-size:0.72rem;color:rgba(255,255,255,0.78);margin-top:3px;">Ventes 30 jours · Épuisement · Réapprovisionnement</div>
+                    </div>
+                    <div id="pred-header-chips" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
                 </div>
             </div>
-            
-            <div class="chart-container">
-                <h3>📈 Tendances de vente (30j)</h3>
-                <div class="bar-chart" id="trends-chart"></div>
+
+            <div style="padding:14px 16px 20px;">
+
+                <!-- ══ KPI CARDS ═══════════════════════════════════════════════ -->
+                <div id="pred-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:16px;"></div>
+
+                <!-- ══ GRAPHIQUES ══════════════════════════════════════════════ -->
+                <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-bottom:18px;" id="pred-charts-grid">
+                    <div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                        <div style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;">📈 Top ventes — 30 derniers jours (quantités)</div>
+                        <canvas id="pred-chart-bar" style="width:100%;height:180px;display:block;"></canvas>
+                    </div>
+                    <div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                        <div style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;">⚡ Niveaux de risque stock</div>
+                        <canvas id="pred-chart-donut" style="width:100%;height:150px;display:block;"></canvas>
+                        <div id="pred-chart-legend" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;justify-content:center;"></div>
+                    </div>
+                </div>
+
+                <!-- ══ LISTE PRÉDICTIONS ═══════════════════════════════════════ -->
+                <div style="background:var(--bg-card,#fff);border-radius:12px;border:1.5px solid var(--border-color,#e0e0e0);overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                    <div style="padding:12px 16px;border-bottom:1.5px solid var(--border-color,#e0e0e0);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                        <div style="font-weight:800;font-size:0.92rem;color:var(--text-main,#2c3e50);display:flex;align-items:center;gap:8px;">
+                            ☔ Prédictions par produit
+                            <span id="pred-list-count" style="font-size:0.72rem;background:rgba(142,68,173,0.12);color:#8e44ad;padding:2px 8px;border-radius:20px;font-weight:700;"></span>
+                        </div>
+                        <div style="display:flex;gap:6px;font-size:0.7rem;">
+                            <span style="display:flex;align-items:center;gap:3px;padding:3px 8px;background:#e74c3c18;border-radius:20px;color:#e74c3c;font-weight:700;">🔴 Urgent &lt;7j</span>
+                            <span style="display:flex;align-items:center;gap:3px;padding:3px 8px;background:#e67e2218;border-radius:20px;color:#e67e22;font-weight:700;">🟠 Attention 7–14j</span>
+                            <span style="display:flex;align-items:center;gap:3px;padding:3px 8px;background:#27ae6018;border-radius:20px;color:#27ae60;font-weight:700;">🟢 OK &gt;14j</span>
+                        </div>
+                    </div>
+                    <div id="predictions-list" style="padding:12px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;"></div>
+                </div>
+
+                <!-- Legacy IDs conservés pour la compatibilité -->
+                <span id="alert-count" style="display:none;">0</span>
+                <span id="avg-days-stock" style="display:none;">0</span>
+                <span id="reorder-count" style="display:none;">0</span>
+                <div id="trends-chart" style="display:none;"></div>
+
             </div>
         </div>
 
@@ -4184,7 +4210,6 @@ button, .btn, .retours-btn {
                     </div>
                 </div>
             </div>
-        </div>
 
         <!-- ===== PANEL INVESTISSEMENTS ===== -->
         <div class="retours-tab-panel" id="rt-investissements">
@@ -4295,49 +4320,124 @@ button, .btn, .retours-btn {
                 <span id="inv-filter-total" style="margin-left:auto;font-weight:700;font-size:0.88rem;color:#e74c3c;"></span>
             </div>
 
+            <!-- ═══ GRAPHIQUES ══════════════════════════════════════════════ -->
+            <div id="inv-charts-wrap" style="display:none;margin-bottom:16px;">
+                <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:12px;">
+
+                    <!-- Donut catégories -->
+                    <div style="background:var(--bg-card,#fff);border-radius:14px;border:1.5px solid var(--border-color,#eee);padding:14px 16px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                            <div style="font-size:0.78rem;font-weight:800;color:var(--text-main,#2c3e50);">🧩 Répartition catégories</div>
+                            <span style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#999);background:var(--bg-card-2,#f0f4f8);padding:2px 8px;border-radius:20px;border:1px solid var(--border-color,#eee);">Mois</span>
+                        </div>
+                        <canvas id="inv-chart-donut" style="width:100%;height:170px;display:block;"></canvas>
+                        <div id="inv-chart-legend" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:5px;"></div>
+                    </div>
+
+                    <!-- Bar mensuel -->
+                    <div style="background:var(--bg-card,#fff);border-radius:14px;border:1.5px solid var(--border-color,#eee);padding:14px 16px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                            <div>
+                                <div style="font-size:0.78rem;font-weight:800;color:var(--text-main,#2c3e50);">📅 Évolution mensuelle</div>
+                                <div style="font-size:0.62rem;color:var(--text-muted,#888);">Dépenses sur 12 mois</div>
+                            </div>
+                            <span style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#999);background:var(--bg-card-2,#f0f4f8);padding:2px 8px;border-radius:20px;border:1px solid var(--border-color,#eee);">12 mois</span>
+                        </div>
+                        <canvas id="inv-chart-monthly" style="width:100%;height:170px;display:block;"></canvas>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Barre recherche + toggle vue -->
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+                <input type="text" id="inv-search" placeholder="🔍 Rechercher achat, fournisseur…" oninput="invRender()" style="flex:1;min-width:160px;padding:7px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.83rem;background:var(--input-bg,#fff);color:var(--text-main);">
+                <button id="inv-toggle-charts" onclick="_invToggleCharts()" style="padding:7px 13px;background:var(--bg-card,#fff);border:1.5px solid rgba(155,89,182,0.4);color:#8e44ad;border-radius:8px;font-size:0.8rem;font-weight:700;cursor:pointer;white-space:nowrap;">📊 Graphiques</button>
+                <button id="inv-toggle-group" onclick="_invToggleGroup()" style="padding:7px 13px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#ddd);color:var(--text-main);border-radius:8px;font-size:0.8rem;font-weight:700;cursor:pointer;white-space:nowrap;">🗂️ Grouper</button>
+            </div>
+
             <!-- Liste des achats -->
-            <div id="inv-list" style="color:var(--text-main,#2c3e50);display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto;"></div>
+            <div id="inv-list" style="color:var(--text-main,#2c3e50);display:flex;flex-direction:column;gap:6px;max-height:560px;overflow-y:auto;"></div>
         </div>
 
         <!-- ===== ONGLET HISTORIQUE DE VENTE (caissier) ===== -->
-        <div class="tab-content" id="tab-historique">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
-                <h3 style="margin:0;font-size:1.1rem;display:flex;align-items:center;gap:8px;">🧾 Historique des ventes</h3>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;background:var(--bg-card,#fff);">
-                    <input type="text" id="cashier-hist-search" placeholder="🔍 Rechercher ticket, caissier..." oninput="filterCashierHistory(this.value)"
-                        style="padding:8px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.85rem;min-width:220px;background:var(--bg-card,#fff);color:var(--text-color,#2c3e50);">
+        </div>
+
+        <div class="tab-content" id="tab-historique" style="padding:0;background:var(--bg-body,#f4f7f6);">
+
+            <!-- ══ HEADER BANNER ══════════════════════════════════════════════ -->
+            <div style="background:linear-gradient(135deg,#1a3a5c 0%,#2c3e50 60%,#3498db 100%);padding:18px 20px 16px;position:relative;overflow:hidden;">
+                <div style="position:absolute;top:-30px;right:-20px;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,0.06);pointer-events:none;"></div>
+                <div style="position:absolute;bottom:-18px;right:80px;width:70px;height:70px;border-radius:50%;background:rgba(255,255,255,0.04);pointer-events:none;"></div>
+                <div style="position:absolute;top:10px;left:-18px;width:55px;height:55px;border-radius:50%;background:rgba(52,152,219,0.14);pointer-events:none;"></div>
+                <div style="position:relative;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                    <div>
+                        <div style="font-size:1.25rem;font-weight:900;color:#fff;letter-spacing:-0.3px;">🧾 Historique des ventes</div>
+                        <div style="font-size:0.72rem;color:rgba(255,255,255,0.75);margin-top:3px;">Tickets · CA · Modes de paiement · Tendances</div>
+                    </div>
+                    <div id="hist-header-chips" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+                </div>
+            </div>
+
+            <div style="padding:14px 16px 20px;">
+
+                <!-- ══ KPI CARDS ═══════════════════════════════════════════════ -->
+                <div id="hist-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:14px;"></div>
+
+                <!-- ══ BOUTONS ACTION ══════════════════════════════════════════ -->
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+                    <button id="hist-toggle-charts" onclick="_histToggleCharts()" style="padding:8px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);display:flex;align-items:center;gap:5px;transition:all 0.15s;">📊 Graphiques</button>
+                    <button onclick="setCashierHistoryDateToday()" style="padding:8px 14px;border:1.5px solid rgba(52,152,219,0.35);border-radius:8px;font-size:0.78rem;font-weight:700;cursor:pointer;background:rgba(52,152,219,0.09);color:#2980b9;">📅 Aujourd'hui</button>
+                    <button onclick="clearCashierHistoryDate()" style="padding:8px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.78rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--gray,#7f8c8d);">🗓️ Toutes dates</button>
+                </div>
+
+                <!-- ══ ZONE GRAPHIQUES ═════════════════════════════════════════ -->
+                <div id="hist-charts-wrap" style="display:none;margin-bottom:16px;">
+                    <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:12px;align-items:start;">
+                        <div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                            <div style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;">📈 CA quotidien — 14 derniers jours</div>
+                            <canvas id="hist-chart-bar" style="width:100%;height:160px;display:block;"></canvas>
+                        </div>
+                        <div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+                            <div style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.5px;">💳 Modes de paiement</div>
+                            <canvas id="hist-chart-donut" style="width:100%;height:140px;display:block;"></canvas>
+                            <div id="hist-chart-legend" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:5px;justify-content:center;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ══ BARRE DE FILTRES ════════════════════════════════════════ -->
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;padding:10px 12px;background:var(--bg-card,#fff);border-radius:10px;border:1.5px solid var(--border-color,#e0e0e0);">
+                    <input type="text" id="cashier-hist-search" placeholder="🔍 Ticket, caissier, article…" oninput="filterCashierHistory(this.value)"
+                        style="padding:7px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.83rem;min-width:180px;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);flex:1;">
                     <select id="cashier-hist-method" onchange="filterCashierHistory(document.getElementById('cashier-hist-search').value)"
-                        style="padding:8px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.83rem;background:var(--bg-card,#fff);color:var(--text-color,#2c3e50);">
+                        style="padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
                         <option value="">Tous modes</option>
                         <option value="cb">💳 Carte</option>
                         <option value="cash">💶 Espèces</option>
                         <option value="mixed">💳💶 Mixte</option>
                     </select>
                     <select id="cashier-hist-status" onchange="filterCashierHistory(document.getElementById('cashier-hist-search').value)"
-                        style="padding:8px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.83rem;background:var(--bg-card,#fff);color:var(--text-color,#2c3e50);">
+                        style="padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
                         <option value="">Tous statuts</option>
                         <option value="active">✅ Validés</option>
                         <option value="cancelled">🚫 Annulés</option>
                     </select>
                     <input type="date" id="cashier-hist-date" onchange="filterCashierHistory(document.getElementById('cashier-hist-search').value)"
-                        title="Choisir un jour precis"
-                        style="padding:8px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.83rem;background:var(--bg-card,#fff);color:var(--text-color,#2c3e50);">
-                    <button type="button" onclick="setCashierHistoryDateToday()"
-                        style="padding:8px 11px;border:1.5px solid rgba(52,152,219,0.35);border-radius:8px;font-size:0.78rem;background:rgba(52,152,219,0.1);color:#2980b9;font-weight:700;cursor:pointer;">
-                        Aujourd'hui
-                    </button>
-                    <button type="button" onclick="clearCashierHistoryDate()"
-                        style="padding:8px 11px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.78rem;background:var(--bg-card,#fff);color:var(--gray,#7f8c8d);font-weight:700;cursor:pointer;">
-                        Toutes dates
-                    </button>
+                        title="Choisir un jour précis"
+                        style="padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
                 </div>
+
+                <!-- ══ STATS RAPIDES CLIQUABLES ════════════════════════════════ -->
+                <div id="cashier-hist-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;"></div>
+
+                <!-- ══ RAPPORT DU JOUR ═════════════════════════════════════════ -->
+                <div id="cashier-hist-day-report" style="display:none;margin-bottom:16px;"></div>
+
+                <!-- ══ LISTE DES TICKETS ═══════════════════════════════════════ -->
+                <div id="cashier-hist-list" style="max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
+
             </div>
-            <!-- Stats rapides -->
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px;" id="cashier-hist-stats">
-            </div>
-            <div id="cashier-hist-day-report" style="display:none;margin-bottom:16px;"></div>
-            <!-- Liste des tickets -->
-            <div id="cashier-hist-list" style="max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
         </div>
 
         <!-- ===== ONGLET HISTORIQUE DES CLÔTURES ===== -->
@@ -4423,7 +4523,7 @@ button, .btn, .retours-btn {
                             </div>
                             <span style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#999);background:var(--bg-card-2,#f0f4f8);padding:3px 8px;border-radius:20px;border:1px solid var(--border-color,#eee);">Divergence</span>
                         </div>
-                        <canvas id="clot-chart-ecarts" style="width:100%;height:130px;display:block;"></canvas>
+                        <canvas id="clot-chart-ecarts" style="width:100%;height:185px;display:block;"></canvas>
                     </div>
                 </div>
 
@@ -15868,6 +15968,21 @@ function toggleInfoSection(headerElement) {
 
     // ===== GESTION ONGLETS =====
     function switchTab(tabName) {
+        // Réinitialiser l'interface investissements quand on quitte l'onglet retours
+        if (tabName !== 'retours') {
+            window._invChartsVisible = false;
+            window._invGroupMode     = false;
+            var _cw2  = document.getElementById('inv-charts-wrap');
+            var _tcb2 = document.getElementById('inv-toggle-charts');
+            var _tgb2 = document.getElementById('inv-toggle-group');
+            var _sch2 = document.getElementById('inv-search');
+            if (_cw2)  _cw2.style.display  = 'none';
+            if (_tcb2) _tcb2.style.background = 'var(--bg-card,#fff)';
+            if (_tgb2) _tgb2.style.background = 'var(--bg-card,#fff)';
+            if (_sch2) _sch2.value = '';
+            // Masquer tous les sous-onglets retours (filet de sécurité)
+            document.querySelectorAll('.retours-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        }
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(tc => {
             tc.classList.remove('active');
@@ -15883,6 +15998,7 @@ function toggleInfoSection(headerElement) {
         if (tabName === 'predictions') renderPredictions();
         if (tabName === 'retours') refreshRetours();
         if (tabName === 'historique') { window._histTimeFilter = 'all'; renderCashierHistory(); }
+        if (tabName !== 'historique') { window._histChartsVisible = false; var _hw = document.getElementById('hist-charts-wrap'); var _hb = document.getElementById('hist-toggle-charts'); if (_hw) _hw.style.display = 'none'; if (_hb) { _hb.style.background = 'var(--bg-card,#fff)'; _hb.style.color = 'var(--text-main,#2c3e50)'; _hb.style.borderColor = 'var(--border-color,#e0e0e0)'; } }
         if (tabName === 'clotures') { renderCloturesTab(); setTimeout(function(){ if(typeof _clotDrawCharts==='function'){var h=JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]');_clotDrawCharts(h);} },80); }
         if (tabName === 'workhours') { _whInit(); renderWorkHours(); }
         if (tabName === 'paiements') {
@@ -19163,25 +19279,264 @@ logout = function(skipConfirmation = false) {
     // ===== PRÉDICTIONS =====
     function renderPredictions() {
         const predictions = calculateStockPredictions();
+
+        // ── Données globales ──────────────────────────────────────────────────
+        const nbAlert   = products.filter(p => p.stock > 0 && p.stock < 5).length;
+        const nbReorder = predictions.filter(p => p.daysLeft < 7).length;
+        const avgDays   = predictions.length > 0
+            ? (predictions.reduce((s, p) => s + p.daysLeft, 0) / predictions.length).toFixed(0)
+            : 0;
+        const nbSurveilled = predictions.length;
+        const topProd = predictions.length
+            ? predictions.slice().sort((a,b) => b.avgSalesPerDay - a.avgSalesPerDay)[0]
+            : null;
+
+        // Legacy (compat)
+        const ac = document.getElementById('alert-count');
+        const ad = document.getElementById('avg-days-stock');
+        const rc = document.getElementById('reorder-count');
+        if (ac) ac.textContent = nbAlert;
+        if (ad) ad.textContent = avgDays;
+        if (rc) rc.textContent = nbReorder;
+
+        // ── Header chips ──────────────────────────────────────────────────────
+        const chipsEl = document.getElementById('pred-header-chips');
+        if (chipsEl) {
+            chipsEl.innerHTML =
+                `<div style="background:rgba(255,255,255,0.15);border-radius:20px;padding:4px 12px;font-size:0.72rem;font-weight:700;color:rgba(255,255,255,0.92);">📦 ${nbSurveilled} produits surveillés</div>` +
+                (nbReorder > 0 ? `<div style="background:rgba(231,76,60,0.45);border-radius:20px;padding:4px 12px;font-size:0.72rem;font-weight:700;color:#fff;">🔴 ${nbReorder} urgent${nbReorder>1?'s':''}</div>` : '') +
+                `<div style="background:rgba(255,255,255,0.15);border-radius:20px;padding:4px 12px;font-size:0.72rem;font-weight:700;color:rgba(255,255,255,0.92);">📅 ${avgDays}j moy.</div>`;
+        }
+
+        // ── KPI cards ─────────────────────────────────────────────────────────
+        const kpiEl = document.getElementById('pred-kpi-row');
+        if (kpiEl) {
+            const nb7  = predictions.filter(p => p.daysLeft <  7).length;
+            const nb14 = predictions.filter(p => p.daysLeft >= 7  && p.daysLeft < 14).length;
+            const nb30 = predictions.filter(p => p.daysLeft >= 14 && p.daysLeft < 30).length;
+            const nbOk = predictions.filter(p => p.daysLeft >= 30).length;
+            kpiEl.innerHTML =
+                `<div style="background:linear-gradient(135deg,#e74c3c,#c0392b);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+                    <div style="font-size:1.3rem;font-weight:800;">${nbReorder}</div>
+                    <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">🔴 Urgent (&lt;7j)</div>
+                    <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">à réapprovisionner</div>
+                </div>` +
+                `<div style="background:linear-gradient(135deg,#e67e22,#d35400);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+                    <div style="font-size:1.3rem;font-weight:800;">${nb14}</div>
+                    <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">🟠 Attention (7–14j)</div>
+                    <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">à surveiller</div>
+                </div>` +
+                `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(39,174,96,0.3);border-radius:12px;padding:14px 12px;text-align:center;">
+                    <div style="font-size:1.3rem;font-weight:800;color:#27ae60;">${nbOk}</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">🟢 Stock OK (&gt;30j)</div>
+                    <div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:1px;">produits sécurisés</div>
+                </div>` +
+                `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(52,152,219,0.3);border-radius:12px;padding:14px 12px;text-align:center;">
+                    <div style="font-size:1.3rem;font-weight:800;color:#3498db;">${avgDays}j</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">📅 Stock moyen</div>
+                    <div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:1px;">tous produits actifs</div>
+                </div>` +
+                (topProd ? `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(155,89,182,0.3);border-radius:12px;padding:14px 12px;text-align:center;">
+                    <div style="font-size:0.92rem;font-weight:800;color:#8e44ad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${topProd.name}</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">🏆 Top vendu/jour</div>
+                    <div style="font-size:0.6rem;color:#8e44ad;font-weight:700;margin-top:1px;">${topProd.avgSalesPerDay.toFixed(1)}/j</div>
+                </div>` : `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(243,156,18,0.3);border-radius:12px;padding:14px 12px;text-align:center;">
+                    <div style="font-size:1.3rem;font-weight:800;color:#f39c12;">${nbAlert}</div>
+                    <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">⚠️ Alertes stock</div>
+                    <div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:1px;">produits &lt;5 unités</div>
+                </div>`);
+        }
+
+        // ── Graphiques canvas ──────────────────────────────────────────────────
+        _predDrawCharts(predictions);
+
+        // ── Liste prédictions redesignée ──────────────────────────────────────
         const predList = document.getElementById('predictions-list');
-        predList.innerHTML = predictions.length === 0 ? '<div class="prediction-item">📊 Pas assez de données</div>' : predictions.map(pred => `
-            <div class="prediction-item ${pred.daysLeft < 7 ? 'prediction-alert' : ''}"
-                onclick="window.openProductDetail(${pred.id})"
-                title="Voir la fiche article"
-                style="cursor:pointer;">
-                <div><strong>${pred.name}</strong><br><span style="font-size:0.9rem; opacity:0.8;">Stock: ${pred.currentStock} | Ventes/j: ${pred.avgSalesPerDay.toFixed(1)}</span></div>
-                <div style="text-align:right;">
-                    <strong>${pred.daysLeft} jours</strong><br>
-                    <span style="font-size:0.8rem; opacity:0.8;">${pred.daysLeft < 7 ? '⚠️ Urgent' : '✅ OK'}</span>
-                    <span style="font-size:0.72rem;opacity:0.5;display:block;margin-top:2px;">🔍 Voir l'article</span>
+        const countEl  = document.getElementById('pred-list-count');
+        if (countEl) countEl.textContent = predictions.length + ' produit' + (predictions.length>1?'s':'');
+
+        if (!predList) return;
+        if (!predictions.length) {
+            predList.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:2.5rem;margin-bottom:10px;opacity:0.4;">📦</div><div style="font-weight:700;color:var(--text-main,#2c3e50);">Pas assez de données</div><div style="font-size:0.8rem;color:var(--gray,#7f8c8d);margin-top:4px;">Enregistrez des ventes pour voir les prédictions</div></div>';
+            return;
+        }
+
+        predList.innerHTML = predictions.map(pred => {
+            const d = pred.daysLeft;
+            const urgColor = d < 7 ? '#e74c3c' : d < 14 ? '#e67e22' : d < 30 ? '#f39c12' : '#27ae60';
+            const urgBg    = d < 7 ? 'rgba(231,76,60,0.06)' : d < 14 ? 'rgba(230,126,34,0.06)' : d < 30 ? 'rgba(243,156,18,0.06)' : 'rgba(39,174,96,0.06)';
+            const urgBorder= d < 7 ? '#e74c3c' : d < 14 ? '#e67e22' : d < 30 ? '#f39c12' : '#27ae60';
+            const urgLabel = d < 7 ? '🔴 Urgent' : d < 14 ? '🟠 Attention' : d < 30 ? '🟡 Surveiller' : '🟢 OK';
+            const pct = Math.min(100, Math.round(d / 30 * 100));
+            const daysLabel = d === 0 ? 'Épuisé' : d + ' jour' + (d>1?'s':'');
+            return `<div onclick="window.openProductDetail(${pred.id})" title="Voir la fiche article" style="background:${urgBg};border:1.5px solid ${urgBorder}30;border-left:4px solid ${urgBorder};border-radius:10px;padding:11px 14px;cursor:pointer;transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 3px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px;">
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:800;font-size:0.88rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${pred.name}</div>
+                        <div style="font-size:0.7rem;color:var(--gray,#7f8c8d);margin-top:2px;display:flex;gap:10px;">
+                            <span>📦 Stock : <b>${pred.currentStock}</b></span>
+                            <span>📈 <b>${pred.avgSalesPerDay.toFixed(1)}</b>/j</span>
+                        </div>
+                    </div>
+                    <div style="text-align:right;flex-shrink:0;">
+                        <div style="font-size:1.1rem;font-weight:900;color:${urgColor};line-height:1;">${daysLabel}</div>
+                        <div style="font-size:0.66rem;font-weight:700;color:${urgColor};margin-top:2px;">${urgLabel}</div>
+                    </div>
                 </div>
-            </div>
-        `).join('');
-        
-        document.getElementById('alert-count').textContent = products.filter(p => p.stock > 0 && p.stock < 5).length;
-        document.getElementById('avg-days-stock').textContent = predictions.length > 0 ? (predictions.reduce((sum, p) => sum + p.daysLeft, 0) / predictions.length).toFixed(0) : 0;
-        document.getElementById('reorder-count').textContent = predictions.filter(p => p.daysLeft < 7).length;
-        renderTrendsChart();
+                <div style="height:6px;background:rgba(0,0,0,0.08);border-radius:3px;overflow:hidden;">
+                    <div style="height:100%;width:${pct}%;background:${urgColor};border-radius:3px;transition:width 0.4s ease;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-top:3px;">
+                    <span style="font-size:0.58rem;color:var(--gray,#aaa);">0j</span>
+                    <span style="font-size:0.58rem;color:var(--gray,#aaa);">30j+</span>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function _predSetupHiDpi(canvas, W, H) {
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width  = W * dpr; canvas.height = H * dpr;
+        canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return ctx;
+    }
+
+    function _predDrawCharts(predictions) {
+        const isDark = document.body.classList.contains('dark-mode');
+        const textC  = isDark ? 'rgba(255,255,255,0.5)' : '#999';
+        const gridC  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+        const cardBg = isDark ? '#1e1e2e' : '#fff';
+
+        // ── BAR: top 7 produits par ventes (30j) ──────────────────────────────
+        const barCanvas = document.getElementById('pred-chart-bar');
+        if (barCanvas) {
+            const W = barCanvas.parentElement.clientWidth - 28 || 320;
+            const H = 180;
+            const ctx = _predSetupHiDpi(barCanvas, W, H);
+            ctx.clearRect(0, 0, W, H);
+
+            const sorted = predictions.slice().sort((a,b) => b.avgSalesPerDay - a.avgSalesPerDay).slice(0,7);
+            if (!sorted.length) {
+                ctx.fillStyle = textC;
+                ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('Pas de données', W/2, H/2);
+            } else {
+                const maxV = Math.max(...sorted.map(s => s.avgSalesPerDay), 0.1);
+                const PL = 10, PR = 10, PT = 18, PB = 40;
+                const graphW = W - PL - PR;
+                const graphH = H - PT - PB;
+                const nbB = sorted.length;
+                const bW  = Math.floor(graphW / nbB * 0.6);
+                const gap = (graphW - bW * nbB) / (nbB + 1);
+                const palette = ['#8e44ad','#9b59b6','#3498db','#2980b9','#1abc9c','#27ae60','#f39c12'];
+
+                // Axe baseline
+                ctx.strokeStyle = gridC; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(PL, PT + graphH); ctx.lineTo(W - PR, PT + graphH); ctx.stroke();
+
+                sorted.forEach((p, i) => {
+                    const x    = PL + gap * (i+1) + bW * i;
+                    const bH   = Math.max(4, (p.avgSalesPerDay / maxV) * graphH);
+                    const y    = PT + graphH - bH;
+                    const clr  = palette[i % palette.length];
+                    const r    = Math.min(5, bW / 2);
+
+                    ctx.fillStyle = clr;
+                    ctx.beginPath();
+                    ctx.moveTo(x + r, y);
+                    ctx.lineTo(x + bW - r, y);
+                    ctx.quadraticCurveTo(x + bW, y, x + bW, y + r);
+                    ctx.lineTo(x + bW, y + bH);
+                    ctx.lineTo(x, y + bH);
+                    ctx.lineTo(x, y + r);
+                    ctx.quadraticCurveTo(x, y, x + r, y);
+                    ctx.closePath(); ctx.fill();
+
+                    // Valeur
+                    ctx.fillStyle = clr;
+                    ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+                    ctx.fillText(p.avgSalesPerDay.toFixed(1) + '/j', x + bW/2, y - 4);
+
+                    // Nom (tronqué)
+                    ctx.fillStyle = textC;
+                    ctx.font = '8px sans-serif';
+                    const shortName = p.name.length > 9 ? p.name.substring(0,8) + '…' : p.name;
+                    ctx.save(); ctx.translate(x + bW/2, PT + graphH + 6);
+                    ctx.rotate(-Math.PI / 6);
+                    ctx.fillText(shortName, 0, 0);
+                    ctx.restore();
+                });
+            }
+        }
+
+        // ── DONUT: niveaux de risque ──────────────────────────────────────────
+        const donutCanvas = document.getElementById('pred-chart-donut');
+        const legendEl    = document.getElementById('pred-chart-legend');
+        if (donutCanvas) {
+            const W = donutCanvas.parentElement.clientWidth - 28 || 200;
+            const H = 150;
+            const ctx = _predSetupHiDpi(donutCanvas, W, H);
+            ctx.clearRect(0, 0, W, H);
+
+            const nb7  = predictions.filter(p => p.daysLeft <  7).length;
+            const nb14 = predictions.filter(p => p.daysLeft >= 7  && p.daysLeft < 14).length;
+            const nb30 = predictions.filter(p => p.daysLeft >= 14 && p.daysLeft < 30).length;
+            const nbOk = predictions.filter(p => p.daysLeft >= 30).length;
+
+            const segs = [
+                { label:'🔴 Urgent',    value: nb7,   color:'#e74c3c' },
+                { label:'🟠 Attention', value: nb14,  color:'#e67e22' },
+                { label:'🟡 Surveiller',value: nb30,  color:'#f39c12' },
+                { label:'🟢 OK',        value: nbOk,  color:'#27ae60' },
+            ].filter(s => s.value > 0);
+
+            const total = predictions.length;
+            if (!total || !segs.length) {
+                ctx.fillStyle = textC;
+                ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText('Pas de données', W/2, H/2);
+            } else {
+                const cx = W/2, cy = H/2, R = Math.min(W,H)/2 - 8, rIn = R * 0.5;
+                let startA = -Math.PI/2;
+                segs.forEach(seg => {
+                    const slice = (seg.value / total) * 2 * Math.PI;
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, startA, startA + slice);
+                    ctx.closePath(); ctx.fillStyle = seg.color; ctx.fill();
+                    // Pct dans le slice
+                    if (slice > 0.45) {
+                        const midA = startA + slice/2;
+                        const tx = cx + (rIn + (R-rIn)/2) * Math.cos(midA);
+                        const ty = cy + (rIn + (R-rIn)/2) * Math.sin(midA);
+                        ctx.fillStyle = 'white'; ctx.font = 'bold 11px sans-serif';
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.fillText(Math.round(seg.value/total*100) + '%', tx, ty);
+                    }
+                    startA += slice;
+                });
+                // Trou central
+                ctx.beginPath(); ctx.arc(cx, cy, rIn, 0, 2*Math.PI);
+                ctx.fillStyle = cardBg; ctx.fill();
+                // Nb total au centre
+                ctx.fillStyle = isDark ? '#e0e0e0' : '#2c3e50';
+                ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(total, cx, cy - 6);
+                ctx.font = '9px sans-serif'; ctx.fillStyle = textC;
+                ctx.fillText('produits', cx, cy + 7);
+            }
+
+            if (legendEl) {
+                legendEl.innerHTML = segs.map(s => {
+                    const pct = total > 0 ? Math.round(s.value/total*100) : 0;
+                    return `<div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:${s.color}18;border:1px solid ${s.color}40;border-radius:20px;font-size:0.68rem;font-weight:700;color:var(--text-main,#2c3e50);">
+                        <div style="width:8px;height:8px;border-radius:50%;background:${s.color};flex-shrink:0;"></div>
+                        ${s.label} <span style="color:${s.color};">${s.value} (${pct}%)</span>
+                    </div>`;
+                }).join('');
+            }
+        }
     }
 
     function calculateStockPredictions() {
@@ -24189,20 +24544,20 @@ function renderCloturesTab() {
     // Sort newest first
     var sorted = filtered.slice().sort(function(a, b) { return new Date(b.datetime) - new Date(a.datetime); });
 
-    var thStyle  = 'padding:9px 12px;text-align:left;font-size:0.65rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;';
+    var thStyle  = 'padding:9px 10px;text-align:left;font-size:0.63rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;';
     var thStyleR = thStyle + 'text-align:right;';
     var thStyleC = thStyle + 'text-align:center;';
 
-    var t = '<table style="width:100%;border-collapse:collapse;min-width:680px;">';
+    var t = '<table style="width:100%;border-collapse:collapse;min-width:820px;">';
     t += '<thead><tr style="background:var(--bg-body,#f4f7f6);border-bottom:2px solid var(--border-color,#e0e0e0);">';
-    t += '<th style="'+thStyle+'">📅 Date & Heure</th>';
+    t += '<th style="'+thStyle+'">📅 Date & Poste</th>';
     t += '<th style="'+thStyle+'">👤 Caissier</th>';
     t += '<th style="'+thStyleC+'">Type</th>';
     t += '<th style="'+thStyleR+'">💰 CA Jour</th>';
     t += '<th style="'+thStyleR+'">💵 Espèces</th>';
     t += '<th style="'+thStyleR+'">💳 CB</th>';
-    t += '<th style="'+thStyleC+'">Écart Esp.</th>';
-    t += '<th style="'+thStyleC+'">Écart CB</th>';
+    t += '<th style="'+thStyleR+'">🏦 Total reçu</th>';
+    t += '<th style="'+thStyleC+'">⚖️ Écarts</th>';
     t += '<th style="'+thStyleC+'">🛒 Ventes</th>';
     if (isAdm) t += '<th style="'+thStyleC+'">Actions</th>';
     t += '</tr></thead><tbody>';
@@ -24213,72 +24568,138 @@ function renderCloturesTab() {
         var yearStr = d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '';
         var timeStr = d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
 
+        // Durée de poste
+        var dureeStr = '';
+        if (h.prisePoste) {
+            var parts = h.prisePoste.split(':');
+            if (parts.length >= 2) {
+                var priseDate = new Date(d);
+                priseDate.setHours(parseInt(parts[0],10), parseInt(parts[1],10), 0, 0);
+                if (priseDate > d) priseDate.setDate(priseDate.getDate() - 1); // poste de nuit
+                var diffMin = Math.round((d - priseDate) / 60000);
+                if (diffMin > 0 && diffMin < 1440) {
+                    var dh = Math.floor(diffMin/60), dm = diffMin%60;
+                    dureeStr = dh > 0 ? dh+'h'+(dm>0?String(dm).padStart(2,'0'):'') : dm+'min';
+                }
+            }
+        }
+
+        // Écart colors
         var ecEspC = h.ecartEsp != null ? (Math.abs(h.ecartEsp) < 0.01 ? '#27ae60' : h.ecartEsp > 0 ? '#f39c12' : '#e74c3c') : null;
         var ecCbC  = h.ecartCb  != null ? (Math.abs(h.ecartCb)  < 0.01 ? '#2980b9' : h.ecartCb  > 0 ? '#f39c12' : '#e74c3c') : null;
+
+        // Total reçu
+        var totalRecu = (h.recuEsp != null ? h.recuEsp : 0) + (h.recuCb != null ? h.recuCb : 0);
+        var hasRecu = h.recuEsp != null || h.recuCb != null;
+
+        // Total écart combiné
+        var ecTot = (h.ecartEsp != null ? h.ecartEsp : 0) + (h.ecartCb != null ? h.ecartCb : 0);
+        var hasEcTot = h.ecartEsp != null || h.ecartCb != null;
+        var ecTotC = !hasEcTot ? null : (Math.abs(ecTot) < 0.02 ? '#27ae60' : ecTot > 0 ? '#f39c12' : '#e74c3c');
 
         var leftBorder = h.partiel ? '3px solid #f39c12' : '3px solid #27ae60';
         var rowBg = idx % 2 === 0 ? 'var(--bg-card,#fff)' : 'var(--bg-body,#fafbfc)';
 
-        t += '<tr style="border-left:'+leftBorder+';background:'+rowBg+';border-bottom:1px solid var(--border-color,#f0f0f0);transition:background .12s;" onmouseover="this.style.background=\'var(--bg-hover,#f0f7ff)\'" onmouseout="this.style.background=\''+rowBg+'\'">';
+        t += '<tr style="border-left:'+leftBorder+';background:'+rowBg+';border-bottom:1px solid var(--border-color,#f0f0f0);transition:background 0.13s,box-shadow 0.13s;cursor:pointer;" onmouseover="this.style.background=\'rgba(26,188,156,0.08)\';this.style.boxShadow=\'inset 0 0 0 1.5px rgba(26,188,156,0.25)\'" onmouseout="this.style.background=\''+rowBg+'\';this.style.boxShadow=\'none\'" onclick="_clotShowDetail(\''+h.id+'\')">';
 
-        // Date & heure
-        t += '<td style="padding:10px 12px;">';
+        // ── Date & Poste ─────────────────────────────────────────────────────
+        t += '<td style="padding:8px 10px;min-width:118px;">';
         t += '<div style="font-weight:700;font-size:0.78rem;color:var(--text-main,#2c3e50);">'+dateStr+yearStr+'</div>';
-        t += '<div style="font-size:0.67rem;color:var(--text-muted,#888);">⏰ '+timeStr+'</div>';
-        if (h.fondCaisse > 0) t += '<div style="font-size:0.63rem;color:#8e44ad;margin-top:1px;">🪙 Fond: '+h.fondCaisse.toFixed(2)+' €</div>';
+        t += '<div style="font-size:0.67rem;color:var(--text-muted,#888);margin-top:1px;">🏁 Fin : '+timeStr+'</div>';
+        if (h.prisePoste) {
+            t += '<div style="font-size:0.63rem;color:#8e44ad;margin-top:1px;">▶ Début : '+h.prisePoste+(dureeStr ? ' <span style="background:rgba(142,68,173,0.1);color:#8e44ad;border-radius:4px;padding:0 4px;font-weight:700;">('+dureeStr+')</span>' : '')+'</div>';
+        }
+        if (h.fondCaisse > 0) {
+            t += '<div style="font-size:0.62rem;color:#1abc9c;margin-top:1px;">🪙 Fond : '+h.fondCaisse.toFixed(2)+' €</div>';
+        }
         t += '</td>';
 
-        // Caissier
+        // ── Caissier ─────────────────────────────────────────────────────────
         var ini = (h.caissier || 'I').charAt(0).toUpperCase();
-        t += '<td style="padding:10px 12px;">';
+        t += '<td style="padding:8px 10px;">';
         t += '<div style="display:flex;align-items:center;gap:7px;">';
-        t += '<span style="width:27px;height:27px;border-radius:7px;background:linear-gradient(135deg,#2c3e50,#1abc9c);color:white;font-size:0.72rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+ini+'</span>';
-        t += '<span style="font-size:0.78rem;font-weight:600;color:var(--text-main);">'+(h.caissier||'Inconnu')+'</span>';
+        t += '<span style="width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#2c3e50,#1abc9c);color:white;font-size:0.72rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+ini+'</span>';
+        t += '<div><div style="font-size:0.78rem;font-weight:700;color:var(--text-main);">'+(h.caissier||'Inconnu')+'</div>';
+        t += '<div style="font-size:0.6rem;color:var(--text-muted,#aaa);font-family:monospace;">'+(h.id||'')+'</div></div>';
         t += '</div></td>';
 
-        // Type
+        // ── Type ─────────────────────────────────────────────────────────────
         var typeBadge = h.partiel
-            ? '<span style="font-size:0.61rem;font-weight:800;background:#fff8e1;color:#e67e22;padding:2px 8px;border-radius:5px;border:1px solid #f39c1230;">⏸ PARTIELLE</span>'
-            : '<span style="font-size:0.61rem;font-weight:800;background:#e8f5e9;color:#27ae60;padding:2px 8px;border-radius:5px;border:1px solid #27ae6030;">🏁 FINALE</span>';
-        t += '<td style="padding:10px 12px;text-align:center;">'+typeBadge+'</td>';
+            ? '<span style="font-size:0.6rem;font-weight:800;background:#fff8e1;color:#e67e22;padding:2px 7px;border-radius:5px;border:1px solid #f39c1230;white-space:nowrap;">⏸ PARTIELLE</span>'
+            : '<span style="font-size:0.6rem;font-weight:800;background:#e8f5e9;color:#27ae60;padding:2px 7px;border-radius:5px;border:1px solid #27ae6030;white-space:nowrap;">🏁 FINALE</span>';
+        t += '<td style="padding:8px 10px;text-align:center;">'+typeBadge+'</td>';
 
-        // CA
-        t += '<td style="padding:10px 12px;text-align:right;"><span style="font-size:0.9rem;font-weight:900;color:#9b59b6;">'+(h.totalJour||0).toFixed(2)+' €</span></td>';
-
-        // Espèces
-        t += '<td style="padding:10px 12px;text-align:right;font-size:0.78rem;color:var(--text-main);">'+(h.theorEsp||0).toFixed(2)+' €';
-        if (h.recuEsp != null) t += '<div style="font-size:0.63rem;color:var(--text-muted,#888);">Reçu: '+h.recuEsp.toFixed(2)+' €</div>';
+        // ── CA ───────────────────────────────────────────────────────────────
+        t += '<td style="padding:8px 10px;text-align:right;">';
+        t += '<div style="font-size:0.92rem;font-weight:900;color:#8e44ad;">'+(h.totalJour||0).toFixed(2)+' €</div>';
+        if (h.nbVentes) t += '<div style="font-size:0.6rem;color:var(--text-muted,#888);margin-top:1px;">'+(((h.totalJour||0)/(h.nbVentes)).toFixed(2))+' €/vte</div>';
         t += '</td>';
 
-        // CB
-        t += '<td style="padding:10px 12px;text-align:right;font-size:0.78rem;color:var(--text-main);">'+(h.theorCb||0).toFixed(2)+' €';
-        if (h.recuCb != null) t += '<div style="font-size:0.63rem;color:var(--text-muted,#888);">Reçu: '+h.recuCb.toFixed(2)+' €</div>';
+        // ── Espèces ──────────────────────────────────────────────────────────
+        t += '<td style="padding:8px 10px;text-align:right;">';
+        t += '<div style="font-size:0.78rem;font-weight:700;color:var(--text-main);">'+(h.theorEsp||0).toFixed(2)+' €</div>';
+        if (h.recuEsp != null) {
+            t += '<div style="font-size:0.63rem;color:var(--text-muted,#888);">Reçu : '+h.recuEsp.toFixed(2)+' €</div>';
+        } else {
+            t += '<div style="font-size:0.6rem;color:var(--text-muted,#bbb);font-style:italic;">Non compté</div>';
+        }
+        if (ecEspC) {
+            var ecEspTxt = (h.ecartEsp>=0?'+':'')+h.ecartEsp.toFixed(2)+' €';
+            t += '<div style="margin-top:2px;"><span style="font-size:0.62rem;font-weight:700;color:white;background:'+ecEspC+';padding:1px 6px;border-radius:4px;">'+ecEspTxt+'</span></div>';
+        }
         t += '</td>';
 
-        // Écart Espèces
-        var ecEspTxt = h.ecartEsp != null ? ((h.ecartEsp>=0?'+':'')+h.ecartEsp.toFixed(2)+' €') : '—';
-        t += '<td style="padding:10px 12px;text-align:center;">';
-        if (ecEspC) t += '<span style="font-size:0.7rem;font-weight:700;color:white;background:'+ecEspC+';padding:2px 9px;border-radius:5px;display:inline-block;">'+ecEspTxt+'</span>';
-        else        t += '<span style="font-size:0.7rem;color:var(--text-muted);">—</span>';
+        // ── CB ───────────────────────────────────────────────────────────────
+        t += '<td style="padding:8px 10px;text-align:right;">';
+        t += '<div style="font-size:0.78rem;font-weight:700;color:var(--text-main);">'+(h.theorCb||0).toFixed(2)+' €</div>';
+        if (h.recuCb != null) {
+            t += '<div style="font-size:0.63rem;color:var(--text-muted,#888);">Reçu : '+h.recuCb.toFixed(2)+' €</div>';
+        } else {
+            t += '<div style="font-size:0.6rem;color:var(--text-muted,#bbb);font-style:italic;">Non compté</div>';
+        }
+        if (ecCbC) {
+            var ecCbTxt = (h.ecartCb>=0?'+':'')+h.ecartCb.toFixed(2)+' €';
+            t += '<div style="margin-top:2px;"><span style="font-size:0.62rem;font-weight:700;color:white;background:'+ecCbC+';padding:1px 6px;border-radius:4px;">'+ecCbTxt+'</span></div>';
+        }
         t += '</td>';
 
-        // Écart CB
-        var ecCbTxt = h.ecartCb != null ? ((h.ecartCb>=0?'+':'')+h.ecartCb.toFixed(2)+' €') : '—';
-        t += '<td style="padding:10px 12px;text-align:center;">';
-        if (ecCbC) t += '<span style="font-size:0.7rem;font-weight:700;color:white;background:'+ecCbC+';padding:2px 9px;border-radius:5px;display:inline-block;">'+ecCbTxt+'</span>';
-        else       t += '<span style="font-size:0.7rem;color:var(--text-muted);">—</span>';
+        // ── Total reçu ───────────────────────────────────────────────────────
+        t += '<td style="padding:8px 10px;text-align:right;">';
+        if (hasRecu) {
+            var totalTheor = (h.theorEsp||0) + (h.theorCb||0);
+            t += '<div style="font-size:0.85rem;font-weight:900;color:#2c3e50;">'+totalRecu.toFixed(2)+' €</div>';
+            t += '<div style="font-size:0.6rem;color:var(--text-muted,#888);">Théo : '+totalTheor.toFixed(2)+' €</div>';
+        } else {
+            t += '<span style="font-size:0.72rem;color:var(--text-muted,#bbb);font-style:italic;">—</span>';
+        }
         t += '</td>';
 
-        // Ventes
-        t += '<td style="padding:10px 12px;text-align:center;">';
-        t += '<span style="font-size:0.85rem;font-weight:700;color:var(--text-main);">'+(h.nbVentes||0)+'</span>';
-        if (h.nbRetours) t += '<div style="font-size:0.63rem;color:#e74c3c;">↩ '+h.nbRetours+' retour'+(h.nbRetours>1?'s':'')+'</div>';
-        if (h.note) t += '<div style="font-size:0.6rem;color:#3498db;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 auto;" title="'+h.note+'">💬 '+h.note+'</div>';
+        // ── Écarts (combinés esp + CB) ────────────────────────────────────
+        t += '<td style="padding:8px 10px;text-align:center;">';
+        if (hasEcTot) {
+            var ecTotTxt = (ecTot>=0?'+':'')+ecTot.toFixed(2)+' €';
+            t += '<div style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;">';
+            t += '<span style="font-size:0.75rem;font-weight:800;color:white;background:'+ecTotC+';padding:2px 10px;border-radius:6px;white-space:nowrap;">'+ecTotTxt+'</span>';
+            // Mini sous-détail esp / CB
+            var espLine = h.ecartEsp != null ? ((h.ecartEsp>=0?'+':'')+h.ecartEsp.toFixed(2)) : '?';
+            var cbLine  = h.ecartCb  != null ? ((h.ecartCb >=0?'+':'')+h.ecartCb.toFixed(2)) : '?';
+            t += '<span style="font-size:0.58rem;color:var(--text-muted,#888);">💵'+espLine+' | 💳'+cbLine+'</span>';
+            t += '</div>';
+        } else {
+            t += '<span style="font-size:0.72rem;color:var(--text-muted,#bbb);">—</span>';
+        }
         t += '</td>';
 
-        // Actions
+        // ── Ventes ───────────────────────────────────────────────────────────
+        t += '<td style="padding:8px 10px;text-align:center;">';
+        t += '<div style="font-size:0.9rem;font-weight:800;color:var(--text-main);">'+(h.nbVentes||0)+'</div>';
+        if (h.nbRetours) t += '<div style="font-size:0.62rem;color:#e74c3c;margin-top:1px;">↩ '+h.nbRetours+' retour'+(h.nbRetours>1?'s':'')+'</div>';
+        if (h.note) t += '<div style="font-size:0.6rem;color:#3498db;max-width:75px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:2px auto 0;" title="'+h.note+'">💬 '+h.note+'</div>';
+        t += '</td>';
+
+        // ── Actions ──────────────────────────────────────────────────────────
         if (isAdm) {
-            t += '<td style="padding:10px 12px;text-align:center;white-space:nowrap;">';
+            t += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">';
             t += '<button onclick="event.stopPropagation();_clotOpenEdit(\''+h.id+'\')" style="padding:3px 9px;background:rgba(52,152,219,0.08);border:1px solid rgba(52,152,219,0.3);color:#3498db;border-radius:5px;font-size:0.65rem;cursor:pointer;font-weight:700;margin-right:3px;">✏️</button>';
             t += '<button onclick="event.stopPropagation();_clotDelete(\''+h.id+'\')" style="padding:3px 9px;background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.3);color:#e74c3c;border-radius:5px;font-size:0.65rem;cursor:pointer;font-weight:700;">🗑️</button>';
             t += '</td>';
@@ -24301,14 +24722,15 @@ function _clotStatCard(icon, value, label, color) {
 // ── Graphiques Clôtures ────────────────────────────────────────────────────────
 function _clotDrawCharts(filtered) {
     var isDark = document.body.classList.contains('dark-mode');
-    var textCol = isDark ? '#c8d8f8' : '#2c3e50';
-    var gridCol = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
+    var textCol  = isDark ? '#c8d8f8'                 : '#2c3e50';
+    var mutedCol = isDark ? 'rgba(200,216,248,0.55)'  : 'rgba(44,62,80,0.45)';
+    var gridCol  = isDark ? 'rgba(255,255,255,0.09)'  : 'rgba(0,0,0,0.07)';
+    var bgCard   = isDark ? '#1e2a3a'                 : '#ffffff';
 
-    // Sort by datetime asc
     var sorted = filtered.slice().sort(function(a,b){ return new Date(a.datetime)-new Date(b.datetime); });
-    var recent = sorted.slice(-12);
+    var recent = sorted.slice(-12);   // 12 for CA chart
 
-    // ── CA Bar Chart ─────────────────────────────────────────────────────────
+    // ── 1. CA Bar Chart ──────────────────────────────────────────────────────
     var cCA = document.getElementById('clot-chart-ca');
     if (cCA) {
         var labCA  = recent.map(function(h){ var d=new Date(h.datetime); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); });
@@ -24316,112 +24738,230 @@ function _clotDrawCharts(filtered) {
         var W=cCA.offsetWidth||400, H=130;
         var ctx=_setupHiDpiCanvas(cCA,W,H);
         ctx.clearRect(0,0,W,H);
-        var PAD={top:18,right:8,bottom:30,left:46};
+        var PAD={top:22,right:10,bottom:30,left:50};
         var CW=W-PAD.left-PAD.right, CH=H-PAD.top-PAD.bottom;
         var n=labCA.length||1;
         var maxV=Math.max.apply(null,dataCA.concat([1]));
-        // Grid
-        for(var g=0;g<=4;g++){
-            var gy=PAD.top+CH*g/4;
+        var niceMax = (function(v){
+            var mag=Math.pow(10,Math.floor(Math.log10(v||1)));
+            return Math.ceil(v/mag)*mag;
+        })(maxV);
+        // Grid & Y axis
+        var steps=4;
+        for(var g=0;g<=steps;g++){
+            var gy=PAD.top+CH*g/steps;
             ctx.strokeStyle=gridCol; ctx.lineWidth=1;
             ctx.beginPath(); ctx.moveTo(PAD.left,gy); ctx.lineTo(PAD.left+CW,gy); ctx.stroke();
-            ctx.fillStyle=textCol; ctx.font='11px sans-serif'; ctx.textAlign='right';
-            ctx.fillText(Math.round(maxV*(4-g)/4),PAD.left-4,gy+3);
+            ctx.fillStyle=mutedCol; ctx.font='bold 11px sans-serif'; ctx.textAlign='right';
+            var yVal=Math.round(niceMax*(steps-g)/steps);
+            ctx.fillText(yVal>=1000?(yVal/1000).toFixed(1)+'k':yVal, PAD.left-5, gy+4);
         }
         // Bars
         var bw=Math.max(8,(CW/n)*0.62);
         for(var bi=0;bi<n;bi++){
             var bx=PAD.left+bi*(CW/n)+(CW/n-bw)/2;
-            var bh=dataCA[bi]?Math.max(3,(dataCA[bi]/maxV)*CH):2;
+            var bh=dataCA[bi]?Math.max(3,(dataCA[bi]/niceMax)*CH):2;
             var by=PAD.top+CH-bh;
-            var pct=dataCA[bi]/maxV;
-            // teal gradient: low=#1abc9c → high=#16a085
-            ctx.fillStyle=isDark?('rgba(26,'+(Math.round(188-pct*30))+','+(Math.round(156-pct*30))+',0.9)'):('rgba('+(Math.round(22+pct*8))+','+(Math.round(160-pct*20))+','+(Math.round(133-pct*33))+',0.88)');
-            var rad=Math.min(4,bh/2);
+            var pct=dataCA[bi]/niceMax;
+            var gr=ctx.createLinearGradient(0,by,0,by+bh);
+            gr.addColorStop(0, isDark?'rgba(26,188,156,0.95)':'rgba(22,160,133,0.92)');
+            gr.addColorStop(1, isDark?'rgba(11,110,92,0.7)' :'rgba(14,100,83,0.7)');
+            ctx.fillStyle=gr;
+            var rad=Math.min(5,bh/2);
             ctx.beginPath();
             ctx.moveTo(bx+rad,by); ctx.lineTo(bx+bw-rad,by);
             ctx.quadraticCurveTo(bx+bw,by,bx+bw,by+rad);
             ctx.lineTo(bx+bw,by+bh); ctx.lineTo(bx,by+bh);
             ctx.lineTo(bx,by+rad); ctx.quadraticCurveTo(bx,by,bx+rad,by);
             ctx.closePath(); ctx.fill();
-            // Label date
-            ctx.fillStyle=textCol; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
-            ctx.fillText(labCA[bi],bx+bw/2,H-PAD.bottom+12);
-            // Value
-            if(dataCA[bi]>0&&bh>15){
-                ctx.fillStyle=isDark?'#1abc9c':'#0e8a74'; ctx.font='bold 10px sans-serif';
-                ctx.fillText(dataCA[bi].toFixed(0)+'€',bx+bw/2,by-3);
+            // Value label above bar
+            if(dataCA[bi]>0 && bw>14){
+                ctx.fillStyle=textCol; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+                var vStr=dataCA[bi]>=1000?(dataCA[bi]/1000).toFixed(1)+'k':dataCA[bi].toFixed(0);
+                ctx.fillText(vStr, bx+bw/2, Math.max(by-3, PAD.top+8));
             }
+            // X label
+            ctx.fillStyle=mutedCol; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+            ctx.fillText(labCA[bi], bx+bw/2, H-PAD.bottom+13);
         }
-        if(n===0){ ctx.fillStyle=textCol; ctx.font='13px sans-serif'; ctx.textAlign='center'; ctx.fillText('Aucune donnée',W/2,H/2); }
+        if(n===0){
+            ctx.fillStyle=mutedCol; ctx.font='13px sans-serif'; ctx.textAlign='center';
+            ctx.fillText('Aucune donnée', W/2, H/2);
+        }
     }
 
-    // ── Écarts Divergence Chart ───────────────────────────────────────────────
-    var cEC=document.getElementById('clot-chart-ecarts');
-    if(cEC){
-        var rec10=recent.slice(-10);
-        var labEC =rec10.map(function(h){ var d=new Date(h.datetime); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); });
-        var espData=rec10.map(function(h){ return h.ecartEsp!=null?h.ecartEsp:null; });
-        var cbData =rec10.map(function(h){ return h.ecartCb !=null?h.ecartCb :null; });
-        var W2=cEC.offsetWidth||260, H2=130;
-        var ctx2=_setupHiDpiCanvas(cEC,W2,H2);
-        ctx2.clearRect(0,0,W2,H2);
-        var P2={top:14,right:8,bottom:30,left:38};
-        var CW2=W2-P2.left-P2.right, CH2=H2-P2.top-P2.bottom;
-        var n2=labEC.length||1;
-        // Max abs
-        var allV=espData.concat(cbData).filter(function(v){return v!==null;});
-        var mxA=allV.length>0?Math.max.apply(null,allV.map(Math.abs).concat([0.5])):0.5;
-        mxA=Math.max(mxA,0.5);
-        var zeroY=P2.top+CH2/2;
-        // Grid lines
-        ctx2.setLineDash([3,3]); ctx2.strokeStyle=gridCol; ctx2.lineWidth=1;
-        [-1,1].forEach(function(s){
-            var gy2=zeroY-s*(CH2/2);
-            ctx2.beginPath(); ctx2.moveTo(P2.left,gy2); ctx2.lineTo(P2.left+CW2,gy2); ctx2.stroke();
-            ctx2.fillStyle=textCol; ctx2.font='10px sans-serif'; ctx2.textAlign='right';
-            ctx2.fillText((s>0?'+':'')+mxA.toFixed(1),P2.left-2,gy2+3);
-        });
-        ctx2.setLineDash([]);
-        // Zero line
-        ctx2.strokeStyle=isDark?'rgba(255,255,255,0.3)':'rgba(0,0,0,0.2)'; ctx2.lineWidth=1.5;
-        ctx2.beginPath(); ctx2.moveTo(P2.left,zeroY); ctx2.lineTo(P2.left+CW2,zeroY); ctx2.stroke();
-        ctx2.fillStyle=textCol; ctx2.font='bold 10px sans-serif'; ctx2.textAlign='right';
-        ctx2.fillText('0',P2.left-2,zeroY+3);
-        // Bars
-        var slotW=CW2/n2, bw2=Math.max(4,slotW*0.3), gap2=1.5;
-        for(var i2=0;i2<n2;i2++){
-            var sx=P2.left+i2*slotW+slotW/2;
-            // Espèces
-            if(espData[i2]!==null){
-                var ve=espData[i2];
-                var bh3=Math.max(2,Math.abs(ve/mxA)*(CH2/2));
-                var by3=ve>=0?zeroY-bh3:zeroY;
-                var ce=Math.abs(ve)<0.01?'#27ae60':ve>0?'#f39c12':'#e74c3c';
-                ctx2.fillStyle=ce;
-                ctx2.fillRect(sx-bw2-gap2,by3,bw2,bh3);
-            }
-            // CB
-            if(cbData[i2]!==null){
-                var vc=cbData[i2];
-                var bh4=Math.max(2,Math.abs(vc/mxA)*(CH2/2));
-                var by4=vc>=0?zeroY-bh4:zeroY;
-                var cc=Math.abs(vc)<0.01?'#2980b9':vc>0?'#f39c12':'#e74c3c';
-                ctx2.fillStyle=cc;
-                ctx2.fillRect(sx+gap2,by4,bw2,bh4);
-            }
-            // Label
-            ctx2.fillStyle=textCol; ctx2.font='bold 9px sans-serif'; ctx2.textAlign='center';
-            ctx2.fillText(labEC[i2],sx,H2-P2.bottom+11);
-        }
-        // Legend
-        var lx=P2.left+2, ly=P2.top-2;
-        ctx2.fillStyle='#27ae60'; ctx2.fillRect(lx,ly,8,5);
-        ctx2.fillStyle=textCol; ctx2.font='9px sans-serif'; ctx2.textAlign='left'; ctx2.fillText('Espèces',lx+10,ly+4);
-        ctx2.fillStyle='#2980b9'; ctx2.fillRect(lx+50,ly,8,5);
-        ctx2.fillText('CB',lx+60,ly+4);
-        if(n2===0){ ctx2.fillStyle=textCol; ctx2.font='13px sans-serif'; ctx2.textAlign='center'; ctx2.fillText('Aucune donnée',W2/2,H2/2); }
+    // ── 2. Écarts Divergence Chart ───────────────────────────────────────────
+    var cEC = document.getElementById('clot-chart-ecarts');
+    if (!cEC) return;
+
+    var rec8    = sorted.slice(-8);
+    var labEC   = rec8.map(function(h){ var d=new Date(h.datetime); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); });
+    var caisEC  = rec8.map(function(h){ return (h.caissier||'?').slice(0,7); });
+    var espData = rec8.map(function(h){ return h.ecartEsp != null ? h.ecartEsp : null; });
+    var cbData  = rec8.map(function(h){ return h.ecartCb  != null ? h.ecartCb  : null; });
+    // Total écart combiné
+    var totData = rec8.map(function(h){
+        if (h.ecartEsp == null && h.ecartCb == null) return null;
+        return (h.ecartEsp||0) + (h.ecartCb||0);
+    });
+
+    var W2 = cEC.offsetWidth || 320, H2 = 185;
+    cEC.style.height = '185px';
+    var ctx2 = _setupHiDpiCanvas(cEC, W2, H2);
+    ctx2.clearRect(0, 0, W2, H2);
+
+    var P2 = { top: 14, right: 14, bottom: 52, left: 46 };
+    var CW2 = W2 - P2.left - P2.right;
+    var CH2 = H2 - P2.top - P2.bottom;
+    var n2  = rec8.length;
+
+    if (n2 === 0) {
+        ctx2.fillStyle = mutedCol; ctx2.font = '13px sans-serif'; ctx2.textAlign = 'center';
+        ctx2.fillText('Aucune donnée', W2 / 2, H2 / 2);
+        return;
     }
+
+    // ── axis scale ──
+    var allV = espData.concat(cbData).concat(totData).filter(function(v){ return v !== null; });
+    var rawMax = allV.length > 0 ? Math.max.apply(null, allV.map(Math.abs)) : 0.5;
+    rawMax = Math.max(rawMax, 0.5);
+    var mxA = (function(v){
+        var mag = Math.pow(10, Math.floor(Math.log10(v)));
+        var step = mag * 0.5;
+        return Math.ceil(v / step) * step;
+    })(rawMax);
+    var zeroY = P2.top + CH2 / 2;
+
+    // ── average total écart ──
+    var validTots = totData.filter(function(v){ return v !== null; });
+    var avgTot = validTots.length ? validTots.reduce(function(s,v){ return s+v; },0)/validTots.length : null;
+
+    // ── zero band ──
+    var bandH = Math.max(2, (0.05 / mxA) * (CH2 / 2));
+    ctx2.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
+    ctx2.fillRect(P2.left, zeroY - bandH, CW2, bandH * 2);
+
+    // ── grid ──
+    [1, 0.5, 0, -0.5, -1].forEach(function(frac) {
+        var gy2 = zeroY - frac * (CH2 / 2);
+        if (frac === 0) {
+            ctx2.strokeStyle = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.22)';
+            ctx2.lineWidth = 1.5; ctx2.setLineDash([]);
+        } else {
+            ctx2.strokeStyle = gridCol; ctx2.lineWidth = 1;
+            ctx2.setLineDash(Math.abs(frac) === 0.5 ? [2,3] : [3,4]);
+        }
+        ctx2.beginPath(); ctx2.moveTo(P2.left, gy2); ctx2.lineTo(P2.left+CW2, gy2); ctx2.stroke();
+        ctx2.setLineDash([]);
+        var lv = frac * mxA;
+        var ls = (lv>0?'+':'') + lv.toFixed(Math.abs(lv)<1?2:1);
+        ctx2.fillStyle = frac===0 ? textCol : mutedCol;
+        ctx2.font = frac===0 ? 'bold 11px sans-serif' : '10px sans-serif';
+        ctx2.textAlign = 'right';
+        ctx2.fillText(ls, P2.left - 5, gy2 + 4);
+    });
+
+    // ── bars ──
+    var slotW = CW2 / n2;
+    var bw2   = Math.max(5, slotW * 0.25);
+    var gap2  = Math.max(1.5, bw2 * 0.15);
+
+    // helper draw bar
+    function drawBar2(x, val, colPos, colNeg, colZero) {
+        if (val === null) return;
+        var isZero = Math.abs(val) < 0.01;
+        var isPos  = val >= 0;
+        var col    = isZero ? colZero : (isPos ? colPos : colNeg);
+        var bh     = Math.max(3, Math.abs(val/mxA) * (CH2/2));
+        var by     = isPos ? zeroY - bh : zeroY;
+        var rad    = Math.min(4, bh/2);
+        ctx2.fillStyle = col;
+        ctx2.beginPath();
+        if (isPos) {
+            ctx2.moveTo(x+rad,by); ctx2.lineTo(x+bw2-rad,by);
+            ctx2.quadraticCurveTo(x+bw2,by,x+bw2,by+rad);
+            ctx2.lineTo(x+bw2,by+bh); ctx2.lineTo(x,by+bh);
+            ctx2.lineTo(x,by+rad); ctx2.quadraticCurveTo(x,by,x+rad,by);
+        } else {
+            ctx2.moveTo(x,by); ctx2.lineTo(x+bw2,by);
+            ctx2.lineTo(x+bw2,by+bh-rad);
+            ctx2.quadraticCurveTo(x+bw2,by+bh,x+bw2-rad,by+bh);
+            ctx2.lineTo(x+rad,by+bh); ctx2.quadraticCurveTo(x,by+bh,x,by+bh-rad);
+            ctx2.lineTo(x,by);
+        }
+        ctx2.closePath(); ctx2.fill();
+        // value label
+        if (bw2 > 8) {
+            var vs = (val>=0?'+':'') + val.toFixed(2);
+            var ly = isPos ? Math.max(by-3, P2.top+8) : by+bh+10;
+            ctx2.save();
+            ctx2.font = 'bold 8px sans-serif'; ctx2.textAlign = 'center';
+            ctx2.fillStyle = isZero ? colZero : col;
+            ctx2.fillText(vs, x+bw2/2, ly);
+            ctx2.restore();
+        }
+    }
+
+    for (var i2=0; i2<n2; i2++) {
+        var sx = P2.left + i2*slotW + slotW/2;
+        var groupW = bw2*3 + gap2*2;
+        var gx = sx - groupW/2;
+
+        // Esp bar
+        drawBar2(gx,           espData[i2], '#27ae60','#e74c3c','#27ae60');
+        // CB bar
+        drawBar2(gx+bw2+gap2,  cbData[i2],  '#3498db','#e74c3c','#3498db');
+        // Total bar (darker)
+        drawBar2(gx+2*(bw2+gap2), totData[i2], '#8e44ad','#c0392b','#27ae60');
+
+        // X label: date
+        ctx2.fillStyle = mutedCol; ctx2.font = 'bold 9px sans-serif'; ctx2.textAlign = 'center';
+        ctx2.fillText(labEC[i2], sx, H2 - P2.bottom + 11);
+        // X label: caissier
+        ctx2.fillStyle = isDark ? 'rgba(200,216,248,0.4)' : 'rgba(44,62,80,0.38)';
+        ctx2.font = '8px sans-serif';
+        ctx2.fillText(caisEC[i2], sx, H2 - P2.bottom + 21);
+    }
+
+    // ── average line ──
+    if (avgTot !== null) {
+        var avgY = zeroY - (avgTot/mxA) * (CH2/2);
+        ctx2.save();
+        ctx2.strokeStyle = '#8e44ad';
+        ctx2.lineWidth = 1.5;
+        ctx2.setLineDash([5, 3]);
+        ctx2.beginPath(); ctx2.moveTo(P2.left, avgY); ctx2.lineTo(P2.left+CW2, avgY); ctx2.stroke();
+        ctx2.setLineDash([]);
+        // label
+        ctx2.fillStyle = '#8e44ad'; ctx2.font = 'bold 9px sans-serif'; ctx2.textAlign = 'right';
+        var avgLbl = 'moy '+(avgTot>=0?'+':'')+avgTot.toFixed(2)+'€';
+        ctx2.fillText(avgLbl, P2.left+CW2, avgY-3);
+        ctx2.restore();
+    }
+
+    // ── legend ──
+    var legItems = [
+        { col:'#27ae60', label:'Esp.' },
+        { col:'#3498db', label:'CB' },
+        { col:'#8e44ad', label:'Total' }
+    ];
+    var legX = P2.left;
+    var legY = H2 - 10;
+    legItems.forEach(function(li) {
+        ctx2.fillStyle = li.col;
+        ctx2.fillRect(legX, legY-8, 8, 8);
+        ctx2.fillStyle = textCol; ctx2.font = 'bold 10px sans-serif'; ctx2.textAlign = 'left';
+        ctx2.fillText(li.label, legX+10, legY-1);
+        legX += 10 + ctx2.measureText(li.label).width + 12;
+    });
+    // Ligne moy
+    ctx2.save();
+    ctx2.strokeStyle = '#8e44ad'; ctx2.lineWidth = 1.5; ctx2.setLineDash([4,3]);
+    ctx2.beginPath(); ctx2.moveTo(legX, legY-4); ctx2.lineTo(legX+16, legY-4); ctx2.stroke();
+    ctx2.setLineDash([]);
+    ctx2.fillStyle = textCol; ctx2.font = 'bold 10px sans-serif'; ctx2.textAlign = 'left';
+    ctx2.fillText('Moy.', legX+18, legY-1);
+    ctx2.restore();
 }
 
 // ===== HELPERS FILTRE DATE CLÔTURES =====
@@ -24646,197 +25186,430 @@ function invRender() {
     var list   = invLoad();
     var month  = (document.getElementById('inv-filter-month') || {}).value || new Date().toISOString().substring(0, 7);
     var catF   = (document.getElementById('inv-filter-cat') || {}).value || '';
+    var search = ((document.getElementById('inv-search') || {}).value || '').toLowerCase().trim();
     var listEl = document.getElementById('inv-list');
     if (!listEl) return;
 
     var filtered = list.filter(function(e) { return e.date.startsWith(month); });
-    if (catF) filtered = filtered.filter(function(e) { return e.cat === catF; });
+    if (catF)   filtered = filtered.filter(function(e) { return e.cat === catF; });
+    if (search) filtered = filtered.filter(function(e) {
+        return (e.desc||'').toLowerCase().includes(search)
+            || (e.fournisseur||'').toLowerCase().includes(search)
+            || (e.note||'').toLowerCase().includes(search)
+            || String(e.numero||'').includes(search);
+    });
 
     var total = filtered.reduce(function(s, e) { return s + e.montant; }, 0);
     var totalEl = document.getElementById('inv-filter-total');
-    if (totalEl) totalEl.textContent = filtered.length ? 'Total : -' + total.toFixed(2) + ' \u20ac' : '';
+    if (totalEl) totalEl.textContent = filtered.length ? 'Total : -' + total.toFixed(2) + ' €' : '';
 
     if (!filtered.length) {
-        listEl.innerHTML = '<div style="text-align:center;padding:50px 20px;"><div style="font-size:3rem;margin-bottom:12px;opacity:0.4;">\ud83d\udcbc</div><h3 style="margin:0 0 6px;font-size:1rem;color:var(--text-main,#2c3e50);">Aucun achat ce mois</h3><p style="font-size:0.82rem;color:var(--gray,#7f8c8d);">Cliquez sur \u00ab \u2795 Nouvel achat \u00bb pour commencer.</p></div>';
+        listEl.innerHTML = '<div style="text-align:center;padding:50px 20px;"><div style="font-size:3rem;margin-bottom:12px;opacity:0.4;">💼</div><h3 style="margin:0 0 6px;font-size:1rem;color:var(--text-main,#2c3e50);">Aucun achat ce mois</h3><p style="font-size:0.82rem;color:var(--gray,#7f8c8d);">Cliquez sur « ➕ Nouvel achat » pour commencer.</p></div>';
         invUpdateStatsRow([], month);
+        _invDrawCharts([], list);
         return;
     }
 
-    // ---- Analyse fournisseurs ----
+    // ---- Analyse ----
     var byFournisseur = {};
     var byPaiement = { comptant:0, cb:0, cheque:0, credit:0 };
-    var payIcons = { comptant:'\ud83d\udcb5', cb:'\ud83d\udcb3', cheque:'\ud83d\udcc4', credit:'\ud83d\udd04' };
-    var payLabels = { comptant:'Comptant', cb:'CB', cheque:'Ch\u00e8que', credit:'Cr\u00e9dit' };
-    var payColors = { comptant:'#27ae60', cb:'#3498db', cheque:'#f39c12', credit:'#e74c3c' };
+    var byCateg = {};
+    var payIcons   = { comptant:'💵', cb:'💳', cheque:'📄', credit:'🔄' };
+    var payLabels  = { comptant:'Comptant', cb:'CB', cheque:'Chèque', credit:'Crédit' };
+    var payColors  = { comptant:'#27ae60', cb:'#3498db', cheque:'#f39c12', credit:'#e74c3c' };
     var fournColors = ['#9b59b6','#3498db','#e67e22','#1abc9c','#e74c3c','#2ecc71','#f39c12','#8e44ad'];
 
     filtered.forEach(function(e) {
-        var f = e.fournisseur || 'Non renseign\u00e9';
+        var f = e.fournisseur || 'Non renseigné';
         if (!byFournisseur[f]) byFournisseur[f] = { total:0, count:0 };
         byFournisseur[f].total += e.montant;
         byFournisseur[f].count++;
         if (e.paiement && byPaiement.hasOwnProperty(e.paiement)) byPaiement[e.paiement] += e.montant;
+        var ckey = e.cat || 'autre';
+        if (!byCateg[ckey]) byCateg[ckey] = 0;
+        byCateg[ckey] += e.montant;
     });
     var topFournisseurs = Object.entries(byFournisseur).sort(function(a,b) { return b[1].total - a[1].total; });
 
-    // ---- HTML : Fournisseurs ----
+    // ---- Fournisseurs ----
     var fournHtml = '';
     if (topFournisseurs.length > 1) {
-        fournHtml = '<div style="margin-bottom:14px;"><div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">\ud83c\udfe2 Top fournisseurs</div><div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;">';
+        fournHtml = '<div style="margin-bottom:14px;"><div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">🏢 Top fournisseurs</div><div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;">';
         topFournisseurs.slice(0, 6).forEach(function(item, idx) {
             var name = item[0], data = item[1];
             var color = fournColors[idx % fournColors.length];
             var pct = total > 0 ? Math.round((data.total / total) * 100) : 0;
             fournHtml += '<div style="min-width:130px;background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-left:4px solid ' + color + ';border-radius:10px;padding:10px 12px;flex-shrink:0;">';
-            fournHtml += '<div style="font-weight:700;font-size:0.78rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">\ud83c\udfe2 ' + name + '</div>';
-            fournHtml += '<div style="font-size:1.05rem;font-weight:800;color:' + color + ';margin:4px 0;">' + data.total.toFixed(2) + ' \u20ac</div>';
-            fournHtml += '<div style="font-size:0.68rem;color:var(--gray,#888);">' + data.count + ' achat' + (data.count>1?'s':'') + ' \u00b7 ' + pct + '%</div>';
+            fournHtml += '<div style="font-weight:700;font-size:0.78rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + name + '">🏢 ' + name + '</div>';
+            fournHtml += '<div style="font-size:1.05rem;font-weight:800;color:' + color + ';margin:4px 0;">' + data.total.toFixed(2) + ' €</div>';
+            fournHtml += '<div style="font-size:0.68rem;color:var(--gray,#888);">' + data.count + ' achat' + (data.count>1?'s':'') + ' · ' + pct + '%</div>';
+            fournHtml += '<div style="height:3px;background:' + color + '30;border-radius:2px;margin-top:6px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:2px;"></div></div>';
             fournHtml += '</div>';
         });
         fournHtml += '</div></div>';
     }
 
-    // ---- HTML : Barre paiements ----
+    // ---- Barre paiements ----
     var payTotal = Object.values(byPaiement).reduce(function(a,b){return a+b;},0);
     var payHtml = '';
     if (payTotal > 0) {
-        payHtml = '<div style="margin-bottom:14px;"><div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">\ud83d\udcb3 R\u00e9partition paiements</div>';
-        payHtml += '<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px;">';
+        payHtml = '<div style="margin-bottom:14px;background:var(--bg-card,#fff);border-radius:12px;border:1.5px solid var(--border-color,#eee);padding:12px 14px;">';
+        payHtml += '<div style="font-size:0.72rem;font-weight:700;color:var(--gray,#7f8c8d);text-transform:uppercase;margin-bottom:8px;">💳 Répartition paiements</div>';
+        payHtml += '<div style="display:flex;height:10px;border-radius:5px;overflow:hidden;margin-bottom:10px;gap:2px;">';
         Object.keys(byPaiement).forEach(function(k) {
             if (byPaiement[k] > 0) {
                 var w = Math.max(2, (byPaiement[k]/payTotal)*100);
-                payHtml += '<div style="width:' + w + '%;background:' + payColors[k] + ';" title="' + payLabels[k] + ' : ' + byPaiement[k].toFixed(2) + ' \u20ac"></div>';
+                payHtml += '<div style="flex:' + w + ';background:' + payColors[k] + ';border-radius:3px;" title="' + payLabels[k] + ' : ' + byPaiement[k].toFixed(2) + ' €"></div>';
             }
         });
-        payHtml += '</div><div style="display:flex;gap:10px;flex-wrap:wrap;">';
+        payHtml += '</div><div style="display:flex;gap:12px;flex-wrap:wrap;">';
         Object.keys(byPaiement).forEach(function(k) {
             if (byPaiement[k] > 0) {
-                payHtml += '<span style="font-size:0.72rem;color:' + payColors[k] + ';font-weight:700;">' + payIcons[k] + ' ' + payLabels[k] + ' : ' + byPaiement[k].toFixed(2) + ' \u20ac</span>';
+                var pct2 = Math.round((byPaiement[k]/payTotal)*100);
+                payHtml += '<div style="display:flex;align-items:center;gap:5px;">';
+                payHtml += '<div style="width:10px;height:10px;border-radius:3px;background:' + payColors[k] + ';flex-shrink:0;"></div>';
+                payHtml += '<span style="font-size:0.73rem;color:var(--text-main);font-weight:700;">' + payIcons[k] + ' ' + payLabels[k] + '</span>';
+                payHtml += '<span style="font-size:0.68rem;color:var(--text-muted,#888);">' + byPaiement[k].toFixed(2) + ' € (' + pct2 + '%)</span>';
+                payHtml += '</div>';
             }
         });
         payHtml += '</div></div>';
     }
 
-    // ---- HTML : Cartes des achats ----
-    var cardsHtml = filtered.map(function(e) {
-        var catIcon  = invCatIcon(e.cat);
-        var catLabel = invCatLabel(e.cat);
-        var d = new Date(e.date);
-        var dateStr  = d.toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'});
-        var safeId   = (e.id||'').replace(/'/g, "\\'");
-        var payIcon  = e.paiement ? (payIcons[e.paiement] || '') : '';
-        var payLbl   = e.paiement ? (payLabels[e.paiement] || e.paiement) : '';
-        var payClr   = e.paiement ? (payColors[e.paiement] || '#888') : '#888';
+    // ---- Groupement par mois si activé ----
+    var grouped = window._invGroupMode;
+    var cardsHtml = '';
 
-        // DLC
-        var dlcHtml = '';
-        if (e.dlc) {
-            var today = new Date(); today.setHours(0,0,0,0);
-            var exp = new Date(e.dlc); exp.setHours(0,0,0,0);
-            var days = Math.ceil((exp - today) / 86400000);
-            var dlcColor = days < 0 ? '#e74c3c' : days <= 3 ? '#e67e22' : days <= 7 ? '#f39c12' : '#27ae60';
-            var dlcLabel = days < 0 ? 'Expir\u00e9' : days === 0 ? "Aujourd\'hui" : days + 'j';
-            dlcHtml = '<span style="font-size:0.65rem;background:' + dlcColor + '20;color:' + dlcColor + ';border:1px solid ' + dlcColor + '40;padding:1px 6px;border-radius:4px;font-weight:600;">\ud83d\udcc5 DLC ' + dlcLabel + '</span>';
-        }
-
-        // Numéro d'investissement
-        var numStr = e.numero || '—';
-
-        var h = '<div onclick="invOpenEdit(\'' + safeId + '\')" style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;overflow:hidden;cursor:pointer;transition:all 0.15s;color:var(--text-main,#2c3e50);display:flex;align-items:stretch;" onmouseover="this.style.boxShadow=\'0 4px 20px rgba(0,0,0,0.1)\';this.style.transform=\'translateY(-1px)\'" onmouseout="this.style.boxShadow=\'none\';this.style.transform=\'none\'">';
-
-        // ── BANDE GAUCHE : Numéro unique ──
-        h += '<div style="background:linear-gradient(180deg,#9b59b6,#8e44ad);min-width:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;padding:8px 4px;gap:2px;">';
-        h += '<div style="font-size:0.55rem;font-weight:700;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.5px;">N\u00b0</div>';
-        h += '<div style="font-size:0.95rem;font-weight:900;color:white;letter-spacing:0.5px;">' + numStr + '</div>';
-        h += '</div>';
-
-        // ── CONTENU DROITE ──
-        h += '<div style="flex:1;min-width:0;padding:12px 14px;">';
-
-        // Ligne 1 : ic\u00f4ne + titre + montant
-        h += '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:6px;">';
-        h += '<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,rgba(155,89,182,0.12),rgba(142,68,173,0.08));display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">' + catIcon + '</div>';
-        h += '<div style="flex:1;min-width:0;">';
-        h += '<div style="font-weight:700;font-size:0.9rem;color:var(--text-main,#2c3e50);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (e.desc||'-') + '</div>';
-        h += '<div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
-        h += '<span style="font-size:0.68rem;color:var(--gray,#888);">' + catLabel + '</span>';
-        h += '<span style="font-size:0.68rem;color:var(--gray,#aaa);">\u00b7</span>';
-        h += '<span style="font-size:0.68rem;color:var(--gray,#888);">\ud83d\udcc6 ' + dateStr + '</span>';
-        if (dlcHtml) { h += '<span style="font-size:0.68rem;color:var(--gray,#aaa);">\u00b7</span>' + dlcHtml; }
-        h += '</div></div>';
-        h += '<div style="text-align:right;flex-shrink:0;">';
-        h += '<div style="font-weight:800;font-size:1.1rem;color:#e74c3c;">-' + e.montant.toFixed(2) + ' \u20ac</div>';
-        if (e.paiement) { h += '<div style="font-size:0.65rem;color:' + payClr + ';font-weight:600;margin-top:2px;">' + payIcon + ' ' + payLbl + '</div>'; }
-        h += '</div></div>';
-
-        // Ligne 2 : d\u00e9tails
-        var details = [];
-        if (e.fournisseur) details.push('\ud83c\udfe2 ' + e.fournisseur);
-        if (e.qte) {
-            var _uT = e.unitType || 'unit';
-            if (_uT === 'pack' && e.nbPacks && e.packSize) {
-                var _packPrix = e.prixPack ? (' · ' + e.prixPack.toFixed(2) + ' €/pack') : '';
-                var _uPrix = e.prixUnit ? (' · ' + e.prixUnit.toFixed(2) + ' €/u.') : '';
-                details.push('\ud83d\udce6 ' + e.nbPacks + ' pack' + (e.nbPacks > 1 ? 's' : '') + ' × ' + e.packSize + ' u. = ' + e.qte + ' u. total' + _packPrix + _uPrix);
-            } else {
-                var _uLbl = _uT === 'kg' ? 'kg' : 'u.';
-                var _qStr = _uT === 'kg' ? parseFloat(e.qte).toFixed(3) : e.qte;
-                var _pStr = e.prixUnit ? (' × ' + e.prixUnit.toFixed(_uT === 'kg' ? 3 : 2) + ' €/' + _uLbl) : '';
-                details.push('\ud83d\udce6 ' + _qStr + ' ' + _uLbl + _pStr);
-            }
-        }
-        if (e.paiement === 'credit' && e.resteADoit != null && e.resteADoit > 0) {
-            details.push('\u26a0\ufe0f Reste : ' + e.resteADoit.toFixed(2) + ' \u20ac');
-        }
-        if (e.paiement === 'credit' && e.acompte) {
-            details.push('\ud83d\udcb0 Acompte : ' + e.acompte.toFixed(2) + ' \u20ac');
-        }
-        if (details.length) {
-            h += '<div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px 0 0;border-top:1px dashed var(--border-color,#eee);margin-top:4px;">';
-            details.forEach(function(det) { h += '<span style="font-size:0.72rem;color:var(--text-muted,#666);font-weight:600;">' + det + '</span>'; });
-            h += '</div>';
-        }
-
-        // Ligne 3 : barre de progression crédit
-        if (e.paiement === 'credit' && e.resteADoit != null) {
-            var _tPaid = (e.acompte || 0) + (Array.isArray(e.paymentLogs) ? e.paymentLogs.reduce(function(s,p){return s+p.amount;},0) : 0);
-            var _pPct = e.montant > 0 ? Math.min(100, Math.round((_tPaid / e.montant) * 100)) : 0;
-            var _pClr = e.resteADoit <= 0 ? '#27ae60' : _pPct >= 50 ? '#3498db' : '#e67e22';
-            var _soldeDateStr = (e.resteADoit <= 0 && e.soldeAt)
-                ? ' \u2014 le ' + new Date(e.soldeAt).toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'})
-                : '';
-            var _pLbl = e.resteADoit <= 0
-                ? '\u2705 Sold\u00e9' + _soldeDateStr
-                : _pPct + '% pay\u00e9 \u2014 Reste ' + e.resteADoit.toFixed(2) + ' \u20ac';
-            h += '<div style="margin-top:6px;">';
-            h += '<div style="display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:3px;">';
-            h += '<span style="color:' + _pClr + ';font-weight:700;">' + _pLbl + '</span>';
-            if (e.echeance) {
-                var _ed = new Date(e.echeance); _ed.setHours(0,0,0,0);
-                var _eToday = new Date(); _eToday.setHours(0,0,0,0);
-                var _eDays = Math.ceil((_ed - _eToday) / 86400000);
-                var _eDateStr = _ed.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
-                var _eClr = _eDays < 0 ? '#e74c3c' : _eDays <= 7 ? '#f39c12' : '#888';
-                h += '<span style="color:' + _eClr + ';font-weight:600;">\ud83d\udcc5 ' + (_eDays < 0 ? 'D\u00fb depuis ' + Math.abs(_eDays) + 'j' : '\u00c9ch. ' + _eDateStr) + '</span>';
-            }
-            h += '</div>';
-            h += '<div style="height:5px;background:var(--border-color,#eee);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + _pPct + '%;background:' + _pClr + ';border-radius:3px;transition:width 0.3s;"></div></div>';
-            h += '</div>';
-        }
-
-        // Ligne 4 : note
-        if (e.note) {
-            h += '<div style="margin-top:6px;padding:6px 10px;background:rgba(52,152,219,0.06);border-radius:7px;border-left:3px solid #3498db;font-size:0.72rem;color:#2980b9;font-style:italic;">\ud83d\udcac ' + e.note + '</div>';
-        }
-
-        h += '</div>'; // ferme contenu droite
-        h += '</div>'; // ferme carte principale
-        return h;
-    }).join('');
+    if (grouped) {
+        // Group by month
+        var byMonth = {};
+        filtered.forEach(function(e) {
+            var mk = e.date.substring(0,7);
+            if (!byMonth[mk]) byMonth[mk] = [];
+            byMonth[mk].push(e);
+        });
+        var months = Object.keys(byMonth).sort(function(a,b){return b.localeCompare(a);});
+        months.forEach(function(mk) {
+            var grp = byMonth[mk];
+            var grpTotal = grp.reduce(function(s,e){return s+e.montant;},0);
+            var mDate = new Date(mk + '-01');
+            var mLabel = mDate.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+            cardsHtml += '<div style="display:flex;align-items:center;gap:10px;margin:8px 0 6px;padding:0 4px;">';
+            cardsHtml += '<div style="flex:1;height:1px;background:linear-gradient(90deg,rgba(155,89,182,0.3),transparent);"></div>';
+            cardsHtml += '<span style="font-size:0.7rem;font-weight:800;color:#8e44ad;text-transform:capitalize;white-space:nowrap;background:var(--bg-card,#fff);padding:3px 10px;border-radius:20px;border:1.5px solid rgba(155,89,182,0.25);">';
+            cardsHtml += mLabel + ' — ' + grp.length + ' achat' + (grp.length>1?'s':'') + ' · -' + grpTotal.toFixed(2) + ' €</span>';
+            cardsHtml += '<div style="flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(155,89,182,0.3));"></div>';
+            cardsHtml += '</div>';
+            cardsHtml += grp.map(function(e){ return invBuildCard(e, payIcons, payLabels, payColors); }).join('');
+        });
+    } else {
+        cardsHtml = filtered.map(function(e){ return invBuildCard(e, payIcons, payLabels, payColors); }).join('');
+    }
 
     listEl.innerHTML = fournHtml + payHtml + '<div style="display:flex;flex-direction:column;gap:8px;">' + cardsHtml + '</div>';
     invUpdateStatsRow(filtered, month);
     invRenderCreditAlerts();
+    _invDrawCharts(filtered, list);
+}
+
+// ── Build a single investment card ────────────────────────────────────────────
+function invBuildCard(e, payIcons, payLabels, payColors) {
+    var catIcon  = invCatIcon(e.cat);
+    var catLabel = invCatLabel(e.cat);
+    var d = new Date(e.date);
+    var dateStr  = d.toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'});
+    var safeId   = (e.id||'').replace(/'/g, "\\'");
+    var payIcon  = e.paiement ? (payIcons[e.paiement] || '') : '';
+    var payLbl   = e.paiement ? (payLabels[e.paiement] || e.paiement) : '';
+    var payClr   = e.paiement ? (payColors[e.paiement] || '#888') : '#888';
+    var numStr   = e.numero || '—';
+
+    // DLC
+    var dlcHtml = '';
+    if (e.dlc) {
+        var today = new Date(); today.setHours(0,0,0,0);
+        var exp = new Date(e.dlc); exp.setHours(0,0,0,0);
+        var days = Math.ceil((exp - today) / 86400000);
+        var dlcColor = days < 0 ? '#e74c3c' : days <= 3 ? '#e67e22' : days <= 7 ? '#f39c12' : '#27ae60';
+        var dlcLabel = days < 0 ? 'Expiré' : days === 0 ? "Aujourd'hui" : days + 'j';
+        dlcHtml = '<span style="font-size:0.65rem;background:' + dlcColor + '20;color:' + dlcColor + ';border:1px solid ' + dlcColor + '40;padding:1px 6px;border-radius:4px;font-weight:600;">📅 DLC ' + dlcLabel + '</span>';
+    }
+
+    var h = '<div onclick="invOpenEdit(\'' + safeId + '\')" style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;overflow:hidden;cursor:pointer;transition:all 0.15s;color:var(--text-main,#2c3e50);display:flex;align-items:stretch;" onmouseover="this.style.boxShadow=\'0 4px 20px rgba(0,0,0,0.1)\';this.style.borderColor=\'rgba(155,89,182,0.35)\'" onmouseout="this.style.boxShadow=\'none\';this.style.borderColor=\'var(--border-color,#e0e0e0)\'">';
+
+    // Bande gauche
+    h += '<div style="background:linear-gradient(180deg,#9b59b6,#8e44ad);min-width:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;padding:8px 4px;gap:2px;">';
+    h += '<div style="font-size:0.55rem;font-weight:700;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.5px;">N°</div>';
+    h += '<div style="font-size:0.95rem;font-weight:900;color:white;letter-spacing:0.5px;">' + numStr + '</div>';
+    h += '</div>';
+
+    // Contenu
+    h += '<div style="flex:1;min-width:0;padding:12px 14px;">';
+
+    // Ligne 1: icône + titre + montant
+    h += '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:6px;">';
+    h += '<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,rgba(155,89,182,0.12),rgba(142,68,173,0.08));display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">' + catIcon + '</div>';
+    h += '<div style="flex:1;min-width:0;">';
+    h += '<div style="font-weight:700;font-size:0.9rem;color:var(--text-main,#2c3e50);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (e.desc||'-') + '</div>';
+    h += '<div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
+    h += '<span style="font-size:0.68rem;color:var(--gray,#888);">' + catLabel + '</span>';
+    h += '<span style="font-size:0.68rem;color:var(--gray,#aaa);">·</span>';
+    h += '<span style="font-size:0.68rem;color:var(--gray,#888);">📆 ' + dateStr + '</span>';
+    if (dlcHtml) { h += '<span style="font-size:0.68rem;color:var(--gray,#aaa);">·</span>' + dlcHtml; }
+    h += '</div></div>';
+    h += '<div style="text-align:right;flex-shrink:0;">';
+    h += '<div style="font-weight:800;font-size:1.1rem;color:#e74c3c;">-' + e.montant.toFixed(2) + ' €</div>';
+    if (e.paiement) { h += '<div style="font-size:0.65rem;color:' + payClr + ';font-weight:600;margin-top:2px;">' + payIcon + ' ' + payLbl + '</div>'; }
+    h += '</div></div>';
+
+    // Ligne 2 : détails
+    var details = [];
+    if (e.fournisseur) details.push('🏢 ' + e.fournisseur);
+    if (e.qte) {
+        var _uT = e.unitType || 'unit';
+        if (_uT === 'pack' && e.nbPacks && e.packSize) {
+            var _packPrix = e.prixPack ? (' · ' + e.prixPack.toFixed(2) + ' €/pack') : '';
+            var _uPrix = e.prixUnit ? (' · ' + e.prixUnit.toFixed(2) + ' €/u.') : '';
+            details.push('📦 ' + e.nbPacks + ' pack' + (e.nbPacks > 1 ? 's' : '') + ' × ' + e.packSize + ' u. = ' + e.qte + ' u. total' + _packPrix + _uPrix);
+        } else {
+            var _uLbl2 = _uT === 'kg' ? 'kg' : 'u.';
+            var _qStr2 = _uT === 'kg' ? parseFloat(e.qte).toFixed(3) : e.qte;
+            var _pStr2 = e.prixUnit ? (' × ' + e.prixUnit.toFixed(_uT === 'kg' ? 3 : 2) + ' €/' + _uLbl2) : '';
+            details.push('📦 ' + _qStr2 + ' ' + _uLbl2 + _pStr2);
+        }
+    }
+    if (e.paiement === 'credit' && e.resteADoit != null && e.resteADoit > 0) details.push('⚠️ Reste : ' + e.resteADoit.toFixed(2) + ' €');
+    if (e.paiement === 'credit' && e.acompte) details.push('💰 Acompte : ' + e.acompte.toFixed(2) + ' €');
+    if (details.length) {
+        h += '<div style="display:flex;gap:10px;flex-wrap:wrap;padding:8px 0 0;border-top:1px dashed var(--border-color,#eee);margin-top:4px;">';
+        details.forEach(function(det) { h += '<span style="font-size:0.72rem;color:var(--text-muted,#666);font-weight:600;">' + det + '</span>'; });
+        h += '</div>';
+    }
+
+    // Barre crédit
+    if (e.paiement === 'credit' && e.resteADoit != null) {
+        var _tPaid = (e.acompte || 0) + (Array.isArray(e.paymentLogs) ? e.paymentLogs.reduce(function(s,p){return s+p.amount;},0) : 0);
+        var _pPct = e.montant > 0 ? Math.min(100, Math.round((_tPaid / e.montant) * 100)) : 0;
+        var _pClr = e.resteADoit <= 0 ? '#27ae60' : _pPct >= 50 ? '#3498db' : '#e67e22';
+        var _soldeDateStr = (e.resteADoit <= 0 && e.soldeAt) ? ' — le ' + new Date(e.soldeAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'}) : '';
+        var _pLbl = e.resteADoit <= 0 ? '✅ Soldé' + _soldeDateStr : _pPct + '% payé — Reste ' + e.resteADoit.toFixed(2) + ' €';
+        h += '<div style="margin-top:6px;">';
+        h += '<div style="display:flex;justify-content:space-between;font-size:0.68rem;margin-bottom:3px;">';
+        h += '<span style="color:' + _pClr + ';font-weight:700;">' + _pLbl + '</span>';
+        if (e.echeance) {
+            var _ed = new Date(e.echeance); _ed.setHours(0,0,0,0);
+            var _eToday = new Date(); _eToday.setHours(0,0,0,0);
+            var _eDays = Math.ceil((_ed - _eToday) / 86400000);
+            var _eDateStr = _ed.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
+            var _eClr = _eDays < 0 ? '#e74c3c' : _eDays <= 7 ? '#f39c12' : '#888';
+            h += '<span style="color:' + _eClr + ';font-weight:600;">📅 ' + (_eDays < 0 ? 'Dû depuis ' + Math.abs(_eDays) + 'j' : 'Éch. ' + _eDateStr) + '</span>';
+        }
+        h += '</div><div style="height:5px;background:var(--border-color,#eee);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + _pPct + '%;background:' + _pClr + ';border-radius:3px;transition:width 0.3s;"></div></div>';
+        h += '</div>';
+    }
+
+    if (e.note) h += '<div style="margin-top:6px;padding:6px 10px;background:rgba(52,152,219,0.06);border-radius:7px;border-left:3px solid #3498db;font-size:0.72rem;color:#2980b9;font-style:italic;">💬 ' + e.note + '</div>';
+
+    h += '</div></div>';
+    return h;
+}
+
+// ── Toggle graphiques ────────────────────────────────────────────────────────
+window._invChartsVisible = false;
+window._invGroupMode     = false;
+
+window._invToggleCharts = function() {
+    window._invChartsVisible = !window._invChartsVisible;
+    var wrap = document.getElementById('inv-charts-wrap');
+    var btn  = document.getElementById('inv-toggle-charts');
+    if (wrap) wrap.style.display = window._invChartsVisible ? 'block' : 'none';
+    if (btn)  btn.style.background = window._invChartsVisible ? 'rgba(155,89,182,0.12)' : 'var(--bg-card,#fff)';
+    if (window._invChartsVisible) invRender();
+};
+
+window._invToggleGroup = function() {
+    window._invGroupMode = !window._invGroupMode;
+    var btn = document.getElementById('inv-toggle-group');
+    if (btn) btn.style.background = window._invGroupMode ? 'rgba(26,188,156,0.12)' : 'var(--bg-card,#fff)';
+    invRender();
+};
+
+// ── Draw investment charts ────────────────────────────────────────────────────
+function _invDrawCharts(filtered, allList) {
+    if (!window._invChartsVisible) return;
+    var isDark   = document.body.classList.contains('dark-mode');
+    var textCol  = isDark ? '#c8d8f8' : '#2c3e50';
+    var mutedCol = isDark ? 'rgba(200,216,248,0.5)' : 'rgba(44,62,80,0.42)';
+    var gridCol  = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)';
+
+    var catColors = ['#9b59b6','#3498db','#e67e22','#1abc9c','#e74c3c','#2ecc71','#f39c12','#8e44ad','#16a085','#d35400'];
+
+    // ── 1. Donut Chart (catégories) ──────────────────────────────────────────
+    var cD = document.getElementById('inv-chart-donut');
+    if (cD) {
+        var byCateg = {};
+        filtered.forEach(function(e) {
+            var k = e.cat || 'autre';
+            if (!byCateg[k]) byCateg[k] = 0;
+            byCateg[k] += e.montant;
+        });
+        var cats = Object.entries(byCateg).sort(function(a,b){return b[1]-a[1];});
+        var total = filtered.reduce(function(s,e){return s+e.montant;},0);
+
+        var W = cD.offsetWidth || 220, H = 170;
+        var ctx = _setupHiDpiCanvas(cD, W, H);
+        ctx.clearRect(0,0,W,H);
+
+        if (cats.length === 0) {
+            ctx.fillStyle = mutedCol; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('Aucune donnée', W/2, H/2); 
+        } else {
+            var cx = W/2, cy = H/2, R = Math.min(cx, cy) - 14, r = R * 0.52;
+            var startAngle = -Math.PI / 2;
+            cats.forEach(function(item, idx) {
+                var slice = (item[1] / total) * 2 * Math.PI;
+                var col = catColors[idx % catColors.length];
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, R, startAngle, startAngle + slice);
+                ctx.closePath();
+                ctx.fillStyle = col;
+                ctx.fill();
+                ctx.strokeStyle = isDark ? '#1e2a3a' : '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Percent label inside slice (if big enough)
+                if (slice > 0.35) {
+                    var midA = startAngle + slice/2;
+                    var lx = cx + Math.cos(midA) * (R * 0.73);
+                    var ly = cy + Math.sin(midA) * (R * 0.73);
+                    ctx.fillStyle = 'white';
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(Math.round((item[1]/total)*100) + '%', lx, ly + 4);
+                }
+                startAngle += slice;
+            });
+
+            // Centre hole
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, 2*Math.PI);
+            ctx.fillStyle = isDark ? '#1e2a3a' : '#fff';
+            ctx.fill();
+
+            // Centre text
+            ctx.fillStyle = textCol; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText(total.toFixed(0) + ' €', cx, cy + 3);
+            ctx.fillStyle = mutedCol; ctx.font = '10px sans-serif';
+            ctx.fillText('Total', cx, cy + 16);
+        }
+
+        // Legend chips below canvas
+        var legendEl = document.getElementById('inv-chart-legend');
+        if (legendEl) {
+            legendEl.innerHTML = cats.map(function(item, idx) {
+                var col = catColors[idx % catColors.length];
+                var pct = total > 0 ? Math.round((item[1]/total)*100) : 0;
+                var icon = invCatIcon(item[0]);
+                return '<div style="display:flex;align-items:center;gap:4px;background:var(--bg-body,#f4f7f6);border-radius:20px;padding:3px 8px;border:1px solid ' + col + '30;">' +
+                    '<div style="width:8px;height:8px;border-radius:2px;background:' + col + ';flex-shrink:0;"></div>' +
+                    '<span style="font-size:0.65rem;font-weight:700;color:var(--text-main);">' + icon + ' ' + invCatLabel(item[0]) + '</span>' +
+                    '<span style="font-size:0.62rem;color:' + col + ';font-weight:800;">' + pct + '%</span>' +
+                    '</div>';
+            }).join('');
+        }
+    }
+
+    // ── 2. Bar Chart (évolution mensuelle) ──────────────────────────────────
+    var cM = document.getElementById('inv-chart-monthly');
+    if (cM && allList) {
+        // Build last 12 months
+        var now12 = new Date();
+        var months12 = [];
+        for (var mi = 11; mi >= 0; mi--) {
+            var md = new Date(now12.getFullYear(), now12.getMonth() - mi, 1);
+            months12.push(md.toISOString().substring(0,7));
+        }
+        var monthTotals = months12.map(function(mk) {
+            return allList.filter(function(e){ return e.date.startsWith(mk); })
+                          .reduce(function(s,e){ return s+e.montant; }, 0);
+        });
+        var labM = months12.map(function(mk) {
+            var d = new Date(mk + '-01');
+            return d.toLocaleDateString('fr-FR',{month:'short'}).slice(0,4);
+        });
+
+        var W2 = cM.offsetWidth || 380, H2 = 170;
+        var ctx2 = _setupHiDpiCanvas(cM, W2, H2);
+        ctx2.clearRect(0,0,W2,H2);
+
+        var PAD = {top:22, right:10, bottom:30, left:50};
+        var CW = W2-PAD.left-PAD.right, CH = H2-PAD.top-PAD.bottom;
+        var n = months12.length;
+        var maxV = Math.max.apply(null, monthTotals.concat([1]));
+        var niceMax = (function(v){
+            if(v<=0) return 1;
+            var mag=Math.pow(10,Math.floor(Math.log10(v)));
+            return Math.ceil(v/mag)*mag;
+        })(maxV);
+
+        // Grid
+        for (var g=0; g<=4; g++) {
+            var gy = PAD.top + CH*g/4;
+            ctx2.strokeStyle = gridCol; ctx2.lineWidth = 1; ctx2.setLineDash(g===0?[]:[3,3]);
+            ctx2.beginPath(); ctx2.moveTo(PAD.left, gy); ctx2.lineTo(PAD.left+CW, gy); ctx2.stroke();
+            ctx2.setLineDash([]);
+            var yv = Math.round(niceMax*(4-g)/4);
+            ctx2.fillStyle = mutedCol; ctx2.font = 'bold 10px sans-serif'; ctx2.textAlign = 'right';
+            ctx2.fillText(yv>=1000?(yv/1000).toFixed(1)+'k':yv, PAD.left-5, gy+4);
+        }
+
+        // Current month marker
+        var curMonthIdx = months12.indexOf(new Date().toISOString().substring(0,7));
+
+        // Bars
+        var bw = Math.max(8, (CW/n)*0.62);
+        for (var bi=0; bi<n; bi++) {
+            var bx = PAD.left + bi*(CW/n) + (CW/n-bw)/2;
+            var bh = monthTotals[bi] ? Math.max(3, (monthTotals[bi]/niceMax)*CH) : 2;
+            var by = PAD.top + CH - bh;
+            var isCur = bi === curMonthIdx;
+            var col2 = isCur ? '#e74c3c' : (isDark ? 'rgba(155,89,182,0.8)' : 'rgba(142,68,173,0.75)');
+            var rad = Math.min(4, bh/2);
+            ctx2.fillStyle = col2;
+            ctx2.beginPath();
+            ctx2.moveTo(bx+rad, by); ctx2.lineTo(bx+bw-rad, by);
+            ctx2.quadraticCurveTo(bx+bw,by, bx+bw,by+rad);
+            ctx2.lineTo(bx+bw, by+bh); ctx2.lineTo(bx, by+bh);
+            ctx2.lineTo(bx, by+rad); ctx2.quadraticCurveTo(bx,by, bx+rad,by);
+            ctx2.closePath(); ctx2.fill();
+
+            // Value above bar
+            if (monthTotals[bi] > 0 && bw > 14) {
+                ctx2.fillStyle = isCur ? '#e74c3c' : textCol;
+                ctx2.font = 'bold 10px sans-serif'; ctx2.textAlign = 'center';
+                var vs = monthTotals[bi] >= 1000 ? (monthTotals[bi]/1000).toFixed(1)+'k' : monthTotals[bi].toFixed(0);
+                ctx2.fillText(vs, bx+bw/2, Math.max(by-3, PAD.top+10));
+            }
+
+            // X label
+            ctx2.fillStyle = isCur ? '#e74c3c' : mutedCol;
+            ctx2.font = isCur ? 'bold 10px sans-serif' : '10px sans-serif';
+            ctx2.textAlign = 'center';
+            ctx2.fillText(labM[bi], bx+bw/2, H2-PAD.bottom+13);
+        }
+
+        // Legend
+        ctx2.fillStyle = '#e74c3c';
+        ctx2.fillRect(PAD.left, PAD.top-10, 8, 8);
+        ctx2.fillStyle = textCol; ctx2.font = '10px sans-serif'; ctx2.textAlign = 'left';
+        ctx2.fillText('Mois actuel', PAD.left+10, PAD.top-3);
+        ctx2.fillStyle = isDark ? 'rgba(155,89,182,0.8)' : 'rgba(142,68,173,0.75)';
+        ctx2.fillRect(PAD.left+80, PAD.top-10, 8, 8);
+        ctx2.fillStyle = textCol;
+        ctx2.fillText('Autres mois', PAD.left+90, PAD.top-3);
+    }
 }
 
 // ============================================================================
@@ -24905,33 +25678,52 @@ function invUpdateStatsRow(filtered, month) {
     const rowEl = document.getElementById('inv-stats-row');
     if (!rowEl) return;
 
-    const total = filtered.reduce((s, e) => s + e.montant, 0);
-    const byCateg = {};
-    filtered.forEach(e => { byCateg[e.cat] = (byCateg[e.cat] || 0) + e.montant; });
+    const total     = filtered.reduce((s, e) => s + e.montant, 0);
+    const count     = filtered.length;
+    const avg       = count > 0 ? total / count : 0;
+    const creditList = filtered.filter(e => e.paiement === 'credit' && e.resteADoit > 0);
+    const creditTotal = creditList.reduce((s,e) => s + (e.resteADoit||0), 0);
 
-    // CA du mois depuis l'historique de ventes
+    // Top catégorie
+    const byCateg = {};
+    filtered.forEach(e => { byCateg[e.cat||'autre'] = (byCateg[e.cat||'autre'] || 0) + e.montant; });
+    const topCat = Object.entries(byCateg).sort((a,b) => b[1]-a[1])[0];
+    const topCatIcon  = topCat ? invCatIcon(topCat[0]) : '—';
+    const topCatLabel = topCat ? invCatLabel(topCat[0]) : '—';
+    const topCatPct   = topCat && total > 0 ? Math.round((topCat[1]/total)*100) : 0;
+
+    // CA du mois
     const salesHistory = JSON.parse(localStorage.getItem('covo_sales_history') || localStorage.getItem('covo_sales') || '[]');
     const monthCA = salesHistory.filter(s => !s.cancelled && (s.date||'').startsWith(month))
         .reduce((s, sale) => s + parseFloat(sale.total || 0), 0);
     const benefice = monthCA - total;
 
     rowEl.innerHTML = `
-        <div style="background:linear-gradient(135deg,#e74c3c,#c0392b);border-radius:10px;padding:14px;color:white;text-align:center;">
-            <div style="font-size:1.4rem;font-weight:800;">${total.toFixed(2)} €</div>
-            <div style="font-size:0.72rem;opacity:0.85;margin-top:2px;">💼 Total dépenses mois</div>
+        <div style="background:linear-gradient(135deg,#e74c3c,#c0392b);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+            <div style="font-size:1.3rem;font-weight:800;">${total.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">💼 Total dépenses</div>
+            <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">${count} achat${count>1?'s':''}</div>
         </div>
-        <div style="background:linear-gradient(135deg,#2ecc71,#27ae60);border-radius:10px;padding:14px;color:white;text-align:center;">
-            <div style="font-size:1.4rem;font-weight:800;">${monthCA.toFixed(2)} €</div>
-            <div style="font-size:0.72rem;opacity:0.85;margin-top:2px;">💰 CA du mois</div>
+        <div style="background:linear-gradient(135deg,#2ecc71,#27ae60);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+            <div style="font-size:1.3rem;font-weight:800;">${monthCA.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">💰 CA du mois</div>
+            <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">${benefice>=0?'📈 Bénéf. ':'📉 Déficit '}<b>${benefice>=0?'+':''}${benefice.toFixed(0)} €</b></div>
         </div>
-        <div style="background:linear-gradient(135deg,${benefice >= 0 ? '#3498db,#2980b9' : '#e67e22,#d35400'});border-radius:10px;padding:14px;color:white;text-align:center;">
-            <div style="font-size:1.4rem;font-weight:800;">${benefice >= 0 ? '+' : ''}${benefice.toFixed(2)} €</div>
-            <div style="font-size:0.72rem;opacity:0.85;margin-top:2px;">${benefice >= 0 ? '📈 Bénéfice estimé' : '📉 Déficit estimé'}</div>
+        <div style="background:var(--bg-card,#fff);border:1.5px solid rgba(155,89,182,0.25);border-radius:12px;padding:14px 12px;text-align:center;">
+            <div style="font-size:1.3rem;font-weight:800;color:#8e44ad;">${avg.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">📊 Panier moyen</div>
+            <div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:1px;">par achat</div>
         </div>
-        <div style="background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;padding:14px;text-align:center;">
-            <div style="font-size:1.1rem;font-weight:800;color:var(--text-main,#2c3e50);">${filtered.length}</div>
-            <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-top:2px;">🧾 Achats enregistrés</div>
+        <div style="background:var(--bg-card,#fff);border:1.5px solid ${topCat ? 'rgba(26,188,156,0.3)':'var(--border-color,#eee)'};border-radius:12px;padding:14px 12px;text-align:center;">
+            <div style="font-size:1.3rem;">${topCatIcon}</div>
+            <div style="font-size:0.82rem;font-weight:800;color:var(--text-main,#2c3e50);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${topCatLabel}</div>
+            <div style="font-size:0.62rem;color:#1abc9c;margin-top:1px;font-weight:700;">Top catégorie · ${topCatPct}%</div>
         </div>
+        ${creditList.length > 0 ? `<div style="background:linear-gradient(135deg,#f39c12,#e67e22);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+            <div style="font-size:1.3rem;font-weight:800;">${creditTotal.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">🔄 Crédits en cours</div>
+            <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">${creditList.length} fournisseur${creditList.length>1?'s':''}</div>
+        </div>` : ''}
     `;
     // Afficher les questions investissement
     if (typeof window._invRenderQuestions === 'function') window._invRenderQuestions();
@@ -25568,6 +26360,20 @@ function _invGetCol(cols, idx, def) {
 }
 
 function switchRetourTab(e, id) {
+    // Fermer l'interface investissements si on la quitte
+    if (id !== 'rt-investissements') {
+        window._invChartsVisible = false;
+        window._invGroupMode     = false;
+        var _cw  = document.getElementById('inv-charts-wrap');
+        var _tcb = document.getElementById('inv-toggle-charts');
+        var _tgb = document.getElementById('inv-toggle-group');
+        var _sch = document.getElementById('inv-search');
+        if (_cw)  _cw.style.display  = 'none';
+        if (_tcb) _tcb.style.background = 'var(--bg-card,#fff)';
+        if (_tgb) _tgb.style.background = 'var(--bg-card,#fff)';
+        if (_sch) _sch.value = '';
+    }
+
     document.querySelectorAll('.retours-tab-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.retours-tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById(id).classList.add('active');
@@ -28394,12 +29200,16 @@ function renderCashierHistory(salesData) {
     const sorted = [...sales].reverse();
     window._sortedSalesHistory = sorted;
     renderCashierHistoryDayReport(sales);
-    
+
+    // Charger toutes les ventes pour les KPI/header/charts (toujours sur le total)
+    let allSales = [];
+    try { allSales = JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch { allSales = []; }
+    _histUpdateKPIs(allSales);
+    if (window._histChartsVisible) _histDrawCharts(allSales);
+
     // Stats rapides cliquables — chiffres toujours sur l'historique COMPLET
     const statsEl = document.getElementById('cashier-hist-stats');
     if (statsEl) {
-        let allSales = [];
-        try { allSales = JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch { allSales = []; }
         const totalCA   = allSales.filter(s=>!s.cancelled).reduce((a,s)=>a+parseFloat(s.total||0),0);
         const nbValid   = allSales.filter(s=>!s.cancelled).length;
         const nbCancel  = allSales.filter(s=>s.cancelled).length;
@@ -28501,6 +29311,281 @@ function clearCashierHistoryDate() {
     const dateEl = document.getElementById('cashier-hist-date');
     if (dateEl) dateEl.value = '';
     filterCashierHistory(document.getElementById('cashier-hist-search')?.value || '');
+}
+
+// ===== HISTORIQUE VENTES — KPI + GRAPHIQUES =====
+window._histChartsVisible = false;
+
+function _histToggleCharts() {
+    window._histChartsVisible = !window._histChartsVisible;
+    var wrap = document.getElementById('hist-charts-wrap');
+    var btn  = document.getElementById('hist-toggle-charts');
+    if (!wrap) return;
+    if (window._histChartsVisible) {
+        wrap.style.display = '';
+        if (btn) { btn.style.background = '#3498db'; btn.style.color = 'white'; btn.style.borderColor = '#2980b9'; }
+        let allSales = [];
+        try { allSales = JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch {}
+        _histDrawCharts(allSales);
+    } else {
+        wrap.style.display = 'none';
+        if (btn) { btn.style.background = 'var(--bg-card,#fff)'; btn.style.color = 'var(--text-main,#2c3e50)'; btn.style.borderColor = 'var(--border-color,#e0e0e0)'; }
+    }
+}
+
+function _histUpdateKPIs(allSales) {
+    const valid    = allSales.filter(s => !s.cancelled);
+    const cancelled = allSales.filter(s => s.cancelled);
+    const totalCA  = valid.reduce((a, s) => a + parseFloat(s.total || 0), 0);
+    const nb       = valid.length;
+    const avg      = nb > 0 ? totalCA / nb : 0;
+    const todayStr = new Date().toDateString();
+    const todayCA  = valid.filter(s => new Date(s.date).toDateString() === todayStr)
+                          .reduce((a, s) => a + parseFloat(s.total || 0), 0);
+    const todayNb  = valid.filter(s => new Date(s.date).toDateString() === todayStr).length;
+
+    // Meilleur caissier (par CA)
+    const byCash = {};
+    valid.forEach(s => {
+        const name = s.cashier || s.cashierId || 'Inconnu';
+        byCash[name] = (byCash[name] || 0) + parseFloat(s.total || 0);
+    });
+    const topEntry = Object.entries(byCash).sort((a, b) => b[1] - a[1])[0];
+    const topCashier = topEntry ? topEntry[0] : '—';
+    const topCA      = topEntry ? topEntry[1] : 0;
+
+    // Mois courant CA
+    const monthPfx = new Date().toISOString().substring(0, 7);
+    const monthCA  = valid.filter(s => (s.date || '').startsWith(monthPfx))
+                          .reduce((a, s) => a + parseFloat(s.total || 0), 0);
+
+    // Header chips
+    const chipsEl = document.getElementById('hist-header-chips');
+    if (chipsEl) {
+        chipsEl.innerHTML =
+            `<div style="background:rgba(255,255,255,0.15);border-radius:20px;padding:4px 12px;font-size:0.72rem;font-weight:700;color:rgba(255,255,255,0.92);">🧾 ${allSales.length} tickets</div>` +
+            `<div style="background:rgba(255,255,255,0.15);border-radius:20px;padding:4px 12px;font-size:0.72rem;font-weight:700;color:rgba(255,255,255,0.92);">💰 ${totalCA.toFixed(2)} € CA total</div>` +
+            (todayCA > 0 ? `<div style="background:rgba(243,156,18,0.35);border-radius:20px;padding:4px 12px;font-size:0.72rem;font-weight:700;color:#fff;">📅 ${todayCA.toFixed(2)} € aujourd'hui</div>` : '');
+    }
+
+    // KPI row
+    const kpiEl = document.getElementById('hist-kpi-row');
+    if (!kpiEl) return;
+    kpiEl.innerHTML =
+        `<div style="background:linear-gradient(135deg,#2ecc71,#27ae60);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+            <div style="font-size:1.25rem;font-weight:800;">${totalCA.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">💰 CA total validé</div>
+            <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">${nb} ticket${nb>1?'s':''}</div>
+        </div>` +
+        `<div style="background:linear-gradient(135deg,#f39c12,#e67e22);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+            <div style="font-size:1.25rem;font-weight:800;">${todayCA.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">📅 CA aujourd'hui</div>
+            <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">${todayNb} vente${todayNb>1?'s':''}</div>
+        </div>` +
+        `<div style="background:linear-gradient(135deg,#3498db,#2980b9);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+            <div style="font-size:1.25rem;font-weight:800;">${monthCA.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">🗓️ CA ce mois</div>
+            <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">${new Date().toLocaleDateString('fr-FR',{month:'long',year:'numeric'})}</div>
+        </div>` +
+        `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(155,89,182,0.25);border-radius:12px;padding:14px 12px;text-align:center;">
+            <div style="font-size:1.25rem;font-weight:800;color:#8e44ad;">${avg.toFixed(2)} €</div>
+            <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">🛒 Panier moyen</div>
+            <div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:1px;">par ticket validé</div>
+        </div>` +
+        `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(231,76,60,0.25);border-radius:12px;padding:14px 12px;text-align:center;">
+            <div style="font-size:1.25rem;font-weight:800;color:#e74c3c;">${cancelled.length}</div>
+            <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">🚫 Annulés</div>
+            <div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:1px;">${allSales.length > 0 ? Math.round((cancelled.length/allSales.length)*100) : 0}% du total</div>
+        </div>` +
+        (topEntry ? `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(26,188,156,0.25);border-radius:12px;padding:14px 12px;text-align:center;">
+            <div style="font-size:1rem;font-weight:800;color:#1abc9c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${topCashier}</div>
+            <div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;">🏆 Top caissier</div>
+            <div style="font-size:0.6rem;color:#1abc9c;font-weight:700;margin-top:1px;">${topCA.toFixed(2)} €</div>
+        </div>` : '');
+}
+
+function _histSetupHiDpi(canvas, W, H) {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return ctx;
+}
+
+function _histDrawCharts(allSales) {
+    const valid = allSales.filter(s => !s.cancelled);
+
+    // ── BAR: CA par jour, 14 derniers jours ──────────────────────────────────
+    const barCanvas = document.getElementById('hist-chart-bar');
+    if (barCanvas) {
+        const W = barCanvas.parentElement.clientWidth - 28 || 340;
+        const H = 160;
+        const ctx = _histSetupHiDpi(barCanvas, W, H);
+        ctx.clearRect(0, 0, W, H);
+
+        // Construire les 14 jours
+        const days = [];
+        const todayD = new Date(); todayD.setHours(0,0,0,0);
+        for (let i = 13; i >= 0; i--) {
+            const d = new Date(todayD); d.setDate(todayD.getDate() - i);
+            const key = d.toISOString().substring(0, 10);
+            const ca  = valid.filter(s => _histDateKey(s.date) === key)
+                              .reduce((a, s) => a + parseFloat(s.total || 0), 0);
+            days.push({ key, ca, isToday: i === 0 });
+        }
+        const maxCA = Math.max(...days.map(d => d.ca), 1);
+
+        const PL = 36, PR = 10, PT = 14, PB = 28;
+        const graphW = W - PL - PR;
+        const graphH = H - PT - PB;
+        const nbBars = days.length;
+        const barW   = Math.floor(graphW / nbBars * 0.62);
+        const gap    = (graphW - barW * nbBars) / nbBars;
+
+        // Grille 4 niveaux
+        const isDark = document.body.classList.contains('dark-mode');
+        const gridC  = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+        const textC  = isDark ? 'rgba(255,255,255,0.5)' : '#999';
+        ctx.strokeStyle = gridC;
+        ctx.lineWidth = 1;
+        for (let g = 0; g <= 4; g++) {
+            const y = PT + graphH - (g / 4) * graphH;
+            ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(W - PR, y); ctx.stroke();
+            if (g > 0) {
+                ctx.fillStyle = textC;
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText((maxCA * g / 4).toFixed(0) + '€', PL - 3, y + 3);
+            }
+        }
+
+        // Barres
+        days.forEach((d, i) => {
+            const x = PL + i * (barW + gap) + gap / 2;
+            const barH2 = d.ca > 0 ? Math.max(3, (d.ca / maxCA) * graphH) : 0;
+            const y = PT + graphH - barH2;
+
+            // Couleur : bleu normal, orange aujourd'hui, gris vide
+            const clr = d.isToday ? '#f39c12' : d.ca > 0 ? '#3498db' : gridC;
+            ctx.fillStyle = clr;
+            // Arrondi haut
+            const r = Math.min(4, barW / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + barW - r, y);
+            ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
+            ctx.lineTo(x + barW, y + barH2);
+            ctx.lineTo(x, y + barH2);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+            ctx.fill();
+
+            // Valeur au-dessus
+            if (d.ca > 0) {
+                ctx.fillStyle = d.isToday ? '#e67e22' : '#2980b9';
+                ctx.font = 'bold 8px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(d.ca.toFixed(0), x + barW / 2, y - 3);
+            }
+
+            // Label date (JJ/MM ou "Auj.")
+            ctx.fillStyle = d.isToday ? '#f39c12' : textC;
+            ctx.font = d.isToday ? 'bold 8px sans-serif' : '8px sans-serif';
+            ctx.textAlign = 'center';
+            const lbl = d.isToday ? "Auj." : d.key.substring(8) + '/' + d.key.substring(5, 7);
+            ctx.fillText(lbl, x + barW / 2, H - 6);
+        });
+    }
+
+    // ── DONUT: Modes de paiement ─────────────────────────────────────────────
+    const donutCanvas = document.getElementById('hist-chart-donut');
+    const legendEl    = document.getElementById('hist-chart-legend');
+    if (donutCanvas) {
+        let cbCA = 0, cashCA = 0, mixCA = 0;
+        valid.forEach(s => {
+            const t = parseFloat(s.total || 0);
+            if (s.method === 'cb')    cbCA   += t;
+            else if (s.method === 'cash') cashCA += t;
+            else                          mixCA  += t;
+        });
+        const total = cbCA + cashCA + mixCA;
+
+        const W = donutCanvas.parentElement.clientWidth - 28 || 200;
+        const H = 140;
+        const ctx = _histSetupHiDpi(donutCanvas, W, H);
+        ctx.clearRect(0, 0, W, H);
+
+        const segments = [
+            { label: '💳 Carte',    value: cbCA,   color: '#3498db' },
+            { label: '💶 Espèces',  value: cashCA, color: '#27ae60' },
+            { label: '💳💶 Mixte',  value: mixCA,  color: '#e67e22' },
+        ].filter(s => s.value > 0);
+
+        if (!total || !segments.length) {
+            ctx.fillStyle = '#ccc';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Aucune donnée', W / 2, H / 2 + 4);
+        } else {
+            const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 10, rIn = R * 0.52;
+            let startA = -Math.PI / 2;
+
+            segments.forEach(seg => {
+                const slice = (seg.value / total) * 2 * Math.PI;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, R, startA, startA + slice);
+                ctx.closePath();
+                ctx.fillStyle = seg.color;
+                ctx.fill();
+
+                // % au milieu du slice
+                if (slice > 0.4) {
+                    const midA = startA + slice / 2;
+                    const tx = cx + (rIn + (R - rIn) / 2) * Math.cos(midA);
+                    const ty = cy + (rIn + (R - rIn) / 2) * Math.sin(midA);
+                    ctx.fillStyle = 'white';
+                    ctx.font = 'bold 10px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(Math.round(seg.value / total * 100) + '%', tx, ty);
+                }
+                startA += slice;
+            });
+
+            // Trou central
+            const isDark = document.body.classList.contains('dark-mode');
+            ctx.beginPath();
+            ctx.arc(cx, cy, rIn, 0, 2 * Math.PI);
+            ctx.fillStyle = isDark ? 'var(--bg-card,#1e1e2e)' : '#fff';
+            ctx.fill();
+
+            // Montant total au centre
+            ctx.fillStyle = isDark ? '#e0e0e0' : '#2c3e50';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(total.toFixed(0) + ' €', cx, cy - 5);
+            ctx.font = '9px sans-serif';
+            ctx.fillStyle = isDark ? '#aaa' : '#888';
+            ctx.fillText('CA total', cx, cy + 7);
+        }
+
+        // Légende
+        if (legendEl) {
+            legendEl.innerHTML = segments.map(s => {
+                const pct = total > 0 ? Math.round(s.value / total * 100) : 0;
+                return `<div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:${s.color}18;border:1px solid ${s.color}40;border-radius:20px;font-size:0.68rem;font-weight:700;color:var(--text-main,#2c3e50);">
+                    <div style="width:8px;height:8px;border-radius:50%;background:${s.color};flex-shrink:0;"></div>
+                    ${s.label} <span style="color:${s.color};">${pct}%</span>
+                </div>`;
+            }).join('');
+        }
+    }
 }
 
 function applyHistStatFilter(statusVal, timeFilter) {
@@ -31475,6 +32560,11 @@ function initAdminSections() {
     // ── Sauvegarde LIENS RAPIDES uniquement (ne touche PAS aux ventes/tickets) ──
     let _gdLinksTimer = null;
     window._gdTriggerLinksSave = function() {
+        // isMaster : auto-save désactivé — uniquement via bouton manuel
+        if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster) {
+            if (typeof _gdMarkDriveDirty === 'function') _gdMarkDriveDirty();
+            return;
+        }
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdLinksTimer);
         _gdLinksTimer = setTimeout(async () => {
@@ -31497,9 +32587,14 @@ function initAdminSections() {
         }, 2000);
     };
 
-    // ── Sauvegarde CLÔTURES (forcée — même pour admin-développeur) ────
+    // ── Sauvegarde CLÔTURES (bloquée pour admin-développeur) ─────────
     let _gdClotureTimer = null;
     window._gdForceClotureSave = function() {
+        // isMaster : aucune sauvegarde automatique — même forcée
+        if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster) {
+            if (typeof _gdMarkDriveDirty === 'function') _gdMarkDriveDirty();
+            return;
+        }
         if (!window._gdUploadToHierarchy) return;
         clearTimeout(_gdClotureTimer);
         _gdClotureTimer = setTimeout(async () => {
@@ -32368,4 +33463,366 @@ setTimeout(_updatePwaInstallUI,1500);
 
     <!-- Footer -->
     <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
-      <button onclick="document.getElementById('clot-edit-m
+      <button onclick="document.getElementById('clot-edit-modal').style.display='none'" style="flex:1;padding:10px 14px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">✕ Annuler</button>
+      <button onclick="window._clotSaveEdit()" style="flex:2;padding:10px 14px;border:none;border-radius:9px;background:linear-gradient(135deg,#27ae60,#2ecc71);color:white;font-weight:800;cursor:pointer;font-size:0.88rem;">💾 Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODALE DÉTAIL CLÔTURE DE POSTE ===== -->
+<div role="dialog" aria-modal="true" id="clot-detail-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(10px);z-index:21200;justify-content:center;align-items:center;padding:14px;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:560px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 28px 72px rgba(0,0,0,0.48);overflow:hidden;">
+
+    <!-- Header -->
+    <div id="clot-detail-header" style="background:linear-gradient(135deg,#1a3a5c 0%,#2c3e50 55%,#1abc9c 100%);padding:16px 20px;position:relative;overflow:hidden;flex-shrink:0;">
+      <div style="position:absolute;top:-24px;right:-18px;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
+      <div style="position:absolute;bottom:-12px;left:60px;width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.05);pointer-events:none;"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;position:relative;">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+            <div id="clot-detail-avatar" style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#1abc9c,#16a085);color:white;font-size:0.9rem;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:2px solid rgba(255,255,255,0.3);"></div>
+            <div>
+              <div id="clot-detail-caissier" style="color:white;font-weight:800;font-size:0.95rem;"></div>
+              <div id="clot-detail-datetime" style="color:rgba(255,255,255,0.75);font-size:0.72rem;margin-top:1px;"></div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span id="clot-detail-type-badge" style="font-size:0.68rem;font-weight:800;padding:3px 11px;border-radius:6px;background:rgba(255,255,255,0.2);color:white;"></span>
+            <span id="clot-detail-id-badge" style="font-size:0.62rem;color:rgba(255,255,255,0.6);background:rgba(0,0,0,0.2);padding:2px 8px;border-radius:5px;font-family:monospace;"></span>
+          </div>
+        </div>
+        <button onclick="document.getElementById('clot-detail-modal').style.display='none'" style="background:rgba(255,255,255,0.18);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;">✕</button>
+      </div>
+    </div>
+
+    <!-- Body scrollable -->
+    <div style="flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:12px;background:var(--bg-body,#f4f7f6);">
+
+      <!-- KPI top row -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+        <div style="background:var(--bg-card,#fff);border-radius:12px;padding:12px 10px;text-align:center;border:1.5px solid rgba(155,89,182,0.2);">
+          <div style="font-size:1.3rem;">💰</div>
+          <div id="clot-detail-ca" style="font-size:1.15rem;font-weight:900;color:#8e44ad;margin-top:3px;"></div>
+          <div style="font-size:0.6rem;font-weight:600;color:var(--text-muted,#888);margin-top:2px;">CA total</div>
+        </div>
+        <div style="background:var(--bg-card,#fff);border-radius:12px;padding:12px 10px;text-align:center;border:1.5px solid rgba(52,152,219,0.2);">
+          <div style="font-size:1.3rem;">🛒</div>
+          <div id="clot-detail-ventes" style="font-size:1.15rem;font-weight:900;color:#3498db;margin-top:3px;"></div>
+          <div style="font-size:0.6rem;font-weight:600;color:var(--text-muted,#888);margin-top:2px;">Ventes</div>
+        </div>
+        <div style="background:var(--bg-card,#fff);border-radius:12px;padding:12px 10px;text-align:center;border:1.5px solid rgba(142,68,173,0.2);">
+          <div style="font-size:1.3rem;">🪙</div>
+          <div id="clot-detail-fond" style="font-size:1.15rem;font-weight:900;color:#8e44ad;margin-top:3px;"></div>
+          <div style="font-size:0.6rem;font-weight:600;color:var(--text-muted,#888);margin-top:2px;">Fond caisse</div>
+        </div>
+      </div>
+
+      <!-- Retours + Prise de poste (si dispo) -->
+      <div id="clot-detail-meta-row" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+
+      <!-- Espèces -->
+      <div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px 16px;border:1.5px solid rgba(39,174,96,0.2);">
+        <div style="font-size:0.72rem;font-weight:800;color:#27ae60;margin-bottom:10px;display:flex;align-items:center;gap:6px;">💶 Espèces</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <div style="background:rgba(39,174,96,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);margin-bottom:4px;">THÉORIQUE</div>
+            <div id="clot-detail-theor-esp" style="font-size:0.95rem;font-weight:800;color:var(--text-main,#2c3e50);"></div>
+          </div>
+          <div style="background:rgba(39,174,96,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);margin-bottom:4px;">REÇU</div>
+            <div id="clot-detail-recu-esp" style="font-size:0.95rem;font-weight:800;color:var(--text-main,#2c3e50);"></div>
+          </div>
+          <div style="background:rgba(39,174,96,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);margin-bottom:4px;">ÉCART</div>
+            <div id="clot-detail-ecart-esp" style="font-size:0.95rem;font-weight:800;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CB -->
+      <div style="background:var(--bg-card,#fff);border-radius:12px;padding:14px 16px;border:1.5px solid rgba(52,152,219,0.2);">
+        <div style="font-size:0.72rem;font-weight:800;color:#3498db;margin-bottom:10px;display:flex;align-items:center;gap:6px;">💳 Carte bancaire</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <div style="background:rgba(52,152,219,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);margin-bottom:4px;">THÉORIQUE</div>
+            <div id="clot-detail-theor-cb" style="font-size:0.95rem;font-weight:800;color:var(--text-main,#2c3e50);"></div>
+          </div>
+          <div style="background:rgba(52,152,219,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);margin-bottom:4px;">REÇU</div>
+            <div id="clot-detail-recu-cb" style="font-size:0.95rem;font-weight:800;color:var(--text-main,#2c3e50);"></div>
+          </div>
+          <div style="background:rgba(52,152,219,0.06);border-radius:8px;padding:10px;text-align:center;">
+            <div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);margin-bottom:4px;">ÉCART</div>
+            <div id="clot-detail-ecart-cb" style="font-size:0.95rem;font-weight:800;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Note -->
+      <div id="clot-detail-note-wrap" style="display:none;background:var(--bg-card,#fff);border-radius:12px;padding:12px 16px;border:1.5px solid rgba(52,152,219,0.15);">
+        <div style="font-size:0.68rem;font-weight:700;color:#3498db;margin-bottom:6px;">📝 Note</div>
+        <div id="clot-detail-note" style="font-size:0.85rem;color:var(--text-main,#2c3e50);line-height:1.5;"></div>
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:10px;flex-shrink:0;background:var(--bg-card,#fff);">
+      <button onclick="document.getElementById('clot-detail-modal').style.display='none'" style="flex:1;padding:10px 14px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;font-size:0.85rem;">✕ Fermer</button>
+      <button id="clot-detail-edit-btn" onclick="window._clotDetailOpenEdit()" style="display:none;flex:1;padding:10px 14px;border:none;border-radius:9px;background:linear-gradient(135deg,#3498db,#2980b9);color:white;font-weight:800;cursor:pointer;font-size:0.85rem;">✏️ Modifier</button>
+    </div>
+
+  </div>
+</div>
+<script>
+// ===== DÉTAIL D'UNE CLÔTURE (lecture seule) ===================================
+window._clotDetailCurrentId = null;
+
+window._clotShowDetail = function(id) {
+    var hist = (function(){
+        try { return JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'); }
+        catch(e) { return []; }
+    })();
+    var h = hist.find(function(x){ return x.id === id; });
+    if (!h) return;
+    window._clotDetailCurrentId = id;
+
+    // Header
+    var ini = (h.caissier || 'I').charAt(0).toUpperCase();
+    document.getElementById('clot-detail-avatar').textContent = ini;
+    document.getElementById('clot-detail-caissier').textContent = h.caissier || 'Inconnu';
+    var d = new Date(h.datetime);
+    document.getElementById('clot-detail-datetime').textContent =
+        d.toLocaleDateString('fr-FR', {weekday:'long', day:'2-digit', month:'long', year:'numeric'})
+        + ' — ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+    var tb = document.getElementById('clot-detail-type-badge');
+    tb.textContent = h.partiel ? '⏸ PARTIELLE' : '🏁 FINALE';
+    tb.style.background = h.partiel ? 'rgba(230,126,34,0.3)' : 'rgba(39,174,96,0.3)';
+    document.getElementById('clot-detail-id-badge').textContent = h.id || '';
+
+    // Header gradient accent
+    var hdr = document.getElementById('clot-detail-header');
+    hdr.style.background = h.partiel
+        ? 'linear-gradient(135deg,#5d3a0a 0%,#7d4a1a 45%,#f39c12 100%)'
+        : 'linear-gradient(135deg,#1a3a5c 0%,#2c3e50 55%,#1abc9c 100%)';
+
+    // KPI
+    document.getElementById('clot-detail-ca').textContent     = (h.totalJour||0).toFixed(2) + ' €';
+    document.getElementById('clot-detail-ventes').textContent = (h.nbVentes||0) + (h.nbRetours ? ' (↩' + h.nbRetours + ')' : '');
+    document.getElementById('clot-detail-fond').textContent   = h.fondCaisse > 0 ? h.fondCaisse.toFixed(2) + ' €' : '—';
+
+    // Meta row (prise de poste / retours)
+    var mr = document.getElementById('clot-detail-meta-row');
+    var metaH = '';
+    if (h.prisePoste) {
+        metaH += '<div style="flex:1;min-width:120px;background:var(--bg-card,#fff);border-radius:9px;padding:9px 12px;border:1.5px solid rgba(142,68,173,0.2);display:flex;align-items:center;gap:7px;">' +
+            '<span style="font-size:1rem;">⏰</span>' +
+            '<div><div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);">PRISE DE POSTE</div>' +
+            '<div style="font-size:0.88rem;font-weight:800;color:#8e44ad;">' + h.prisePoste + '</div></div></div>';
+    }
+    if (h.nbRetours) {
+        metaH += '<div style="flex:1;min-width:120px;background:var(--bg-card,#fff);border-radius:9px;padding:9px 12px;border:1.5px solid rgba(231,76,60,0.2);display:flex;align-items:center;gap:7px;">' +
+            '<span style="font-size:1rem;">↩️</span>' +
+            '<div><div style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#888);">RETOURS</div>' +
+            '<div style="font-size:0.88rem;font-weight:800;color:#e74c3c;">' + h.nbRetours + ' retour' + (h.nbRetours > 1 ? 's' : '') + '</div></div></div>';
+    }
+    mr.innerHTML = metaH;
+    mr.style.display = metaH ? 'flex' : 'none';
+
+    // Espèces
+    var fmtE = function(v) { return v != null ? v.toFixed(2) + ' €' : '—'; };
+    document.getElementById('clot-detail-theor-esp').textContent = fmtE(h.theorEsp);
+    document.getElementById('clot-detail-recu-esp').textContent  = fmtE(h.recuEsp);
+    var eEspEl = document.getElementById('clot-detail-ecart-esp');
+    if (h.ecartEsp != null) {
+        eEspEl.textContent = (h.ecartEsp >= 0 ? '+' : '') + h.ecartEsp.toFixed(2) + ' €';
+        eEspEl.style.color = Math.abs(h.ecartEsp) < 0.01 ? '#27ae60' : h.ecartEsp > 0 ? '#f39c12' : '#e74c3c';
+    } else { eEspEl.textContent = '—'; eEspEl.style.color = 'var(--text-muted,#888)'; }
+
+    // CB
+    document.getElementById('clot-detail-theor-cb').textContent = fmtE(h.theorCb);
+    document.getElementById('clot-detail-recu-cb').textContent  = fmtE(h.recuCb);
+    var eCbEl = document.getElementById('clot-detail-ecart-cb');
+    if (h.ecartCb != null) {
+        eCbEl.textContent = (h.ecartCb >= 0 ? '+' : '') + h.ecartCb.toFixed(2) + ' €';
+        eCbEl.style.color = Math.abs(h.ecartCb) < 0.01 ? '#2980b9' : h.ecartCb > 0 ? '#f39c12' : '#e74c3c';
+    } else { eCbEl.textContent = '—'; eCbEl.style.color = 'var(--text-muted,#888)'; }
+
+    // Note
+    var nw = document.getElementById('clot-detail-note-wrap');
+    if (h.note) {
+        document.getElementById('clot-detail-note').textContent = h.note;
+        nw.style.display = 'block';
+    } else {
+        nw.style.display = 'none';
+    }
+
+    // Edit button (admins only)
+    var isAdm = typeof currentUser !== 'undefined' && currentUser &&
+        (currentUser.role === 'admin' || currentUser.isMaster || currentUser.id === 'USR-MASTER');
+    var editBtn = document.getElementById('clot-detail-edit-btn');
+    editBtn.style.display = isAdm ? 'block' : 'none';
+
+    // Show modal with animation
+    var m = document.getElementById('clot-detail-modal');
+    m.style.display = 'flex';
+    m.querySelector('div').style.transform = 'scale(0.92)';
+    m.querySelector('div').style.opacity = '0';
+    m.querySelector('div').style.transition = 'transform 0.18s cubic-bezier(.34,1.56,.64,1), opacity 0.15s ease';
+    requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+            m.querySelector('div').style.transform = 'scale(1)';
+            m.querySelector('div').style.opacity = '1';
+        });
+    });
+};
+
+window._clotDetailOpenEdit = function() {
+    document.getElementById('clot-detail-modal').style.display = 'none';
+    if (window._clotDetailCurrentId && typeof window._clotOpenEdit === 'function') {
+        window._clotOpenEdit(window._clotDetailCurrentId);
+    }
+};
+
+// ===== MASTER DEV — PROTECTION DÉCONNEXION =====
+
+/**
+ * Point d'entrée du bouton Déconnexion.
+ * Si isMaster avec modifs en attente → affiche le modal.
+ * Sinon → comportement normal (confirm natif).
+ */
+window._masterCheckLogout = function() {
+    if (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster
+        && (window._masterDirtyCount || 0) > 0) {
+        window._masterShowLogoutWarning();
+    } else {
+        logout(false); // confirmation native pour les non-isMaster
+    }
+};
+
+/**
+ * Affiche le modal d'avertissement avec compte et heure de dernière sauvegarde.
+ */
+window._masterShowLogoutWarning = function() {
+    var m = document.getElementById('master-logout-warning-modal');
+    if (!m) { logout(true); return; }
+
+    // Nombre de modifications
+    var countEl = document.getElementById('logout-warn-count');
+    if (countEl) countEl.textContent = window._masterDirtyCount || 0;
+
+    // Dernière sauvegarde connue
+    var lastEl = document.getElementById('logout-warn-lastsave');
+    if (lastEl) {
+        var lastTs = localStorage.getItem('gdrive_last_auto_save')
+                  || localStorage.getItem('covo_last_save_time')
+                  || localStorage.getItem('gdrive_last_links_save');
+        if (lastTs) {
+            try {
+                var d = new Date(lastTs);
+                lastEl.innerHTML = '🕐 Dernière sauvegarde : <strong>' + d.toLocaleString('fr-FR') + '</strong>';
+                lastEl.style.display = '';
+            } catch(e) { lastEl.style.display = 'none'; }
+        } else {
+            lastEl.innerHTML = '⚠️ Aucune sauvegarde trouvée dans cette session.';
+            lastEl.style.display = '';
+        }
+    }
+
+    // Afficher avec animation
+    m.style.display = 'flex';
+    var inner = document.getElementById('master-logout-warning-inner');
+    if (inner) {
+        inner.style.transform  = 'scale(0.88)';
+        inner.style.opacity    = '0';
+        inner.style.transition = 'transform 0.22s cubic-bezier(.34,1.56,.64,1), opacity 0.18s ease';
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                inner.style.transform = 'scale(1)';
+                inner.style.opacity   = '1';
+            });
+        });
+    }
+};
+
+/**
+ * Sauvegarde d'abord, puis déconnecte.
+ */
+window._masterSaveAndLogout = function() {
+    var m = document.getElementById('master-logout-warning-modal');
+    if (m) m.style.display = 'none';
+    if (typeof window._masterManualSave === 'function') {
+        showScanToast('💾 Sauvegarde en cours…', 'info');
+        window._masterManualSave().then(function() {
+            window._masterDirtyCount = 0;
+            if (typeof _updateMasterFab === 'function') _updateMasterFab();
+            logout(true);
+        }).catch(function(e) {
+            console.error('Sauvegarde échouée:', e);
+            if (confirm('⚠️ La sauvegarde a échoué. Déconnecter quand même ?')) {
+                logout(true);
+            }
+        });
+    } else {
+        logout(true);
+    }
+};
+
+/**
+ * Déconnexion forcée sans sauvegarde.
+ */
+window._masterForceLogout = function() {
+    var m = document.getElementById('master-logout-warning-modal');
+    if (m) m.style.display = 'none';
+    window._masterDirtyCount = 0;
+    if (typeof _updateMasterFab === 'function') _updateMasterFab();
+    logout(true);
+};
+
+// Fermer la modale en cliquant sur le fond
+document.getElementById('master-logout-warning-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+
+// Close detail modal on backdrop click
+document.getElementById('clot-detail-modal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+
+<!-- ===== MODAL AVERTISSEMENT DÉCONNEXION (isMaster) ===== -->
+<div id="master-logout-warning-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+    <div id="master-logout-warning-inner" style="background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;">
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;">
+            <div style="position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
+            <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">⚠️</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-0.2px;">Modifications non sauvegardées</div>
+            <div style="font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:5px;">
+                Vous avez <span id="logout-warn-count" style="font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;">0</span> modification(s) en attente
+            </div>
+        </div>
+        <!-- Corps -->
+        <div style="padding:20px 24px 14px;">
+            <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
+                Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
+                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+            </p>
+            <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
+        </div>
+        <!-- Boutons -->
+        <div style="padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;">
+            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);transition:opacity 0.15s;" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">
+                💾 Sauvegarder et se déconnecter
+            </button>
+            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(231,76,60,0.07)'" onmouseout="this.style.background='var(--bg-body,#fff8f8)'">
+                🚪 Quitter sans sauvegarder
+            </button>
+            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='var(--bg-body,#f4f4f4)'" onmouseout="this.style.background='none'">
+                ✕ Annuler — continuer à travailler
+            </button>
+        </div>
+    </div>
+</div>
+
+</script>
+</body></html>
