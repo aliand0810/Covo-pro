@@ -3542,6 +3542,7 @@ button, .btn, .retours-btn {
             <button class="tab" onclick="switchTab('paiements')" id="tab-btn-paiements" style="display:none;">💸 Paiements</button>
             <button class="tab" onclick="switchTab('workhours')" id="tab-btn-workhours">⏱️ Heures travail</button>
             <button class="tab" onclick="switchTab('predictions')" id="tab-btn-predictions">☂ Prédictions</button>
+            <button class="tab" onclick="switchTab('inventaire')" id="tab-btn-inventaire">📋 Inventaire</button>
             <button class="tab tab-gestion" onclick="switchTab('retours')" id="tab-btn-retours">
                 <span class="tab-gestion-main">🗂️ Gestion</span>
                 <span class="tab-gestion-sub">Retours · Stocks · Achats</span>
@@ -3929,6 +3930,126 @@ button, .btn, .retours-btn {
                 <span id="avg-days-stock" style="display:none;">0</span>
                 <span id="reorder-count" style="display:none;">0</span>
                 <div id="trends-chart" style="display:none;"></div>
+
+            </div>
+        </div>
+
+        <!-- ===== ONGLET INVENTAIRE ===== -->
+        <div class="tab-content" id="tab-inventaire" style="padding:0;background:var(--bg-body,#f4f7f6);">
+
+            <!-- HEADER -->
+            <div style="background:linear-gradient(135deg,#1a5276 0%,#1e8449 60%,#27ae60 100%);padding:18px 20px 16px;position:relative;overflow:hidden;">
+                <div style="position:absolute;top:-28px;right:-18px;width:100px;height:100px;border-radius:50%;background:rgba(255,255,255,0.06);pointer-events:none;"></div>
+                <div style="position:absolute;bottom:-16px;right:80px;width:65px;height:65px;border-radius:50%;background:rgba(255,255,255,0.04);pointer-events:none;"></div>
+                <div style="position:relative;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+                    <div>
+                        <div style="font-size:1.25rem;font-weight:900;color:#fff;letter-spacing:-0.3px;">📋 Inventaire du stock</div>
+                        <div style="font-size:0.72rem;color:rgba(255,255,255,0.78);margin-top:3px;">Comptage · Valorisation · Alertes réappro</div>
+                    </div>
+                    <div id="invt-header-chips" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+                </div>
+            </div>
+
+            <div style="padding:14px 16px 24px;">
+
+                <!-- KPI ROW -->
+                <div id="invt-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:14px;"></div>
+
+                <!-- BOUTONS ACTION -->
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+                    <button id="invt-btn-start" onclick="invtStartSession()" style="padding:9px 18px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:9px;font-weight:800;font-size:0.86rem;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 4px 14px rgba(39,174,96,0.3);">
+                        🔍 Lancer un inventaire
+                    </button>
+                    <button onclick="invtToggleSection('valeur')" id="invt-btn-val" style="padding:9px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">
+                        💰 Valorisation
+                    </button>
+                    <button onclick="invtToggleSection('alertes')" id="invt-btn-alerte" style="padding:9px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">
+                        ⚠️ Alertes réappro
+                    </button>
+                    <button onclick="invtToggleSection('historique')" id="invt-btn-hist" style="padding:9px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">
+                        📜 Historique
+                    </button>
+                </div>
+
+                <!-- SESSION DE COMPTAGE -->
+                <div id="invt-session-wrap" style="display:none;margin-bottom:18px;background:var(--bg-card,#fff);border-radius:14px;border:2px solid #27ae60;box-shadow:0 4px 18px rgba(39,174,96,0.15);overflow:hidden;">
+                    <div style="background:linear-gradient(135deg,#229954,#27ae60);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <div style="color:white;font-weight:800;font-size:0.92rem;">🔍 Session de comptage en cours</div>
+                        <div id="invt-session-info" style="font-size:0.72rem;color:rgba(255,255,255,0.85);"></div>
+                    </div>
+                    <div style="padding:14px 16px;">
+                        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">
+                            <input type="text" id="invt-search" placeholder="🔍 Rechercher un produit…" oninput="invtFilterProducts()" style="flex:1;min-width:180px;padding:8px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.84rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                            <span id="invt-progress" style="font-size:0.78rem;font-weight:700;color:#27ae60;white-space:nowrap;"></span>
+                        </div>
+                        <!-- Filtres statut inventaire -->
+                        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+                            <button id="invt-sf-all"   onclick="invtSetStatusFilter('all')"   style="padding:5px 12px;border-radius:20px;font-size:0.75rem;font-weight:700;cursor:pointer;border:1.5px solid var(--accent,#2c6fad);background:var(--accent,#2c6fad);color:#fff;">Tous</button>
+                            <button id="invt-sf-never" onclick="invtSetStatusFilter('never')" style="padding:5px 12px;border-radius:20px;font-size:0.75rem;font-weight:700;cursor:pointer;border:1.5px solid var(--border-color,#e0e0e0);background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">🕐 Non inventoriés</button>
+                            <button id="invt-sf-done"  onclick="invtSetStatusFilter('done')"  style="padding:5px 12px;border-radius:20px;font-size:0.75rem;font-weight:700;cursor:pointer;border:1.5px solid var(--border-color,#e0e0e0);background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">✅ Déjà inventoriés</button>
+                            <span id="invt-sf-stats" style="font-size:0.72rem;color:var(--gray,#888);align-self:center;margin-left:4px;"></span>
+                        </div>
+                        <div id="invt-product-list" style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;"></div>
+                        <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+                            <button onclick="invtValidateSession()" style="flex:1;padding:11px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:9px;font-weight:800;cursor:pointer;font-size:0.9rem;min-width:160px;">✅ Valider l'inventaire</button>
+                            <button onclick="invtCancelSession()" style="padding:11px 18px;background:none;color:#e74c3c;border:1.5px solid rgba(231,76,60,0.35);border-radius:9px;font-weight:700;cursor:pointer;font-size:0.86rem;">🗑️ Annuler</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VALORISATION -->
+                <div id="invt-valeur-wrap" style="display:none;margin-bottom:18px;">
+                    <div style="background:var(--bg-card,#fff);border-radius:12px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);overflow:hidden;">
+                        <!-- Header + KPIs -->
+                        <div style="padding:12px 16px;border-bottom:1.5px solid var(--border-color,#e0e0e0);">
+                            <div style="font-weight:800;font-size:0.92rem;color:var(--text-main,#2c3e50);margin-bottom:10px;">💰 Valorisation du stock</div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+                                <div style="background:rgba(39,174,96,0.08);border-radius:9px;padding:8px 10px;text-align:center;">
+                                    <div style="font-size:0.63rem;font-weight:700;color:#27ae60;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">📦 Prix achat</div>
+                                    <div id="invt-val-cost" style="font-size:0.96rem;font-weight:900;color:#27ae60;">—</div>
+                                </div>
+                                <div style="background:rgba(44,111,173,0.08);border-radius:9px;padding:8px 10px;text-align:center;">
+                                    <div style="font-size:0.63rem;font-weight:700;color:#2c6fad;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">🏷️ Prix vente</div>
+                                    <div id="invt-val-sale" style="font-size:0.96rem;font-weight:900;color:#2c6fad;">—</div>
+                                </div>
+                                <div style="background:rgba(155,89,182,0.08);border-radius:9px;padding:8px 10px;text-align:center;">
+                                    <div style="font-size:0.63rem;font-weight:700;color:#9b59b6;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">📈 Marge pot.</div>
+                                    <div id="invt-val-margin" style="font-size:0.96rem;font-weight:900;color:#9b59b6;">—</div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Chart + table -->
+                        <div style="padding:14px 16px;display:grid;grid-template-columns:1.6fr 1fr;gap:14px;align-items:start;">
+                            <div>
+                                <div style="font-size:0.7rem;font-weight:800;color:var(--text-muted,#888);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Valeur vente par catégorie</div>
+                                <canvas id="invt-chart-val" style="width:100%;height:180px;display:block;"></canvas>
+                            </div>
+                            <div id="invt-val-table" style="display:flex;flex-direction:column;gap:2px;max-height:220px;overflow-y:auto;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ALERTES RÉAPPRO -->
+                <div id="invt-alertes-wrap" style="display:none;margin-bottom:18px;">
+                    <div style="background:var(--bg-card,#fff);border-radius:12px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);overflow:hidden;">
+                        <div style="padding:12px 16px;border-bottom:1.5px solid var(--border-color,#e0e0e0);">
+                            <div style="font-weight:800;font-size:0.92rem;color:var(--text-main,#2c3e50);">⚠️ Alertes réapprovisionnement</div>
+                            <div style="font-size:0.72rem;color:var(--gray,#888);margin-top:2px;">Produits actifs avec stock ≤ seuil critique</div>
+                        </div>
+                        <div id="invt-alertes-list" style="padding:12px;display:flex;flex-direction:column;gap:8px;max-height:380px;overflow-y:auto;"></div>
+                    </div>
+                </div>
+
+                <!-- HISTORIQUE INVENTAIRES -->
+                <div id="invt-historique-wrap" style="display:none;margin-bottom:18px;">
+                    <div style="background:var(--bg-card,#fff);border-radius:12px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.06);overflow:hidden;">
+                        <div style="padding:12px 16px;border-bottom:1.5px solid var(--border-color,#e0e0e0);display:flex;align-items:center;justify-content:space-between;">
+                            <div style="font-weight:800;font-size:0.92rem;color:var(--text-main,#2c3e50);">📜 Historique des inventaires</div>
+                            <span id="invt-hist-count" style="font-size:0.72rem;background:rgba(26,82,118,0.1);color:#1a5276;padding:2px 9px;border-radius:20px;font-weight:700;"></span>
+                        </div>
+                        <div id="invt-historique-list" style="padding:12px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto;"></div>
+                    </div>
+                </div>
 
             </div>
         </div>
@@ -7764,6 +7885,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_dettes:            JSON.parse(localStorage.getItem('covo_dettes')            || '[]'),
                 covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
                 covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
+                covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]'),
                 _version: 17, _savedAt
             }, null, 2);
             const writable = await covoFileHandle.createWritable();
@@ -13419,7 +13541,7 @@ function toggleInfoSection(headerElement) {
     window._modulesSave = function() {
         _modulesApply();
         document.getElementById('modules-modal').style.display = 'none';
-        showScanToast('\u2705 Configuration des modules sauvegard\u00e9e', 'success');
+        showScanToast('✅ Configuration des modules sauvegard\u00e9e', 'success');
         // Sauvegarder UNIQUEMENT les liens et modules vers Drive (pas les tickets/ventes)
         if (typeof window._gdTriggerLinksSave === 'function') window._gdTriggerLinksSave();
     };
@@ -13511,7 +13633,7 @@ function toggleInfoSection(headerElement) {
         document.getElementById('mod-link-form').style.display = 'none';
         _modLinksRender();
         _quickLinksRender();
-        showScanToast('\u2705 Lien ' + (editId ? 'modifi\u00e9' : 'ajout\u00e9') + ' : ' + name, 'success');
+        showScanToast('✅ Lien ' + (editId ? 'modifi\u00e9' : 'ajout\u00e9') + ' : ' + name, 'success');
     };
 
     // Éditer un lien
@@ -16001,6 +16123,7 @@ function toggleInfoSection(headerElement) {
         if (tabName !== 'historique') { window._histChartsVisible = false; var _hw = document.getElementById('hist-charts-wrap'); var _hb = document.getElementById('hist-toggle-charts'); if (_hw) _hw.style.display = 'none'; if (_hb) { _hb.style.background = 'var(--bg-card,#fff)'; _hb.style.color = 'var(--text-main,#2c3e50)'; _hb.style.borderColor = 'var(--border-color,#e0e0e0)'; } }
         if (tabName === 'clotures') { renderCloturesTab(); setTimeout(function(){ if(typeof _clotDrawCharts==='function'){var h=JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]');_clotDrawCharts(h);} },80); }
         if (tabName === 'workhours') { _whInit(); renderWorkHours(); }
+        if (tabName === 'inventaire') { if (typeof invtInit === 'function') invtInit(); }
         if (tabName === 'paiements') {
             var pd = document.getElementById('pay-date');
             if (pd && !pd.value) pd.value = new Date().toISOString().slice(0,10);
@@ -17375,6 +17498,11 @@ logout = function(skipConfirmation = false) {
                     </p>
                     <p style="font-size:0.8rem; color:${isLowStock ? 'var(--warning)' : 'gray'};">
                         Stock: ${stockDisplay} ${isLowStock ? '⚠️' : ''}
+                    </p>
+                    <p style="font-size:0.7rem; color:${p.lastInventoryDate ? '#27ae60' : '#e67e22'}; margin:2px 0 0; font-weight:600;">
+                        ${p.lastInventoryDate
+                            ? '📅 Inventaire : ' + new Date(p.lastInventoryDate).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                            : '🕐 Jamais inventorié'}
                     </p>
                     ${isAdmin ? `
                     <button onclick="(function(){var z=document.getElementById('ez-${p.id}');var open=z.style.display!=='none';z.style.display=open?'none':'block';this.innerHTML=open?'✏️ Modifier':'✖ Réduire';this.style.background=open?'var(--primary)':'var(--gray)';}).call(this)"
@@ -19090,7 +19218,39 @@ logout = function(skipConfirmation = false) {
 
         <div class="footer">COVO Pro — Rapport généré le ${now.toLocaleString('fr-FR')} · Confidentiel</div>
         <script>window.onload=function(){window.print();};<\/script>
-        </body></html>`;
+        
+<!-- ===== MODAL AVERTISSEMENT DÉCONNEXION (isMaster) ===== -->
+<div id="master-logout-warning-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+    <div id="master-logout-warning-inner" style="background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;">
+            <div style="position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
+            <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">⚠️</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-0.2px;">Modifications non sauvegardées</div>
+            <div style="font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:5px;">
+                Vous avez <span id="logout-warn-count" style="font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;">0</span> modification(s) en attente
+            </div>
+        </div>
+        <div style="padding:20px 24px 14px;">
+            <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
+                Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
+                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+            </p>
+            <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
+        </div>
+        <div style="padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;">
+            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);">
+                💾 Sauvegarder et se déconnecter
+            </button>
+            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;">
+                🚪 Quitter sans sauvegarder
+            </button>
+            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;">
+                ✕ Annuler — continuer à travailler
+            </button>
+        </div>
+    </div>
+</div>
+</body></html>`;
 
         const w = window.open('', '_blank', 'width=900,height=700');
         if (w) { w.document.write(html); w.document.close(); }
@@ -20347,12 +20507,14 @@ logout = function(skipConfirmation = false) {
             if (data.covo_dettes)            localStorage.setItem('covo_dettes',            JSON.stringify(data.covo_dettes));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
                 saveAll();
                 renderAll();
                 closeImportModal();
                 if (typeof invUpdateStats === 'function') invUpdateStats();
                 if (typeof refreshRetours === 'function') refreshRetours();
                 if (typeof renderCloturesTab === 'function') renderCloturesTab();
+                if (typeof window.invtInit === 'function') window.invtInit();
                 const nbP = (data.products||[]).length;
                 const nbV = (data.salesHistory||[]).filter(s=>!s.cancelled).length;
                 showScanToast(`✅ Restauration réussie — ${nbP} produit(s), ${nbV} vente(s) validée(s)`, 'success');
@@ -24012,7 +24174,7 @@ window.invModalSubmit = function() {
     invSave(list);
     document.getElementById('inv-add-modal').style.display = 'none';
     invRender(); invUpdateStats();
-    showScanToast('\u2705 Achat #' + list[0].numero + ' enregistr\u00e9 \u2014 ' + montant.toFixed(2) + ' \u20ac', 'success');
+    showScanToast('✅ Achat #' + list[0].numero + ' enregistr\u00e9 \u2014 ' + montant.toFixed(2) + ' \u20ac', 'success');
 };
 
 // ============================================================================
@@ -24126,66 +24288,189 @@ window._openStockHistory = function(productId) {
     var unit = p.unitType === 'kg' ? 'kg' : 'u.';
     document.getElementById('sh-product-name').textContent = p.name;
     document.getElementById('sh-current-stock').textContent = (p.unitType === 'kg' ? (p.stock||0).toFixed(3) : String(p.stock||0)) + ' ' + unit;
-    document.getElementById('sh-title').textContent = '📦 Historique — ' + p.name;
-    document.getElementById('sh-filter').value = 'all';
+    document.getElementById('sh-title').textContent = '📦 Historique du stock';
+    var sfEl = document.getElementById('sh-filter'); if (sfEl) sfEl.value = 'all';
+    var spEl = document.getElementById('sh-period'); if (spEl) spEl.value = 'all';
     window._renderStockHistory();
     var shModal = document.getElementById('stock-history-modal');
     shModal.style.display = 'flex';
     shModal.style.zIndex = '21000';
 };
 
+window._rebuildAndRefresh = function() {
+    var n = window._rebuildStockHistory(window._shProduct);
+    if (typeof rToast === 'function') rToast(n + ' mouvement(s) reconstruit(s)', 'info');
+    else if (typeof showScanToast === 'function') showScanToast(n + ' mouvement(s) reconstruit(s)', 'info');
+    window._renderStockHistory();
+};
+
 window._renderStockHistory = function() {
     var p = window._shProduct;
     if (!p) return;
-    var hist = Array.isArray(p.stockHistory) ? p.stockHistory.slice() : [];
-    var filter = document.getElementById('sh-filter').value;
-    if (filter !== 'all') hist = hist.filter(function(e) { return e.type === filter; });
-    hist.sort(function(a, b) { return new Date(b.date) - new Date(a.date); }); // plus récent en premier
-    var listEl = document.getElementById('sh-list');
-    var alertEl = document.getElementById('sh-alert-zone');
-    // Alerte écart
     var rawHist = Array.isArray(p.stockHistory) ? p.stockHistory : [];
-    if (alertEl) {
-        if (rawHist.length) {
-            var last = rawHist[rawHist.length - 1];
-            var real = parseFloat(p.stock || 0);
-            var diff = parseFloat((real - last.after).toFixed(3));
-            if (Math.abs(diff) > 0.001) {
-                var sign = diff > 0 ? '+' : '';
-                alertEl.innerHTML = '<div style="background:rgba(231,76,60,0.08);border:1.5px solid #e74c3c;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:0.78rem;color:#c0392b;">⚠️ <strong>Écart</strong> — Réel : ' + real + ' vs log : ' + last.after + ' (' + sign + diff + ')</div>';
-            } else { alertEl.innerHTML = ''; }
-        } else { alertEl.innerHTML = ''; }
+
+    // ── Prix de référence ──
+    var costPrice  = (p.costPrice != null && p.costPrice !== '') ? parseFloat(p.costPrice) : null;
+    var salePrice  = parseFloat(p.unitType === 'kg' ? (p.pricePerKg || 0) : (p.price || 0));
+    if (salePrice <= 0) salePrice = null;
+
+    var _fmtVal = function(v, forceSign) {
+        var sign = (forceSign !== false && v >= 0) ? '+' : '';
+        return sign + parseFloat(v).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    };
+
+    // ── Filtres ──
+    var filter = (document.getElementById('sh-filter') || {}).value || 'all';
+    var period = (document.getElementById('sh-period') || {}).value || 'all';
+    var now = new Date();
+    var periodMs = { today: 86400000, '7d': 7*86400000, '30d': 30*86400000, '90d': 90*86400000 };
+    var hist = rawHist.slice().filter(function(e) {
+        if (filter !== 'all' && e.type !== filter) return false;
+        if (period !== 'all') {
+            var ms = periodMs[period];
+            if (ms && (now - new Date(e.date)) > ms) return false;
+        }
+        return true;
+    });
+    hist.sort(function(a, b) { return new Date(b.date) - new Date(a.date); });
+
+    // ── Totaux valeur (achat + vente) sur rawHist complet ──
+    var lostCost = 0, gainCost = 0, lostSale = 0, gainSale = 0;
+    rawHist.forEach(function(e) {
+        var d = e.delta != null ? e.delta : (e.after != null && e.before != null ? e.after - e.before : 0);
+        if (costPrice !== null) {
+            var vc = d * costPrice;
+            if (vc < 0) lostCost += Math.abs(vc); else if (vc > 0) gainCost += vc;
+        }
+        if (salePrice !== null) {
+            var vs = d * salePrice;
+            if (vs < 0) lostSale += Math.abs(vs); else if (vs > 0) gainSale += vs;
+        }
+    });
+
+    // ── KPI strip ──
+    var kpiEl = document.getElementById('sh-kpi-strip');
+    if (kpiEl) {
+        var nbSales = rawHist.filter(function(e){ return e.type === 'sale'; }).length;
+        var nbInvt  = rawHist.filter(function(e){ return e.type === 'inventaire'; }).length;
+        var fmt = function(v) { return v.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; };
+
+        // Ligne perdu : achat + vente
+        var perduVal = (costPrice !== null ? '<div>' + fmt(lostCost) + '</div><div style="font-size:0.58rem;color:#c0392b;opacity:0.8;">' + (salePrice !== null ? fmt(lostSale) + ' vte' : '') + '</div>' : (salePrice !== null ? fmt(lostSale) : '—'));
+        var gagneVal = (costPrice !== null ? '<div>' + fmt(gainCost) + '</div><div style="font-size:0.58rem;color:#1e8449;opacity:0.8;">' + (salePrice !== null ? fmt(gainSale) + ' vte' : '') + '</div>' : (salePrice !== null ? fmt(gainSale) : '—'));
+
+        var kpis = [
+            { label: 'Mouvements', valHtml: rawHist.length, color: '#8e44ad', icon: '📋' },
+            { label: 'Ventes',     valHtml: nbSales,        color: '#e74c3c', icon: '🛒' },
+            { label: 'Perdu',      valHtml: perduVal,       color: '#e74c3c', icon: '📉', sub: costPrice !== null ? 'achat' : (salePrice !== null ? 'vente' : '') },
+            { label: 'Gagné',      valHtml: gagneVal,       color: '#27ae60', icon: '📈', sub: costPrice !== null ? 'achat' : (salePrice !== null ? 'vente' : '') }
+        ];
+        kpiEl.innerHTML = kpis.map(function(k) {
+            return '<div style="padding:8px 6px;text-align:center;border-right:1px solid var(--border-color,#eee);">' +
+                '<div style="font-size:1rem;">' + k.icon + '</div>' +
+                '<div style="font-size:0.78rem;font-weight:900;color:' + k.color + ';line-height:1.2;">' + k.valHtml + '</div>' +
+                '<div style="font-size:0.58rem;color:var(--gray,#888);font-weight:600;margin-top:1px;">' + k.label + (k.sub ? ' (' + k.sub + ')' : '') + '</div>' +
+                '</div>';
+        }).join('');
     }
+
+    // ── Alerte zone ──
+    var alertEl = document.getElementById('sh-alert-zone');
+    if (alertEl) {
+        var parts = [];
+        if (rawHist.length) {
+            var lastLog = rawHist.slice().sort(function(a,b){ return new Date(b.date)-new Date(a.date); })[0];
+            var real = parseFloat(p.stock || 0);
+            var logAfter = lastLog.after != null ? parseFloat(lastLog.after) : null;
+            if (logAfter !== null) {
+                var diff = parseFloat((real - logAfter).toFixed(3));
+                if (Math.abs(diff) > 0.001) {
+                    var sign = diff > 0 ? '+' : '';
+                    var valBits = [];
+                    if (costPrice !== null) valBits.push(_fmtVal(diff * costPrice) + ' achat');
+                    if (salePrice !== null) valBits.push(_fmtVal(diff * salePrice) + ' vente');
+                    var valStr = valBits.length ? ' &middot; Valeur : <strong>' + valBits.join(' / ') + '</strong>' : '';
+                    parts.push('<div style="background:rgba(231,76,60,0.07);border:1.5px solid #e74c3c;border-radius:8px;padding:8px 14px;margin:8px 0;font-size:0.78rem;color:#c0392b;">⚠️ <strong>Écart détecté</strong> — Réel : <strong>' + real + '</strong> &middot; Log : <strong>' + logAfter + '</strong> &middot; Diff. : <strong>' + sign + diff + '</strong>' + valStr + '</div>');
+                }
+            }
+        }
+        if (costPrice === null && salePrice === null) {
+            parts.push('<div style="background:rgba(230,126,34,0.07);border:1.5px solid #e67e22;border-radius:8px;padding:7px 14px;margin:6px 0;font-size:0.75rem;color:#b7770d;">ℹ️ Aucun prix renseigné — les valeurs en € ne peuvent pas être calculées.</div>');
+        }
+        alertEl.innerHTML = parts.join('');
+    }
+
+    var listEl = document.getElementById('sh-list');
     if (!hist.length) {
-        listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#888);"><div style="font-size:2rem;margin-bottom:10px;">📭</div><div>Aucun mouvement enregistré</div><button onclick="window._rebuildStockHistory(window._shProduct);window._renderStockHistory();" style="margin-top:12px;padding:8px 16px;border:1.5px solid #8e44ad;border-radius:8px;background:rgba(142,68,173,0.08);color:#8e44ad;cursor:pointer;font-weight:700;font-size:0.82rem;">🔄 Reconstruire depuis les ventes</button></div>';
+        listEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gray,#888);">' +
+            '<div style="font-size:2.5rem;margin-bottom:10px;">💭</div>' +
+            '<div style="font-weight:700;font-size:0.9rem;">Aucun mouvement' + (filter !== 'all' || period !== 'all' ? ' pour ce filtre' : '') + '</div>' +
+            (rawHist.length === 0 ? '<button onclick="window._rebuildAndRefresh()" style="margin-top:14px;padding:9px 18px;border:1.5px solid #8e44ad;border-radius:9px;background:rgba(142,68,173,0.08);color:#8e44ad;cursor:pointer;font-weight:700;font-size:0.82rem;">🔄 Reconstruire depuis les ventes</button>' : '') +
+            '</div>';
         return;
     }
-    var typeIcons = { sale:'🛒', manual:'✏️', defect:'⚠️', restock:'📦', retour:'↩️', creation:'✨', import:'📥' };
-    var typeLabels = { sale:'Vente', manual:'Manuel', defect:'Défaut', restock:'Réappro.', retour:'Retour', creation:'Création', import:'Import' };
+
+    var typeIcons  = { sale:'🛒', manual:'✏️', defect:'⚠️', restock:'📦', retour:'↩️', creation:'✨', import:'📥', inventaire:'📋' };
+    var typeLabels = { sale:'Vente', manual:'Modification', defect:'Défaut', restock:'Réappro.', retour:'Retour', creation:'Création', import:'Import', inventaire:'Inventaire' };
+    var typeBg     = { sale:'rgba(231,76,60,0.07)', manual:'rgba(52,152,219,0.07)', defect:'rgba(230,126,34,0.07)', restock:'rgba(39,174,96,0.07)', retour:'rgba(155,89,182,0.07)', creation:'rgba(241,196,15,0.07)', inventaire:'rgba(142,68,173,0.07)', import:'rgba(149,165,166,0.07)' };
+    var typeBorder = { sale:'#e74c3c', manual:'#3498db', defect:'#e67e22', restock:'#27ae60', retour:'#9b59b6', creation:'#f1c40f', inventaire:'#8e44ad', import:'#95a5a6' };
+
     var html = hist.map(function(e) {
-        var icon = typeIcons[e.type] || '📝';
+        var icon  = typeIcons[e.type]  || '📝';
         var label = typeLabels[e.type] || e.type;
+        var bg    = typeBg[e.type]     || 'var(--bg-card,#fff)';
+        var bdr   = typeBorder[e.type] || 'var(--border-color,#eee)';
         var d = new Date(e.date);
         var dateStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'}) + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
-        var delta = e.delta || (e.after - e.before);
-        var deltaStr = (delta >= 0 ? '+' : '') + (p.unitType === 'kg' ? delta.toFixed(3) : Math.round(delta));
+        var delta = e.delta != null ? e.delta : (e.after != null && e.before != null ? e.after - e.before : 0);
+        var unit  = p.unitType === 'kg' ? 'kg' : 'u.';
+        var deltaQty = (delta >= 0 ? '+' : '') + (p.unitType === 'kg' ? parseFloat(delta).toFixed(3) : Math.round(delta)) + ' ' + unit;
         var deltaColor = delta > 0 ? '#27ae60' : delta < 0 ? '#e74c3c' : '#888';
-        var rebuilt = e._rebuilt ? ' <span style="font-size:0.65rem;background:#f39c12;color:white;padding:1px 5px;border-radius:4px;">reconstruit</span>' : '';
-        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-card,#fff);border-radius:9px;border:1px solid var(--border-color,#eee);margin-bottom:6px;">' +
-            '<div style="font-size:1.3rem;flex-shrink:0;">' + icon + '</div>' +
+
+        // ── Valeur monétaire achat + vente ──
+        var valHtml = '';
+        var hasAny = costPrice !== null || salePrice !== null;
+        if (hasAny) {
+            var valEurC = costPrice !== null ? delta * costPrice : null;
+            var valEurS = salePrice !== null ? delta * salePrice : null;
+            var mainVal = valEurC !== null ? valEurC : valEurS;
+            var mainColor = mainVal > 0 ? '#27ae60' : mainVal < 0 ? '#e74c3c' : '#888';
+            var mainTag   = mainVal > 0 ? '📈 Gagné' : mainVal < 0 ? '📉 Perdu' : '➡️ Neutre';
+
+            var parts = [];
+            if (valEurC !== null) parts.push('<span style="font-weight:800;">' + _fmtVal(valEurC) + '</span> <span style="opacity:0.7;font-size:0.67rem;">achat</span>');
+            if (valEurS !== null) parts.push('<span style="font-weight:800;">' + _fmtVal(valEurS) + '</span> <span style="opacity:0.7;font-size:0.67rem;">vente</span>');
+
+            valHtml = '<div style="font-size:0.73rem;color:' + mainColor + ';margin-top:3px;">' +
+                mainTag + ' : ' + parts.join(' <span style="color:var(--gray,#aaa);font-weight:400;">&nbsp;/&nbsp;</span> ') +
+                '</div>';
+        }
+
+        var rebuilt = e._rebuilt ? '<span style="margin-left:5px;font-size:0.6rem;background:#f39c12;color:white;padding:1px 5px;border-radius:4px;vertical-align:middle;">reconstruit</span>' : '';
+        var beforeAfter = (e.before != null && e.after != null)
+            ? '<div style="font-size:0.67rem;color:var(--gray,#888);margin-top:1px;">' +
+              (p.unitType==='kg' ? parseFloat(e.before).toFixed(2) : e.before) + ' → ' +
+              (p.unitType==='kg' ? parseFloat(e.after).toFixed(2)  : e.after)  + ' ' + unit + '</div>'
+            : '';
+
+        return '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 12px;background:' + bg + ';border-radius:10px;border:1.5px solid ' + bdr + ';margin-bottom:7px;">' +
+            '<div style="font-size:1.4rem;flex-shrink:0;line-height:1;padding-top:2px;">' + icon + '</div>' +
             '<div style="flex:1;min-width:0;">' +
-                '<div style="font-size:0.82rem;font-weight:700;color:var(--text-main);">' + label + rebuilt + '</div>' +
-                '<div style="font-size:0.72rem;color:var(--gray,#888);">' + (e.reason || '') + '</div>' +
-                '<div style="font-size:0.68rem;color:var(--text-muted,#aaa);margin-top:2px;">' + dateStr + (e.user ? ' · ' + e.user : '') + '</div>' +
+                '<div style="font-size:0.83rem;font-weight:800;color:var(--text-main);">' + label + rebuilt + '</div>' +
+                '<div style="font-size:0.73rem;color:var(--gray,#888);margin-top:1px;">' + (e.reason || '—') + '</div>' +
+                valHtml +
+                '<div style="font-size:0.65rem;color:var(--text-muted,#aaa);margin-top:3px;">' + dateStr + (e.user && e.user !== 'system' ? ' &middot; <strong>' + e.user + '</strong>' : '') + '</div>' +
             '</div>' +
             '<div style="text-align:right;flex-shrink:0;">' +
-                '<div style="font-size:0.95rem;font-weight:800;color:' + deltaColor + ';">' + deltaStr + '</div>' +
-                '<div style="font-size:0.68rem;color:var(--gray,#888);">' + (e.before != null ? e.before : '?') + ' → ' + (e.after != null ? e.after : '?') + '</div>' +
+                '<div style="font-size:1rem;font-weight:900;color:' + deltaColor + ';">' + deltaQty + '</div>' +
+                beforeAfter +
             '</div>' +
         '</div>';
     }).join('');
-    listEl.innerHTML = html;
+    listEl.innerHTML = html + (hist.length >= 100 ? '<div style="text-align:center;font-size:0.75rem;color:var(--gray,#888);padding:8px;">' + hist.length + ' entrées affichées</div>' : '');
 };
+
+
 
 // ============================================================================
 // FIN DE POSTE — Recette du jour + Historique de caisse
@@ -25029,7 +25314,7 @@ function exportCloturesCSV() {
     a.download = 'clotures_poste_' + new Date().toISOString().split('T')[0] + '.csv';
     a.click();
     URL.revokeObjectURL(url);
-    showScanToast('\u2705 ' + hist.length + ' cl\u00f4ture(s) export\u00e9e(s)', 'success');
+    showScanToast('✅ ' + hist.length + ' cl\u00f4ture(s) export\u00e9e(s)', 'success');
 }
 
 // ===== SUPPRESSION D'UNE CLÔTURE =====
@@ -25123,7 +25408,7 @@ window._clotSaveEdit = function() {
     _saveCaisseHistorique(hist);
     document.getElementById('clot-edit-modal').style.display = 'none';
     renderCloturesTab();
-    showScanToast('\u2705 Cl\u00f4ture modifi\u00e9e', 'success');
+    showScanToast('✅ Cl\u00f4ture modifi\u00e9e', 'success');
 };
 
 function invAddEntry() {
@@ -25853,7 +26138,7 @@ function invEditAddPayment() {
     if (typeof addRetourHist === 'function') {
         if (justSolde) {
             addRetourHist('credit_solde', 'invest',
-                '\u2705 Cr\u00e9dit sold\u00e9',
+                '✅ Cr\u00e9dit sold\u00e9',
                 (entry.desc || '\u2014') + ' \u00b7 ' + (entry.montant || 0).toFixed(2) + ' \u20ac' +
                 ' \u2014 sold\u00e9 le ' + new Date(entry.soldeAt).toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'})
             );
@@ -25865,7 +26150,7 @@ function invEditAddPayment() {
             );
         }
     }
-    showScanToast(justSolde ? '\u2705 Cr\u00e9dit sold\u00e9 !' : 'Paiement de ' + amount.toFixed(2) + ' \u20ac enregistr\u00e9', justSolde ? 'success' : 'success');
+    showScanToast(justSolde ? '✅ Cr\u00e9dit sold\u00e9 !' : 'Paiement de ' + amount.toFixed(2) + ' \u20ac enregistr\u00e9', justSolde ? 'success' : 'success');
     if (justSolde) { invRender(); invUpdateStats(); }
 }
 
@@ -25901,7 +26186,7 @@ function invEditRenderPayHistory(entry) {
         var d = new Date(p.date);
         var ds = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
         html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(39,174,96,0.06);border-radius:6px;margin-bottom:4px;font-size:0.75rem;">';
-        html += '<span>\u2705</span><span style="flex:1;">' + ds + (p.user ? ' \u00b7 ' + p.user : '') + '</span>';
+        html += '<span>✅</span><span style="flex:1;">' + ds + (p.user ? ' \u00b7 ' + p.user : '') + '</span>';
         html += '<span style="font-weight:700;color:#27ae60;">+' + p.amount.toFixed(2) + ' \u20ac</span>';
         html += '<button onclick="invEditDeletePayment(' + idx + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:0.8rem;padding:0 4px;">\u2716</button></div>';
     });
@@ -25917,9 +26202,9 @@ function invEditRenderPayHistory(entry) {
         var days = Math.ceil((due - today) / 86400000);
         if (days < 0) { alertEl.innerHTML = '<div style="background:rgba(231,76,60,0.1);border:1.5px solid #e74c3c;border-radius:8px;padding:10px 12px;font-size:0.8rem;color:#c0392b;">\ud83d\udea8 <strong>\u00c9ch\u00e9ance d\u00e9pass\u00e9e</strong> depuis ' + Math.abs(days) + ' jour(s) \u2014 Reste : ' + reste.toFixed(2) + ' \u20ac</div>'; alertEl.style.display='block'; }
         else if (days <= 7) { alertEl.innerHTML = '<div style="background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;border-radius:8px;padding:10px 12px;font-size:0.8rem;color:#d35400;">\u26a0\ufe0f <strong>\u00c9ch\u00e9ance dans ' + days + ' jour(s)</strong> \u2014 Reste : ' + reste.toFixed(2) + ' \u20ac</div>'; alertEl.style.display='block'; }
-        else { alertEl.innerHTML = '<div style="background:rgba(39,174,96,0.06);border:1.5px solid #27ae60;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#27ae60;">\u2705 \u00c9ch\u00e9ance dans ' + days + ' jours</div>'; alertEl.style.display='block'; }
+        else { alertEl.innerHTML = '<div style="background:rgba(39,174,96,0.06);border:1.5px solid #27ae60;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#27ae60;">✅ \u00c9ch\u00e9ance dans ' + days + ' jours</div>'; alertEl.style.display='block'; }
     } else if (alertEl) {
-        if (reste <= 0 && entry.paiement === 'credit') { alertEl.innerHTML = '<div style="background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:8px;padding:8px 12px;font-size:0.8rem;color:#27ae60;">\u2705 <strong>Enti\u00e8rement pay\u00e9</strong></div>'; alertEl.style.display='block'; }
+        if (reste <= 0 && entry.paiement === 'credit') { alertEl.innerHTML = '<div style="background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:8px;padding:8px 12px;font-size:0.8rem;color:#27ae60;">✅ <strong>Enti\u00e8rement pay\u00e9</strong></div>'; alertEl.style.display='block'; }
         else { alertEl.style.display='none'; }
     }
 }
@@ -26045,7 +26330,7 @@ function invSaveEdit() {
         var justSoldeEdit2 = payMode === 'credit' && prevReste > 0 && list[idx].resteADoit <= 0;
         if (justSoldeEdit2) {
             addRetourHist('credit_solde', 'invest',
-                '\u2705 Cr\u00e9dit sold\u00e9 (modif.)',
+                '✅ Cr\u00e9dit sold\u00e9 (modif.)',
                 desc + ' \u00b7 ' + montant.toFixed(2) + ' \u20ac' +
                 ' \u2014 sold\u00e9 le ' + new Date(list[idx].soldeAt).toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'})
             );
@@ -26053,7 +26338,7 @@ function invSaveEdit() {
             addRetourHist('modified', 'invest', '\u270f\ufe0f Achat modifi\u00e9', desc + ' \u00b7 ' + montant.toFixed(2) + ' \u20ac');
         }
     }
-    showScanToast(payMode === 'credit' && list[idx].resteADoit <= 0 && prevReste > 0 ? '\u2705 Cr\u00e9dit sold\u00e9 !' : 'Achat modifi\u00e9', 'success');
+    showScanToast(payMode === 'credit' && list[idx].resteADoit <= 0 && prevReste > 0 ? '✅ Cr\u00e9dit sold\u00e9 !' : 'Achat modifi\u00e9', 'success');
 }
 
 
@@ -26249,7 +26534,7 @@ function _invShowImportPreview() {
     statsHtml += '</div>';
 
     var actionsHtml = '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">';
-    actionsHtml += '<button onclick="_invImpCheckAll(true)" style="padding:5px 12px;border:1.5px solid #27ae60;background:rgba(39,174,96,0.06);color:#27ae60;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">\u2705 Tout cocher</button>';
+    actionsHtml += '<button onclick="_invImpCheckAll(true)" style="padding:5px 12px;border:1.5px solid #27ae60;background:rgba(39,174,96,0.06);color:#27ae60;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">✅ Tout cocher</button>';
     actionsHtml += '<button onclick="_invImpCheckAll(false)" style="padding:5px 12px;border:1.5px solid #95a5a6;background:rgba(149,165,166,0.06);color:#95a5a6;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">\u2b1c Tout d\u00e9cocher</button>';
     if (dupCount > 0) actionsHtml += '<button onclick="_invImpUncheckDup()" style="padding:5px 12px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.06);color:#e74c3c;border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;">\u26a0\ufe0f Exclure doublons</button>';
     actionsHtml += '</div>';
@@ -26314,7 +26599,7 @@ function _invImpUpdateTotal() {
         if (cb.checked) { var idx = parseInt(cb.getAttribute('data-imp-idx')); if (parsed[idx]) { count++; total += parsed[idx].montant; } }
     });
     var btn = document.getElementById('inv-imp-btn-confirm');
-    if (btn) { btn.textContent = '\u2705 Importer ' + count + ' achat(s) \u2014 ' + total.toFixed(2) + ' \u20ac'; btn.disabled = count === 0; btn.style.opacity = count === 0 ? '0.4' : '1'; }
+    if (btn) { btn.textContent = '✅ Importer ' + count + ' achat(s) \u2014 ' + total.toFixed(2) + ' \u20ac'; btn.disabled = count === 0; btn.style.opacity = count === 0 ? '0.4' : '1'; }
     var td = document.getElementById('inv-import-total-display');
     if (td) td.textContent = total.toFixed(2) + ' \u20ac';
 }
@@ -26337,7 +26622,7 @@ function invConfirmImport() {
     invSave(merged);
     document.getElementById('inv-import-preview-modal').style.display = 'none';
     invRender(); invUpdateStats();
-    showScanToast('\u2705 ' + toImport.length + ' achat(s) import\u00e9(s) avec succ\u00e8s !', 'success');
+    showScanToast('✅ ' + toImport.length + ' achat(s) import\u00e9(s) avec succ\u00e8s !', 'success');
     window._invImportParsed = []; window._invImportErrors = [];
 }
 
@@ -27254,7 +27539,7 @@ function _cardUpdateAlerts(id) {
             } else if (days <= 7) {
                 dlcEl.innerHTML = '<div style="background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;border-radius:7px;padding:7px 10px;font-size:0.78rem;color:#d35400;display:flex;align-items:center;gap:6px;"><span style="font-size:1rem;">\u23f0</span>Expire dans <strong>' + days + ' jours</strong></div>';
             } else {
-                dlcEl.innerHTML = '<div style="background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:7px;padding:6px 10px;font-size:0.75rem;color:#27ae60;display:flex;align-items:center;gap:6px;"><span>\u2705</span>DLC valide — ' + days + ' jours restants</div>';
+                dlcEl.innerHTML = '<div style="background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:7px;padding:6px 10px;font-size:0.75rem;color:#27ae60;display:flex;align-items:center;gap:6px;"><span>✅</span>DLC valide — ' + days + ' jours restants</div>';
             }
         } else {
             dlcEl.innerHTML = '';
@@ -27664,6 +27949,38 @@ function _catBuildPrintHTML() {
     <div class="footer">
         ${shopName} — Catalogue généré le ${dateStr} à ${timeStr} — ${totalArticles} article(s) · Valeur stock: ${valeurStock.toFixed(2)} €
     </div>
+
+<!-- ===== MODAL AVERTISSEMENT DÉCONNEXION (isMaster) ===== -->
+<div id="master-logout-warning-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+    <div id="master-logout-warning-inner" style="background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;">
+            <div style="position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
+            <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">⚠️</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-0.2px;">Modifications non sauvegardées</div>
+            <div style="font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:5px;">
+                Vous avez <span id="logout-warn-count" style="font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;">0</span> modification(s) en attente
+            </div>
+        </div>
+        <div style="padding:20px 24px 14px;">
+            <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
+                Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
+                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+            </p>
+            <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
+        </div>
+        <div style="padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;">
+            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);">
+                💾 Sauvegarder et se déconnecter
+            </button>
+            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;">
+                🚪 Quitter sans sauvegarder
+            </button>
+            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;">
+                ✕ Annuler — continuer à travailler
+            </button>
+        </div>
+    </div>
+</div>
 </body></html>`;
 }
 
@@ -28951,7 +29268,39 @@ function exportMarcPDF(type) {
     </table>
     <div class="footer">COVO Pro — Export retours fournisseurs — ${date}</div>
     <script>window.onload=function(){window.print();};<\/script>
-    </body></html>`;
+    
+<!-- ===== MODAL AVERTISSEMENT DÉCONNEXION (isMaster) ===== -->
+<div id="master-logout-warning-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+    <div id="master-logout-warning-inner" style="background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;">
+            <div style="position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
+            <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">⚠️</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-0.2px;">Modifications non sauvegardées</div>
+            <div style="font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:5px;">
+                Vous avez <span id="logout-warn-count" style="font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;">0</span> modification(s) en attente
+            </div>
+        </div>
+        <div style="padding:20px 24px 14px;">
+            <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
+                Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
+                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+            </p>
+            <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
+        </div>
+        <div style="padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;">
+            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);">
+                💾 Sauvegarder et se déconnecter
+            </button>
+            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;">
+                🚪 Quitter sans sauvegarder
+            </button>
+            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;">
+                ✕ Annuler — continuer à travailler
+            </button>
+        </div>
+    </div>
+</div>
+</body></html>`;
 
     const blob = new Blob([html], {type:'text/html;charset=utf-8'});
     const url = URL.createObjectURL(blob);
@@ -30991,6 +31340,7 @@ function initAdminSections() {
                 covo_dettes:            JSON.parse(localStorage.getItem('covo_dettes')            || '[]'),
                 covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
                 covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
+                covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]'),
                 _version: 20,
                 _savedAt: ts,
                 _source: 'google_drive_auto',
@@ -31206,6 +31556,7 @@ function initAdminSections() {
             if (data.covo_dettes)            localStorage.setItem('covo_dettes',            JSON.stringify(data.covo_dettes));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
 
             const modal = document.getElementById('gdrive-restore-modal');
             if (modal) modal.style.display = 'none';
@@ -31239,6 +31590,8 @@ function initAdminSections() {
                 if (typeof window._paieRender === 'function')         window._paieRender();
                 if (typeof window._paieRenderCagnotte === 'function') window._paieRenderCagnotte();
                 if (typeof _cfRecalc === 'function')                  _cfRecalc();
+                // Module Inventaire
+                if (typeof window.invtInit === 'function')            window.invtInit();
             }, 200);
             // Modules : re-appliquer la config (onglets visibles/cachés)
             if (typeof _modulesApply === 'function')  _modulesApply();
@@ -32146,6 +32499,38 @@ function initAdminSections() {
 </main>
 
 
+
+<!-- ===== MODAL AVERTISSEMENT DÉCONNEXION (isMaster) ===== -->
+<div id="master-logout-warning-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+    <div id="master-logout-warning-inner" style="background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;">
+            <div style="position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
+            <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">⚠️</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-0.2px;">Modifications non sauvegardées</div>
+            <div style="font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:5px;">
+                Vous avez <span id="logout-warn-count" style="font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;">0</span> modification(s) en attente
+            </div>
+        </div>
+        <div style="padding:20px 24px 14px;">
+            <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
+                Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
+                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+            </p>
+            <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
+        </div>
+        <div style="padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;">
+            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);">
+                💾 Sauvegarder et se déconnecter
+            </button>
+            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;">
+                🚪 Quitter sans sauvegarder
+            </button>
+            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;">
+                ✕ Annuler — continuer à travailler
+            </button>
+        </div>
+    </div>
+</div>
 </body></html>`;
 
             await _gdUploadToHierarchy('tickets', now, fileName, html, 'text/html');
@@ -32689,7 +33074,7 @@ function initAdminSections() {
             if (data.covo_modules_config) localStorage.setItem('covo_modules_config', data.covo_modules_config);
             if (typeof window._modulesApply === 'function') try { window._modulesApply(); } catch(e) {}
             if (typeof _quickLinksRender === 'function') try { _quickLinksRender(); } catch(e) {}
-            showScanToast('\u2705 Restauration \ud83d\udd17 Liens & modules appliqu\u00e9e', 'success');
+            showScanToast('✅ Restauration \ud83d\udd17 Liens & modules appliqu\u00e9e', 'success');
             return;
         }
 
@@ -33128,28 +33513,51 @@ setTimeout(_updatePwaInstallUI,1500);
 
 
 <!-- ===== MODALE HISTORIQUE DU STOCK ===== -->
-<div role="dialog" aria-modal="true" id="stock-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);z-index:21000;justify-content:center;align-items:center;padding:16px;">
-  <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:680px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;">
-    <div style="background:linear-gradient(135deg,#8e44ad,#7d3c98);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-      <div style="color:white;font-weight:800;font-size:0.95rem;" id="sh-title">📦 Historique du stock</div>
-      <button onclick="document.getElementById('stock-history-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:0.9rem;">✕</button>
+<div role="dialog" aria-modal="true" id="stock-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(10px);z-index:21000;justify-content:center;align-items:flex-start;padding:16px;overflow-y:auto;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:720px;margin:auto;display:flex;flex-direction:column;box-shadow:0 28px 70px rgba(0,0,0,0.45);overflow:hidden;">
+
+    <!-- ── Header ── -->
+    <div style="background:linear-gradient(135deg,#8e44ad,#6c3483);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;">
+      <div>
+        <div style="color:white;font-weight:900;font-size:1rem;" id="sh-title">📦 Historique du stock</div>
+        <div style="color:rgba(255,255,255,0.8);font-size:0.75rem;margin-top:2px;" id="sh-product-name"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="text-align:right;">
+          <div style="color:rgba(255,255,255,0.7);font-size:0.68rem;">Stock actuel</div>
+          <div style="color:white;font-weight:900;font-size:1.05rem;" id="sh-current-stock"></div>
+        </div>
+        <button onclick="document.getElementById('stock-history-modal').style.display='none'" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;flex-shrink:0;">✕</button>
+      </div>
     </div>
-    <div style="padding:12px 18px;background:var(--bg-card-2,#f8fafc);border-bottom:1px solid var(--border-color,#eee);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span id="sh-product-name" style="font-weight:700;font-size:0.9rem;color:var(--text-main);"></span>
-      <span style="color:var(--gray);font-size:0.78rem;">Stock actuel :</span>
-      <span id="sh-current-stock" style="font-weight:800;color:#8e44ad;font-size:0.9rem;"></span>
-      <select id="sh-filter" onchange="window._renderStockHistory()" style="margin-left:auto;padding:6px 10px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:0.78rem;">
-        <option value="all">Tous</option>
+
+    <!-- ── KPI strip ── -->
+    <div id="sh-kpi-strip" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:1px solid var(--border-color,#eee);flex-shrink:0;"></div>
+
+    <!-- ── Filtres ── -->
+    <div style="padding:10px 16px;background:var(--bg-body,#f8fafc);border-bottom:1px solid var(--border-color,#eee);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0;">
+      <select id="sh-filter" onchange="window._renderStockHistory()" style="padding:6px 10px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:0.78rem;background:var(--bg-card,#fff);color:var(--text-main);flex:1;min-width:130px;">
+        <option value="all">Tous les types</option>
         <option value="sale">🛒 Ventes</option>
-        <option value="manual">✏️ Modif. manuelles</option>
+        <option value="manual">✏️ Modifications</option>
+        <option value="inventaire">📋 Inventaires</option>
         <option value="defect">⚠️ Défauts</option>
         <option value="restock">📦 Réapprovisionnement</option>
         <option value="retour">↩️ Retours</option>
+        <option value="creation">✨ Création</option>
       </select>
-      <button onclick="window._rebuildStockHistory(window._shProduct)" title="Reconstruire depuis les ventes" style="padding:5px 10px;border:1.5px solid #8e44ad;border-radius:7px;background:rgba(142,68,173,0.08);color:#8e44ad;cursor:pointer;font-size:0.75rem;font-weight:700;">🔄 Reconstruire</button>
+      <select id="sh-period" onchange="window._renderStockHistory()" style="padding:6px 10px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:0.78rem;background:var(--bg-card,#fff);color:var(--text-main);flex:1;min-width:120px;">
+        <option value="all">Toute période</option>
+        <option value="today">Aujourd'hui</option>
+        <option value="7d">7 derniers jours</option>
+        <option value="30d">30 derniers jours</option>
+        <option value="90d">3 derniers mois</option>
+      </select>
+      <button onclick="window._rebuildAndRefresh()" title="Reconstruire depuis les ventes" style="padding:6px 12px;border:1.5px solid #8e44ad;border-radius:8px;background:rgba(142,68,173,0.09);color:#8e44ad;cursor:pointer;font-size:0.75rem;font-weight:700;white-space:nowrap;">🔄 Reconstruire</button>
     </div>
-    <div id="sh-alert-zone" style="padding:0 18px;"></div>
-    <div id="sh-list" style="flex:1;overflow-y:auto;padding:12px 18px;"></div>
+
+    <div id="sh-alert-zone" style="padding:0 16px;flex-shrink:0;"></div>
+    <div id="sh-list" style="overflow-y:auto;max-height:55vh;padding:12px 16px;"></div>
   </div>
 </div>
 
@@ -33789,10 +34197,915 @@ document.getElementById('clot-detail-modal').addEventListener('click', function(
     if (e.target === this) this.style.display = 'none';
 });
 
+</script>
+
+<!-- ===== MODULE INVENTAIRE ===== -->
+<script>
+// ====================================================================
+// MODULE INVENTAIRE — comptage, valorisation, alertes, historique
+// ====================================================================
+(function() {
+    'use strict';
+
+    // ── Utilitaires ────────────────────────────────────────────────
+    function _getProds() {
+        if (typeof products !== 'undefined' && Array.isArray(products)) return products;
+        return JSON.parse(localStorage.getItem('covo_products') || '[]');
+    }
+    function _getHist() {
+        return JSON.parse(localStorage.getItem('covo_inventaires') || '[]');
+    }
+    function _saveHist(h) {
+        localStorage.setItem('covo_inventaires', JSON.stringify(h));
+    }
+    function _fmt(n) {
+        return parseFloat(n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+    function _fmtQty(p, qty) {
+        return p.unitType === 'kg'
+            ? parseFloat(qty).toFixed(3) + ' kg'
+            : parseInt(qty) + ' u.';
+    }
+
+    // ── État session ────────────────────────────────────────────────
+    var _session = null; // { started, counts: {id: qty} }
+    var _pendingProds = null, _pendingAdj = null, _pendingNbAdj = 0;
+    var _statusFilter = 'all'; // 'all' | 'never' | 'done'
+    var _scanModal = { prodId: null, count: 0, log: [] }; // modal scan
+
+    // ── Modal de confirmation inventaire ───────────────────────────────
+    (function _injectInvtModal() {
+        if (document.getElementById('invt-modal-confirm')) return;
+        var el = document.createElement('div');
+        el.id = 'invt-modal-confirm';
+        el.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);backdrop-filter:blur(10px);z-index:32000;justify-content:center;align-items:center;padding:20px;';
+        el.innerHTML = '<div style="background:var(--bg-card,#fff);border-radius:22px;max-width:420px;width:100%;box-shadow:0 32px 80px rgba(0,0,0,0.45);overflow:hidden;animation:invtModalIn 0.22s cubic-bezier(.34,1.56,.64,1);">' +
+            '<div id="invt-mc-header" style="padding:24px 24px 14px;text-align:center;"></div>' +
+            '<div id="invt-mc-body" style="padding:0 24px 18px;"></div>' +
+            '<div style="display:flex;gap:10px;padding:14px 20px 20px;border-top:1px solid var(--border-color,#eee);">' +
+                '<button id="invt-mc-btn-cancel" style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:11px;font-size:0.88rem;font-weight:700;cursor:pointer;background:var(--bg-body,#f4f7f6);color:var(--text-main,#2c3e50);transition:opacity 0.15s;" onmouseenter="this.style.opacity=\'0.8\'" onmouseleave="this.style.opacity=\'1\'">Annuler</button>' +
+                '<button id="invt-mc-btn-ok" style="flex:1.4;padding:11px;border:none;border-radius:11px;font-size:0.88rem;font-weight:800;cursor:pointer;color:white;background:#27ae60;transition:transform 0.1s;" onmouseenter="this.style.transform=\'scale(1.03)\'" onmouseleave="this.style.transform=\'scale(1)\'">Confirmer</button>' +
+            '</div>' +
+        '</div>';
+        document.body.appendChild(el);
+        var style = document.createElement('style');
+        style.textContent = '@keyframes invtModalIn{from{opacity:0;transform:scale(0.88) translateY(20px)}to{opacity:1;transform:scale(1) translateY(0)}}';
+        document.head.appendChild(style);
+    })();
+
+    function _invtConfirm(opts, cb) {
+        var modal  = document.getElementById('invt-modal-confirm');
+        var header = document.getElementById('invt-mc-header');
+        var body   = document.getElementById('invt-mc-body');
+        var btnOk  = document.getElementById('invt-mc-btn-ok');
+        var btnCan = document.getElementById('invt-mc-btn-cancel');
+        if (!modal) { cb(window.confirm(opts.title || 'Confirmer ?')); return; }
+        header.innerHTML =
+            '<div style="font-size:2.8rem;line-height:1;margin-bottom:10px;">' + (opts.icon || '❓') + '</div>' +
+            '<div style="font-size:1.05rem;font-weight:900;color:var(--text-main,#2c3e50);">' + (opts.title || 'Confirmer ?') + '</div>';
+        body.innerHTML = opts.body
+            ? '<div style="font-size:0.84rem;color:var(--gray,#666);text-align:center;line-height:1.6;">' + opts.body + '</div>'
+            : '';
+        btnOk.textContent  = opts.okLabel  || 'Confirmer';
+        btnCan.textContent = opts.cancelLabel || 'Annuler';
+        btnOk.style.background = opts.okColor || '#27ae60';
+        modal.style.display = 'flex';
+        // Listeners (one-shot)
+        function _close(val) {
+            modal.style.display = 'none';
+            btnOk.removeEventListener('click', _onOk);
+            btnCan.removeEventListener('click', _onCan);
+            modal.removeEventListener('click', _onBg);
+            cb(val);
+        }
+        function _onOk()  { _close(true);  }
+        function _onCan() { _close(false); }
+        function _onBg(e) { if (e.target === modal) _close(false); }
+        btnOk.addEventListener('click',  _onOk);
+        btnCan.addEventListener('click', _onCan);
+        modal.addEventListener('click',  _onBg);
+    }
+
+
+    // ── Init — appelée à chaque ouverture de l'onglet ───────────────
+    window.invtInit = function() {
+        _renderKPI();
+        _renderHeaderChips();
+        // reset boutons toggle à leur état par défaut (fermés)
+        ['valeur','alertes','historique'].forEach(function(s) {
+            var w = document.getElementById('invt-' + s + '-wrap');
+            if (w) w.style.display = 'none';
+            var b = document.getElementById('invt-btn-' + (s==='valeur'?'val':s==='alertes'?'alerte':'hist'));
+            if (b) { b.style.background = 'var(--bg-card,#fff)'; b.style.color = 'var(--text-main,#2c3e50)'; b.style.borderColor = 'var(--border-color,#e0e0e0)'; }
+        });
+    };
+
+    // ── KPI ─────────────────────────────────────────────────────────
+    function _renderKPI() {
+        var el = document.getElementById('invt-kpi-row');
+        if (!el) return;
+        var prods = _getProds().filter(function(p) { return p.active !== false; });
+        var total = prods.length;
+        var enRupture = prods.filter(function(p) { return (p.stock || 0) <= 0; }).length;
+        var alertes = prods.filter(function(p) {
+            var s = p.stock || 0;
+            var min = p.unitType === 'kg' ? 0.5 : 3;
+            return s > 0 && s <= min;
+        }).length;
+        var valStock = prods.reduce(function(acc, p) {
+            var cost = p.costPrice != null ? parseFloat(p.costPrice) : null;
+            if (cost == null) return acc;
+            return acc + cost * (p.stock || 0);
+        }, 0);
+        var hist = _getHist();
+        var dernier = hist.length > 0 ? hist[hist.length - 1] : null;
+        var kpis = [
+            { icon: '📦', label: 'Produits actifs', val: total, color: '#2c6fad' },
+            { icon: '❌', label: 'En rupture',       val: enRupture, color: '#e74c3c' },
+            { icon: '⚠️', label: 'Stock faible',     val: alertes, color: '#e67e22' },
+            { icon: '💰', label: 'Valeur stock*',    val: _fmt(valStock), color: '#27ae60', small: true },
+            { icon: '📋', label: 'Inventaires',      val: hist.length, color: '#8e44ad' },
+            { icon: '📅', label: 'Dernier',          val: dernier ? new Date(dernier.started).toLocaleDateString('fr-FR') : '—', color: '#1a5276', small: true }
+        ];
+        el.innerHTML = kpis.map(function(k) {
+            return '<div style="background:var(--bg-card,#fff);border-radius:11px;padding:12px 14px;border:1.5px solid var(--border-color,#e0e0e0);box-shadow:0 2px 8px rgba(0,0,0,0.05);">' +
+                '<div style="font-size:1.4rem;margin-bottom:4px;">' + k.icon + '</div>' +
+                '<div style="font-size:' + (k.small ? '0.88rem' : '1.3rem') + ';font-weight:900;color:' + k.color + ';line-height:1.1;">' + k.val + '</div>' +
+                '<div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:2px;font-weight:600;">' + k.label + '</div>' +
+                '</div>';
+        }).join('');
+    }
+
+    // ── Header chips ────────────────────────────────────────────────
+    function _renderHeaderChips() {
+        var el = document.getElementById('invt-header-chips');
+        if (!el) return;
+        var prods = _getProds().filter(function(p) { return p.active !== false; });
+        var avecCost = prods.filter(function(p) { return p.costPrice != null && p.costPrice !== ''; }).length;
+        el.innerHTML =
+            '<div style="background:rgba(255,255,255,0.18);color:#fff;padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:700;">' + prods.length + ' produits actifs</div>' +
+            '<div style="background:rgba(255,255,255,0.18);color:#fff;padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:700;">' + avecCost + ' avec prix achat</div>';
+    }
+
+    // ── Toggle sections secondaires ─────────────────────────────────
+    window.invtToggleSection = function(section) {
+        var map = { valeur: 'invt-valeur-wrap', alertes: 'invt-alertes-wrap', historique: 'invt-historique-wrap' };
+        var btnMap = { valeur: 'invt-btn-val', alertes: 'invt-btn-alerte', historique: 'invt-btn-hist' };
+        Object.keys(map).forEach(function(s) {
+            var w = document.getElementById(map[s]);
+            var b = document.getElementById(btnMap[s]);
+            if (s === section) {
+                var open = w && w.style.display !== 'none';
+                if (w) w.style.display = open ? 'none' : '';
+                if (b) {
+                    b.style.background = open ? 'var(--bg-card,#fff)' : 'var(--accent,#2c6fad)';
+                    b.style.color      = open ? 'var(--text-main,#2c3e50)' : '#fff';
+                    b.style.borderColor= open ? 'var(--border-color,#e0e0e0)' : 'var(--accent,#2c6fad)';
+                }
+                if (!open) {
+                    if (s === 'valeur')     _renderValeur();
+                    if (s === 'alertes')    _renderAlertes();
+                    if (s === 'historique') _renderHistorique();
+                }
+            }
+        });
+    };
+
+    // ── Valorisation ────────────────────────────────────────────────
+    // ── Valorisation ────────────────────────────────────────────────
+    function _renderValeur() {
+        var prods = _getProds().filter(function(p) { return p.active !== false; });
+        var byCatCost = {}, byCatSale = {};
+        var totalCost = 0, totalSale = 0;
+
+        prods.forEach(function(p) {
+            var stock = parseFloat(p.stock || 0);
+            var cat = p.category || 'Sans catégorie';
+            // Prix achat
+            if (p.costPrice != null && p.costPrice !== '') {
+                var cv = parseFloat(p.costPrice) * stock;
+                totalCost += cv;
+                byCatCost[cat] = (byCatCost[cat] || 0) + cv;
+            }
+            // Prix vente
+            var sp = p.unitType === 'kg' ? parseFloat(p.pricePerKg || 0) : parseFloat(p.price || 0);
+            if (sp > 0) {
+                var sv = sp * stock;
+                totalSale += sv;
+                byCatSale[cat] = (byCatSale[cat] || 0) + sv;
+            }
+        });
+
+        var margin = totalSale - totalCost;
+        var marginPct = totalSale > 0 ? ((margin / totalSale) * 100).toFixed(1) : 0;
+
+        // KPI chips
+        var costEl   = document.getElementById('invt-val-cost');
+        var saleEl   = document.getElementById('invt-val-sale');
+        var marginEl = document.getElementById('invt-val-margin');
+        if (costEl)   costEl.textContent   = totalCost > 0  ? _fmt(totalCost)  : '—';
+        if (saleEl)   saleEl.textContent   = totalSale > 0  ? _fmt(totalSale)  : '—';
+        if (marginEl) {
+            if (margin > 0) {
+                marginEl.textContent = '+' + _fmt(margin) + ' (' + marginPct + '%)';
+                marginEl.style.color = '#9b59b6';
+            } else if (margin < 0) {
+                marginEl.textContent = _fmt(margin) + ' (' + marginPct + '%)';
+                marginEl.style.color = '#e74c3c';
+            } else {
+                marginEl.textContent = '—';
+                marginEl.style.color = '#9b59b6';
+            }
+        }
+
+        // Table par catégorie
+        var tbl = document.getElementById('invt-val-table');
+        if (tbl) {
+            var allCats = Object.keys(Object.assign({}, byCatCost, byCatSale));
+            allCats.sort(function(a, b) {
+                return ((byCatSale[b] || 0) + (byCatCost[b] || 0)) - ((byCatSale[a] || 0) + (byCatCost[a] || 0));
+            });
+            if (allCats.length === 0) {
+                tbl.innerHTML = '<div style="color:var(--gray,#888);font-size:0.82rem;padding:12px;">Aucun produit valorisable.</div>';
+            } else {
+                tbl.innerHTML = allCats.map(function(cat) {
+                    var cv = byCatCost[cat] || 0;
+                    var sv = byCatSale[cat] || 0;
+                    var mg = sv - cv;
+                    var mgColor = mg >= 0 ? '#9b59b6' : '#e74c3c';
+                    var mgSign  = mg > 0 ? '+' : '';
+                    var pct = totalSale > 0 ? ((sv / totalSale) * 100).toFixed(1) : (totalCost > 0 ? ((cv / totalCost) * 100).toFixed(1) : '0');
+                    return '<div style="padding:6px 0;border-bottom:1px solid var(--border-color,#eee);">' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">' +
+                            '<span style="font-size:0.76rem;color:var(--text-main,#2c3e50);font-weight:700;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + cat + '</span>' +
+                            '<span style="font-size:0.66rem;color:var(--gray,#888);font-weight:600;">' + pct + '%</span>' +
+                        '</div>' +
+                        '<div style="display:flex;flex-direction:column;gap:1px;">' +
+                            (cv > 0 ? '<div style="display:flex;align-items:center;gap:4px;"><span style="font-size:0.64rem;color:#27ae60;width:10px;">📦</span><span style="font-size:0.72rem;color:#27ae60;font-weight:600;">' + _fmt(cv) + '</span></div>' : '') +
+                            (sv > 0 ? '<div style="display:flex;align-items:center;gap:4px;"><span style="font-size:0.64rem;color:#2c6fad;width:10px;">🏷️</span><span style="font-size:0.72rem;color:#2c6fad;font-weight:600;">' + _fmt(sv) + '</span></div>' : '') +
+                            (cv > 0 && sv > 0 ? '<div style="display:flex;align-items:center;gap:4px;"><span style="font-size:0.64rem;color:' + mgColor + ';width:10px;">📈</span><span style="font-size:0.7rem;color:' + mgColor + ';font-weight:700;">' + mgSign + _fmt(mg) + '</span></div>' : '') +
+                        '</div>' +
+                    '</div>';
+                }).join('');
+            }
+        }
+
+        // Donut — basé sur prix vente (fallback achat)
+        var canvas = document.getElementById('invt-chart-val');
+        if (!canvas) return;
+        var useData = Object.keys(byCatSale).length > 0 ? byCatSale : byCatCost;
+        var chartTotal = Object.keys(byCatSale).length > 0 ? totalSale : totalCost;
+        var chartLabel = Object.keys(byCatSale).length > 0 ? 'Vente' : 'Achat';
+        var chartColor = Object.keys(byCatSale).length > 0 ? '#2c6fad' : '#27ae60';
+        var sortedCat = Object.entries(useData).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 8);
+        var colors = ['#2c6fad','#27ae60','#e67e22','#9b59b6','#e74c3c','#1abc9c','#f39c12','#3498db'];
+        var ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth || 280;
+        canvas.height = 180;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (sortedCat.length === 0 || chartTotal === 0) {
+            ctx.fillStyle = '#aaa';
+            ctx.font = '13px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Aucune donnée', canvas.width / 2, 90);
+            return;
+        }
+        var cx = canvas.width / 2, cy = 88, r = 70, ri = 38, startA = -Math.PI / 2;
+        sortedCat.forEach(function(e, i) {
+            var slice = (e[1] / chartTotal) * Math.PI * 2;
+            ctx.beginPath(); ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, startA, startA + slice);
+            ctx.closePath();
+            ctx.fillStyle = colors[i % colors.length];
+            ctx.fill();
+            startA += slice;
+        });
+        ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2);
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg-card') || '#fff';
+        ctx.fill();
+        ctx.textAlign = 'center';
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--text-main') || '#2c3e50';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(chartLabel, cx, cy - 4);
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = chartColor;
+        ctx.fillText(_fmt(chartTotal).replace(' €','€'), cx, cy + 12);
+    }
+
+    // ── Alertes réappro ─────────────────────────────────────────────
+    function _renderAlertes() {
+        var el = document.getElementById('invt-alertes-list');
+        if (!el) return;
+        var prods = _getProds().filter(function(p) {
+            if (p.active === false) return false;
+            var s = p.stock || 0;
+            var min = p.stockAlert != null ? parseFloat(p.stockAlert) : (p.unitType === 'kg' ? 0.5 : 3);
+            return s <= min;
+        });
+        prods.sort(function(a, b) { return (a.stock || 0) - (b.stock || 0); });
+        if (prods.length === 0) {
+            el.innerHTML = '<div style="text-align:center;padding:28px 12px;color:var(--gray,#888);"><div style="font-size:2rem;margin-bottom:6px;">✅</div><strong>Aucune alerte</strong><div style="font-size:0.8rem;margin-top:4px;">Tous les stocks sont au-dessus des seuils.</div></div>';
+            return;
+        }
+        el.innerHTML = prods.map(function(p) {
+            var s = parseFloat(p.stock || 0);
+            var min = p.stockAlert != null ? parseFloat(p.stockAlert) : (p.unitType === 'kg' ? 0.5 : 3);
+            var isRupture = s <= 0;
+            var color = isRupture ? '#e74c3c' : '#e67e22';
+            var badge = isRupture ? '❌ Rupture' : '⚠️ Faible';
+            return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-body,#f4f7f6);border-radius:9px;border-left:3px solid ' + color + ';">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:700;font-size:0.84rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + p.name + '</div>' +
+                    '<div style="font-size:0.7rem;color:var(--gray,#888);margin-top:2px;">' + (p.category || 'Sans catégorie') + '</div>' +
+                '</div>' +
+                '<div style="text-align:right;flex-shrink:0;">' +
+                    '<div style="font-weight:900;color:' + color + ';font-size:0.9rem;">' + _fmtQty(p, s) + '</div>' +
+                    '<div style="font-size:0.68rem;color:var(--gray,#888);">seuil : ' + _fmtQty(p, min) + '</div>' +
+                '</div>' +
+                '<div style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:12px;font-size:0.65rem;font-weight:700;flex-shrink:0;">' + badge + '</div>' +
+                '</div>';
+        }).join('');
+    }
+
+    // ── Historique inventaires ──────────────────────────────────────
+    function _renderHistorique() {
+        var el = document.getElementById('invt-historique-list');
+        var cntEl = document.getElementById('invt-hist-count');
+        if (!el) return;
+        var hist = _getHist().slice().reverse();
+        if (cntEl) cntEl.textContent = hist.length + ' inventaire' + (hist.length > 1 ? 's' : '');
+        if (hist.length === 0) {
+            el.innerHTML = '<div style="text-align:center;padding:28px 12px;color:var(--gray,#888);"><div style="font-size:2rem;margin-bottom:6px;">📋</div><strong>Aucun inventaire enregistré</strong><div style="font-size:0.8rem;margin-top:4px;">Lancez votre premier inventaire ci-dessus.</div></div>';
+            return;
+        }
+        el.innerHTML = hist.map(function(inv, idx) {
+            var realIdx = hist.length - 1 - idx;
+            var date = new Date(inv.started).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            var adjRows = Object.values(inv.adjustments || {});
+            var withDiff = adjRows.filter(function(a) { return a.diff !== 0; });
+            var nbAjust = withDiff.length;
+            var totalDiff = adjRows.reduce(function(acc, a) { return acc + Math.abs(a.diff || 0); }, 0);
+            // Mini-tableau des écarts (produits avec diff ≠ 0)
+            var diffTable = '';
+            if (withDiff.length > 0) {
+                withDiff.sort(function(a, b) { return Math.abs(b.diff||0) - Math.abs(a.diff||0); });
+                diffTable = '<div style="margin-top:10px;overflow-x:auto;">' +
+                    '<table style="width:100%;border-collapse:collapse;font-size:0.75rem;">' +
+                    '<thead><tr style="background:var(--bg-body,#f0f4f8);">' +
+                    '<th style="padding:5px 8px;text-align:left;color:var(--gray,#888);font-weight:700;border-radius:6px 0 0 0;">Produit</th>' +
+                    '<th style="padding:5px 8px;text-align:right;color:var(--gray,#888);font-weight:700;">Avant</th>' +
+                    '<th style="padding:5px 8px;text-align:right;color:var(--gray,#888);font-weight:700;">Compté</th>' +
+                    '<th style="padding:5px 8px;text-align:right;color:var(--gray,#888);font-weight:700;border-radius:0 6px 0 0;">Écart</th>' +
+                    '</tr></thead><tbody>' +
+                    withDiff.map(function(r) {
+                        var dc = r.diff > 0 ? '#27ae60' : '#e74c3c';
+                        var ds = r.diff > 0 ? '+' : '';
+                        return '<tr style="border-top:1px solid var(--border-color,#eee);">' +
+                            '<td style="padding:5px 8px;color:var(--text-main,#2c3e50);font-weight:600;">' + (r.name || '—') + '</td>' +
+                            '<td style="padding:5px 8px;text-align:right;color:var(--gray,#888);">' + parseFloat(r.before||0).toFixed(2) + '</td>' +
+                            '<td style="padding:5px 8px;text-align:right;color:var(--text-main,#2c3e50);">' + parseFloat(r.counted||0).toFixed(2) + '</td>' +
+                            '<td style="padding:5px 8px;text-align:right;font-weight:800;color:' + dc + ';">' + ds + parseFloat(r.diff||0).toFixed(2) + '</td>' +
+                            '</tr>';
+                    }).join('') +
+                    '</tbody></table></div>';
+            } else {
+                diffTable = '<div style="margin-top:8px;font-size:0.75rem;color:var(--gray,#888);font-style:italic;">Aucun écart constaté.</div>';
+            }
+            return '<div style="background:var(--bg-body,#f4f7f6);border-radius:10px;padding:12px 14px;border:1px solid var(--border-color,#e0e0e0);">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">' +
+                    '<div>' +
+                        '<div style="font-weight:800;font-size:0.85rem;color:var(--text-main,#2c3e50);">📋 Inventaire du ' + date + '</div>' +
+                        '<div style="font-size:0.72rem;color:var(--gray,#888);margin-top:2px;">' +
+                            (inv.countedProducts || 0) + ' produits comptés · ' +
+                            '<span style="color:' + (nbAjust > 0 ? '#e74c3c' : '#27ae60') + ';font-weight:700;">' + nbAjust + ' ajustement(s)</span>' +
+                            ' · Δtotal : <strong>' + totalDiff.toFixed(2) + '</strong>' +
+                        '</div>' +
+                    '</div>' +
+                    '<button onclick="invtShowDetail(' + realIdx + ')" style="padding:5px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.75rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">Tous les produits ▾</button>' +
+                '</div>' +
+                diffTable +
+                '<div id="invt-detail-' + realIdx + '" style="display:none;margin-top:10px;"></div>' +
+                '</div>';
+        }).join('');
+    }
+
+    // ── Détail d'un inventaire ──────────────────────────────────────
+    window.invtShowDetail = function(idx) {
+        var el = document.getElementById('invt-detail-' + idx);
+        if (!el) return;
+        if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+        var hist = _getHist();
+        var inv = hist[idx];
+        if (!inv) return;
+        var adj = inv.adjustments || {};
+        var rows = Object.values(adj);
+        if (rows.length === 0) { el.innerHTML = '<div style="color:var(--gray,#888);font-size:0.8rem;">Aucun ajustement enregistré.</div>'; el.style.display = ''; return; }
+        rows.sort(function(a, b) { return Math.abs(b.diff||0) - Math.abs(a.diff||0); });
+        el.innerHTML = '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.78rem;">' +
+            '<thead><tr style="background:var(--bg-card,#fff);">' +
+            '<th style="padding:6px 8px;text-align:left;color:var(--gray,#888);font-weight:700;">Produit</th>' +
+            '<th style="padding:6px 8px;text-align:right;color:var(--gray,#888);font-weight:700;">Avant</th>' +
+            '<th style="padding:6px 8px;text-align:right;color:var(--gray,#888);font-weight:700;">Compté</th>' +
+            '<th style="padding:6px 8px;text-align:right;color:var(--gray,#888);font-weight:700;">Écart</th>' +
+            '</tr></thead><tbody>' +
+            rows.map(function(r) {
+                var diffColor = r.diff > 0 ? '#27ae60' : r.diff < 0 ? '#e74c3c' : 'var(--gray,#888)';
+                var diffSign = r.diff > 0 ? '+' : '';
+                return '<tr style="border-top:1px solid var(--border-color,#eee);">' +
+                    '<td style="padding:6px 8px;color:var(--text-main,#2c3e50);font-weight:600;">' + (r.name || '—') + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;color:var(--text-main,#2c3e50);">' + parseFloat(r.before || 0).toFixed(2) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;color:var(--text-main,#2c3e50);">' + parseFloat(r.counted || 0).toFixed(2) + '</td>' +
+                    '<td style="padding:6px 8px;text-align:right;color:' + diffColor + ';font-weight:800;">' + diffSign + parseFloat(r.diff || 0).toFixed(2) + '</td>' +
+                    '</tr>';
+            }).join('') +
+            '</tbody></table></div>';
+        el.style.display = '';
+    };
+
+    // ── Session de comptage ─────────────────────────────────────────
+    window.invtStartSession = function() {
+        function _doStart() {
+            _session = { started: new Date().toISOString(), counts: {} };
+            var wrap = document.getElementById('invt-session-wrap');
+            if (wrap) wrap.style.display = '';
+            var info = document.getElementById('invt-session-info');
+            if (info) info.textContent = 'Démarrée le ' + new Date().toLocaleString('fr-FR');
+            var btn = document.getElementById('invt-btn-start');
+            if (btn) { btn.textContent = '🔄 Session en cours…'; btn.disabled = true; btn.style.opacity = '0.6'; }
+            _statusFilter = 'all';
+        if (typeof invtSetStatusFilter === 'function') invtSetStatusFilter('all');
+        _renderSessionProducts('', 'all');
+        }
+        if (_session) {
+            _invtConfirm({
+                icon: '🔄',
+                title: 'Session déjà en cours',
+                body: 'Voulez-vous abandonner la session actuelle et en démarrer une nouvelle ?<br><span style="color:#e74c3c;font-weight:700;">Les quantités saisies seront perdues.</span>',
+                okLabel: 'Nouvelle session',
+                okColor: '#e67e22',
+                cancelLabel: 'Continuer la session'
+            }, function(ok) { if (ok) { _resetSession(); _doStart(); } });
+            return;
+        }
+        _doStart();
+    };
+
+    window.invtFilterProducts = function() {
+        var q = (document.getElementById('invt-search') || {}).value || '';
+        _renderSessionProducts(q, _statusFilter);
+    };
+
+    window.invtSetStatusFilter = function(val) {
+        _statusFilter = val;
+        // Update button styles
+        ['all','never','done'].forEach(function(k) {
+            var btn = document.getElementById('invt-sf-' + k);
+            if (!btn) return;
+            var active = k === val;
+            btn.style.background     = active ? 'var(--accent,#2c6fad)' : 'var(--bg-card,#fff)';
+            btn.style.color          = active ? '#fff' : 'var(--text-main,#2c3e50)';
+            btn.style.borderColor    = active ? 'var(--accent,#2c6fad)' : 'var(--border-color,#e0e0e0)';
+        });
+        var q = (document.getElementById('invt-search') || {}).value || '';
+        _renderSessionProducts(q, val);
+    };
+
+    function _renderSessionProducts(query, statusFilter) {
+        if (statusFilter === undefined) statusFilter = _statusFilter;
+        var el = document.getElementById('invt-product-list');
+        var progEl = document.getElementById('invt-progress');
+        var statsEl = document.getElementById('invt-sf-stats');
+        if (!el || !_session) return;
+        var allProds = _getProds().filter(function(p) { return p.active !== false; });
+        var q = (query || '').toLowerCase().trim();
+
+        // Comptes globaux pour le badge stats
+        var nbNever = allProds.filter(function(p) { return !p.lastInventoryDate; }).length;
+        var nbDone  = allProds.filter(function(p) { return !!p.lastInventoryDate; }).length;
+        if (statsEl) statsEl.textContent = nbNever + ' non inventorié(s) · ' + nbDone + ' déjà inventorié(s)';
+
+        // Filtre recherche
+        var afterSearch = q ? allProds.filter(function(p) {
+            return (p.name || '').toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q);
+        }) : allProds;
+
+        // Filtre statut
+        var filtered = afterSearch.filter(function(p) {
+            if (statusFilter === 'never') return !p.lastInventoryDate;
+            if (statusFilter === 'done')  return !!p.lastInventoryDate;
+            return true;
+        });
+
+        var counted = Object.keys(_session.counts).length;
+        if (progEl) progEl.textContent = counted + ' / ' + allProds.length + ' comptés';
+
+        if (filtered.length === 0) {
+            var msg = statusFilter === 'never' ? 'Tous les produits ont déjà été inventoriés 🎉'
+                    : statusFilter === 'done'  ? 'Aucun produit inventorié pour l\'instant.'
+                    : 'Aucun produit trouvé.';
+            el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray,#888);font-size:0.82rem;">' + msg + '</div>';
+            return;
+        }
+
+        // Grouper seulement quand "Tous" est sélectionné et pas de recherche active
+        var useGroups = (statusFilter === 'all') && !q;
+
+        function _renderCard(p) {
+            var currentCount = _session.counts[String(p.id)] != null ? _session.counts[String(p.id)] : '';
+            var isCounted = _session.counts[String(p.id)] != null;
+            var stockDisplay = p.unitType === 'kg' ? parseFloat(p.stock || 0).toFixed(3) + ' kg' : (p.stock || 0) + ' u.';
+            var lastInvtStr = p.lastInventoryDate
+                ? '📅 ' + new Date(p.lastInventoryDate).toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric' })
+                : '🕐 Jamais inventorié';
+            var lastInvtColor = p.lastInventoryDate ? '#27ae60' : '#e67e22';
+            // Diff display for scanned products
+            var diffHtml = '';
+            if (isCounted) {
+                var sc = parseFloat(currentCount);
+                var si = parseFloat(p.stock || 0);
+                var df = sc - si;
+                var dc = df === 0 ? '#27ae60' : df > 0 ? '#2980b9' : '#e74c3c';
+                var ds = df > 0 ? '+' : '';
+                diffHtml = '<span style="font-size:0.68rem;font-weight:700;color:' + dc + ';margin-left:6px;">écart: ' + ds + (p.unitType==='kg' ? parseFloat(df).toFixed(3)+' kg' : parseFloat(df).toFixed(0)+' u.') + '</span>';
+            }
+            return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg-card,#fff);border-radius:9px;border:1.5px solid ' + (isCounted ? '#27ae60' : 'var(--border-color,#e0e0e0)') + ';transition:border-color 0.2s;cursor:pointer;" onclick="invtOpenScanModal(' + p.id + ')">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:700;font-size:0.84rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (isCounted ? '✅ ' : '') + p.name + '</div>' +
+                    '<div style="font-size:0.7rem;color:var(--gray,#888);margin-top:1px;">'+( p.category || 'Sans catégorie') + ' · Stock: <strong>' + stockDisplay + '</strong>' + diffHtml + '</div>' +
+                    '<div style="font-size:0.65rem;color:' + lastInvtColor + ';margin-top:2px;font-weight:600;">' + lastInvtStr + '</div>' +
+                '</div>' +
+                '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;" onclick="event.stopPropagation();">' +
+                    '<label style="font-size:0.7rem;color:var(--gray,#888);font-weight:600;">' + (p.unitType === 'kg' ? 'kg' : 'qté') + '</label>' +
+                    '<input type="number" min="0" step="' + (p.unitType === 'kg' ? '0.001' : '1') + '" ' +
+                        'value="' + (currentCount !== '' ? currentCount : '') + '" placeholder="\u2014" ' +
+                        'style="width:80px;padding:6px 8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.84rem;font-weight:700;text-align:center;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);" ' +
+                        'onchange="invtSetCount(' + p.id + ', this.value)" ' +
+                        'oninput="invtSetCount(' + p.id + ', this.value)">' +
+                    '<button onclick="event.stopPropagation();invtOpenScanModal(' + p.id + ')" title="Scanner les articles" style="padding:6px 9px;background:linear-gradient(135deg,#2c6fad,#1a5276);color:#fff;border:none;border-radius:7px;font-size:0.82rem;cursor:pointer;font-weight:700;white-space:nowrap;" >📷 Scan</button>' +
+                '</div>' +
+            '</div>';
+        }
+
+        function _groupHeader(label, count, color, bg) {
+            return '<div style="display:flex;align-items:center;gap:8px;padding:7px 4px 5px;margin-top:4px;">' +
+                '<div style="font-size:0.72rem;font-weight:800;color:' + color + ';text-transform:uppercase;letter-spacing:0.5px;">' + label + '</div>' +
+                '<div style="flex:1;height:1px;background:' + color + ';opacity:0.2;"></div>' +
+                '<div style="font-size:0.68rem;font-weight:700;color:#fff;background:' + color + ';padding:1px 7px;border-radius:10px;">' + count + '</div>' +
+            '</div>';
+        }
+
+        var html = '';
+        if (useGroups) {
+            var neverGroup = filtered.filter(function(p) { return !p.lastInventoryDate; });
+            var doneGroup  = filtered.filter(function(p) { return !!p.lastInventoryDate; });
+            if (neverGroup.length > 0) {
+                html += _groupHeader('🕐 Non inventoriés', neverGroup.length, '#e67e22', 'rgba(230,126,34,0.1)');
+                html += neverGroup.map(_renderCard).join('');
+            }
+            if (doneGroup.length > 0) {
+                html += _groupHeader('✅ Déjà inventoriés', doneGroup.length, '#27ae60', 'rgba(39,174,96,0.1)');
+                html += doneGroup.map(_renderCard).join('');
+            }
+        } else {
+            html = filtered.map(_renderCard).join('');
+        }
+        el.innerHTML = html;
+    }
+
+    // ── Modal Scan par article ─────────────────────────────────────────
+    window.invtOpenScanModal = function(prodId) {
+        if (!_session) return;
+        var prods = _getProds();
+        var p = prods.find(function(pp) { return String(pp.id) === String(prodId); });
+        if (!p) return;
+        var initCount = _session.counts[String(prodId)] != null ? parseFloat(_session.counts[String(prodId)]) : 0;
+        _scanModal.prodId = String(prodId);
+        _scanModal.count = initCount;
+        _scanModal.log = [];
+        if (initCount > 0) _scanModal.log.push({ qty: initCount, note: 'saisie initiale' });
+        _renderScanModalUI(p);
+    };
+
+    function _renderScanModalUI(p) {
+        var id = String(p.id);
+        var count = _scanModal.count;
+        var stockInit = parseFloat(p.stock || 0);
+        var diff = count - stockInit;
+        var diffColor = diff === 0 ? '#27ae60' : diff > 0 ? '#2980b9' : '#e74c3c';
+        var diffSign = diff > 0 ? '+' : '';
+        var unit = p.unitType === 'kg' ? 'kg' : 'u.';
+
+        var modal = document.getElementById('invt-scan-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'invt-scan-modal';
+            modal.style.cssText = 'position:fixed;inset:0;z-index:10000;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);animation:fadeIn .18s;';
+            document.body.appendChild(modal);
+        }
+        modal.style.display = 'flex';
+
+        var logHtml = '';
+        if (_scanModal.log.length > 0) {
+            logHtml = '<div style="margin-top:10px;max-height:110px;overflow-y:auto;border:1px solid var(--border-color,#eee);border-radius:9px;padding:4px 8px;">' +
+                _scanModal.log.slice().reverse().map(function(e, i) {
+                    return '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.75rem;border-bottom:1px solid var(--border-color,#f5f5f5);">' +
+                        '<span style="color:var(--gray,#888);">' + (e.note || 'scan') + '</span>' +
+                        '<span style="font-weight:700;color:var(--text-main,#2c3e50);">+' + (p.unitType==='kg'?parseFloat(e.qty).toFixed(3):parseFloat(e.qty).toFixed(0)) + ' ' + unit + '</span>' +
+                    '</div>';
+                }).join('') +
+            '</div>';
+        }
+
+        var catStr = p.category ? ('<span style="background:var(--accent-light,#e8f0fb);color:var(--accent,#2c6fad);padding:2px 8px;border-radius:20px;font-size:0.7rem;font-weight:700;">' + p.category + '</span>') : '';
+
+        modal.innerHTML = '<div style="width:100%;max-width:480px;background:var(--bg-card,#fff);border-radius:20px 20px 0 0;padding:22px 20px 28px;box-shadow:0 -8px 40px rgba(0,0,0,0.18);animation:slideUp .22s cubic-bezier(.4,0,.2,1);">' +
+
+            // Header
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-size:1.05rem;font-weight:800;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">📷 ' + p.name + '</div>' +
+                    '<div style="margin-top:4px;display:flex;gap:6px;align-items:center;">' + catStr +
+                        '<span style="font-size:0.72rem;color:var(--gray,#888);">Stock théorique : <strong>' + (p.unitType==='kg'?parseFloat(p.stock||0).toFixed(3):parseFloat(p.stock||0).toFixed(0)) + ' ' + unit + '</strong></span>' +
+                    '</div>' +
+                '</div>' +
+                '<button onclick="document.getElementById(\'invt-scan-modal\').style.display=\'none\';" style="background:var(--border-color,#e0e0e0);border:none;border-radius:50%;width:30px;height:30px;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text-main,#333);">×</button>' +
+            '</div>' +
+
+            // Big count display
+            '<div style="text-align:center;margin:14px 0 10px;">' +
+                '<div style="font-size:0.72rem;color:var(--gray,#888);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Quantité comptée</div>' +
+                '<div style="display:flex;align-items:center;justify-content:center;gap:14px;">' +
+                    '<button onclick="invtScanAdjust(-1)" style="width:42px;height:42px;border-radius:50%;border:2px solid #e74c3c;background:rgba(231,76,60,0.08);color:#e74c3c;font-size:1.4rem;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#8722;</button>' +
+                    '<div id="invt-scan-count-display" style="font-size:2.4rem;font-weight:900;color:var(--text-main,#2c3e50);min-width:80px;text-align:center;">' + (p.unitType==='kg'?parseFloat(count).toFixed(3):parseFloat(count).toFixed(0)) + '</div>' +
+                    '<button onclick="invtScanAdjust(1)" style="width:42px;height:42px;border-radius:50%;border:2px solid #27ae60;background:rgba(39,174,96,0.08);color:#27ae60;font-size:1.4rem;font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;">&#43;</button>' +
+                '</div>' +
+                '<div id="invt-scan-diff-display" style="margin-top:6px;font-size:0.88rem;font-weight:700;color:' + diffColor + ';">' +
+                    (diff === 0 ? '✅ Conforme au stock' : ('Écart : ' + diffSign + (p.unitType==='kg'?parseFloat(diff).toFixed(3):parseFloat(diff).toFixed(0)) + ' ' + unit)) +
+                '</div>' +
+            '</div>' +
+
+            // Scan input
+            '<div style="background:var(--bg,#f8f9fa);border-radius:12px;padding:12px 14px;margin:12px 0;">' +
+                '<label style="font-size:0.72rem;font-weight:700;color:var(--gray,#888);text-transform:uppercase;letter-spacing:0.4px;display:block;margin-bottom:6px;">🔍 Scanner un article (code-barre)</label>' +
+                '<div style="display:flex;gap:8px;">' +
+                    '<input id="invt-scan-input" type="text" placeholder="Pointez le scanner ou saisissez le code…" autocomplete="off" ' +
+                        'style="flex:1;padding:10px 12px;border:2px solid var(--accent,#2c6fad);border-radius:9px;font-size:0.9rem;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);outline:none;" ' +
+                        'onkeydown="if(event.key===\'Enter\'){event.preventDefault();invtScanOne();}" />' +
+                    '<button onclick="invtScanOne()" style="padding:10px 14px;background:linear-gradient(135deg,#2c6fad,#1a5276);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:0.85rem;cursor:pointer;">+1 Scan</button>' +
+                '</div>' +
+                '<div style="font-size:0.68rem;color:var(--gray,#aaa);margin-top:5px;">↵ Entrée = 1 scan · chaque scan ajoute 1 unité</div>' +
+            '</div>' +
+
+            // Scan log
+            (logHtml ? ('<div style="font-size:0.72rem;font-weight:700;color:var(--gray,#888);margin-bottom:2px;">Historique de la session</div>' + logHtml) : '') +
+
+            // Action buttons
+            '<div style="display:flex;gap:10px;margin-top:16px;">' +
+                '<button onclick="invtScanConfirm()" style="flex:1;padding:13px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:10px;font-weight:800;font-size:0.92rem;cursor:pointer;">✅ Valider ce comptage</button>' +
+                '<button onclick="invtScanReset()" style="padding:13px 14px;background:none;color:#e74c3c;border:1.5px solid rgba(231,76,60,0.3);border-radius:10px;font-weight:700;cursor:pointer;font-size:0.82rem;">🗑️ Reset</button>' +
+            '</div>' +
+        '</div>';
+
+        // Focus scan input
+        setTimeout(function() {
+            var inp = document.getElementById('invt-scan-input');
+            if (inp) inp.focus();
+        }, 100);
+
+        // Close on backdrop click
+        modal.onclick = function(e) {
+            if (e.target === modal) modal.style.display = 'none';
+        };
+    }
+
+    window.invtScanOne = function() {
+        if (!_session || !_scanModal.prodId) return;
+        var inp = document.getElementById('invt-scan-input');
+        var raw = inp ? inp.value.trim() : '';
+        // Each scan = +1 unit (or +qty if numeric value typed manually)
+        var addQty = 1;
+        if (raw !== '' && !isNaN(parseFloat(raw)) && parseFloat(raw) > 0) {
+            addQty = parseFloat(raw);
+        }
+        _scanModal.count += addQty;
+        _scanModal.log.push({ qty: addQty, note: raw ? ('code: ' + raw) : 'scan' });
+        if (inp) inp.value = '';
+
+        // Update invtSetCount
+        invtSetCount(_scanModal.prodId, _scanModal.count);
+
+        // Refresh modal display only (not full list, for performance)
+        var prods = _getProds();
+        var p = prods.find(function(pp) { return String(pp.id) === _scanModal.prodId; });
+        if (p) _renderScanModalUI(p);
+    };
+
+    window.invtScanAdjust = function(delta) {
+        if (!_session || !_scanModal.prodId) return;
+        var prods = _getProds();
+        var p = prods.find(function(pp) { return String(pp.id) === _scanModal.prodId; });
+        if (!p) return;
+        var step = p.unitType === 'kg' ? 0.001 : 1;
+        _scanModal.count = Math.max(0, _scanModal.count + (delta * step));
+        _scanModal.log.push({ qty: delta * step, note: delta > 0 ? 'ajout manuel' : 'retrait manuel' });
+        invtSetCount(_scanModal.prodId, _scanModal.count);
+        _renderScanModalUI(p);
+    };
+
+    window.invtScanConfirm = function() {
+        if (!_session || !_scanModal.prodId) return;
+        invtSetCount(_scanModal.prodId, _scanModal.count);
+        var modal = document.getElementById('invt-scan-modal');
+        if (modal) modal.style.display = 'none';
+        // Refresh the product list to show updated count & diff
+        var q = (document.getElementById('invt-search') || {}).value || '';
+        _renderSessionProducts(q, _statusFilter);
+    };
+
+    window.invtScanReset = function() {
+        if (!_session || !_scanModal.prodId) return;
+        _scanModal.count = 0;
+        _scanModal.log = [];
+        invtSetCount(_scanModal.prodId, '');
+        var prods = _getProds();
+        var p = prods.find(function(pp) { return String(pp.id) === _scanModal.prodId; });
+        if (p) _renderScanModalUI(p);
+    };
+
+    window.invtSetCount = function(id, val) {
+        if (!_session) return;
+        var key = String(id);
+        var v = parseFloat(val);
+        if (val === '' || isNaN(v) || v < 0) {
+            delete _session.counts[key];
+        } else {
+            _session.counts[key] = v;
+        }
+        // Mettre à jour le compteur de progression
+        var prods = _getProds().filter(function(p) { return p.active !== false; });
+        var counted = Object.keys(_session.counts).length;
+        var progEl = document.getElementById('invt-progress');
+        if (progEl) progEl.textContent = counted + ' / ' + prods.length + ' comptés';
+    };
+
+    window.invtCancelSession = function() {
+        var counted = _session ? Object.keys(_session.counts).length : 0;
+        _invtConfirm({
+            icon: '🗑️',
+            title: 'Annuler l\'inventaire ?',
+            body: counted > 0
+                ? '<strong>' + counted + ' produit(s) saisi(s)</strong> seront perdus.<br>Cette action est irréversible.'
+                : 'Voulez-vous vraiment annuler la session ?',
+            okLabel: 'Oui, annuler',
+            okColor: '#e74c3c',
+            cancelLabel: 'Continuer'
+        }, function(ok) { if (ok) _resetSession(); });
+    };
+
+    function _resetSession() {
+        _session = null;
+        _statusFilter = 'all';
+        var wrap = document.getElementById('invt-session-wrap');
+        if (wrap) wrap.style.display = 'none';
+        var btn = document.getElementById('invt-btn-start');
+        if (btn) { btn.innerHTML = '🔍 Lancer un inventaire'; btn.disabled = false; btn.style.opacity = '1'; }
+        var listEl = document.getElementById('invt-product-list');
+        if (listEl) listEl.innerHTML = '';
+        var searchEl = document.getElementById('invt-search');
+        if (searchEl) searchEl.value = '';
+        var progEl = document.getElementById('invt-progress');
+        if (progEl) progEl.textContent = '';
+    }
+
+    window.invtValidateSession = function() {
+        if (!_session) return;
+        var counted = Object.keys(_session.counts).length;
+        if (counted === 0) {
+            if (typeof showScanToast === 'function') showScanToast('⚠️ Aucun produit compté — saisissez au moins une quantité.', 'warning');
+            else alert('Aucun produit compté — saisissez au moins une quantité.');
+            return;
+        }
+        var prods = _getProds();
+        var adjustments = {};
+        var hasChanges = false;
+        Object.keys(_session.counts).forEach(function(id) {
+            var prod = prods.find(function(p) { return String(p.id) === id; });
+            if (!prod) return;
+            var counted = parseFloat(_session.counts[id]);
+            var before = parseFloat(prod.stock || 0);
+            var diff = counted - before;
+            adjustments[id] = { id: id, name: prod.name, before: before, counted: counted, diff: diff };
+            if (diff !== 0) hasChanges = true;
+        });
+        var nbAdjust = Object.values(adjustments).filter(function(a) { return a.diff !== 0; }).length;
+        // Construire le résumé des ajustements pour le modal
+        var adjList = Object.values(adjustments).filter(function(a){ return a.diff !== 0; });
+        adjList.sort(function(a,b){ return Math.abs(b.diff||0)-Math.abs(a.diff||0); });
+        var adjHtml = '';
+        if (adjList.length > 0) {
+            adjHtml = '<div style="margin:10px 0 4px;max-height:160px;overflow-y:auto;text-align:left;border:1px solid var(--border-color,#eee);border-radius:9px;padding:6px 10px;">' +
+                adjList.slice(0,12).map(function(a){
+                    var dc = a.diff > 0 ? '#27ae60' : '#e74c3c';
+                    var ds = a.diff > 0 ? '+' : '';
+                    return '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.78rem;border-bottom:1px solid var(--border-color,#f0f0f0);">' +
+                        '<span style="color:var(--text-main);font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + a.name + '</span>' +
+                        '<span style="color:' + dc + ';font-weight:800;">' + ds + parseFloat(a.diff).toFixed(2) + '</span>' +
+                    '</div>';
+                }).join('') +
+                (adjList.length > 12 ? '<div style="font-size:0.7rem;color:var(--gray,#888);padding-top:4px;">…et ' + (adjList.length-12) + ' autre(s)</div>' : '') +
+            '</div>';
+        }
+        var confirmOpts = nbAdjust > 0 ? {
+            icon: '✅',
+            title: 'Valider l\'inventaire',
+            body: '<strong>' + nbAdjust + ' ajustement(s)</strong> de stock seront appliqués.' + adjHtml,
+            okLabel: 'Valider et appliquer',
+            okColor: '#27ae60'
+        } : {
+            icon: '📋',
+            title: 'Aucune différence',
+            body: 'Tous les stocks comptés sont conformes.<br>Voulez-vous tout de même enregistrer cet inventaire ?',
+            okLabel: 'Enregistrer',
+            okColor: '#2c6fad'
+        };
+        _pendingProds = prods; _pendingAdj = adjustments; _pendingNbAdj = nbAdjust;
+        _invtConfirm(confirmOpts, function(ok) { if (!ok) return; _doValidate(); });
+        return;
+    };
+
+    // Logique de validation réelle (après confirmation)
+    window._invtDoValidate = window._invtDoValidate || function() {}; // placeholder
+    function _doValidate() {
+        var prods = _pendingProds;
+        var adjustments = _pendingAdj;
+        var nbAdjust = _pendingNbAdj;
+        if (!prods || !adjustments) return;
+        // Appliquer les ajustements + dater chaque produit compté
+        var validatedDate = new Date().toISOString();
+        Object.keys(_session.counts).forEach(function(id) {
+            var prod = prods.find(function(p) { return String(p.id) === id; });
+            if (!prod) return;
+            prod.lastInventoryDate = validatedDate;
+            var adj = adjustments[id];
+            if (adj && adj.diff !== 0) prod.stock = parseFloat(adj.counted.toFixed(3));
+        });
+        // Journaliser dans l'historique de stock de chaque produit compté
+        if (typeof window._logStockChange === 'function') {
+            Object.keys(_session.counts).forEach(function(id) {
+                var adj = adjustments[id];
+                if (!adj) return;
+                var prod = prods.find(function(p) { return String(p.id) === id; });
+                if (prod) {
+                    window._logStockChange(prod, adj.before, adj.counted, 'inventaire',
+                        'Inventaire physique' + (adj.diff !== 0 ? ' (écart : ' + (adj.diff > 0 ? '+' : '') + parseFloat(adj.diff).toFixed(2) + ')' : ' (conforme)'),
+                        { diff: adj.diff, session: _session.started });
+                }
+            });
+        }
+        try {
+            localStorage.setItem('covo_products', JSON.stringify(prods));
+            if (typeof products !== 'undefined' && Array.isArray(products)) {
+                prods.forEach(function(p) {
+                    var idx = products.findIndex(function(x) { return x.id === p.id; });
+                    if (idx >= 0) { products[idx].stock = p.stock; products[idx].lastInventoryDate = p.lastInventoryDate; products[idx].stockHistory = p.stockHistory; }
+                });
+            }
+            if (typeof autoSave === 'function') autoSave();
+            if (typeof renderProducts === 'function') renderProducts();
+        } catch(e) { console.error('invt: save error', e); }
+        // Enregistrer l'inventaire dans l'historique
+        var inv = {
+            started: _session.started,
+            validated: new Date().toISOString(),
+            countedProducts: Object.keys(_session.counts).length,
+            adjustments: adjustments
+        };
+        var hist = _getHist();
+        hist.push(inv);
+        _saveHist(hist);
+        // Synchroniser immédiatement vers Google Drive (inventaire + produits mis à jour)
+        if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+        if (typeof showScanToast === 'function') {
+            showScanToast('✅ Inventaire validé — ' + nbAdjust + ' ajustement(s) appliqué(s)', 'success');
+        }
+        _resetSession();
+        _renderKPI();
+        _renderHeaderChips();
+        // Rafraîchir les sections ouvertes
+        var vw = document.getElementById('invt-valeur-wrap');
+        if (vw && vw.style.display !== 'none') _renderValeur();
+        var aw = document.getElementById('invt-alertes-wrap');
+        if (aw && aw.style.display !== 'none') _renderAlertes();
+        var hw = document.getElementById('invt-historique-wrap');
+        if (hw && hw.style.display !== 'none') _renderHistorique();
+    }
+
+})();
+</script>
+
 <!-- ===== MODAL AVERTISSEMENT DÉCONNEXION (isMaster) ===== -->
 <div id="master-logout-warning-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
     <div id="master-logout-warning-inner" style="background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;">
-        <!-- Header -->
         <div style="background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;">
             <div style="position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;"></div>
             <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">⚠️</div>
@@ -33801,7 +35114,6 @@ document.getElementById('clot-detail-modal').addEventListener('click', function(
                 Vous avez <span id="logout-warn-count" style="font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;">0</span> modification(s) en attente
             </div>
         </div>
-        <!-- Corps -->
         <div style="padding:20px 24px 14px;">
             <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
                 Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
@@ -33809,20 +35121,17 @@ document.getElementById('clot-detail-modal').addEventListener('click', function(
             </p>
             <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
         </div>
-        <!-- Boutons -->
         <div style="padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;">
-            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);transition:opacity 0.15s;" onmouseover="this.style.opacity='.9'" onmouseout="this.style.opacity='1'">
+            <button onclick="_masterSaveAndLogout()" style="width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);">
                 💾 Sauvegarder et se déconnecter
             </button>
-            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='rgba(231,76,60,0.07)'" onmouseout="this.style.background='var(--bg-body,#fff8f8)'">
+            <button onclick="_masterForceLogout()" style="width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;">
                 🚪 Quitter sans sauvegarder
             </button>
-            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.background='var(--bg-body,#f4f4f4)'" onmouseout="this.style.background='none'">
+            <button onclick="document.getElementById('master-logout-warning-modal').style.display='none'" style="width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;">
                 ✕ Annuler — continuer à travailler
             </button>
         </div>
     </div>
 </div>
-
-</script>
 </body></html>
