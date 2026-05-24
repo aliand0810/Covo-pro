@@ -6533,6 +6533,29 @@ button, .btn, .retours-btn {
                         </label>
                         <input type="date" id="edit-dlc">
                     </div>
+
+                    <!-- Tarif Pack -->
+                    <div class="edit-form-group" id="edit-pack-section">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                            <input type="checkbox" id="edit-pack-enabled" onchange="window._togglePackFields()" style="width:16px;height:16px;cursor:pointer;">
+                            <span>📦 Activer tarif pack</span>
+                        </label>
+                        <div id="edit-pack-fields" style="display:none;margin-top:8px;background:rgba(142,68,173,0.06);border:1.5px solid rgba(142,68,173,0.2);border-radius:10px;padding:10px 12px;">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                                <div>
+                                    <label style="font-size:0.72rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">Taille du pack (unités)</label>
+                                    <input type="number" id="edit-pack-size" min="2" step="1" placeholder="ex: 6" oninput="window._updatePackPreview()"
+                                        style="width:100%;padding:7px 10px;border:1.5px solid rgba(142,68,173,0.3);border-radius:7px;font-size:0.9rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
+                                </div>
+                                <div>
+                                    <label style="font-size:0.72rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">Prix du pack (€)</label>
+                                    <input type="number" id="edit-pack-price" min="0" step="0.01" placeholder="ex: 8.00" oninput="window._updatePackPreview()"
+                                        style="width:100%;padding:7px 10px;border:1.5px solid rgba(142,68,173,0.3);border-radius:7px;font-size:0.9rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#fff);color:var(--text-main);">
+                                </div>
+                            </div>
+                            <div id="edit-pack-preview" style="font-size:0.72rem;color:#8e44ad;min-height:18px;font-weight:600;"></div>
+                        </div>
+                    </div>
                     
                     <div class="edit-form-group">
                         <label>
@@ -16571,6 +16594,19 @@ function toggleInfoSection(headerElement) {
         document.getElementById('edit-stock').value = product.stock || 0;
         document.getElementById('edit-price').value = product.price || 0;
         document.getElementById('edit-dlc').value = product.expiryDate || '';
+        // Pack
+        const packEnabled = !!(product.packSize && product.packSize >= 2 && product.packPrice > 0);
+        const packCbx = document.getElementById('edit-pack-enabled');
+        if (packCbx) {
+            packCbx.checked = packEnabled;
+            const pf = document.getElementById('edit-pack-fields');
+            if (pf) pf.style.display = packEnabled ? '' : 'none';
+            const ps = document.getElementById('edit-pack-size');
+            const pp = document.getElementById('edit-pack-price');
+            if (ps) ps.value = product.packSize || '';
+            if (pp) pp.value = product.packPrice || '';
+            if (typeof window._updatePackPreview === 'function') window._updatePackPreview();
+        }
         
         // ── Picker catégorie ───────────────────────────────────────────
         window._currentEditProductId = product.id;
@@ -16638,6 +16674,27 @@ function toggleInfoSection(headerElement) {
     }
     
     // ── Picker catégorie — toggle ─────────────────────────────────────
+    // ── Pack fields toggle + preview ─────────────────────────────────
+    window._togglePackFields = function() {
+        const cbx = document.getElementById('edit-pack-enabled');
+        const pf  = document.getElementById('edit-pack-fields');
+        if (pf) pf.style.display = cbx && cbx.checked ? '' : 'none';
+        window._updatePackPreview();
+    };
+    window._updatePackPreview = function() {
+        const prev = document.getElementById('edit-pack-preview');
+        if (!prev) return;
+        const cbx = document.getElementById('edit-pack-enabled');
+        if (!cbx || !cbx.checked) { prev.textContent = ''; return; }
+        const ps  = parseInt(document.getElementById('edit-pack-size').value)  || 0;
+        const pp  = parseFloat(document.getElementById('edit-pack-price').value) || 0;
+        const pu  = parseFloat(document.getElementById('edit-price').value)     || 0;
+        if (ps < 2 || pp <= 0 || pu <= 0) { prev.textContent = 'Renseignez taille, prix pack et prix unitaire'; return; }
+        const savings = parseFloat((ps * pu - pp).toFixed(2));
+        prev.innerHTML = ps + ' u. → ' + pp.toFixed(2) + '€ (au lieu de ' + (ps * pu).toFixed(2) + '€)'
+                       + (savings > 0 ? ' — <strong style="color:#27ae60;">économie ' + savings.toFixed(2) + '€</strong>' : '');
+    };
+
     window._toggleCatPicker = function() {
         const dd = document.getElementById('edit-category-dropdown');
         if (!dd) return;
@@ -16779,6 +16836,19 @@ function toggleInfoSection(headerElement) {
         if (perms.price) product.price = parseFloat(document.getElementById('edit-price').value) || 0;
         if (perms.dlc) product.expiryDate = document.getElementById('edit-dlc').value;
         if (perms.promo) product.promo = parseInt(document.getElementById('edit-promo').value) || 0;
+        // Pack — toujours sauvegardé (pas soumis aux permissions caissier)
+        const packCbxS = document.getElementById('edit-pack-enabled');
+        if (packCbxS) {
+            if (packCbxS.checked) {
+                const ps = parseInt(document.getElementById('edit-pack-size').value) || 0;
+                const pp = parseFloat(document.getElementById('edit-pack-price').value) || 0;
+                product.packSize  = ps >= 2 ? ps : 0;
+                product.packPrice = pp > 0  ? pp : 0;
+            } else {
+                product.packSize  = 0;
+                product.packPrice = 0;
+            }
+        }
         
         autoSave();
         showScanToast('✅ Article mis à jour avec succès');
@@ -17700,7 +17770,7 @@ function toggleInfoSection(headerElement) {
     }
 
     function calculateChange() {
-        const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const received = parseFloat(document.getElementById('amount-received').value) || 0;
         const change = received - total;
         const display = document.getElementById('change-due');
@@ -17714,7 +17784,7 @@ function toggleInfoSection(headerElement) {
     }
 
     function onMixedInput(changedField) {
-        const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const cbInput = document.getElementById('mixed-cb');
         const cashInput = document.getElementById('mixed-cash');
         const cbVal = parseFloat(cbInput.value) || 0;
@@ -17739,7 +17809,7 @@ function toggleInfoSection(headerElement) {
     }
 
     function updateMixedSummary() {
-        const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const cbVal = parseFloat(document.getElementById('mixed-cb').value) || 0;
         const cashVal = parseFloat(document.getElementById('mixed-cash').value) || 0;
         const paid = cbVal + cashVal;
@@ -17872,6 +17942,32 @@ logout = function(skipConfirmation = false) {
     closeSessionModal();
     originalLogout(skipConfirmation); // Appelle la fonction logout d'origine avec le paramètre
 }
+
+    // ===== SYSTÈME TARIF PACK =====
+    // Calcule le total en appliquant le tarif pack si applicable
+    // Ex: qty=7, unitPrice=1.50, packSize=6, packPrice=8 → 1 pack (8€) + 1u (1.50€) = 9.50€
+    function _packCalc(qty, unitPrice, packSize, packPrice) {
+        if (!packSize || packSize < 2 || !packPrice || qty < packSize) {
+            return { total: parseFloat((qty * unitPrice).toFixed(2)), packs: 0, remainder: qty, hasPack: false };
+        }
+        var packs     = Math.floor(qty / packSize);
+        var remainder = qty % packSize;
+        return {
+            total:     parseFloat((packs * packPrice + remainder * unitPrice).toFixed(2)),
+            packs:     packs,
+            remainder: remainder,
+            hasPack:   true
+        };
+    }
+    // Retourne le total d'une ligne panier (avec gestion pack)
+    function _cartLineTotal(item) {
+        if (item.packSize && item.packSize >= 2 && item.packPrice && item.unitType !== 'kg') {
+            return _packCalc(item.quantity, item.unitPrice || item.price, item.packSize, item.packPrice).total;
+        }
+        return parseFloat((item.price * item.quantity).toFixed(2));
+    }
+    // ===== FIN SYSTÈME TARIF PACK =====
+
     function addToCart(productId) {
         const product = products.find(p => p.id === productId);
         if (!product || product.stock <= 0) return;
@@ -17926,11 +18022,14 @@ logout = function(skipConfirmation = false) {
                     name: product.name + (applyNight ? ' 🌙' : ''),
                     price: product.price * (1 - disc / 100) * nightMultiplier,
                     originalPrice: product.price,
+                    unitPrice: product.price * (1 - disc / 100) * nightMultiplier,
                     quantity: 1,
                     unitType: 'unit',
                     discount: disc,
                     nightTariff: applyNight,
-                    nightPercent: nightPct
+                    nightPercent: nightPct,
+                    packSize:  (product.packSize  && product.packSize  >= 2) ? product.packSize  : 0,
+                    packPrice: (product.packPrice && product.packPrice > 0)  ? product.packPrice : 0
                 });
             }
         }
@@ -17970,7 +18069,7 @@ logout = function(skipConfirmation = false) {
 
     function updateCartUI() {
         const cartItems = document.getElementById('cart-items');
-        const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         
         if (cart.length === 0) {
             cartItems.innerHTML = '<p style="text-align:center; color:var(--gray); margin:20px 0;">🛒 Panier vide</p>';
@@ -17981,6 +18080,18 @@ logout = function(skipConfirmation = false) {
                     ? `${item.quantity.toFixed(3)} kg`
                     : `x${item.quantity}`;
                 const unitLabel = isKg ? `${item.originalPrice.toFixed(2)}€/kg` : '';
+                // Décomposition pack pour affichage
+                let packLabel = '';
+                if (!isKg && item.packSize >= 2 && item.packPrice > 0 && item.quantity >= item.packSize) {
+                    const pc = _packCalc(item.quantity, item.unitPrice || item.price, item.packSize, item.packPrice);
+                    if (pc.packs > 0 && pc.remainder > 0) {
+                        packLabel = `<div style="font-size:0.72rem;color:#8e44ad;margin-top:3px;font-weight:700;">📦 ${pc.packs} pack × ${item.packPrice.toFixed(2)}€ + ${pc.remainder} u × ${(item.unitPrice||item.price).toFixed(2)}€</div>`;
+                    } else if (pc.packs > 0) {
+                        packLabel = `<div style="font-size:0.72rem;color:#8e44ad;margin-top:3px;font-weight:700;">📦 ${pc.packs} pack × ${item.packPrice.toFixed(2)}€ <span style="color:#27ae60;font-size:0.65rem;">(économie ${(item.quantity*(item.unitPrice||item.price) - pc.total).toFixed(2)}€)</span></div>`;
+                    }
+                } else if (!isKg && item.packSize >= 2 && item.packPrice > 0) {
+                    packLabel = `<div style="font-size:0.68rem;color:var(--gray,#888);margin-top:2px;">Pack dès ${item.packSize} u. → ${item.packPrice.toFixed(2)}€</div>`;
+                }
                 return `
                 <div style="background:#f8f9fa; padding:12px; margin-bottom:10px; border-radius:8px; color:#2c3e50;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -17999,11 +18110,12 @@ logout = function(skipConfirmation = false) {
                                     style="background:var(--primary); color:white; padding:5px 10px;">+</button>
                         </div>
                         <span style="font-weight:bold; color:var(--success);">
-                            ${(item.price * item.quantity).toFixed(2)}€
+                            ${_cartLineTotal(item).toFixed(2)}€
                             ${isKg ? `<span style="font-size:0.75rem; color:var(--gray); display:block;">${unitLabel}</span>` : ''}
                             ${item.discount > 0 ? `<span style="font-size:0.8rem; color:var(--danger);">(-${item.discount}%)</span>` : ''}
                         </span>
                     </div>
+                    ${packLabel}
                 </div>
             `}).join('');
         }
@@ -18039,7 +18151,7 @@ logout = function(skipConfirmation = false) {
 
     function validateSale() {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
-        const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const method = document.getElementById('payment-method').value;
         let received = total;
         let receivedCash = 0;
@@ -18175,7 +18287,7 @@ logout = function(skipConfirmation = false) {
             const qtyLabel = isKg
                 ? `${item.quantity.toFixed(3)} kg × ${item.originalPrice ? item.originalPrice.toFixed(2) : item.price.toFixed(2)}€/kg`
                 : `x${item.quantity}`;
-            const lineTotal = (item.price * item.quantity).toFixed(2);
+            const lineTotal = _cartLineTotal(item).toFixed(2);
 
             if (!isCancelled && item.retourne) {
                 // Article retourné : barré avec badge et date
@@ -18440,7 +18552,7 @@ logout = function(skipConfirmation = false) {
             const qtyLabel = isKg
                 ? `${item.quantity.toFixed(3)} kg × ${item.originalPrice ? item.originalPrice.toFixed(2) : item.price.toFixed(2)}€/kg`
                 : `x${item.quantity}`;
-            const lineTotal = (item.price * item.quantity).toFixed(2);
+            const lineTotal = _cartLineTotal(item).toFixed(2);
             if (item.retourne) {
                 const retourDateStr = item.retourDate ? new Date(item.retourDate).toLocaleDateString('fr-FR') : '';
                 return `<div style="display:flex;justify-content:space-between;margin:5px 0;align-items:flex-start;gap:4px;">
@@ -19033,61 +19145,10 @@ logout = function(skipConfirmation = false) {
                             : '🕐 Jamais inventorié'}
                     </p>
                     ${isAdmin ? `
-                    <button onclick="(function(){var z=document.getElementById('ez-${p.id}');var open=z.style.display!=='none';z.style.display=open?'none':'block';this.innerHTML=open?'✏️ Modifier':'✖ Réduire';this.style.background=open?'var(--primary)':'var(--gray)';}).call(this)"
-                        id="ez-btn-${p.id}"
-                        style="width:100%;margin-top:8px;padding:7px;background:var(--primary);color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:700;">
+                    <button onclick="openProductEditModal(${p.id})"
+                        style="width:100%;margin-top:8px;padding:9px;background:var(--primary);color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.85rem;font-weight:700;letter-spacing:0.02em;">
                         ✏️ Modifier
                     </button>
-                    <div id="ez-${p.id}" style="display:none;">
-                    <div class="admin-edit-zone">
-                        <label>Nom</label>
-                        <input type="text" id="edit-name-${p.id}" value="${p.name}">
-                        <label>Image (URL)</label>
-                        <input type="text" id="edit-img-${p.id}" value="${imgDisplay}" placeholder="${imgPlaceholder}">
-                        <label>Catégorie</label>
-                        <select id="edit-cat-${p.id}">
-                            ${(typeof getEchCategories==='function' ? getEchCategories() : categories).map(c => `<option value="${c}" ${p.category == c ? 'selected' : ''}>${c}</option>`).join('')}
-                        </select>
-                        <label>Code-barre</label>
-                        <div style="display:flex; gap:5px; align-items:end;">
-                            <input type="text" id="edit-barcode-${p.id}" value="${p.barcode || ''}" placeholder="Scanner..." style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}">
-                            <button onclick="searchProductBarcode(${p.id})" style="background:var(--primary); color:white; padding:8px 12px; white-space:nowrap;">🔍</button>
-                            <button id="undo-search-${p.id}" onclick="undoBarcodeSearch(${p.id})" style="display:none; background:var(--warning); color:white; padding:8px 12px; white-space:nowrap;">↩️</button>
-                        </div>
-                        <div id="product-search-result-${p.id}" style="margin-top:5px; padding:8px; border-radius:5px; font-size:0.85rem; display:none;"></div>
-                        <div class="grid-2">
-                            <div><label>Prix${p.unitType === 'kg' ? ' /kg (€)' : ' (€)'}</label><input type="number" step="0.01" id="edit-price-${p.id}" value="${p.unitType === 'kg' ? (p.pricePerKg || '') : (p.price || '')}" oninput="cardBenefPreview(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
-                            <div><label>💰 Prix d'achat (€)</label><input type="number" step="0.01" id="edit-cost-${p.id}" value="${p.costPrice != null ? p.costPrice : ''}" placeholder="0.00" oninput="cardBenefPreview(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
-                        </div>
-                        <div id="card-benef-${p.id}" style="display:${(p.costPrice != null && (p.price || p.pricePerKg)) ? '' : 'none'};background:var(--bg-card,#eafaf1);border:1.5px solid #27ae60;border-radius:7px;padding:8px 10px;font-size:0.78rem;margin-bottom:4px;"></div>
-                        <div class="grid-2" style="margin-top:0;">
-                            <div><label>Stock${p.unitType === 'kg' ? ' (kg)' : ''}</label><input type="number" step="${p.unitType === 'kg' ? '0.001' : '1'}" id="edit-stock-${p.id}" value="${p.stock}" oninput="_cardUpdateAlerts(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}"></div>
-                        </div>
-                        <div id="card-stock-alert-${p.id}" style="margin-bottom:4px;"></div>
-                        <label>Date limite de consommation</label>
-                        <input type="date" id="edit-expiry-${p.id}" value="${p.expiryDate || ''}" style="width:100%; padding:8px; border:1px solid #ddd; border-radius:5px;" onchange="_cardUpdateAlerts(${p.id})" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}">
-                        <div id="card-dlc-alert-${p.id}" style="margin-top:4px;margin-bottom:4px;"></div>
-                        <label>Promo (%)</label>
-                        <select id="edit-promo-${p.id}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}">
-                            ${promoTypes.map(pt => `<option value="${pt}" ${disc == pt ? 'selected' : ''}>-${pt}%</option>`).join('')}
-                        </select>
-                        <label style="color:#6d28d9; font-weight:bold; margin-top:10px;">🌙 Tarif de Nuit</label>
-                        <div style="display:flex; align-items:center; gap:8px; padding:8px; background:#f5f3ff; border-radius:6px; border:1px solid #a78bfa; margin-bottom:6px;">
-                            <input type="checkbox" id="edit-night-${p.id}" ${p.nightTariff ? 'checked' : ''} style="width:18px;height:18px;accent-color:#6d28d9;cursor:pointer;">
-                            <label for="edit-night-${p.id}" style="margin:0;font-size:0.85rem;cursor:pointer;color:#5b21b6;">Activer la majoration nuit pour cet article</label>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <input type="number" id="edit-night-pct-${p.id}" min="0" max="500" step="1" value="${p.nightTariffPercent !== undefined ? p.nightTariffPercent : ''}" placeholder="Laissez vide = défaut (${nightTariffSettings.defaultPercent}%)" style="flex:1; padding:6px; border-radius:5px; border:1px solid #a78bfa; font-size:0.85rem;" onkeydown="if(event.key==='Enter'){event.preventDefault();updateProductInfo(${p.id});}">
-                            <span style="font-size:0.8rem; color:#6d28d9; white-space:nowrap;">% majoration</span>
-                        </div>
-                        <button onclick="updateProductInfo(${p.id})" style="background:var(--primary);color:white;width:100%;margin-top:10px;padding:8px;border-radius:5px;">💾 SAUVEGARDER</button>
-                        <button onclick="openDefectModal(${p.id})" style="background:linear-gradient(135deg,#e67e22,#d35400);color:white;width:100%;margin-top:6px;padding:8px;border-radius:5px;border:none;cursor:pointer;font-size:0.85rem;font-weight:700;">⚠️ Déclarer un défaut</button>
-                        <div style="display:flex; gap:5px; margin-top:5px;">
-                            <button onclick="toggleProductActive(${p.id})" style="flex:1; background:var(--gray); color:white; font-size:0.7rem;">${p.active ? '👁️ Désactiver' : '✅ Activer'}</button>
-                            <button onclick="deleteProduct(${p.id})" style="flex:1; background:var(--danger); color:white; font-size:0.7rem;">🗑️ Supprimer</button>
-                        </div>
-                    </div>
-                    </div>
                     ` : `
                     <button class="btn-buy" onclick="addToCart(${p.id})" ${isOut ? 'disabled' : ''}>${isOut ? '❌ ÉPUISÉ' : '🛒 AJOUTER'}</button>
                     ${currentUser && currentUser.role === 'caissier' && cashierPermissions.editEnabled && cashierEditModeActive ? `
@@ -19172,6 +19233,19 @@ logout = function(skipConfirmation = false) {
             const costRawP = parseFloat(document.getElementById(`edit-cost-${id}`)?.value);
             if (!isNaN(costRawP) && costRawP >= 0) p.costPrice = costRawP;
             else delete p.costPrice;
+            // Pack
+            if (p.unitType !== 'kg') {
+                const packCbxCard = document.getElementById(`edit-pack-enabled-card-${id}`);
+                if (packCbxCard && packCbxCard.checked) {
+                    const ps = parseInt(document.getElementById(`edit-pack-size-card-${id}`)?.value) || 0;
+                    const pp = parseFloat(document.getElementById(`edit-pack-price-card-${id}`)?.value) || 0;
+                    p.packSize  = ps >= 2 ? ps : 0;
+                    p.packPrice = pp > 0  ? pp : 0;
+                } else {
+                    p.packSize  = 0;
+                    p.packPrice = 0;
+                }
+            }
             saveAll();
             showScanToast('✅ Produit modifié');
         }
@@ -20075,6 +20149,34 @@ logout = function(skipConfirmation = false) {
             btn.disabled = false;
             btn.textContent = '🛒 Ajouter au panier';
         }
+        // Bloc tarif pack
+        const packBlock = document.getElementById('pd-pack-block');
+        const packInfo  = document.getElementById('pd-pack-info');
+        const packAdmin = document.getElementById('pd-pack-admin');
+        const packSum   = document.getElementById('pd-pack-summary');
+        const packSzEl  = document.getElementById('pd-pack-size');
+        const packPrEl  = document.getElementById('pd-pack-price');
+        if (packBlock && !isKg) {
+            const hasPack = p.packSize >= 2 && p.packPrice > 0;
+            packBlock.style.display = '';
+            if (hasPack) {
+                const savings = parseFloat((p.packSize * p.price - p.packPrice).toFixed(2));
+                packSum.innerHTML = p.packSize + ' u. → <strong>' + p.packPrice.toFixed(2) + '€</strong>'
+                    + (savings > 0 ? ' <span style="font-size:0.75rem;color:#27ae60;">(économie ' + savings.toFixed(2) + '€)</span>' : '');
+                packInfo.style.display = '';
+            } else {
+                packInfo.style.display = 'none';
+            }
+            if (packAdmin && isAdmin) {
+                packAdmin.style.display = '';
+                if (packSzEl) packSzEl.value = hasPack ? p.packSize : '';
+                if (packPrEl) packPrEl.value = hasPack ? p.packPrice : '';
+                if (typeof pdPackPreview === 'function') pdPackPreview();
+            }
+        } else if (packBlock) {
+            packBlock.style.display = 'none';
+        }
+
         // Bouton Déclarer un défaut — admin OU caissier avec permission
         const defectBtnPd2 = document.getElementById('pd-defect-btn');
         if (defectBtnPd2) {
@@ -20115,11 +20217,485 @@ logout = function(skipConfirmation = false) {
         }
     }
 
+
+    // ===== MODAL ÉDITION PRODUIT (product-edit-modal) =====
+    var _pemProductId = null;
+
+    window.openProductEditModal = function(id) {
+        const p = products.find(x => x.id == id);
+        if (!p) return;
+        _pemProductId = p.id;
+        const isKg = p.unitType === 'kg';
+
+        // Header
+        const hImg = document.getElementById('pem-header-img');
+        if (hImg) { hImg.src = p.img || ''; hImg.style.display = p.img ? '' : 'none'; }
+        const hName = document.getElementById('pem-header-name');
+        if (hName) hName.textContent = p.name || 'Article';
+        const hMeta = document.getElementById('pem-header-meta');
+        if (hMeta) hMeta.textContent = (p.category || '—') + (p.barcode ? '  ·  #' + p.barcode : '') + (isKg ? '  ·  ⚖️ au kg' : '');
+
+        // Image
+        const imgIn = document.getElementById('pem-img');
+        const imgPv = document.getElementById('pem-img-prev');
+        if (imgIn) imgIn.value = (p.img && !p.img.startsWith('data:')) ? p.img : '';
+        if (imgPv) { imgPv.src = p.img || ''; imgPv.style.opacity = p.img ? '1' : '0.2'; }
+
+        // Identité
+        document.getElementById('pem-name').value = p.name || '';
+        // Catégorie select
+        const catSel = document.getElementById('pem-cat');
+        if (catSel) {
+            catSel.innerHTML = '<option value="">— Aucune catégorie</option>'
+                + (typeof categories !== 'undefined' ? categories : []).map(c =>
+                    `<option value="${c}"${p.category === c ? ' selected' : ''}>${c}</option>`
+                ).join('');
+            catSel.value = p.category || '';
+        }
+        document.getElementById('pem-barcode').value = p.barcode || '';
+        document.getElementById('pem-barcode-result').style.display = 'none';
+        const brandEl = document.getElementById('pem-brand');
+        if (brandEl) brandEl.value = p.brand || '';
+        const descEl = document.getElementById('pem-description');
+        if (descEl) descEl.value = p.description || '';
+
+        // Prix & Stock
+        const priceLabel = document.getElementById('pem-price-label');
+        if (priceLabel) priceLabel.textContent = isKg ? 'Prix de vente (€/kg)' : 'Prix de vente (€)';
+        const stockLabel = document.getElementById('pem-stock-label');
+        if (stockLabel) stockLabel.textContent = isKg ? 'Stock (kg)' : 'Stock';
+        const stockIn = document.getElementById('pem-stock');
+        if (stockIn) { stockIn.step = isKg ? '0.001' : '1'; stockIn.value = p.stock || 0; }
+        document.getElementById('pem-price').value = isKg ? (p.pricePerKg || '') : (p.price || '');
+        document.getElementById('pem-cost').value = p.costPrice != null ? p.costPrice : '';
+        // Promo select
+        const promoSel = document.getElementById('pem-promo');
+        if (promoSel) {
+            promoSel.innerHTML = '<option value="0">Aucune promotion</option>'
+                + (typeof promoTypes !== 'undefined' ? promoTypes : []).filter(Boolean).map(pt =>
+                    `<option value="${pt}"${parseInt(p.promo) === parseInt(pt) ? ' selected' : ''}>-${pt}%</option>`
+                ).join('');
+            promoSel.value = p.promo || '0';
+        }
+        pemBenefPreview();
+        pemStockAlert();
+
+        // DLC
+        document.getElementById('pem-expiry').value = p.expiryDate || '';
+        pemDlcAlert();
+
+        // Nuit
+        const nightCbx = document.getElementById('pem-night');
+        const nightPctW = document.getElementById('pem-night-pct-wrap');
+        if (nightCbx) nightCbx.checked = !!p.nightTariff;
+        if (nightPctW) nightPctW.style.display = p.nightTariff ? 'flex' : 'none';
+        document.getElementById('pem-night-pct').value = (p.nightTariffPercent !== undefined && p.nightTariffPercent !== null) ? p.nightTariffPercent : '';
+
+        // Pack (caché pour kg)
+        const packSec = document.getElementById('pem-pack-section');
+        if (packSec) packSec.style.display = isKg ? 'none' : '';
+        if (!isKg) {
+            const hasPack = p.packSize >= 2 && p.packPrice > 0;
+            document.getElementById('pem-pack-enabled').checked = hasPack;
+            const pf = document.getElementById('pem-pack-fields');
+            if (pf) pf.style.display = hasPack ? 'flex' : 'none';
+            document.getElementById('pem-pack-size').value = hasPack ? p.packSize : '';
+            document.getElementById('pem-pack-price').value = hasPack ? p.packPrice : '';
+            pemPackPreview();
+        }
+
+        // Bouton actif/inactif
+        const togBtn = document.getElementById('pem-toggle-active-btn');
+        if (togBtn) {
+            if (p.active === false) {
+                togBtn.textContent = '✅ Activer l\'article';
+                togBtn.style.borderColor = '#27ae60'; togBtn.style.color = '#27ae60';
+            } else {
+                togBtn.textContent = '👁️ Désactiver';
+                togBtn.style.borderColor = '#7f8c8d'; togBtn.style.color = '#7f8c8d';
+            }
+        }
+
+        document.getElementById('product-edit-modal').style.display = 'flex';
+    };
+
+    window.saveProductEditModal = function() {
+        if (_pemProductId == null) return;
+        const p = products.find(x => x.id == _pemProductId);
+        if (!p) return;
+        const isKg = p.unitType === 'kg';
+
+        const name = document.getElementById('pem-name').value.trim();
+        if (!name) { showScanToast('❌ Nom requis'); return; }
+        p.name = name;
+        p.category = document.getElementById('pem-cat').value || '';
+        p.barcode = document.getElementById('pem-barcode').value.trim();
+        const brandVal = (document.getElementById('pem-brand')?.value || '').trim();
+        if (brandVal) p.brand = brandVal; else delete p.brand;
+        const descVal = (document.getElementById('pem-description')?.value || '').trim();
+        if (descVal) p.description = descVal; else delete p.description;
+
+        const imgVal = document.getElementById('pem-img').value.trim();
+        if (imgVal) p.img = imgVal;
+
+        const priceVal = parseFloat(document.getElementById('pem-price').value);
+        if (!isNaN(priceVal) && priceVal >= 0) {
+            if (isKg) p.pricePerKg = priceVal; else p.price = priceVal;
+        }
+        const costVal = parseFloat(document.getElementById('pem-cost').value);
+        if (!isNaN(costVal) && costVal >= 0) p.costPrice = costVal; else delete p.costPrice;
+
+        const _before = p.stock;
+        const stockVal = isKg
+            ? parseFloat(document.getElementById('pem-stock').value)
+            : parseInt(document.getElementById('pem-stock').value);
+        if (!isNaN(stockVal)) {
+            p.stock = isKg ? parseFloat(stockVal.toFixed(3)) : stockVal;
+            if (_before !== p.stock && typeof window._logStockChange === 'function') {
+                window._logStockChange(p, _before, p.stock, 'manual', 'Modification fiche produit', {});
+            }
+        }
+        p.promo = parseInt(document.getElementById('pem-promo').value) || 0;
+        p.expiryDate = document.getElementById('pem-expiry').value || null;
+
+        // Nuit
+        p.nightTariff = document.getElementById('pem-night').checked;
+        const nPct = document.getElementById('pem-night-pct').value;
+        p.nightTariffPercent = (nPct !== '' && nPct !== undefined) ? parseFloat(nPct) : undefined;
+
+        // Pack
+        if (!isKg) {
+            if (document.getElementById('pem-pack-enabled').checked) {
+                const ps = parseInt(document.getElementById('pem-pack-size').value) || 0;
+                const pp = parseFloat(document.getElementById('pem-pack-price').value) || 0;
+                p.packSize  = ps >= 2 ? ps : 0;
+                p.packPrice = pp > 0  ? pp : 0;
+            } else { p.packSize = 0; p.packPrice = 0; }
+        }
+
+        saveAll();
+        renderProducts();
+        document.getElementById('product-edit-modal').style.display = 'none';
+        showScanToast('✅ ' + p.name + ' mis à jour');
+    };
+
+    function pemImgPreview() {
+        const val = document.getElementById('pem-img').value.trim();
+        const prev = document.getElementById('pem-img-prev');
+        if (prev) { prev.src = val || ''; prev.style.opacity = val ? '1' : '0.2'; }
+    }
+    window.pemImgPreview = pemImgPreview;
+
+    function pemBenefPreview() {
+        const price = parseFloat(document.getElementById('pem-price')?.value);
+        const cost  = parseFloat(document.getElementById('pem-cost')?.value);
+        const box   = document.getElementById('pem-benef-preview');
+        if (box) _renderBenefBox(price, cost, box);
+    }
+    window.pemBenefPreview = pemBenefPreview;
+
+    function pemStockAlert() {
+        const box = document.getElementById('pem-stock-alert');
+        if (!box) return;
+        const v = parseFloat(document.getElementById('pem-stock')?.value || 0);
+        if (v <= 0)    box.innerHTML = '<div style="background:rgba(231,76,60,0.1);border:1.5px solid #e74c3c;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#c0392b;">📦 <strong>Stock épuisé</strong> — Article indisponible à la vente</div>';
+        else if (v < 5) box.innerHTML = '<div style="background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#d35400;">⚠️ <strong>Stock faible</strong> — ' + v + ' restant(s)</div>';
+        else            box.innerHTML = '';
+    }
+    window.pemStockAlert = pemStockAlert;
+
+    function pemDlcAlert() {
+        const box = document.getElementById('pem-dlc-alert');
+        if (!box) return;
+        const val = document.getElementById('pem-expiry')?.value;
+        if (!val) { box.innerHTML = ''; return; }
+        const today = new Date(); today.setHours(0,0,0,0);
+        const exp   = new Date(val); exp.setHours(0,0,0,0);
+        const days  = Math.ceil((exp - today) / 86400000);
+        if (days < 0)      box.innerHTML = '<div style="background:rgba(231,76,60,0.12);border:1.5px solid #e74c3c;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#c0392b;">❌ <strong>EXPIRÉ</strong> depuis ' + Math.abs(days) + ' jour(s)</div>';
+        else if (days === 0) box.innerHTML = '<div style="background:rgba(231,76,60,0.12);border:1.5px solid #e74c3c;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#c0392b;">⚠️ <strong>Expire AUJOURD\'HUI</strong></div>';
+        else if (days <= 7) box.innerHTML = '<div style="background:rgba(243,156,18,0.1);border:1.5px solid #f39c12;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#d35400;">⏰ Expire dans <strong>' + days + ' jour(s)</strong></div>';
+        else                box.innerHTML = '<div style="background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:8px;padding:7px 12px;font-size:0.75rem;color:#27ae60;">✅ DLC valide — ' + days + ' jours restants</div>';
+    }
+    window.pemDlcAlert = pemDlcAlert;
+
+    window.pemToggleNight = function() {
+        const cbx = document.getElementById('pem-night');
+        const wrap = document.getElementById('pem-night-pct-wrap');
+        if (wrap) wrap.style.display = cbx && cbx.checked ? 'flex' : 'none';
+    };
+
+    window.pemTogglePack = function() {
+        const cbx = document.getElementById('pem-pack-enabled');
+        const pf  = document.getElementById('pem-pack-fields');
+        if (pf) pf.style.display = cbx && cbx.checked ? 'flex' : 'none';
+        pemPackPreview();
+    };
+
+    function pemPackPreview() {
+        const prev = document.getElementById('pem-pack-prev');
+        if (!prev) return;
+        const ps = parseInt(document.getElementById('pem-pack-size')?.value) || 0;
+        const pp = parseFloat(document.getElementById('pem-pack-price')?.value) || 0;
+        const pu = parseFloat(document.getElementById('pem-price')?.value) || 0;
+        if (ps < 2 || pp <= 0) { prev.innerHTML = ''; return; }
+        const savings = pu > 0 ? parseFloat((ps * pu - pp).toFixed(2)) : null;
+        prev.innerHTML = ps + ' u. → <strong>' + pp.toFixed(2) + '€</strong>'
+            + (savings !== null && savings > 0 ? ' — <span style="color:#27ae60;">économie ' + savings.toFixed(2) + '€</span>' : '');
+    }
+    window.pemPackPreview = pemPackPreview;
+
+    window.pemToggleActive = function() {
+        if (_pemProductId == null) return;
+        const p = products.find(x => x.id == _pemProductId);
+        if (!p) return;
+        p.active = p.active === false ? true : false;
+        saveAll();
+        const btn = document.getElementById('pem-toggle-active-btn');
+        if (btn) {
+            if (p.active === false) {
+                btn.textContent = '✅ Activer l\'article';
+                btn.style.borderColor = '#27ae60'; btn.style.color = '#27ae60';
+            } else {
+                btn.textContent = '👁️ Désactiver';
+                btn.style.borderColor = '#7f8c8d'; btn.style.color = '#7f8c8d';
+            }
+        }
+        showScanToast(p.active ? '✅ Article activé' : '👁️ Article masqué');
+    };
+
+    window.pemDeclareDefect = function() {
+        if (_pemProductId == null) return;
+        document.getElementById('product-edit-modal').style.display = 'none';
+        if (typeof openDefectModal === 'function') openDefectModal(_pemProductId);
+    };
+
+    window.pemDeleteProduct = function() {
+        if (_pemProductId == null) return;
+        const p = products.find(x => x.id == _pemProductId);
+        if (!p) return;
+        if (!confirm('Supprimer définitivement "' + p.name + '" ?')) return;
+        products = products.filter(x => x.id != _pemProductId);
+        _pemProductId = null;
+        saveAll();
+        renderProducts();
+        document.getElementById('product-edit-modal').style.display = 'none';
+        showScanToast('🗑️ Article supprimé');
+    };
+
+    // ── Données OpenFoodFacts stockées globalement (aucune valeur texte dans les onclick) ──
+    window._pemOFFData = null;
+    window._pemOFFImgs = [];
+
+    // Applique le nom depuis _pemOFFData (appelé sans argument depuis onclick)
+    window._pemApplyName = function() {
+        if (!window._pemOFFData || !window._pemOFFData.product) return;
+        var prod = window._pemOFFData.product;
+        var val  = prod.product_name_fr || prod.product_name || '';
+        var el   = document.getElementById('pem-name');
+        if (el && val) { el.value = val; el.dispatchEvent(new Event('input')); showScanToast('✅ Nom appliqué'); }
+    };
+    // Applique la marque depuis _pemOFFData
+    window._pemApplyBrand = function() {
+        if (!window._pemOFFData || !window._pemOFFData.product) return;
+        var val = window._pemOFFData.product.brands || '';
+        var el  = document.getElementById('pem-brand');
+        if (el && val) { el.value = val; showScanToast('✅ Marque appliquée'); }
+    };
+    // Applique la description depuis _pemOFFData
+    window._pemApplyDesc = function() {
+        if (!window._pemOFFData || !window._pemOFFData.product) return;
+        var prod = window._pemOFFData.product;
+        var val  = prod.generic_name_fr || prod.generic_name || prod.ingredients_text_fr || '';
+        var el   = document.getElementById('pem-description');
+        if (el && val) { el.value = val; showScanToast('✅ Description appliquée'); }
+    };
+    // Applique l'image par index dans _pemOFFImgs (index numérique = sans danger dans onclick)
+    window._pemApplyImg = function(idx) {
+        var im = window._pemOFFImgs[idx];
+        if (!im) return;
+        var el = document.getElementById('pem-img');
+        if (el) { el.value = im.url; pemImgPreview(); }
+        var hImg = document.getElementById('pem-header-img');
+        if (hImg) { hImg.src = im.url; hImg.style.display = ''; }
+        // Highlight miniature sélectionnée
+        document.querySelectorAll('.pem-img-thumb').forEach(function(t, i) {
+            t.style.borderColor = i === idx ? '#2980b9' : '#dee2e6';
+            t.style.transform   = i === idx ? 'scale(1.12)' : 'scale(1)';
+        });
+        showScanToast('✅ Image appliquée : ' + im.label);
+    };
+
+    window.pemSearchBarcode = async function() {
+        var barcode = document.getElementById('pem-barcode').value.trim();
+        var resultDiv = document.getElementById('pem-barcode-result');
+        if (!barcode) { showScanToast('❌ Entrez un code-barres'); return; }
+
+        resultDiv.style.cssText = 'display:block;background:#fff8e1;border:1.5px solid #ffc107;border-radius:12px;padding:14px;font-size:0.82rem;';
+        resultDiv.innerHTML = '<div style="text-align:center;color:#7d5a00;padding:8px;letter-spacing:0.02em;">🔍 Recherche en cours…</div>';
+
+        try {
+            var res  = await fetch('https://world.openfoodfacts.org/api/v0/product/' + barcode + '.json');
+            var data = await res.json();
+            window._pemOFFData = data;
+
+            if (data.status === 1 && data.product) {
+                var prod  = data.product;
+                var name  = prod.product_name_fr  || prod.product_name  || '';
+                var brand = prod.brands            || '';
+                var desc  = prod.generic_name_fr   || prod.generic_name  || prod.ingredients_text_fr || '';
+                var qty   = prod.quantity          || '';
+                var grade = (prod.nutrition_grades || prod.nutriscore_grade || '').toUpperCase();
+
+                // Nutriscore couleurs
+                var gradeColors = { A:'#1e7e34', B:'#5cb85c', C:'#f0ad4e', D:'#e67e22', E:'#c0392b' };
+                var gradeColor  = gradeColors[grade] || '#7f8c8d';
+
+                // Catégories OpenFoodFacts (max 3)
+                var offCats = [];
+                if (prod.categories_tags && prod.categories_tags.length) {
+                    prod.categories_tags.slice(0, 3).forEach(function(c) {
+                        var clean = c.replace(/^[a-z]{2}:/i,'').replace(/-/g,' ');
+                        clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+                        offCats.push(clean);
+                    });
+                }
+
+                // Construire tableau d'images (indices numériques dans onclick)
+                window._pemOFFImgs = [];
+                if (prod.image_front_url)       window._pemOFFImgs.push({ label:'🖼️ Face',         url: prod.image_front_url });
+                if (prod.image_url && prod.image_url !== prod.image_front_url)
+                                                window._pemOFFImgs.push({ label:'📦 Produit',       url: prod.image_url });
+                if (prod.image_ingredients_url) window._pemOFFImgs.push({ label:'🧪 Ingrédients',   url: prod.image_ingredients_url });
+                if (prod.image_nutrition_url)   window._pemOFFImgs.push({ label:'📊 Nutrition',     url: prod.image_nutrition_url });
+
+                var mainImg = window._pemOFFImgs.length ? window._pemOFFImgs[0].url : '';
+
+                // ── Bouton action générique ──
+                function aBtn(label, fn, bg) {
+                    return '<button onclick="' + fn + '" style="flex-shrink:0;padding:5px 12px;background:' + bg + ';color:#fff;border:none;border-radius:7px;font-size:0.74rem;font-weight:700;cursor:pointer;white-space:nowrap;">' + label + '</button>';
+                }
+                function row(icon, val, fn, bg) {
+                    return '<div style="display:flex;align-items:center;gap:6px;background:#f8f9fa;border-radius:8px;padding:7px 9px;">'
+                        + '<span style="flex:1;font-size:0.82rem;color:#2c3e50;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>' + icon + '</b> ' + val.replace(/</g,'&lt;') + '</span>'
+                        + aBtn('Utiliser', fn, bg)
+                        + '</div>';
+                }
+
+                var html = '<div style="display:flex;gap:12px;align-items:flex-start;">';
+
+                // ── Colonne image ──
+                if (mainImg) {
+                    html += '<div style="flex-shrink:0;text-align:center;width:96px;">';
+                    html += '<img src="' + mainImg + '" alt="" style="width:88px;height:88px;object-fit:contain;border-radius:10px;background:#fff;border:1.5px solid #dee2e6;display:block;">';
+                    // Miniatures cliquables (onclick avec INDEX numérique uniquement)
+                    if (window._pemOFFImgs.length > 1) {
+                        html += '<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:3px;justify-content:center;">';
+                        window._pemOFFImgs.forEach(function(im, idx) {
+                            html += '<img src="' + im.url + '" title="' + im.label + '" onclick="window._pemApplyImg(' + idx + ')"'
+                                + ' class="pem-img-thumb"'
+                                + ' style="width:26px;height:26px;object-fit:contain;border-radius:5px;background:#fff;border:1.5px solid ' + (idx===0?'#2980b9':'#dee2e6') + ';cursor:pointer;transition:border-color 0.2s,transform 0.15s;' + (idx===0?'transform:scale(1.12);':'') + '">';
+                        });
+                        html += '</div>';
+                    }
+                    html += '<button onclick="window._pemApplyImg(0)" style="margin-top:5px;width:100%;padding:4px 0;background:#17a2b8;color:#fff;border:none;border-radius:7px;font-size:0.72rem;font-weight:700;cursor:pointer;">📷 Utiliser</button>';
+                    html += '</div>';
+                }
+
+                // ── Colonne infos ──
+                html += '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;">';
+
+                // En-tête : trouvé + Nutriscore + quantité
+                html += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px;">';
+                html += '<span style="font-weight:800;color:#155724;font-size:0.85rem;">✅ Produit trouvé</span>';
+                if (grade && gradeColors[grade]) {
+                    html += '<span style="background:' + gradeColor + ';color:#fff;font-weight:900;font-size:0.78rem;padding:2px 8px;border-radius:20px;">Nutriscore ' + grade + '</span>';
+                }
+                if (qty) html += '<span style="font-size:0.75rem;color:#6c757d;">' + qty.replace(/</g,'&lt;') + '</span>';
+                html += '</div>';
+
+                // Catégories OFF (max 3 tags)
+                if (offCats.length) {
+                    html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:2px;">';
+                    offCats.forEach(function(c) {
+                        html += '<span style="background:#e9ecef;color:#495057;font-size:0.7rem;font-weight:600;padding:2px 8px;border-radius:12px;">' + c.replace(/</g,'&lt;') + '</span>';
+                    });
+                    html += '</div>';
+                }
+
+                if (name)  html += row('🏷️', name,  'window._pemApplyName()',  '#28a745');
+                if (brand) html += row('🏭', brand, 'window._pemApplyBrand()', '#6f42c1');
+                if (desc) {
+                    var descShort = desc.length > 90 ? desc.substring(0, 90) + '…' : desc;
+                    html += '<div style="background:#f8f9fa;border-radius:8px;padding:7px 9px;">'
+                        + '<div style="font-size:0.76rem;color:#555;line-height:1.45;margin-bottom:5px;">📝 ' + descShort.replace(/</g,'&lt;') + '</div>'
+                        + '<div style="text-align:right;">' + aBtn('Utiliser description', 'window._pemApplyDesc()', '#fd7e14') + '</div>'
+                        + '</div>';
+                }
+
+                html += '</div>'; // fin infos
+                html += '</div>'; // fin flex
+
+                resultDiv.style.cssText = 'display:block;background:#d4edda;border:1.5px solid #28a745;border-radius:12px;padding:12px;font-size:0.82rem;';
+                resultDiv.innerHTML = html;
+
+            } else {
+                resultDiv.style.cssText = 'display:block;background:#f8d7da;border:1.5px solid #f5c6cb;border-radius:12px;padding:12px;font-size:0.82rem;';
+                resultDiv.innerHTML = '<div style="color:#721c24;text-align:center;padding:6px;">❌ Produit non trouvé dans OpenFoodFacts</div>';
+            }
+        } catch(e) {
+            resultDiv.style.cssText = 'display:block;background:#f8d7da;border:1.5px solid #f5c6cb;border-radius:12px;padding:12px;font-size:0.82rem;';
+            resultDiv.innerHTML = '<div style="color:#721c24;text-align:center;padding:6px;">❌ Erreur de connexion</div>';
+        }
+    };
+    // ===== FIN MODAL ÉDITION PRODUIT =====
+
     function closeProductDetail() {
         const modal = document.getElementById('product-detail-modal');
         if (modal) modal.classList.remove('active');
         _pdCurrentId = null;
     }
+
+    function pdPackPreview() {
+        const prev = document.getElementById('pd-pack-prev');
+        if (!prev) return;
+        const ps = parseInt(document.getElementById('pd-pack-size')?.value) || 0;
+        const pp = parseFloat(document.getElementById('pd-pack-price')?.value) || 0;
+        const p  = _pdCurrentId != null ? products.find(x => x.id == _pdCurrentId) : null;
+        const pu = p ? (p.price || 0) : 0;
+        if (ps < 2 || pp <= 0) { prev.textContent = ''; return; }
+        const savings = pu > 0 ? parseFloat((ps * pu - pp).toFixed(2)) : null;
+        prev.innerHTML = ps + ' u. → ' + pp.toFixed(2) + '€'
+            + (savings !== null && savings > 0 ? ' <strong style="color:#27ae60;">(économie ' + savings.toFixed(2) + '€)</strong>' : '');
+    }
+    window.pdPackPreview = pdPackPreview;
+
+    window.pdSavePack = function() {
+        if (_pdCurrentId == null) return;
+        const p  = products.find(x => x.id == _pdCurrentId);
+        if (!p) return;
+        const ps = parseInt(document.getElementById('pd-pack-size')?.value) || 0;
+        const pp = parseFloat(document.getElementById('pd-pack-price')?.value) || 0;
+        p.packSize  = ps >= 2 ? ps : 0;
+        p.packPrice = pp > 0  ? pp : 0;
+        saveAll();
+        openProductDetail(_pdCurrentId);
+        if (typeof renderProducts === 'function') renderProducts();
+        showScanToast('✅ Tarif pack enregistré');
+    };
+
+    window.pdClearPack = function() {
+        if (_pdCurrentId == null) return;
+        const p = products.find(x => x.id == _pdCurrentId);
+        if (!p) return;
+        p.packSize  = 0;
+        p.packPrice = 0;
+        saveAll();
+        openProductDetail(_pdCurrentId);
+        if (typeof renderProducts === 'function') renderProducts();
+        showScanToast('🗑️ Tarif pack supprimé');
+    };
+
     window.openProductDetail = openProductDetail;
     window.closeProductDetail = closeProductDetail;
     window._openProductDetailImpl = openProductDetail;
@@ -22286,7 +22862,7 @@ logout = function(skipConfirmation = false) {
             const articlesDesc = sale.items.map(item => {
                 const isKg = item.unitType === 'kg';
                 const qtyLabel = isKg ? item.quantity.toFixed(3) + ' kg' : 'x' + item.quantity;
-                return item.name + ' ' + qtyLabel + ' (' + (item.price * item.quantity).toFixed(2) + '€)';
+                return item.name + ' ' + qtyLabel + ' (' + _cartLineTotal(item).toFixed(2) + '€)';
             }).join(' | ');
 
             const methodLabel = sale.method === 'cb' ? 'Carte Bancaire' : sale.method === 'mixed' ? 'Mixte CB+Espèces' : 'Espèces';
@@ -23475,7 +24051,7 @@ logout = function(skipConfirmation = false) {
         sale.items.forEach((item, idx) => {
             const isKg = item.unitType === 'kg';
             const qtyLabel = isKg ? item.quantity.toFixed(3) + ' kg' : 'x' + item.quantity;
-            const lineTotal = (item.price * item.quantity).toFixed(2);
+            const lineTotal = _cartLineTotal(item).toFixed(2);
             const div = document.createElement('div');
             div.id = 'rc-item-' + idx;
             div.style.cssText = 'padding:12px 14px; border:2px solid var(--border-color,#e0e0e0); border-radius:10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; transition:all 0.15s; background:var(--bg-card,#fff);';
@@ -23504,7 +24080,7 @@ logout = function(skipConfirmation = false) {
         const item = sale.items[itemIdx];
         const isKg = item.unitType === 'kg';
         const qtyLabel = isKg ? item.quantity.toFixed(3) + ' kg' : 'x' + item.quantity;
-        const lineTotal = (item.price * item.quantity).toFixed(2);
+        const lineTotal = _cartLineTotal(item).toFixed(2);
 
         const infoEl = document.getElementById('rc-selected-info');
         infoEl.innerHTML = `
@@ -23579,7 +24155,7 @@ logout = function(skipConfirmation = false) {
     function rcRetour() {
         if (!_rcSelectedItem) return;
         const { sale, itemIdx, item, condition } = _rcSelectedItem;
-        const lineTotal = parseFloat((item.price * item.quantity).toFixed(2));
+        const lineTotal = _cartLineTotal(item);
 
         // Motif selon l'état choisi
         const conditionLabels = {
@@ -24222,6 +24798,33 @@ logout = function(skipConfirmation = false) {
                 </div>
             </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:14px;display:none;"></div>
+            <!-- Bloc tarif pack -->
+            <div id="pd-pack-block" style="display:none;margin-bottom:12px;">
+                <!-- Bandeau info (visible tous) -->
+                <div id="pd-pack-info" style="background:linear-gradient(135deg,rgba(142,68,173,0.1),rgba(142,68,173,0.06));border:1.5px solid rgba(142,68,173,0.3);border-radius:10px;padding:10px 14px;margin-bottom:6px;">
+                    <div style="font-size:0.7rem;font-weight:700;color:#8e44ad;text-transform:uppercase;margin-bottom:5px;letter-spacing:0.04em;">📦 Tarif Pack</div>
+                    <div id="pd-pack-summary" style="font-size:0.88rem;font-weight:800;color:var(--text-main,#2c3e50);"></div>
+                </div>
+                <!-- Config admin (visible admin uniquement) -->
+                <div id="pd-pack-admin" style="display:none;background:rgba(142,68,173,0.05);border:1.5px dashed rgba(142,68,173,0.25);border-radius:10px;padding:10px 14px;">
+                    <div style="font-size:0.68rem;font-weight:700;color:#8e44ad;margin-bottom:8px;">⚙️ Modifier le pack</div>
+                    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px;">
+                        <div>
+                            <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">Taille (u.)</label>
+                            <input type="number" id="pd-pack-size" min="2" step="1" placeholder="6" oninput="pdPackPreview()"
+                                style="width:80px;padding:6px 8px;border:1.5px solid rgba(142,68,173,0.35);border-radius:7px;font-size:0.9rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);">
+                        </div>
+                        <div>
+                            <label style="font-size:0.68rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">Prix pack (€)</label>
+                            <input type="number" id="pd-pack-price" min="0" step="0.01" placeholder="8.00" oninput="pdPackPreview()"
+                                style="width:95px;padding:6px 8px;border:1.5px solid rgba(142,68,173,0.35);border-radius:7px;font-size:0.9rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);">
+                        </div>
+                        <button onclick="pdSavePack()" style="padding:7px 14px;background:linear-gradient(135deg,#8e44ad,#7d3c98);color:white;border:none;border-radius:8px;font-weight:700;font-size:0.8rem;cursor:pointer;white-space:nowrap;">💾 Enregistrer</button>
+                        <button onclick="pdClearPack()" style="padding:7px 10px;background:none;border:1.5px solid #e74c3c;color:#e74c3c;border-radius:8px;font-weight:700;font-size:0.75rem;cursor:pointer;white-space:nowrap;">🗑️ Supprimer</button>
+                    </div>
+                    <div id="pd-pack-prev" style="font-size:0.72rem;color:#8e44ad;font-weight:600;min-height:16px;"></div>
+                </div>
+            </div>
             <button class="pd-add-btn" id="pd-add-btn" onclick="pdAddToCart()">🛒 Ajouter au panier</button>
             <button id="pd-defect-btn" onclick="pdDeclareDefect()" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;font-size:0.9rem;font-weight:800;cursor:pointer;">⚠️ Déclarer un défaut</button>
             <button id="pd-stock-history-btn" onclick="window._openStockHistory(window._pdCurrentProductId)" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#8e44ad,#7d3c98);color:white;font-size:0.88rem;font-weight:800;cursor:pointer;">📊 Historique du stock</button>
@@ -24813,6 +25416,262 @@ logout = function(skipConfirmation = false) {
     </div>
   </div>
 </div>
+
+
+<!-- ===== MODAL SCAN INVENTAIRE ===== -->
+<div id="invt-scan-modal" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9980;pointer-events:none;">
+    <!-- Zone scan (bas d'écran, toujours visible pendant session) -->
+    <div style="pointer-events:all;background:linear-gradient(135deg,#1a5276,#229954);border-radius:16px 16px 0 0;padding:0;box-shadow:0 -4px 24px rgba(0,0,0,0.22);max-width:520px;margin:0 auto;">
+        <!-- État : prêt à scanner -->
+        <div id="invt-scan-ready" style="padding:11px 18px;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:1.1rem;">📷</span>
+            <span style="color:rgba(255,255,255,0.85);font-size:0.82rem;font-weight:600;">Scannez un code-barre ou saisissez dans le champ de recherche</span>
+            <input type="hidden" id="invt-scan-input" value="">
+        </div>
+        <!-- État : produit trouvé -->
+        <div id="invt-scan-result" style="display:none;padding:12px 16px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:0;">
+                    <div id="invt-scan-name" style="font-weight:800;font-size:0.92rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+                    <div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+                        <span style="font-size:0.7rem;color:rgba(255,255,255,0.7);">Stock actuel:</span>
+                        <span id="invt-scan-stock" style="font-size:0.7rem;font-weight:700;color:rgba(255,255,255,0.9);"></span>
+                        <span style="font-size:0.7rem;color:rgba(255,255,255,0.5);">·</span>
+                        <span style="font-size:0.7rem;color:rgba(255,255,255,0.7);">Comptés:</span>
+                        <span id="invt-scan-counted" style="font-size:0.7rem;font-weight:700;color:#a9dfbf;"></span>
+                    </div>
+                </div>
+                <!-- Contrôle quantité -->
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <button onclick="window._invtScanAdjust(-1)" style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.25);color:white;font-size:1.1rem;font-weight:900;cursor:pointer;line-height:1;">−</button>
+                    <input type="number" id="invt-scan-qty" min="0" step="1"
+                        style="width:56px;text-align:center;padding:5px 4px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:white;font-weight:800;font-size:0.95rem;"
+                        onchange="window._invtScanQtyChange(this.value)">
+                    <button onclick="window._invtScanAdjust(1)" style="width:32px;height:32px;border-radius:8px;background:rgba(255,255,255,0.15);border:1.5px solid rgba(255,255,255,0.25);color:white;font-size:1.1rem;font-weight:900;cursor:pointer;line-height:1;">+</button>
+                </div>
+                <!-- Bouton valider -->
+                <button onclick="window._invtScanConfirm()" style="padding:8px 16px;background:rgba(255,255,255,0.92);color:#1a5276;border:none;border-radius:9px;font-weight:800;font-size:0.82rem;cursor:pointer;flex-shrink:0;">✓ OK</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- ===== MODAL HISTORIQUE DU STOCK ===== -->
+<div id="stock-history-modal" style="display:none;position:fixed;inset:0;z-index:22000;background:rgba(0,0,0,0.65);backdrop-filter:blur(6px);align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px 8px;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:620px;box-shadow:0 20px 60px rgba(0,0,0,0.35);display:flex;flex-direction:column;min-height:0;margin:auto;">
+
+    <!-- En-tête -->
+    <div style="display:flex;align-items:center;gap:10px;padding:16px 18px;background:linear-gradient(135deg,#8e44ad,#7d3c98);border-radius:18px 18px 0 0;">
+      <div style="flex:1;min-width:0;">
+        <div id="sh-title" style="font-size:1rem;font-weight:900;color:#fff;">📦 Historique du stock</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:3px;flex-wrap:wrap;">
+          <span id="sh-product-name" style="font-size:0.82rem;font-weight:700;color:rgba(255,255,255,0.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;"></span>
+          <span style="font-size:0.7rem;color:rgba(255,255,255,0.6);">·</span>
+          <span style="font-size:0.72rem;color:rgba(255,255,255,0.75);">Stock actuel : <strong id="sh-current-stock" style="color:#fff;"></strong></span>
+        </div>
+      </div>
+      <button onclick="document.getElementById('stock-history-modal').style.display='none'" style="background:rgba(255,255,255,0.15);border:none;border-radius:50%;width:34px;height:34px;cursor:pointer;color:#fff;font-size:1.1rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;">✕</button>
+    </div>
+
+    <!-- KPI strip -->
+    <div id="sh-kpi-strip" style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--border-color,#eee);"></div>
+
+    <!-- Filtres -->
+    <div style="display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-color,#eee);flex-wrap:wrap;align-items:center;">
+      <select id="sh-filter" onchange="window._renderStockHistory()" style="flex:1;min-width:110px;padding:6px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.8rem;font-weight:700;background:var(--bg-body,#f4f7f6);color:var(--text-main,#2c3e50);">
+        <option value="all">Tous les types</option>
+        <option value="sale">🛒 Ventes</option>
+        <option value="restock">📦 Réappro.</option>
+        <option value="manual">✏️ Manuel</option>
+        <option value="inventaire">📋 Inventaire</option>
+        <option value="retour">↩️ Retours</option>
+        <option value="defect">⚠️ Défauts</option>
+        <option value="creation">✨ Création</option>
+      </select>
+      <select id="sh-period" onchange="window._renderStockHistory()" style="flex:1;min-width:110px;padding:6px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.8rem;font-weight:700;background:var(--bg-body,#f4f7f6);color:var(--text-main,#2c3e50);">
+        <option value="all">Toute la période</option>
+        <option value="today">Aujourd'hui</option>
+        <option value="7d">7 derniers jours</option>
+        <option value="30d">30 derniers jours</option>
+        <option value="90d">90 derniers jours</option>
+      </select>
+      <button onclick="window._rebuildAndRefresh()" style="padding:6px 12px;border:1.5px solid #8e44ad;border-radius:9px;background:rgba(142,68,173,0.08);color:#8e44ad;cursor:pointer;font-weight:700;font-size:0.78rem;white-space:nowrap;">🔄 Reconstruire</button>
+    </div>
+
+    <!-- Zone alerte -->
+    <div id="sh-alert-zone" style="padding:0 14px;"></div>
+
+    <!-- Liste mouvements -->
+    <div id="sh-list" style="padding:12px 14px;flex:1;overflow-y:auto;max-height:58vh;"></div>
+
+  </div>
+</div>
+<!-- ===== FIN MODAL HISTORIQUE DU STOCK ===== -->
+
+
+<!-- ===== MODAL ÉDITION PRODUIT ===== -->
+<div id="product-edit-modal" style="display:none;position:fixed;inset:0;z-index:25000;background:rgba(0,0,0,0.65);backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:12px;">
+  <div style="background:var(--bg-body,#f4f7f6);border-radius:20px;width:100%;max-width:560px;max-height:96vh;display:flex;flex-direction:column;box-shadow:0 24px 80px rgba(0,0,0,0.4);overflow:hidden;">
+
+    <!-- ── HEADER ── -->
+    <div id="pem-header" style="background:linear-gradient(135deg,#2c3e50,#3d5166);padding:16px 18px;display:flex;align-items:center;gap:14px;flex-shrink:0;">
+      <img id="pem-header-img" src="" alt="" style="width:52px;height:52px;object-fit:contain;border-radius:10px;background:rgba(255,255,255,0.12);flex-shrink:0;" onerror="this.style.display='none'">
+      <div style="flex:1;min-width:0;">
+        <div id="pem-header-name" style="font-size:1rem;font-weight:900;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+        <div id="pem-header-meta" style="font-size:0.72rem;color:rgba(255,255,255,0.6);margin-top:2px;"></div>
+      </div>
+      <button onclick="document.getElementById('product-edit-modal').style.display='none'" style="background:rgba(255,255,255,0.12);border:none;color:#fff;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:1.1rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.22)'" onmouseout="this.style.background='rgba(255,255,255,0.12)'">✕</button>
+    </div>
+
+    <!-- ── BODY (scrollable) ── -->
+    <div style="overflow-y:auto;flex:1;padding:18px;display:flex;flex-direction:column;gap:14px;">
+
+      <!-- Image -->
+      <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:var(--gray,#7f8c8d);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">🖼️ Image</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <img id="pem-img-prev" src="" alt="" style="width:56px;height:56px;object-fit:contain;border-radius:10px;background:var(--bg-body,#f4f7f6);border:1.5px solid var(--border-color,#e0e0e0);flex-shrink:0;" onerror="this.style.opacity='0.3'">
+          <input type="text" id="pem-img" placeholder="https://..." oninput="pemImgPreview()"
+            style="flex:1;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.85rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+        </div>
+      </div>
+
+      <!-- Identité -->
+      <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:var(--gray,#7f8c8d);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">🏷️ Identité</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Nom de l'article *</label>
+            <input type="text" id="pem-name" placeholder="Nom de l'article"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.92rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Catégorie</label>
+            <select id="pem-cat" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);"></select>
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Code-barres</label>
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="pem-barcode" placeholder="1234567890123"
+                style="flex:1;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+              <button onclick="pemSearchBarcode()" style="padding:9px 14px;background:linear-gradient(135deg,#3498db,#2980b9);color:#fff;border:none;border-radius:9px;font-size:0.8rem;font-weight:700;cursor:pointer;white-space:nowrap;">🔍 Info</button>
+            </div>
+            <div id="pem-barcode-result" style="display:none;margin-top:8px;border-radius:12px;font-size:0.82rem;overflow:hidden;"></div>
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Marque</label>
+            <input type="text" id="pem-brand" placeholder="ex: Milka, Nestlé…"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Description</label>
+            <textarea id="pem-description" placeholder="Description de l'article…" rows="2"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.85rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);resize:vertical;font-family:inherit;"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prix & Stock -->
+      <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:var(--gray,#7f8c8d);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">💰 Prix &amp; Stock</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div>
+            <label id="pem-price-label" style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Prix de vente (€)</label>
+            <input type="number" id="pem-price" min="0" step="0.01" placeholder="0.00" oninput="pemBenefPreview();pemPackPreview()"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Prix d'achat (€)</label>
+            <input type="number" id="pem-cost" min="0" step="0.01" placeholder="0.00" oninput="pemBenefPreview()"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+          <div id="pem-stock-wrap">
+            <label id="pem-stock-label" style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Stock</label>
+            <input type="number" id="pem-stock" min="0" step="1" placeholder="0" oninput="pemStockAlert()"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Promotion (%)</label>
+            <select id="pem-promo" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);"></select>
+          </div>
+        </div>
+        <div id="pem-stock-alert" style="margin-top:8px;"></div>
+        <div id="pem-benef-preview" style="display:none;margin-top:8px;background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:9px;padding:10px 12px;font-size:0.8rem;"></div>
+      </div>
+
+      <!-- DLC -->
+      <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:var(--gray,#7f8c8d);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">📅 Date limite (DLC/DLUO)</div>
+        <input type="date" id="pem-expiry" onchange="pemDlcAlert()"
+          style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+        <div id="pem-dlc-alert" style="margin-top:8px;"></div>
+      </div>
+
+      <!-- Tarif Nuit -->
+      <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:#6d28d9;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">🌙 Tarif de nuit</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <input type="checkbox" id="pem-night" onchange="pemToggleNight()" style="width:18px;height:18px;accent-color:#6d28d9;cursor:pointer;flex-shrink:0;">
+          <label for="pem-night" style="font-size:0.88rem;color:#5b21b6;font-weight:600;cursor:pointer;margin:0;">Activer la majoration nuit pour cet article</label>
+        </div>
+        <div id="pem-night-pct-wrap" style="display:none;display:flex;align-items:center;gap:8px;">
+          <input type="number" id="pem-night-pct" min="0" max="500" step="1" placeholder="Défaut global"
+            style="flex:1;padding:8px 12px;border:1.5px solid #a78bfa;border-radius:9px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);">
+          <span style="font-size:0.8rem;color:#6d28d9;white-space:nowrap;">% majoration</span>
+        </div>
+      </div>
+
+      <!-- Tarif Pack (caché pour kg) -->
+      <div id="pem-pack-section" style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:#8e44ad;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">📦 Tarif pack</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <input type="checkbox" id="pem-pack-enabled" onchange="pemTogglePack()" style="width:18px;height:18px;accent-color:#8e44ad;cursor:pointer;flex-shrink:0;">
+          <label for="pem-pack-enabled" style="font-size:0.88rem;color:#8e44ad;font-weight:600;cursor:pointer;margin:0;">Activer tarif pack pour cet article</label>
+        </div>
+        <div id="pem-pack-fields" style="display:none;flex-direction:column;gap:8px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div>
+              <label style="font-size:0.72rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">Taille du pack (unités)</label>
+              <input type="number" id="pem-pack-size" min="2" step="1" placeholder="ex: 6" oninput="pemPackPreview()"
+                style="width:100%;padding:9px 12px;border:1.5px solid #d8b4fe;border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);">
+            </div>
+            <div>
+              <label style="font-size:0.72rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:4px;">Prix du pack (€)</label>
+              <input type="number" id="pem-pack-price" min="0" step="0.01" placeholder="ex: 8.00" oninput="pemPackPreview()"
+                style="width:100%;padding:9px 12px;border:1.5px solid #d8b4fe;border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);">
+            </div>
+          </div>
+          <div id="pem-pack-prev" style="font-size:0.78rem;color:#8e44ad;font-weight:700;min-height:18px;"></div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:var(--gray,#7f8c8d);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">⚡ Actions</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="pem-toggle-active-btn" onclick="pemToggleActive()"
+            style="flex:1;min-width:120px;padding:9px 12px;border:1.5px solid #7f8c8d;background:none;color:#7f8c8d;border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;">👁️ Désactiver</button>
+          <button onclick="pemDeclareDefect()"
+            style="flex:1;min-width:120px;padding:9px 12px;border:none;background:linear-gradient(135deg,#e67e22,#d35400);color:#fff;border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;">⚠️ Déclarer défaut</button>
+          <button onclick="pemDeleteProduct()"
+            style="flex:1;min-width:120px;padding:9px 12px;border:1.5px solid #e74c3c;background:none;color:#e74c3c;border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;" onmouseover="this.style.background='#e74c3c';this.style.color='#fff'" onmouseout="this.style.background='none';this.style.color='#e74c3c'">🗑️ Supprimer</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── FOOTER ── -->
+    <div style="padding:12px 18px;border-top:1px solid var(--border-color,#e0e0e0);display:flex;gap:8px;flex-shrink:0;background:var(--bg-card,#fff);">
+      <button onclick="document.getElementById('product-edit-modal').style.display='none'"
+        style="flex:1;padding:11px;border:1.5px solid var(--border-color,#ddd);border-radius:10px;background:none;color:var(--text-main,#2c3e50);font-weight:700;font-size:0.9rem;cursor:pointer;">Annuler</button>
+      <button onclick="saveProductEditModal()"
+        style="flex:2;padding:11px;border:none;border-radius:10px;background:linear-gradient(135deg,#27ae60,#2ecc71);color:#fff;font-weight:800;font-size:0.95rem;cursor:pointer;box-shadow:0 4px 14px rgba(39,174,96,0.35);">💾 Enregistrer</button>
+    </div>
+
+  </div>
+</div>
+<!-- ===== FIN MODAL ÉDITION PRODUIT ===== -->
 
 <div id="logout-confirm-modal" style="display:none;position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.62);backdrop-filter:blur(6px);align-items:center;justify-content:center;">
     <div style="background:var(--bg-card,#fff);border-radius:22px;overflow:hidden;max-width:390px;width:calc(100% - 32px);box-shadow:0 32px 90px rgba(0,0,0,0.55);animation:lcm-in 0.22s cubic-bezier(.4,0,.2,1);">
@@ -28710,6 +29569,32 @@ function renderCatalogueTab() {
                                 </div>
                             </div>
                         </div>
+                        ${isKg ? '' : `
+                        <div style="grid-column:1/-1;background:#fdf4ff;border-radius:8px;padding:10px;border:1.5px solid #d8b4fe;">
+                            <label style="color:#8e44ad;font-weight:bold;margin-bottom:8px;display:block;">📦 Tarif Pack</label>
+                            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.87rem;margin:0;">
+                                    <input type="checkbox" id="cie-pack-enabled-${p.id}" ${(p.packSize>=2&&p.packPrice>0)?'checked':''}
+                                        onchange="cieTogglePack(${p.id})" style="width:16px;height:16px;accent-color:#8e44ad;">
+                                    Activer tarif pack
+                                </label>
+                            </div>
+                            <div id="cie-pack-fields-${p.id}" style="${(p.packSize>=2&&p.packPrice>0)?'':'display:none;'}display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+                                <div>
+                                    <label style="font-size:0.72rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">Taille du pack (u.)</label>
+                                    <input type="number" id="cie-pack-size-${p.id}" min="2" step="1" value="${p.packSize||''}" placeholder="ex: 6"
+                                        oninput="ciePackPreview(${p.id})"
+                                        style="width:100px;padding:6px 8px;border:1.5px solid #d8b4fe;border-radius:7px;font-size:0.9rem;font-weight:700;">
+                                </div>
+                                <div>
+                                    <label style="font-size:0.72rem;font-weight:700;color:#8e44ad;display:block;margin-bottom:3px;">Prix du pack (€)</label>
+                                    <input type="number" id="cie-pack-price-${p.id}" min="0" step="0.01" value="${p.packPrice||''}" placeholder="ex: 8.00"
+                                        oninput="ciePackPreview(${p.id})"
+                                        style="width:110px;padding:6px 8px;border:1.5px solid #d8b4fe;border-radius:7px;font-size:0.9rem;font-weight:700;">
+                                </div>
+                                <div id="cie-pack-prev-${p.id}" style="font-size:0.72rem;color:#8e44ad;font-weight:600;align-self:center;"></div>
+                            </div>
+                        </div>`}
                         <div>
                             <label>URL Image</label>
                             <div style="display:flex;gap:6px;align-items:center;">
@@ -28944,6 +29829,44 @@ function importCatalogueCSV(input) {
     reader.readAsText(file, 'UTF-8');
 }
 
+function cardTogglePack(id) {
+    const cbx = document.getElementById(`edit-pack-enabled-card-${id}`);
+    const pf  = document.getElementById(`edit-pack-fields-card-${id}`);
+    if (pf) pf.style.display = (cbx && cbx.checked) ? 'flex' : 'none';
+    cardPackPreview(id);
+}
+
+function cardPackPreview(id) {
+    const prev = document.getElementById(`card-pack-prev-${id}`);
+    if (!prev) return;
+    const ps = parseInt(document.getElementById(`edit-pack-size-card-${id}`)?.value) || 0;
+    const pp = parseFloat(document.getElementById(`edit-pack-price-card-${id}`)?.value) || 0;
+    const pu = parseFloat(document.getElementById(`edit-price-${id}`)?.value) || 0;
+    if (ps < 2 || pp <= 0) { prev.textContent = ''; return; }
+    const savings = pu > 0 ? parseFloat((ps * pu - pp).toFixed(2)) : null;
+    prev.innerHTML = `${ps} u. → ${pp.toFixed(2)}€`
+        + (savings !== null && savings > 0 ? ` <strong style="color:#27ae60;">(économie ${savings.toFixed(2)}€)</strong>` : '');
+}
+
+function cieTogglePack(id) {
+    const cbx = document.getElementById(`cie-pack-enabled-${id}`);
+    const pf  = document.getElementById(`cie-pack-fields-${id}`);
+    if (pf) pf.style.display = (cbx && cbx.checked) ? 'flex' : 'none';
+    ciePackPreview(id);
+}
+
+function ciePackPreview(id) {
+    const prev = document.getElementById(`cie-pack-prev-${id}`);
+    if (!prev) return;
+    const ps  = parseInt(document.getElementById(`cie-pack-size-${id}`)?.value) || 0;
+    const pp  = parseFloat(document.getElementById(`cie-pack-price-${id}`)?.value) || 0;
+    const pu  = parseFloat(document.getElementById(`cie-price-${id}`)?.value) || 0;
+    if (ps < 2 || pp <= 0 || pu <= 0) { prev.textContent = ''; return; }
+    const savings = parseFloat((ps * pu - pp).toFixed(2));
+    prev.innerHTML = `${ps} u. → ${pp.toFixed(2)}€`
+        + (savings > 0 ? ` <strong style="color:#27ae60;">(économie ${savings.toFixed(2)}€)</strong>` : '');
+}
+
 function catSaveInlineEdit(id) {
     const p = products.find(x => x.id === id);
     if (!p) return;
@@ -28974,6 +29897,19 @@ function catSaveInlineEdit(id) {
     const costRawC = parseFloat(document.getElementById(`cie-cost-${id}`)?.value);
     if (!isNaN(costRawC) && costRawC >= 0) p.costPrice = costRawC;
     else delete p.costPrice;
+    // Pack
+    if (p.unitType !== 'kg') {
+        const packCbx = document.getElementById(`cie-pack-enabled-${id}`);
+        if (packCbx && packCbx.checked) {
+            const ps = parseInt(document.getElementById(`cie-pack-size-${id}`)?.value) || 0;
+            const pp = parseFloat(document.getElementById(`cie-pack-price-${id}`)?.value) || 0;
+            p.packSize  = ps >= 2 ? ps : 0;
+            p.packPrice = pp > 0  ? pp : 0;
+        } else {
+            p.packSize  = 0;
+            p.packPrice = 0;
+        }
+    }
     saveAll();
     renderCatalogueTab();
     if (typeof addRetourHist === 'function') {
@@ -34388,13 +35324,17 @@ function initAdminSections() {
         // KPI row
         var kpiEl = document.getElementById('invt-kpi-row');
         if (kpiEl) {
-            var totalStock = prods.reduce(function(s, p) { return s + (p.stock || 0); }, 0);
+            var totalUnitStock = prods.filter(function(p) { return p.unitType !== 'kg'; })
+                                     .reduce(function(s, p) { return s + (parseInt(p.stock) || 0); }, 0);
+            var totalKgStock   = prods.filter(function(p) { return p.unitType === 'kg'; })
+                                     .reduce(function(s, p) { return s + (parseFloat(p.stock) || 0); }, 0);
             var outOfStock = prods.filter(function(p) { return (p.stock || 0) <= 0; }).length;
             var lastInvt   = inventaires.length > 0 ? new Date(inventaires[0].date).toLocaleDateString('fr-FR') : '—';
             var totalCost  = prods.reduce(function(s, p) { return s + (p.stock || 0) * (p.costPrice || 0); }, 0);
             kpiEl.innerHTML =
                 _invtKpiCard('📦', 'Articles actifs', prods.length, '#1a5276') +
-                _invtKpiCard('🔢', 'Stock total', totalStock, '#27ae60') +
+                _invtKpiCard('🏷️', 'Stock unités', totalUnitStock + ' u.', '#27ae60') +
+                _invtKpiCard('⚖️', 'Stock kg', totalKgStock.toFixed(3) + ' kg', '#1565c0') +
                 _invtKpiCard('⚠️', 'Ruptures', outOfStock, '#e74c3c') +
                 _invtKpiCard('💰', 'Valeur stock', totalCost.toFixed(2) + ' €', '#9b59b6') +
                 _invtKpiCard('📅', 'Dernier inventaire', lastInvt, '#2980b9');
@@ -34528,6 +35468,10 @@ function initAdminSections() {
         var infoEl = document.getElementById('invt-session-info');
         if (infoEl) infoEl.textContent = prods.length + ' produit(s) · Démarré à ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
+        // Afficher le panel scan
+        var scanModal = document.getElementById('invt-scan-modal');
+        if (scanModal) { scanModal.style.display = 'block'; _invtScanResetToReady(); }
+
         // Disable start button
         var startBtn = document.getElementById('invt-btn-start');
         if (startBtn) { startBtn.disabled = true; startBtn.style.opacity = '0.5'; }
@@ -34546,6 +35490,11 @@ function initAdminSections() {
 
     window.invtCancelSession = function() {
         window._invtSession = null;
+        // Cacher le panel scan
+        var scanModal = document.getElementById('invt-scan-modal');
+        if (scanModal) scanModal.style.display = 'none';
+        clearTimeout(window._invtScanAutoReset);
+        window._invtScanCurrentPid = null;
         var wrap = document.getElementById('invt-session-wrap');
         if (wrap) wrap.style.display = 'none';
         var startBtn = document.getElementById('invt-btn-start');
@@ -34591,6 +35540,11 @@ function initAdminSections() {
 
         // Reset session UI
         window._invtSession = null;
+        // Cacher le panel scan
+        var scanModal = document.getElementById('invt-scan-modal');
+        if (scanModal) scanModal.style.display = 'none';
+        clearTimeout(window._invtScanAutoReset);
+        window._invtScanCurrentPid = null;
         var wrap = document.getElementById('invt-session-wrap');
         if (wrap) wrap.style.display = 'none';
         var startBtn = document.getElementById('invt-btn-start');
@@ -34644,7 +35598,7 @@ function initAdminSections() {
             return true;
         });
 
-        // Stats
+        // Stats globales
         var doneCount  = prods.filter(function(p) { return !!counts[p.id]; }).length;
         var neverCount = prods.length - doneCount;
         var progressEl = document.getElementById('invt-progress');
@@ -34657,21 +35611,81 @@ function initAdminSections() {
             return;
         }
 
-        listEl.innerHTML = list.map(function(p) {
+        // Séparer articles à l'unité et articles au kg
+        var unitList = list.filter(function(p) { return p.unitType !== 'kg'; });
+        var kgList   = list.filter(function(p) { return p.unitType === 'kg'; });
+
+        function buildCard(p) {
+            var isKg    = p.unitType === 'kg';
             var counted = counts[p.id] != null;
             var qty     = counts[p.id] != null ? counts[p.id] : '';
+            var step    = isKg ? '0.001' : '1';
+            var ph      = isKg ? '0.000 kg' : 'Qté';
+            var stockTxt = isKg
+                ? (parseFloat(p.stock || 0).toFixed(3) + ' kg')
+                : ((p.stock || 0) + ' u.');
             var bgColor = counted ? 'rgba(39,174,96,0.06)' : 'var(--bg-body,#f4f7f6)';
             var borderL = counted ? '3px solid #27ae60' : '3px solid transparent';
+            var badge   = isKg
+                ? '<span style="background:#1565c0;color:#fff;font-size:0.62rem;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:5px;">⚖️ kg</span>'
+                : '';
             return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:' + bgColor + ';border-radius:9px;border-left:' + borderL + ';">'
                  + '<div style="flex:1;min-width:0;">'
-                 + '<div style="font-weight:700;font-size:0.82rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (p.name || '?') + '</div>'
-                 + '<div style="font-size:0.7rem;color:var(--gray,#888);">' + (p.category || '—') + ' · Stock: ' + (p.stock || 0) + '</div>'
+                 + '<div style="font-weight:700;font-size:0.82rem;color:var(--text-main,#2c3e50);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                 + (p.name || '?') + badge + '</div>'
+                 + '<div style="font-size:0.7rem;color:var(--gray,#888);">' + (p.category || '—') + ' · Stock: ' + stockTxt + '</div>'
                  + '</div>'
-                 + '<input type="number" min="0" step="1" value="' + qty + '" placeholder="Qté"'
+                 + '<input type="number" min="0" step="' + step + '" value="' + qty + '" placeholder="' + ph + '"'
                  + ' data-invt-pid="' + p.id + '" onchange="_invtSetCount(this.dataset.invtPid, this.value)"'
-                 + ' style="width:70px;padding:5px 8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-weight:700;font-size:0.85rem;text-align:center;">'
+                 + ' style="width:78px;padding:5px 8px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-weight:700;font-size:0.85rem;text-align:center;">'
                  + '</div>';
-        }).join('');
+        }
+
+        function buildSection(title, icon, color, items, isKgSection) {
+            if (!items.length) return '';
+            var doneInSection = items.filter(function(p) { return !!counts[p.id]; }).length;
+            var sectionStock  = items.reduce(function(acc, p) { return acc + (isKgSection ? (parseFloat(p.stock) || 0) : (parseInt(p.stock) || 0)); }, 0);
+            var sectionStockStr = isKgSection
+                ? (sectionStock.toFixed(3) + ' kg')
+                : (sectionStock + ' u.');
+            return '<div style="margin-bottom:6px;">'
+                 + '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:' + color + ';border-radius:8px;margin-bottom:6px;">'
+                 + '<span style="font-size:0.85rem;">' + icon + '</span>'
+                 + '<span style="font-weight:800;font-size:0.79rem;color:var(--text-main,#2c3e50);">' + title + '</span>'
+                 + '<span style="font-size:0.68rem;font-weight:700;color:var(--gray,#888);background:rgba(0,0,0,0.05);padding:2px 7px;border-radius:10px;margin-left:4px;">Stock: ' + sectionStockStr + '</span>'
+                 + '<span style="margin-left:auto;font-size:0.7rem;font-weight:700;color:var(--gray,#888);">' + doneInSection + '/' + items.length + '</span>'
+                 + '</div>'
+                 + '<div style="display:flex;flex-direction:column;gap:5px;">'
+                 + items.map(buildCard).join('')
+                 + '</div>'
+                 + '</div>';
+        }
+
+        // Totaux globaux (tous articles actifs, indépendant du filtre)
+        var allUnitProds = prods.filter(function(p) { return p.unitType !== 'kg'; });
+        var allKgProds   = prods.filter(function(p) { return p.unitType === 'kg'; });
+        var totalUnitStock = allUnitProds.reduce(function(acc, p) { return acc + (parseInt(p.stock) || 0); }, 0);
+        var totalKgStock   = allKgProds.reduce(function(acc, p) { return acc + (parseFloat(p.stock) || 0); }, 0);
+
+        var html = '';
+
+        // Bandeau récapitulatif stocks
+        html += '<div style="display:flex;gap:8px;margin-bottom:10px;">'
+              + '<div style="flex:1;text-align:center;background:rgba(39,174,96,0.09);border:1.5px solid rgba(39,174,96,0.25);border-radius:10px;padding:8px 4px;">'
+              + '<div style="font-size:0.68rem;font-weight:700;color:#27ae60;letter-spacing:0.03em;text-transform:uppercase;">📦 Stock unités</div>'
+              + '<div style="font-size:1.18rem;font-weight:900;color:var(--text-main,#2c3e50);line-height:1.2;">' + totalUnitStock + ' <span style="font-size:0.7rem;font-weight:600;color:var(--gray,#888);">u.</span></div>'
+              + '<div style="font-size:0.65rem;color:var(--gray,#888);">' + allUnitProds.length + ' réf.</div>'
+              + '</div>'
+              + '<div style="flex:1;text-align:center;background:rgba(21,101,192,0.09);border:1.5px solid rgba(21,101,192,0.25);border-radius:10px;padding:8px 4px;">'
+              + '<div style="font-size:0.68rem;font-weight:700;color:#1565c0;letter-spacing:0.03em;text-transform:uppercase;">⚖️ Stock kg</div>'
+              + '<div style="font-size:1.18rem;font-weight:900;color:var(--text-main,#2c3e50);line-height:1.2;">' + totalKgStock.toFixed(3) + ' <span style="font-size:0.7rem;font-weight:600;color:var(--gray,#888);">kg</span></div>'
+              + '<div style="font-size:0.65rem;color:var(--gray,#888);">' + allKgProds.length + ' réf.</div>'
+              + '</div>'
+              + '</div>';
+
+        html += buildSection('Articles à l\'unité', '🏷️', 'rgba(39,174,96,0.06)', unitList, false);
+        html += buildSection('Articles au poids (kg)', '⚖️', 'rgba(21,101,192,0.06)', kgList, true);
+        listEl.innerHTML = html || '<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">Aucun produit trouvé</div>';
     }
 
     window._invtSetCount = function(productId, val) {
@@ -34694,27 +35708,138 @@ function initAdminSections() {
     };
 
     // invtScanOne : appelé par le scanner code-barre quand l'inventaire est en session
+    // Appelé SANS argument depuis le guard scanner (barcode vient de invt-scan-input)
+    // Ou AVEC argument depuis invtSearchBarcodeDetect
     window.invtScanOne = function(barcode) {
         if (!window._invtSession) return;
-        var prods = typeof products !== 'undefined' ? products : [];
+        // Lire le barcode depuis invt-scan-input si non fourni
+        if (!barcode) {
+            var inp = document.getElementById('invt-scan-input');
+            barcode = inp ? inp.value : '';
+        }
         var bc = (barcode || '').toLowerCase().trim();
+        if (!bc) return;
+
+        var prods = typeof products !== 'undefined' ? products : [];
         var p = prods.find(function(x) { return x.barcode && x.barcode.toLowerCase() === bc; });
         if (!p) {
-            if (typeof showScanToast === 'function') showScanToast('❌ Code-barres non trouvé: ' + barcode, 'error');
+            if (typeof showScanToast === 'function') showScanToast('❌ Code-barres non reconnu: ' + barcode, 'error');
+            if (typeof playErrorBeep === 'function') playErrorBeep();
             return;
         }
-        // Incrémenter d'1
+
+        // Incrémenter d'1 (chaque scan = +1)
         var cur = window._invtSession.counts[p.id] || 0;
         window._invtSession.counts[p.id] = cur + 1;
-        if (typeof showScanToast === 'function') showScanToast('✅ ' + p.name + ' · Qté: ' + window._invtSession.counts[p.id], 'success');
-        // Mettre à jour l'input visible si présent
+        if (typeof playBeep === 'function') playBeep();
+
+        // Afficher le résultat dans le panel scan
+        _invtShowScanResult(p);
+
+        // Mettre à jour l'input visible dans la liste si présent
         var input = document.querySelector('[data-invt-pid="' + p.id + '"]');
         if (input) input.value = window._invtSession.counts[p.id];
-        // Rafraîchir les stats
+
+        // Rafraîchir les stats progression
         var prdsActive = prods.filter(function(x) { return x.active !== false; });
         var done = Object.keys(window._invtSession.counts).length;
         var progressEl = document.getElementById('invt-progress');
         if (progressEl) progressEl.textContent = done + '/' + prdsActive.length + ' comptés';
+        var statsEl = document.getElementById('invt-sf-stats');
+        if (statsEl) statsEl.textContent = done + ' fait · ' + (prdsActive.length - done) + ' restant';
+    };
+
+    // Afficher le produit scanné dans le panel scan
+    function _invtShowScanResult(p) {
+        var readyEl  = document.getElementById('invt-scan-ready');
+        var resultEl = document.getElementById('invt-scan-result');
+        var nameEl   = document.getElementById('invt-scan-name');
+        var stockEl  = document.getElementById('invt-scan-stock');
+        var countEl  = document.getElementById('invt-scan-counted');
+        var qtyEl    = document.getElementById('invt-scan-qty');
+        if (!resultEl) return;
+        window._invtScanCurrentPid = p.id;
+        var qty = window._invtSession.counts[p.id] || 0;
+        if (nameEl)  nameEl.textContent  = p.name || '?';
+        if (stockEl) stockEl.textContent = (p.stock || 0) + ' en stock';
+        if (countEl) countEl.textContent = qty;
+        if (qtyEl)   qtyEl.value         = qty;
+        if (readyEl) readyEl.style.display = 'none';
+        resultEl.style.display = '';
+        // Auto-retour à "prêt" après 8 secondes sans action
+        clearTimeout(window._invtScanAutoReset);
+        window._invtScanAutoReset = setTimeout(function() {
+            _invtScanResetToReady();
+        }, 8000);
+    }
+
+    function _invtScanResetToReady() {
+        var readyEl  = document.getElementById('invt-scan-ready');
+        var resultEl = document.getElementById('invt-scan-result');
+        if (readyEl)  readyEl.style.display  = '';
+        if (resultEl) resultEl.style.display = 'none';
+        window._invtScanCurrentPid = null;
+    }
+
+    // Ajuster la quantité avec les boutons +/-
+    window._invtScanAdjust = function(delta) {
+        if (!window._invtSession || !window._invtScanCurrentPid) return;
+        clearTimeout(window._invtScanAutoReset);
+        var pid = window._invtScanCurrentPid;
+        var cur = window._invtSession.counts[pid] || 0;
+        var newQty = Math.max(0, cur + delta);
+        window._invtSession.counts[pid] = newQty;
+        var qtyEl   = document.getElementById('invt-scan-qty');
+        var countEl = document.getElementById('invt-scan-counted');
+        if (qtyEl)   qtyEl.value         = newQty;
+        if (countEl) countEl.textContent = newQty;
+        // Mettre à jour la liste
+        var input = document.querySelector('[data-invt-pid="' + pid + '"]');
+        if (input) input.value = newQty;
+        window._invtScanAutoReset = setTimeout(function() { _invtScanResetToReady(); }, 8000);
+    };
+
+    // Champ quantité modifié manuellement
+    window._invtScanQtyChange = function(val) {
+        if (!window._invtSession || !window._invtScanCurrentPid) return;
+        clearTimeout(window._invtScanAutoReset);
+        var pid = window._invtScanCurrentPid;
+        var qty = parseInt(val);
+        if (isNaN(qty) || qty < 0) qty = 0;
+        window._invtSession.counts[pid] = qty;
+        var countEl = document.getElementById('invt-scan-counted');
+        if (countEl) countEl.textContent = qty;
+        var input = document.querySelector('[data-invt-pid="' + pid + '"]');
+        if (input) input.value = qty;
+        window._invtScanAutoReset = setTimeout(function() { _invtScanResetToReady(); }, 8000);
+    };
+
+    // Bouton ✓ OK — confirmer et revenir à "prêt"
+    window._invtScanConfirm = function() {
+        clearTimeout(window._invtScanAutoReset);
+        if (window._invtScanCurrentPid && window._invtSession) {
+            var pid = window._invtScanCurrentPid;
+            var qty = window._invtSession.counts[pid] || 0;
+            var prods = typeof products !== 'undefined' ? products : [];
+            var p = prods.find(function(x) { return String(x.id) === String(pid); });
+            if (typeof showScanToast === 'function' && p) {
+                showScanToast('✅ ' + p.name + ' · ' + qty + ' unité' + (qty > 1 ? 's' : '') + ' enregistrée' + (qty > 1 ? 's' : ''), 'success');
+            }
+        }
+        _invtScanResetToReady();
+    };
+
+    // Détection barcode depuis la recherche (onkeydown Enter)
+    window.invtSearchBarcodeDetect = function() {
+        if (!window._invtSession) return;
+        var inp = document.getElementById('invt-search');
+        if (!inp) return;
+        var val = inp.value.trim();
+        // Si ressemble à un code-barre (que des chiffres/lettres, >= 6 chars)
+        if (val.length >= 6 && /^[A-Za-z0-9\-]{4,}$/.test(val)) {
+            window.invtScanOne(val);
+            inp.value = '';
+        }
     };
 
     // ===========================================================================
