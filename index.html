@@ -1068,7 +1068,7 @@ const _store = {
             display: flex;
             align-items: center;
             gap: 6px;
-            padding: 2px 12px;
+            padding: 2px 10px;
             flex-shrink: 0;
             font-size: 0.7rem;
             white-space: nowrap;
@@ -1085,6 +1085,74 @@ const _store = {
             background: #2ecc71;
             box-shadow: 0 0 6px #2ecc7188;
             animation: gdPulse 3s infinite;
+        }
+        /* ── Pill statut Drive ────────────────────── */
+        #gd-drive-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 9px 2px 7px;
+            border-radius: 12px;
+            border: none;
+            font-size: 0.68rem;
+            font-weight: 700;
+            cursor: default;
+            transition: filter 0.15s, transform 0.1s;
+            user-select: none;
+            letter-spacing: 0.01em;
+            line-height: 1.6;
+            background: rgba(231,76,60,0.18);
+            color: #e74c3c;
+            border: 1px solid rgba(231,76,60,0.35);
+        }
+        #gd-drive-pill.pill-online {
+            background: rgba(243,156,18,0.18);
+            color: #f39c12;
+            border-color: rgba(243,156,18,0.35);
+        }
+        #gd-drive-pill.pill-connected {
+            background: linear-gradient(135deg,rgba(39,174,96,0.28),rgba(46,204,113,0.18));
+            color: #2ecc71;
+            border: 1px solid rgba(46,204,113,0.4);
+            cursor: pointer;
+            animation: gdPillPulse 3s infinite;
+        }
+        #gd-drive-pill.pill-connected:hover {
+            filter: brightness(1.15);
+            transform: scale(1.03);
+        }
+        @keyframes gdPillPulse {
+            0%,100% { box-shadow: 0 0 0 rgba(46,204,113,0); }
+            50%      { box-shadow: 0 0 8px rgba(46,204,113,0.35); }
+        }
+        /* ── Chip dernière sauvegarde Drive ──────── */
+        #gd-last-file-chip {
+            display: none;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(46,204,113,0.12);
+            border: 1px solid rgba(46,204,113,0.3);
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: #52be80;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            white-space: nowrap;
+            margin-left: 2px;
+        }
+        #gd-last-file-chip:hover {
+            background: rgba(46,204,113,0.25);
+            transform: scale(1.04);
+        }
+        #gd-last-file-chip .chip-restore-badge {
+            background: rgba(46,204,113,0.3);
+            border-radius: 6px;
+            padding: 0 5px;
+            font-size: 0.6rem;
+            font-weight: 800;
+            letter-spacing: 0.02em;
         }
         /* Voyant réseau : 4 états */
         @keyframes netPulseGreen  { 0%,100%{box-shadow:0 0 4px #2ecc7188} 50%{box-shadow:0 0 10px #2ecc71cc} }
@@ -3535,16 +3603,18 @@ button, .btn, .retours-btn {
             <!-- Voyant qualité réseau -->
             <span id="net-quality-dot" title="Qualité de la connexion internet"
                 style="width:8px;height:8px;border-radius:50%;background:#e74c3c;box-shadow:0 0 4px #e74c3c88;flex-shrink:0;cursor:default;transition:background 0.5s,box-shadow 0.5s;margin-right:2px;"></span>
-            <span id="net-quality-label" style="font-size:0.68rem;color:#e74c3c;white-space:nowrap;margin-right:6px;cursor:default;"></span>
-            <!-- Point statut Drive -->
-            <span class="gd-dot" id="gd-main-dot"></span>
-            <span id="gd-main-label" style="font-size:0.7rem;white-space:nowrap;">Hors ligne</span>
-            <span class="gd-saving" id="gdrive-saving-indicator">⏳ Sauvegarde…</span>
-            <span class="gd-time" id="gdrive-last-save-time" style="margin-left:4px;"></span>
-            <!-- Dernier fichier Drive détecté — cliquable pour restaurer -->
-            <span id="gd-last-file-chip" onclick="_gdChipClick()" title="Cliquer pour restaurer cette sauvegarde"
-                style="display:none;margin-left:6px;padding:1px 8px;background:rgba(46,204,113,0.18);border:1px solid rgba(46,204,113,0.35);border-radius:10px;font-size:0.65rem;color:#52be80;cursor:pointer;white-space:nowrap;transition:background 0.2s;"
-                onmouseover="this.style.background='rgba(46,204,113,0.32)'" onmouseout="this.style.background='rgba(46,204,113,0.18)'">
+            <span id="net-quality-label" style="font-size:0.68rem;color:#e74c3c;white-space:nowrap;margin-right:4px;cursor:default;"></span>
+            <!-- Pill statut Drive — cliquable si connecté -->
+            <button id="gd-drive-pill" onclick="_gdPillClick()" title="Statut Google Drive" aria-label="Statut Google Drive">
+                <span class="gd-dot" id="gd-main-dot"></span>
+                <span id="gd-main-label">Hors ligne</span>
+            </button>
+            <span class="gd-saving" id="gdrive-saving-indicator">⏳</span>
+            <!-- Chip dernière sauvegarde Drive -->
+            <span id="gd-last-file-chip" onclick="_gdChipClick()" title="Cliquer pour restaurer cette sauvegarde">
+                <span>💾</span>
+                <span id="gd-chip-time"></span>
+                <span class="chip-restore-badge">↩ Restaurer</span>
             </span>
         </div>
         <!-- Zone DLC : marquee roulant OU affichage un par un avec nav -->
@@ -33357,17 +33427,17 @@ function initAdminSections() {
 
     // ---- UI Helpers ----
     function _gdUpdateStatusBar(connected, label, time) {
-        const bar = document.getElementById('gdrive-status-bar');
+        const bar  = document.getElementById('gdrive-status-bar');
         if (!bar) return;
         if (connected) { bar.classList.add('connected'); } else { bar.classList.remove('connected'); }
 
-        const dot   = document.getElementById('gd-main-dot');
-        const lbl   = document.getElementById('gd-main-label');
-        const tm    = document.getElementById('gdrive-last-save-time');
+        const dot    = document.getElementById('gd-main-dot');
+        const lbl    = document.getElementById('gd-main-label');
+        const pill   = document.getElementById('gd-drive-pill');
         const isOnline = navigator.onLine;
 
+        // ── Voyant interne ────────────────────────────────────────
         if (dot) {
-            // Vert = Drive connecté, Orange = en ligne sans Drive, Rouge = hors ligne
             if (connected) {
                 dot.style.background = '#2ecc71';
                 dot.style.boxShadow  = '0 0 6px #2ecc7188';
@@ -33380,31 +33450,40 @@ function initAdminSections() {
             }
         }
 
+        // ── Texte + couleur du label ──────────────────────────────
         if (lbl) {
             if (connected) {
                 lbl.textContent = '☁️ Drive connecté';
-                lbl.style.color = '#52be80';
             } else if (isOnline) {
-                lbl.textContent = '● En ligne';
-                lbl.style.color = '#f39c12';
+                lbl.textContent = 'En ligne';
             } else {
-                lbl.textContent = '● Hors ligne';
-                lbl.style.color = '#e74c3c';
+                lbl.textContent = 'Hors ligne';
             }
         }
 
-        if (tm) {
-            if (time) {
-                const d = new Date(time);
-                const isToday = d.toDateString() === new Date().toDateString();
-                const dateStr = isToday
-                    ? d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',second:'2-digit'})
-                    : d.toLocaleDateString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
-                tm.textContent = connected ? '· Sauvegardé ' + dateStr : '';
-                tm.style.color = '#52be80';
+        // ── Pill : classe CSS + clickable ─────────────────────────
+        if (pill) {
+            pill.classList.remove('pill-connected', 'pill-online', 'pill-offline');
+            if (connected) {
+                pill.classList.add('pill-connected');
+                pill.title = 'Drive connecté — cliquer pour restaurer';
+            } else if (isOnline) {
+                pill.classList.add('pill-online');
+                pill.title = 'En ligne — Drive non connecté';
             } else {
-                tm.textContent = '';
+                pill.title = 'Hors ligne';
             }
+        }
+
+        // ── Chip dernière sauvegarde (heure) ──────────────────────
+        if (time && connected) {
+            const d = new Date(time);
+            const isToday = d.toDateString() === new Date().toDateString();
+            const dateStr = isToday
+                ? d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit',second:'2-digit'})
+                : d.toLocaleDateString('fr-FR', {day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
+            const chipTime = document.getElementById('gd-chip-time');
+            if (chipTime) chipTime.textContent = dateStr;
         }
     }
 
@@ -33412,15 +33491,19 @@ function initAdminSections() {
     function _gdUpdateNetworkStatus() {
         const connected = typeof _gdConnected !== 'undefined' && _gdConnected;
         if (!connected) {
-            const dot = document.getElementById('gd-main-dot');
-            const lbl = document.getElementById('gd-main-label');
+            const dot  = document.getElementById('gd-main-dot');
+            const lbl  = document.getElementById('gd-main-label');
+            const pill = document.getElementById('gd-drive-pill');
             if (dot) {
                 dot.style.background = navigator.onLine ? '#f39c12' : '#e74c3c';
                 dot.style.boxShadow  = navigator.onLine ? '0 0 4px #f39c1288' : '0 0 4px #e74c3c88';
             }
             if (lbl) {
-                lbl.textContent = navigator.onLine ? '● En ligne' : '● Hors ligne';
-                lbl.style.color = navigator.onLine ? '#f39c12' : '#e74c3c';
+                lbl.textContent = navigator.onLine ? 'En ligne' : 'Hors ligne';
+            }
+            if (pill) {
+                pill.classList.remove('pill-connected', 'pill-online', 'pill-offline');
+                if (navigator.onLine) pill.classList.add('pill-online');
             }
         }
     }
@@ -33923,19 +34006,22 @@ function initAdminSections() {
                 : modDate.toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) + ' ' +
                   modDate.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
 
-            chip.textContent = '☁️ ' + dateLabel + ' ↩';
-            chip.style.display = '';
+            const chipTimeEl = document.getElementById('gd-chip-time');
+            if (chipTimeEl) chipTimeEl.textContent = dateLabel;
+            chip.style.display = 'inline-flex';
 
             // Nouveau fichier détecté depuis la dernière vérification → flash
             if (latest.id !== _gdLastDetectedFileId) {
                 _gdLastDetectedFileId   = latest.id;
                 _gdLastDetectedFileName = latest.name;
                 _gdLastDetectedFileData = null; // réinitialiser les données préchargées
-                chip.style.borderColor = '#f39c12';
+                chip.style.background = 'rgba(243,156,18,0.2)';
+                chip.style.borderColor = 'rgba(243,156,18,0.5)';
                 chip.style.color = '#f39c12';
                 setTimeout(() => {
-                    chip.style.borderColor = 'rgba(46,204,113,0.35)';
-                    chip.style.color = '#52be80';
+                    chip.style.background = '';
+                    chip.style.borderColor = '';
+                    chip.style.color = '';
                 }, 3000);
             }
         } catch(e) { /* silencieux */ }
@@ -33983,6 +34069,13 @@ function initAdminSections() {
     }
 
     // Clic sur le chip → liste des sauvegardes disponibles
+    // ── Clic sur la pill Drive (ouvre le modal de restauration si connecté) ──
+    window._gdPillClick = function() {
+        if (typeof _gdConnected !== 'undefined' && _gdConnected) {
+            if (typeof gdriveOpenRestoreModal === 'function') gdriveOpenRestoreModal();
+        }
+    };
+
     window._gdChipClick = async function() {
         if (!_gdConnected || !_gdFolderId) return;
         const chip = document.getElementById('gd-last-file-chip');
