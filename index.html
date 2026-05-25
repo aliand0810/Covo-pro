@@ -1093,9 +1093,10 @@ const _store = {
             gap: 5px;
             padding: 2px 9px 2px 7px;
             border-radius: 12px;
-            border: none;
+            border: 1px solid rgba(231,76,60,0.35);
             font-size: 0.68rem;
             font-weight: 700;
+            font-family: inherit;
             cursor: default;
             transition: filter 0.15s, transform 0.1s;
             user-select: none;
@@ -1103,7 +1104,8 @@ const _store = {
             line-height: 1.6;
             background: rgba(231,76,60,0.18);
             color: #e74c3c;
-            border: 1px solid rgba(231,76,60,0.35);
+            outline: none;
+            flex-shrink: 0;
         }
         #gd-drive-pill.pill-online {
             background: rgba(243,156,18,0.18);
@@ -3605,16 +3607,16 @@ button, .btn, .retours-btn {
                 style="width:8px;height:8px;border-radius:50%;background:#e74c3c;box-shadow:0 0 4px #e74c3c88;flex-shrink:0;cursor:default;transition:background 0.5s,box-shadow 0.5s;margin-right:2px;"></span>
             <span id="net-quality-label" style="font-size:0.68rem;color:#e74c3c;white-space:nowrap;margin-right:4px;cursor:default;"></span>
             <!-- Pill statut Drive — cliquable si connecté -->
-            <button id="gd-drive-pill" onclick="_gdPillClick()" title="Statut Google Drive" aria-label="Statut Google Drive">
+            <button id="gd-drive-pill" type="button" onclick="_gdPillClick()" title="Statut Google Drive" aria-label="Statut Google Drive">
                 <span class="gd-dot" id="gd-main-dot"></span>
                 <span id="gd-main-label">Hors ligne</span>
             </button>
             <span class="gd-saving" id="gdrive-saving-indicator">⏳</span>
             <!-- Chip dernière sauvegarde Drive -->
             <span id="gd-last-file-chip" onclick="_gdChipClick()" title="Cliquer pour restaurer cette sauvegarde">
-                <span>💾</span>
-                <span id="gd-chip-time"></span>
-                <span class="chip-restore-badge">↩ Restaurer</span>
+                <span style="flex-shrink:0;">💾</span>
+                <span id="gd-chip-time" style="font-variant-numeric:tabular-nums;"></span>
+                <span class="chip-restore-badge" style="flex-shrink:0;">↩</span>
             </span>
         </div>
         <!-- Zone DLC : marquee roulant OU affichage un par un avec nav -->
@@ -34079,8 +34081,11 @@ function initAdminSections() {
     window._gdChipClick = async function() {
         if (!_gdConnected || !_gdFolderId) return;
         const chip = document.getElementById('gd-last-file-chip');
-        const origText = chip ? chip.textContent : '';
-        if (chip) { chip.textContent = '⏳…'; chip.style.pointerEvents = 'none'; }
+        const chipTimeEl = document.getElementById('gd-chip-time');
+        const origTime = chipTimeEl ? chipTimeEl.textContent : '';
+        // Indiquer le chargement sans détruire la structure
+        if (chipTimeEl) chipTimeEl.textContent = '…';
+        if (chip) chip.style.pointerEvents = 'none';
 
         try {
             const q = encodeURIComponent(
@@ -34092,11 +34097,13 @@ function initAdminSections() {
             );
             const data = await resp.json();
             const files = (data.files || []).filter(f => f.name.startsWith('covo_backup'));
-            if (chip) { chip.textContent = origText; chip.style.pointerEvents = ''; }
+            if (chipTimeEl) chipTimeEl.textContent = origTime;
+            if (chip) chip.style.pointerEvents = '';
             if (!files.length) { showScanToast('Aucune sauvegarde trouvée dans le dossier', 'info'); return; }
             _gdShowPickerModal(files);
         } catch(e) {
-            if (chip) { chip.textContent = origText; chip.style.pointerEvents = ''; }
+            if (chipTimeEl) chipTimeEl.textContent = origTime;
+            if (chip) chip.style.pointerEvents = '';
             showScanToast('❌ Impossible de charger la liste des sauvegardes', 'error');
         }
     };
@@ -34306,14 +34313,19 @@ function initAdminSections() {
             const nNum = parseFloat(newVal) || 0;
             const diff = cNum !== nNum;
             const arrow = diff ? (nNum > cNum ? '▲' : '▼') : '';
-            const arrowColor = diff ? (nNum > cNum ? '#27ae60' : '#e74c3c') : '';
-            const bold = diff ? 'font-weight:800;' : '';
-            return `<tr>
-                <td style="padding:8px 12px;font-size:0.82rem;color:${clr.text};border-bottom:1px solid ${clr.border};">${label}</td>
-                <td style="padding:8px 12px;text-align:center;font-size:0.85rem;color:${clr.textSub};border-bottom:1px solid ${clr.border};">${curVal}</td>
-                <td style="padding:8px 12px;text-align:center;font-size:0.85rem;color:${clr.text};${bold}border-bottom:1px solid ${clr.border};">${newVal}${arrow?` <span style="color:${arrowColor};font-size:0.72rem;">${arrow}</span>`:''}
-                </td>
-            </tr>`;
+            const arrowColor = diff ? (nNum > cNum ? '#7c3aed' : '#e74c3c') : '';
+            const drvBg = diff ? (isDark ? 'rgba(109,40,217,0.12)' : 'rgba(109,40,217,0.07)') : '';
+            const drvWeight = diff ? 'font-weight:800;' : '';
+            return `<div style="display:grid;grid-template-columns:1fr auto auto;align-items:center;
+                                padding:7px 12px;border-bottom:1px solid ${clr.border};
+                                background:${diff?(isDark?'rgba(109,40,217,0.04)':'rgba(109,40,217,0.02)'):'transparent'};">
+                <div style="font-size:0.8rem;color:${clr.text};">${label}</div>
+                <div style="font-size:0.82rem;color:${clr.textSub};text-align:center;min-width:64px;">${curVal}</div>
+                <div style="font-size:0.82rem;color:${clr.text};${drvWeight}text-align:center;min-width:64px;
+                            background:${drvBg};border-radius:5px;padding:1px 4px;">
+                  ${newVal}${arrow?` <span style="color:${arrowColor};font-size:0.7rem;">${arrow}</span>`:''}
+                </div>
+            </div>`;
         };
 
         // Bandeau de recommandation intelligent
@@ -34355,100 +34367,142 @@ function initAdminSections() {
             ? `<span style="background:#1565c022;color:#1565c0;padding:2px 8px;border-radius:12px;font-size:0.7rem;font-weight:700;margin-left:4px;">⭐ Plus complet</span>` : '';
 
         const html = `
-        <div role="dialog" aria-modal="true" id="gdrive-compare-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:20000;display:flex;justify-content:center;align-items:center;">
-          <div style="background:${clr.bg};border-radius:16px;width:92%;max-width:560px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.5);">
-            <div style="background:linear-gradient(135deg,#1565c0,#0d47a1);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
-              <div>
-                <div style="color:#ffffff;font-weight:800;font-size:1rem;">☁️ Restauration Google Drive</div>
-                <div style="color:rgba(255,255,255,0.8);font-size:0.75rem;margin-top:2px;">Comparez avant de restaurer</div>
-              </div>
-              <button onclick="document.getElementById('gdrive-compare-modal').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>
-            </div>
-            <div style="overflow-y:auto;flex:1;padding:16px 20px;background:${clr.bg};">
+        <div role="dialog" aria-modal="true" id="gdrive-compare-modal"
+             style="position:fixed;inset:0;background:rgba(0,0,0,0.78);backdrop-filter:blur(12px);
+                    z-index:20000;display:flex;justify-content:center;align-items:flex-start;
+                    overflow-y:auto;padding:16px 8px;">
+          <div style="background:${clr.bg};border-radius:18px;width:96%;max-width:560px;
+                      margin:auto;display:flex;flex-direction:column;
+                      box-shadow:0 28px 70px rgba(0,0,0,0.55);overflow:hidden;">
 
-              <!-- Recommandation -->
+            <!-- ── En-tête violet ── -->
+            <div style="background:linear-gradient(135deg,#6d28d9,#7c3aed,#4f46e5);
+                        padding:16px 20px;display:flex;align-items:flex-start;
+                        justify-content:space-between;flex-shrink:0;">
+              <div>
+                <div style="color:#fff;font-weight:900;font-size:1rem;letter-spacing:-0.2px;">
+                  &#128229; Restauration Google Drive
+                </div>
+                <div style="color:rgba(255,255,255,0.72);font-size:0.72rem;margin-top:3px;display:flex;align-items:center;gap:6px;">
+                  <span>Comparez vos données avant de restaurer</span>
+                </div>
+              </div>
+              <button type="button" onclick="document.getElementById('gdrive-compare-modal').remove()"
+                      style="background:rgba(255,255,255,0.18);border:none;color:white;
+                             width:30px;height:30px;border-radius:50%;cursor:pointer;
+                             font-size:1rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;">&#10005;</button>
+            </div>
+
+            <!-- ── Bandeau redémarrage auto ── -->
+            <div style="padding:8px 16px;background:rgba(109,40,217,0.10);
+                        border-bottom:1.5px solid rgba(109,40,217,0.18);
+                        font-size:0.74rem;color:${isDark?'#c4b5fd':'#5b21b6'};
+                        display:flex;align-items:center;gap:7px;flex-shrink:0;">
+              &#9889;
+              <span>Un <strong>redémarrage automatique</strong> sera effectué après confirmation de la restauration.</span>
+            </div>
+
+            <!-- ── Corps ── -->
+            <div style="overflow-y:auto;flex:1;padding:16px 18px;background:${clr.bg};">
+
+              <!-- Bandeau recommandation -->
               ${recoBanner}
 
-              <!-- Cartes fichiers -->
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
-                <div style="background:${clr.curBg};border-radius:10px;padding:12px 14px;border:2px solid ${localIsBigger?clr.borderGood:clr.curBorder};position:relative;overflow:hidden;">
-                  <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${localIsBigger?'linear-gradient(90deg,#27ae60,#2ecc71)':'linear-gradient(90deg,#78909c,#b0bec5)'};border-radius:10px 10px 0 0;"></div>
-                  <div style="font-size:0.65rem;text-transform:uppercase;color:${clr.curLabel};font-weight:700;letter-spacing:0.04em;margin-bottom:5px;">💾 Sauvegarde actuelle</div>
-                  <div style="font-size:0.88rem;font-weight:700;color:${clr.curText};">Données locales</div>
-                  <div style="font-size:0.73rem;color:${clr.curLabel};margin-top:4px;">🕐 ${fmtDate(cur.savedAt)}</div>
-                  <div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
-                    <span style="padding:2px 8px;background:${isDark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.06)'};border-radius:12px;font-size:0.72rem;color:${clr.curLabel};">${fmtSz(curBytes)}</span>
+              <!-- Cartes comparaison -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+
+                <!-- Carte locale -->
+                <div style="background:${clr.curBg};border-radius:12px;padding:12px 14px;
+                            border:2px solid ${localIsBigger?'#7c3aed':clr.curBorder};
+                            position:relative;overflow:hidden;">
+                  <div style="position:absolute;top:0;left:0;right:0;height:3px;
+                              background:${localIsBigger?'linear-gradient(90deg,#7c3aed,#a78bfa)':'linear-gradient(90deg,#78909c,#b0bec5)'};"></div>
+                  <div style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.06em;
+                              font-weight:800;color:${clr.curLabel};margin-bottom:5px;">&#128190; Sauvegarde actuelle</div>
+                  <div style="font-size:0.9rem;font-weight:800;color:${clr.curText};">Données locales</div>
+                  <div style="font-size:0.7rem;color:${clr.curLabel};margin-top:4px;">&#128336; ${fmtDate(cur.savedAt)}</div>
+                  <div style="margin-top:7px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+                    <span style="padding:2px 8px;background:${isDark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.06)'};
+                                 border-radius:12px;font-size:0.7rem;color:${clr.curLabel};">${fmtSz(curBytes)}</span>
                     ${curSizeTag}
                   </div>
                 </div>
-                <div style="background:${clr.bgDrive};border-radius:10px;padding:12px 14px;border:2px solid ${driveIsBigger?'#27ae60':clr.borderDrive};position:relative;overflow:hidden;">
-                  <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${driveIsBigger?'linear-gradient(90deg,#27ae60,#2ecc71)':'linear-gradient(90deg,#1565c0,#42a5f5)'};border-radius:10px 10px 0 0;"></div>
-                  <div style="font-size:0.65rem;text-transform:uppercase;color:${clr.textDrive};font-weight:700;letter-spacing:0.04em;margin-bottom:5px;">☁️ Sauvegarde Drive</div>
+
+                <!-- Carte Drive -->
+                <div style="background:${clr.bgDrive};border-radius:12px;padding:12px 14px;
+                            border:2px solid ${driveIsBigger?'#7c3aed':clr.borderDrive};
+                            position:relative;overflow:hidden;">
+                  <div style="position:absolute;top:0;left:0;right:0;height:3px;
+                              background:${driveIsBigger?'linear-gradient(90deg,#7c3aed,#a78bfa)':'linear-gradient(90deg,#4285F4,#42a5f5)'};"></div>
+                  <div style="font-size:0.6rem;text-transform:uppercase;letter-spacing:0.06em;
+                              font-weight:800;color:${clr.textDrive};margin-bottom:5px;">&#9729;&#65039; Sauvegarde Drive</div>
                   <div style="font-size:0.78rem;font-weight:700;color:${clr.text};word-break:break-all;line-height:1.3;">${newFileName}</div>
-                  <div style="font-size:0.73rem;color:${clr.textDrive};margin-top:4px;">🕐 ${fmtDate(nw.savedAt)}</div>
-                  <div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
-                    <span style="padding:2px 8px;background:${isDark?'rgba(100,180,255,0.12)':'rgba(21,101,192,0.1)'};border-radius:12px;font-size:0.72rem;color:${clr.textDrive};font-weight:600;">${fmtSz(newBytes)}</span>
+                  <div style="font-size:0.7rem;color:${clr.textDrive};margin-top:4px;">&#128336; ${fmtDate(nw.savedAt)}</div>
+                  <div style="margin-top:7px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+                    <span style="padding:2px 8px;background:${isDark?'rgba(100,180,255,0.12)':'rgba(66,133,244,0.1)'};
+                                 border-radius:12px;font-size:0.7rem;color:${clr.textDrive};font-weight:600;">${fmtSz(newBytes)}</span>
                     ${drvSizeTag}
-                    ${sizeDiff!==0?`<span style="padding:2px 8px;border-radius:12px;font-size:0.68rem;font-weight:700;background:${driveIsBigger?'#27ae6022':'#e74c3c22'};color:${driveIsBigger?'#27ae60':'#e74c3c'};">${driveIsBigger?'+':''}${sizeDiff>0?'+':''}${fmtSz(Math.abs(sizeDiff))}</span>`:''}
+                    ${sizeDiff!==0?`<span style="padding:2px 8px;border-radius:12px;font-size:0.68rem;font-weight:700;
+                                              background:${driveIsBigger?'rgba(109,40,217,0.12)':'#e74c3c22'};
+                                              color:${driveIsBigger?'#7c3aed':'#e74c3c'};">${sizeDiff>0?'+':''}${fmtSz(Math.abs(sizeDiff))}</span>`:''}
                   </div>
                 </div>
               </div>
 
               <!-- Tableau comparatif -->
-              <table style="width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;border:1px solid ${clr.border};margin-bottom:12px;">
-                <thead>
-                  <tr style="background:${clr.bgAlt};">
-                    <th style="padding:9px 12px;text-align:left;font-size:0.78rem;color:${clr.textSub};font-weight:700;">Données</th>
-                    <th style="padding:9px 12px;text-align:center;font-size:0.78rem;color:${clr.textSub};font-weight:700;">💾 Actuel</th>
-                    <th style="padding:9px 12px;text-align:center;font-size:0.78rem;color:${clr.textDrive};font-weight:700;">☁️ Drive</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${row('📦 Produits',            cur.prods,                    nw.prods)}
-                  ${row('🧾 Tickets',             cur.tickets,                  nw.tickets)}
-                  ${row('💰 CA validé (€)',       cur.validCA.toFixed(2),       nw.validCA.toFixed(2))}
-                  ${row('↩️ Retours clients',     cur.retours,                  nw.retours)}
-                  ${row('📦 Retours fournisseur', cur.marc,                     nw.marc)}
-                  ${row('💼 Investissements',     cur.inv,                      nw.inv)}
-                  ${row('💬 Messages',            (JSON.parse(localStorage.getItem('covo_messages')||'[]')).length, (newData.covo_messages||[]).length)}
-                  ${row('📋 Historique connexions',(JSON.parse(localStorage.getItem('covo_login_history')||'[]')).length, (newData.covo_login_history||[]).length)}
-                  ${row('🔗 Liens rapides',       (JSON.parse(localStorage.getItem('covo_quick_links')||'[]')).length, (newData.covo_quick_links||[]).length)}
-                  ${row('🗓️ Clôtures de poste',  (JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]')).length, (newData.covo_caisse_historique||[]).length)}
-                  ${row('💸 Paiements',           (JSON.parse(localStorage.getItem('covo_paiements')||'[]')).length,          (newData.covo_paiements||[]).length)}
-                  ${row('⚠️ Dettes',              (JSON.parse(localStorage.getItem('covo_dettes')||'[]')).length,             (newData.covo_dettes||[]).length)}
-                </tbody>
-              </table>
-
-              <!-- Infos sauvegardes scindées -->
-              <div style="margin-top:10px;padding:10px 12px;background:${clr.bgAlt||'rgba(26,115,232,0.05)'};border:1.5px solid ${clr.border};border-radius:8px;font-size:0.78rem;color:${clr.text};">
-                <div style="font-weight:700;margin-bottom:6px;color:${clr.textDrive};">📂 Sauvegardes scindées disponibles</div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;background:var(--bg-card,#fff);">
-                  <span style="padding:3px 9px;border-radius:12px;background:#e8f5e9;color:#1b5e20;font-weight:700;">
-                    💰 Ventes : ${localStorage.getItem('gdrive_last_sales_save') ? new Date(localStorage.getItem('gdrive_last_sales_save')).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '—'}
-                  </span>
-                  <span style="padding:3px 9px;border-radius:12px;background:#e8f0fe;color:#1a237e;font-weight:700;">
-                    ⚙️ Params : ${localStorage.getItem('gdrive_last_params_save') ? new Date(localStorage.getItem('gdrive_last_params_save')).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '—'}
-                  </span>
-                  <span style="padding:3px 9px;border-radius:12px;background:#fff3e0;color:#e65100;font-weight:700;">
-                    📦 Complet : ${localStorage.getItem('gdrive_last_save') ? new Date(localStorage.getItem('gdrive_last_save')).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}) : '—'}
-                  </span>
+              <div style="border-radius:10px;overflow:hidden;border:1.5px solid ${clr.border};margin-bottom:14px;">
+                <div style="display:grid;grid-template-columns:1fr auto auto;background:${clr.bgAlt};
+                            padding:8px 12px;border-bottom:1.5px solid ${clr.border};">
+                  <div style="font-size:0.74rem;font-weight:800;color:${clr.textSub};">Données</div>
+                  <div style="font-size:0.74rem;font-weight:800;color:${clr.textSub};text-align:center;min-width:64px;">&#128190; Actuel</div>
+                  <div style="font-size:0.74rem;font-weight:800;color:${clr.textDrive};text-align:center;min-width:64px;">&#9729;&#65039; Drive</div>
                 </div>
-                <div style="margin-top:6px;font-size:0.72rem;color:${clr.textSub};">Utilisez "Restauration intelligente" pour choisir ce que vous souhaitez restaurer.</div>
+                ${row('&#128230; Produits',            cur.prods,              nw.prods)}
+                ${row('&#129522; Tickets',             cur.tickets,            nw.tickets)}
+                ${row('&#128176; CA valid&#233; (&#8364;)', cur.validCA.toFixed(2), nw.validCA.toFixed(2))}
+                ${row('&#8617;&#65039; Retours clients',  cur.retours,            nw.retours)}
+                ${row('&#128230; Retours fourn.',      cur.marc,               nw.marc)}
+                ${row('&#128188; Investissements',     cur.inv,                nw.inv)}
+                ${row('&#128172; Messages',            (JSON.parse(localStorage.getItem('covo_messages')||'[]')).length, (newData.covo_messages||[]).length)}
+                ${row('&#128203; Historique conn.',    (JSON.parse(localStorage.getItem('covo_login_history')||'[]')).length, (newData.covo_login_history||[]).length)}
+                ${row('&#128279; Liens rapides',       (JSON.parse(localStorage.getItem('covo_quick_links')||'[]')).length, (newData.covo_quick_links||[]).length)}
+                ${row('&#128197; Cl&#244;tures',       (JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]')).length, (newData.covo_caisse_historique||[]).length)}
+                ${row('&#128184; Paiements',           (JSON.parse(localStorage.getItem('covo_paiements')||'[]')).length, (newData.covo_paiements||[]).length)}
+                ${row('&#9888;&#65039; Dettes',        (JSON.parse(localStorage.getItem('covo_dettes')||'[]')).length,   (newData.covo_dettes||[]).length)}
               </div>
 
-              <div style="padding:10px 12px;background:${clr.bgWarn};border:1.5px solid #f39c12;border-radius:8px;font-size:0.82rem;color:${clr.textWarn};font-weight:600;margin-top:10px;">
-                ⚠️ La restauration remplacera <strong>toutes les données locales</strong> de façon irréversible.
+              <!-- Avertissement irréversible -->
+              <div style="padding:10px 13px;background:${clr.bgWarn};border:1.5px solid #f39c12;
+                          border-radius:9px;font-size:0.78rem;color:${clr.textWarn};
+                          display:flex;align-items:flex-start;gap:8px;">
+                <span style="flex-shrink:0;font-size:1rem;">&#9888;&#65039;</span>
+                <span>La restauration remplace <strong>toutes les données locales</strong> de façon irréversible.
+                      La plateforme <strong>redémarrera automatiquement</strong> ensuite.</span>
               </div>
             </div>
-            <div style="padding:12px 20px;border-top:1px solid ${clr.border};display:flex;gap:8px;flex-shrink:0;background:${clr.bg};flex-wrap:wrap;">
-              <button onclick="document.getElementById('gdrive-compare-modal').remove()" style="flex:1;min-width:80px;padding:10px;background:${clr.cancelBg};border:1.5px solid ${clr.border};border-radius:8px;cursor:pointer;font-weight:700;color:${clr.cancelClr};font-size:0.85rem;">✖ Annuler</button>
-              <button onclick="window._gdTriggerSmartRestore()"
-                style="flex:1;min-width:100px;padding:10px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">
-                🔄 Restauration intelligente
+
+            <!-- ── Pied de page ── -->
+            <div style="padding:12px 18px;border-top:1.5px solid ${clr.border};
+                        display:flex;gap:8px;flex-shrink:0;background:${clr.bg};flex-wrap:wrap;">
+              <button type="button" onclick="document.getElementById('gdrive-compare-modal').remove()"
+                      style="flex:1;min-width:70px;padding:10px 8px;background:${clr.cancelBg};
+                             border:1.5px solid ${clr.border};border-radius:9px;cursor:pointer;
+                             font-weight:700;color:${clr.cancelClr};font-size:0.82rem;font-family:inherit;">
+                &#10006; Annuler
               </button>
-              <button onclick="_gdConfirmRestoreFromChip()"
-                style="flex:2;min-width:140px;padding:10px;background:${driveIsBigger?'linear-gradient(135deg,#27ae60,#1e8449)':'linear-gradient(135deg,#1565c0,#0d47a1)'};color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">
-                ${driveIsBigger?'✅ Restaurer depuis Drive (recommandé)':'✅ Restaurer depuis Drive'}
+              <button type="button" onclick="window._gdTriggerSmartRestore()"
+                      style="flex:1;min-width:110px;padding:10px 8px;
+                             background:linear-gradient(135deg,#7c3aed,#5b21b6);
+                             color:white;border:none;border-radius:9px;cursor:pointer;
+                             font-weight:700;font-size:0.82rem;font-family:inherit;">
+                &#128260; Restauration intelligente
+              </button>
+              <button type="button" onclick="_gdConfirmRestoreFromChip()"
+                      style="flex:2;min-width:120px;padding:10px 8px;
+                             background:${driveIsBigger?'linear-gradient(135deg,#6d28d9,#7c3aed)':'linear-gradient(135deg,#1565c0,#0d47a1)'};
+                             color:white;border:none;border-radius:9px;cursor:pointer;
+                             font-weight:700;font-size:0.82rem;font-family:inherit;">
+                ${driveIsBigger?'&#9989; Restaurer (recommandé) &#8594;':'&#9989; Restaurer depuis Drive &#8594;'}
               </button>
             </div>
           </div>
