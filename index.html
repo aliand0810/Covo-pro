@@ -14874,7 +14874,7 @@ function toggleInfoSection(headerElement) {
     window._renderExpiredList = function() {
         const search = (document.getElementById('expired-search')?.value || '').toLowerCase();
         const today  = new Date(); today.setHours(0,0,0,0);
-        const soon   = new Date(today); soon.setDate(soon.getDate() + 7);
+        const soon   = new Date(today); soon.setDate(soon.getDate() + 30); // fenêtre élargie à 30j
 
         const list = document.getElementById('expired-list');
         const countEl = document.getElementById('expired-modal-count');
@@ -14883,13 +14883,23 @@ function toggleInfoSection(headerElement) {
         const expired = products.filter(p => {
             if (!p.expiryDate) return false;
             if (p.active === false) return false;
-            if (parseFloat(p.stock || 0) <= 0) return false; // pas d'alerte si stock vide
-            const d = new Date(p.expiryDate);
-            return d <= soon; // expirés + dans les 7 jours
-        }).filter(p => !search || p.name.toLowerCase().includes(search));
+            // ⚠️ On affiche TOUS les produits expirés ou à risque, stock vide inclus.
+            // (La restriction stock>0 cachait des articles expirés légitimes.)
+            const d = new Date(p.expiryDate); d.setHours(0,0,0,0);
+            return d <= soon; // expirés + dans les 30 jours
+        }).filter(p => !search || p.name.toLowerCase().includes(search)
+                               || (p.category||'').toLowerCase().includes(search));
 
+        // Tri : expirés d'abord (les plus anciens), puis les plus urgents à venir
         expired.sort((a,b) => new Date(a.expiryDate) - new Date(b.expiryDate));
-        if (countEl) countEl.textContent = expired.length + ' article(s) expiré(s) ou à risque (≤ 7 jours)';
+
+        const nbExp  = expired.filter(p => new Date(p.expiryDate) < today).length;
+        const nbSoon = expired.length - nbExp;
+        if (countEl) {
+            countEl.textContent = expired.length + ' article(s)'
+                + (nbExp  ? ' · ' + nbExp  + ' expiré(s)' : '')
+                + (nbSoon ? ' · ' + nbSoon + ' à risque (≤ 30j)' : '');
+        }
 
         list.innerHTML = '';
         if (!expired.length) {
@@ -14898,23 +14908,36 @@ function toggleInfoSection(headerElement) {
         }
 
         expired.forEach(p => {
-            const d   = new Date(p.expiryDate);
-            const diff= Math.round((d - today) / 86400000);
+            const d      = new Date(p.expiryDate); d.setHours(0,0,0,0);
+            const diff   = Math.round((d - today) / 86400000);
             const isExp  = diff < 0;
             const isUrgent = diff >= 0 && diff <= 3;
-            const color = isExp ? '#e74c3c' : isUrgent ? '#e67e22' : '#f39c12';
-            const label = isExp ? 'Expiré il y a '+(Math.abs(diff))+' j' : diff === 0 ? 'Expire aujourd\'hui !' : 'Expire dans '+diff+' j';
+            const stockVal = parseFloat(p.stock || 0);
+            const stockEmpty = stockVal <= 0;
+            const color  = isExp ? '#e74c3c' : isUrgent ? '#e67e22' : '#f39c12';
+            const label  = isExp
+                ? 'Expiré il y a ' + Math.abs(diff) + ' j'
+                : diff === 0 ? 'Expire aujourd\'hui !'
+                : 'Expire dans ' + diff + ' j';
+            const stockTxt = stockEmpty
+                ? '<span style="color:#e74c3c;font-weight:700;">⚠️ Stock vide</span>'
+                : '📦 ' + stockVal + (p.unitType === 'kg' ? ' kg' : ' u.');
 
             const row = document.createElement('div');
-            row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--bg-card,#fff);border-radius:10px;border:1.5px solid '+(isExp?'rgba(231,76,60,0.3)':'rgba(243,156,18,0.3)')+';';
+            row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 14px;'
+                + 'background:var(--bg-card,#fff);border-radius:10px;border:1.5px solid '
+                + (isExp ? 'rgba(231,76,60,0.3)' : 'rgba(243,156,18,0.3)') + ';'
+                + (stockEmpty ? 'opacity:0.7;' : '');
             row.innerHTML = `
-                <div style="flex-shrink:0;width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--input-bg,#f0f0f0);">
-                    <img src="${p.img||''}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" alt="">
+                <div style="flex-shrink:0;width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--input-bg,#f0f0f0);position:relative;">
+                    <img src="${p.img||''}" style="width:100%;height:100%;object-fit:cover;${stockEmpty?'filter:grayscale(0.6);':''}" onerror="this.style.display='none'" alt="">
                 </div>
                 <div style="flex:1;min-width:0;">
                     <div style="font-weight:700;font-size:0.88rem;color:var(--text-main,#333);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_esc(p.name)}</div>
-                    <div style="font-size:0.75rem;color:var(--gray,#888);margin-top:2px;">
-                        📦 Stock : ${p.stock} &nbsp;·&nbsp; 📁 ${p.category||'—'}
+                    <div style="font-size:0.75rem;color:var(--gray,#888);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                        ${stockTxt}
+                        <span style="color:var(--gray,#aaa);">·</span>
+                        <span>📁 ${_esc(p.category||'—')}</span>
                     </div>
                 </div>
                 <div style="text-align:right;flex-shrink:0;">
@@ -14922,7 +14945,7 @@ function toggleInfoSection(headerElement) {
                     <div style="font-size:0.72rem;color:var(--gray,#888);margin-top:2px;">${d.toLocaleDateString('fr-FR')}</div>
                 </div>
                 ${isAdmin ? `<button onclick="document.getElementById('expired-modal').style.display='none';window.openProductDetail(${p.id})"
-                    style="padding:6px 10px;background:var(--input-bg,#f0f2f5);border:1.5px solid var(--border-color,#ddd);color:var(--text-main,#333);border-radius:8px;cursor:pointer;font-size:0.78rem;white-space:nowrap;">
+                    style="padding:6px 10px;background:var(--input-bg,#f0f2f5);border:1.5px solid var(--border-color,#ddd);color:var(--text-main,#333);border-radius:8px;cursor:pointer;font-size:0.78rem;white-space:nowrap;flex-shrink:0;">
                     ✏️ Voir
                 </button>` : ''}`;
             list.appendChild(row);
