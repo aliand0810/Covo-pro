@@ -34000,30 +34000,48 @@ function initAdminSections() {
         if (chip) chip.style.display = 'none';
     }
 
-    // ── Auto-restauration au démarrage ──────────────────────────────────────
-    // Récupère la sauvegarde la plus récente depuis Drive et l'applique
-    // seulement si elle est plus récente que la dernière sauvegarde locale.
+    // ── Vérification au démarrage — notifie si Drive a des données plus récentes ──
+    // ⚠️  IMPORTANT : cette fonction N'APPLIQUE PLUS de restauration automatique.
+    //     L'ancien comportement (auto-restore silencieux + location.reload()) causait
+    //     une boucle infinie. On affiche désormais une bannière et laisse l'utilisateur
+    //     décider manuellement.
     async function _gdAutoRestoreOnStartup() {
         if (!_gdConnected || !_gdFolderId || !_gdAccessToken) return;
+
+        // ── Garde anti-boucle ──────────────────────────────────────────────────
+        // Si une restauration vient d'être effectuée (< 90s), ne rien faire.
+        const lastRestore = localStorage.getItem('gdrive_last_restore');
+        if (lastRestore) {
+            const elapsed = Date.now() - new Date(lastRestore).getTime();
+            if (elapsed < 90000) return; // 90 secondes de grâce post-restauration
+        }
+
         try {
             const q = encodeURIComponent(
                 `'${_gdFolderId}' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'`
             );
             const resp = await _gdFetch(
                 'https://www.googleapis.com/drive/v3/files?q=' + q +
-                '&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)'
+                '&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime,size)'
             );
             const files = ((await resp.json()).files || []);
             if (!files.length) return;
-            const latest = files[0];
-            // Ne restaurer que si Drive est plus récent que la dernière sauvegarde locale
-            const localTs = localStorage.getItem('covo_last_save') || localStorage.getItem('gdrive_last_save') || '';
-            if (localTs && new Date(latest.modifiedTime) <= new Date(localTs)) return;
-            // Charger et appliquer
-            const dataResp = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + latest.id + '?alt=media');
-            const data = await dataResp.json();
-            await _gdApplyRestore(data, latest.name);
-            showScanToast('☁️ Données synchronisées automatiquement depuis Drive', 'success');
+
+            const latest    = files[0];
+            const driveDate = new Date(latest.modifiedTime);
+            const localTs   = localStorage.getItem('covo_last_save') || localStorage.getItem('gdrive_last_save') || '';
+
+            // Si le fichier Drive est plus récent que la dernière sauvegarde locale :
+            // afficher une bannière de notification — PAS de restauration automatique.
+            if (!localTs || driveDate > new Date(localTs)) {
+                const driveStr = driveDate.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
+                               + ' ' + driveDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                showScanToast(
+                    '☁️ Une sauvegarde Drive plus récente est disponible (' + driveStr + '). '
+                    + 'Cliquez sur 💾 ou sur "Restaurer" pour l\'appliquer.',
+                    'info'
+                );
+            }
         } catch(e) {
             // Silencieux — ne pas bloquer le démarrage
         }
@@ -34937,8 +34955,31 @@ function initAdminSections() {
 
             _gdRestoring = true;
 
-            // Sauvegarder tout en localStorage
-            saveAll();
+            // ── Persistance garantie — bypass du guard isMaster de saveAll() ──
+            // On appelle _doSaveAllFull() directement pour s'assurer que les données
+            // sont bien écrites en localStorage même pour un utilisateur isMaster.
+            try {
+                if (typeof _doSaveAllFull === 'function') {
+                    _doSaveAllFull();
+                } else {
+                    // Fallback : écrire manuellement les clés critiques
+                    localStorage.setItem('covo_products',            JSON.stringify(products));
+                    localStorage.setItem('covo_categories',          JSON.stringify(categories));
+                    localStorage.setItem('covo_sales_history',       JSON.stringify(salesHistory));
+                    localStorage.setItem('covo_settings',            JSON.stringify(appSettings));
+                    localStorage.setItem('covo_users',               JSON.stringify(users));
+                    localStorage.setItem('covo_night_tariff',        JSON.stringify(nightTariffSettings));
+                    localStorage.setItem('covo_cashier_permissions', JSON.stringify(cashierPermissions));
+                    localStorage.setItem('covo_pending_sync',        JSON.stringify(pendingSync));
+                    localStorage.setItem('covo_delivery_goal',       String(deliveryGoal));
+                }
+            } catch(saveErr) {
+                console.error('GDrive restore: save error', saveErr);
+            }
+            // Marquer la restauration — empêche l'auto-restore en boucle au redémarrage
+            var _restoreTs = new Date().toISOString();
+            localStorage.setItem('gdrive_last_restore', _restoreTs);
+            localStorage.setItem('covo_last_save',      _restoreTs);
 
             // Redémarrage automatique — l'interface sera entièrement rechargée
             _gdShowRestartOverlay(fileName || 'Sauvegarde Drive');
@@ -35858,8 +35899,27 @@ function initAdminSections() {
                 if (data.deliveryGoal) deliveryGoal = data.deliveryGoal;
             }
 
-            saveAll();
-            localStorage.setItem('gdrive_last_restore', new Date().toISOString());
+            // Bypass du guard isMaster — écriture directe en localStorage
+            try {
+                if (typeof _doSaveAllFull === 'function') {
+                    _doSaveAllFull();
+                } else {
+                    localStorage.setItem('covo_products',            JSON.stringify(products));
+                    localStorage.setItem('covo_categories',          JSON.stringify(categories));
+                    localStorage.setItem('covo_sales_history',       JSON.stringify(salesHistory));
+                    localStorage.setItem('covo_settings',            JSON.stringify(appSettings));
+                    localStorage.setItem('covo_users',               JSON.stringify(users));
+                    localStorage.setItem('covo_night_tariff',        JSON.stringify(nightTariffSettings));
+                    localStorage.setItem('covo_cashier_permissions', JSON.stringify(cashierPermissions));
+                    localStorage.setItem('covo_pending_sync',        JSON.stringify(pendingSync));
+                    localStorage.setItem('covo_delivery_goal',       String(deliveryGoal));
+                }
+            } catch(saveErr) {
+                console.error('Smart restore: save error', saveErr);
+            }
+            var _smartTs = new Date().toISOString();
+            localStorage.setItem('gdrive_last_restore', _smartTs);
+            localStorage.setItem('covo_last_save',      _smartTs);
             _gdShowRestartOverlay(fname || 'Restauration intelligente');
         } catch(err) {
             console.error('Smart restore apply error:', err);
@@ -36990,4 +37050,4 @@ function initAdminSections() {
 
 </script>
 </body>
-</htm
+</html>
