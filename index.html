@@ -25811,6 +25811,44 @@ logout = function(skipConfirmation = false) {
 </div>
 
 
+
+<!-- ===== MODAL DÉTAIL INVENTAIRE ===== -->
+<div id="invt-detail-modal" style="display:none;position:fixed;inset:0;z-index:22500;background:rgba(0,0,0,0.6);backdrop-filter:blur(6px);align-items:flex-start;justify-content:center;overflow-y:auto;padding:16px 8px;">
+    <div style="background:var(--bg-card,#fff);border-radius:16px;width:100%;max-width:580px;box-shadow:0 20px 60px rgba(0,0,0,0.35);display:flex;flex-direction:column;margin:auto;">
+
+        <!-- En-tête -->
+        <div style="background:linear-gradient(135deg,#1a5276,#229954);border-radius:16px 16px 0 0;padding:16px 18px;display:flex;align-items:flex-start;gap:10px;">
+            <div style="flex:1;min-width:0;">
+                <div id="invt-detail-title" style="font-size:1rem;font-weight:900;color:#fff;">📋 Détail inventaire</div>
+                <div id="invt-detail-meta" style="font-size:0.72rem;color:rgba(255,255,255,0.8);margin-top:3px;"></div>
+            </div>
+            <button onclick="document.getElementById('invt-detail-modal').style.display='none'"
+                style="background:rgba(255,255,255,0.15);border:none;border-radius:50%;width:34px;height:34px;
+                cursor:pointer;color:#fff;font-size:1.1rem;flex-shrink:0;display:flex;align-items:center;justify-content:center;">✕</button>
+        </div>
+
+        <!-- Légende écarts -->
+        <div style="padding:10px 16px 6px;display:flex;gap:10px;flex-wrap:wrap;font-size:0.72rem;border-bottom:1px solid var(--border-color,#eee);">
+            <span style="color:#27ae60;font-weight:700;">▲ Surplus</span>
+            <span style="color:#888;font-weight:700;">= Conforme</span>
+            <span style="color:#e74c3c;font-weight:700;">▼ Manquant</span>
+            <span style="color:#888;font-style:italic;margin-left:auto;">Quantité comptée · Écart vs stock</span>
+        </div>
+
+        <!-- Liste articles -->
+        <div id="invt-detail-body" style="padding:12px 14px;display:flex;flex-direction:column;gap:7px;max-height:60vh;overflow-y:auto;"></div>
+
+        <!-- Pied -->
+        <div style="padding:12px 16px;border-top:1px solid var(--border-color,#eee);text-align:right;">
+            <button onclick="document.getElementById('invt-detail-modal').style.display='none'"
+                style="background:var(--gray,#95a5a6);color:white;padding:8px 20px;border-radius:8px;border:none;cursor:pointer;font-weight:700;font-size:0.84rem;">
+                Fermer
+            </button>
+        </div>
+
+    </div>
+</div>
+
 <!-- ===== MODAL SCAN INVENTAIRE ===== -->
 <div id="invt-scan-modal" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:9980;pointer-events:none;">
     <!-- Zone scan (bas d'écran, toujours visible pendant session) -->
@@ -36257,21 +36295,30 @@ function initAdminSections() {
         var listEl  = document.getElementById('invt-historique-list');
         var countEl = document.getElementById('invt-hist-count');
         if (!inventaires) inventaires = JSON.parse(localStorage.getItem('covo_inventaires') || '[]');
+        window._invtHistData = inventaires;
         if (countEl) countEl.textContent = inventaires.length + ' session' + (inventaires.length > 1 ? 's' : '');
         if (!listEl) return;
         if (inventaires.length === 0) {
             listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">Aucun inventaire enregistré</div>';
             return;
         }
-        listEl.innerHTML = inventaires.slice(0, 50).map(function(inv) {
-            var dt = inv.date ? new Date(inv.date).toLocaleString('fr-FR') : '—';
+        listEl.innerHTML = inventaires.slice(0, 50).map(function(inv, idx) {
+            var dt      = inv.date ? new Date(inv.date).toLocaleString('fr-FR') : '—';
             var counted = inv.counted || 0;
             var total   = inv.total   || 0;
             var pct     = total > 0 ? Math.round(counted / total * 100) : 0;
-            return '<div style="padding:10px 14px;background:var(--bg-body,#f4f7f6);border-radius:9px;">'
+            var pctColor = pct >= 90 ? '#27ae60' : pct >= 50 ? '#f39c12' : '#e74c3c';
+            return '<div onclick="window._invtShowDetail(' + idx + ')" '
+                 + 'style="padding:10px 14px;background:var(--bg-body,#f4f7f6);border-radius:9px;'
+                 + 'cursor:pointer;border:1.5px solid transparent;transition:all 0.15s;user-select:none;">'
                  + '<div style="display:flex;justify-content:space-between;align-items:center;">'
-                 + '<div style="font-weight:700;font-size:0.82rem;color:var(--text-main,#2c3e50);">📋 ' + dt + '</div>'
-                 + '<span style="font-size:0.72rem;background:rgba(26,82,118,0.1);color:#1a5276;padding:2px 9px;border-radius:12px;font-weight:700;">' + counted + '/' + total + ' · ' + pct + '%</span>'
+                 +   '<div style="font-weight:700;font-size:0.82rem;color:var(--text-main,#2c3e50);">📋 ' + dt + '</div>'
+                 +   '<div style="display:flex;align-items:center;gap:6px;">'
+                 +     '<span style="font-size:0.72rem;background:rgba(26,82,118,0.1);color:#1a5276;padding:2px 9px;border-radius:12px;font-weight:700;">'
+                 +       counted + '/' + total + ' · <span style="color:' + pctColor + ';">' + pct + '%</span>'
+                 +     '</span>'
+                 +     '<span style="font-size:0.7rem;color:var(--gray,#aaa);">▶</span>'
+                 +   '</div>'
                  + '</div>'
                  + (inv.caissier ? '<div style="font-size:0.7rem;color:var(--gray,#888);margin-top:3px;">Par ' + inv.caissier + '</div>' : '')
                  + '</div>';
@@ -36368,13 +36415,21 @@ function initAdminSections() {
         });
 
         // Save inventory session
+        // Snapshot des stocks au moment de l'inventaire
+        var stockSnapshot = {};
+        Object.keys(counts).forEach(function(id) {
+            var p2 = prods.find(function(x){ return String(x.id) === id; });
+            if (p2) stockSnapshot[id] = p2.stock || 0;
+        });
+
         var inv = {
-            id:         'INVT-' + Date.now(),
-            date:       today,
-            caissier:   (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.username || currentUser.name || currentUser.id) : 'Inconnu',
-            counted:    counted,
-            total:      total,
-            counts:     counts
+            id:            'INVT-' + Date.now(),
+            date:          today,
+            caissier:      (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.username || currentUser.name || currentUser.id) : 'Inconnu',
+            counted:       counted,
+            total:         total,
+            counts:        counts,
+            stockSnapshot: stockSnapshot
         };
         var inventaires = JSON.parse(localStorage.getItem('covo_inventaires') || '[]');
         inventaires.unshift(inv);
@@ -36396,9 +36451,299 @@ function initAdminSections() {
 
         if (typeof showScanToast === 'function') showScanToast('\u2705 Inventaire valid\u00e9 ! ' + counted + ' / ' + total + ' articles compt\u00e9s', 'success');
 
-        // Rafra\u00eechir la liste inventaire
+        // Rafraîchir la liste inventaire
         if (typeof invtInit === 'function') setTimeout(invtInit, 200);
     };
+
+
+    // ===================================================================
+    // ===== FONCTIONS INVENTAIRE — LISTE PRODUITS & SCAN ================
+    // ===================================================================
+
+    function _invtUpdateProgress() {
+        if (!window._invtSession) return;
+        var prods = typeof products !== 'undefined' ? products.filter(function(p){ return p.active !== false; }) : [];
+        var counts = window._invtSession.counts || {};
+        var counted = Object.keys(counts).length;
+        var total = prods.length;
+        var progEl  = document.getElementById('invt-progress');
+        var sfStats = document.getElementById('invt-sf-stats');
+        if (progEl)  progEl.textContent  = counted + ' / ' + total + ' comptés';
+        if (sfStats) sfStats.textContent = counted + ' sur ' + total;
+    }
+
+    function _invtRenderProductList() {
+        var listEl = document.getElementById('invt-product-list');
+        if (!listEl) return;
+        var prods = typeof products !== 'undefined' ? products.filter(function(p){ return p.active !== false; }) : [];
+        var searchEl = document.getElementById('invt-search');
+        var query = searchEl ? searchEl.value.trim().toLowerCase() : '';
+        var filter = window._invtStatusFilter || 'all';
+        var counts = window._invtSession ? (window._invtSession.counts || {}) : {};
+
+        // 1. Filtrer par statut
+        var filtered = prods.filter(function(p) {
+            var isCounted = counts.hasOwnProperty(String(p.id));
+            if (filter === 'done')  return isCounted;
+            if (filter === 'never') return !isCounted;
+            return true;
+        });
+
+        // 2. Filtrer par texte
+        if (query) {
+            filtered = filtered.filter(function(p) {
+                return (p.name     || '').toLowerCase().indexOf(query) !== -1
+                    || (p.category || '').toLowerCase().indexOf(query) !== -1
+                    || (p.barcode  || '').toLowerCase().indexOf(query) !== -1;
+            });
+        }
+
+        // 3. Trier: comptés en tête, puis alphabétique
+        filtered.sort(function(a, b) {
+            var ac = counts.hasOwnProperty(String(a.id));
+            var bc = counts.hasOwnProperty(String(b.id));
+            if (ac && !bc) return -1;
+            if (!ac && bc) return 1;
+            return (a.name || '').localeCompare(b.name || 'fr');
+        });
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray,#888);font-size:0.82rem;">Aucun produit trouvé</div>';
+            _invtUpdateProgress();
+            return;
+        }
+
+        listEl.innerHTML = filtered.map(function(p) {
+            var id = String(p.id);
+            var isCounted  = counts.hasOwnProperty(id);
+            var countedQty = isCounted ? counts[id] : null;
+            var stock = p.stock || 0;
+            var unit  = p.unitType === 'kg' ? ' kg' : ' u.';
+            var stockColor = stock <= 0 ? '#e74c3c' : (stock <= 5 ? '#f39c12' : '#27ae60');
+            var lastDate = p.lastInventoryDate ? new Date(p.lastInventoryDate).toLocaleDateString('fr-FR') : 'jamais';
+            var border = isCounted ? '1.5px solid #27ae60' : '1.5px solid var(--border-color,#e0e0e0)';
+            var bg     = isCounted ? 'rgba(39,174,96,0.07)' : 'var(--bg-card,#fff)';
+
+            return '<div onclick="window._invtProductTap(\'' + id + '\')" '
+                 + 'style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:' + bg + ';'
+                 + 'border-radius:10px;border:' + border + ';cursor:pointer;transition:all 0.15s;user-select:none;">'
+                 + '<div style="flex:1;min-width:0;">'
+                 +   '<div style="font-weight:700;font-size:0.85rem;color:var(--text-main,#2c3e50);'
+                 +   'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                 +   (isCounted ? '✅ ' : '') + (p.name || '—') + '</div>'
+                 +   '<div style="font-size:0.71rem;color:var(--gray,#888);margin-top:2px;">'
+                 +   (p.category || '—') + (p.barcode ? ' · ' + p.barcode : '') + ' · dernier : ' + lastDate
+                 +   '</div>'
+                 + '</div>'
+                 + '<div style="text-align:right;flex-shrink:0;">'
+                 +   '<div style="font-size:0.82rem;font-weight:900;color:' + stockColor + ';">' + stock + unit + '</div>'
+                 +   (isCounted
+                        ? '<div style="font-size:0.7rem;font-weight:700;color:#27ae60;">→ ' + countedQty + unit + '</div>'
+                        : '<div style="font-size:0.7rem;color:var(--gray,#888);">à compter</div>')
+                 + '</div>'
+                 + '</div>';
+        }).join('');
+
+        _invtUpdateProgress();
+    }
+
+    window.invtSearchOninput = function() {
+        _invtRenderProductList();
+    };
+
+    window.invtSetStatusFilter = function(filter) {
+        window._invtStatusFilter = filter;
+        var map = { all: 'invt-sf-all', never: 'invt-sf-never', done: 'invt-sf-done' };
+        Object.keys(map).forEach(function(k) {
+            var btn = document.getElementById(map[k]);
+            if (!btn) return;
+            var active = (k === filter);
+            btn.style.background  = active ? 'var(--accent,#2c6fad)'       : 'var(--bg-card,#fff)';
+            btn.style.color       = active ? '#fff'                         : 'var(--text-main,#2c3e50)';
+            btn.style.borderColor = active ? 'var(--accent,#2c6fad)'       : 'var(--border-color,#e0e0e0)';
+        });
+        _invtRenderProductList();
+    };
+
+    window.invtSearchBarcodeDetect = function() {
+        var searchEl = document.getElementById('invt-search');
+        var val = searchEl ? searchEl.value.trim() : '';
+        if (!val) return;
+        if (val.length >= 4) {
+            var prods = typeof products !== 'undefined' ? products : [];
+            var found = prods.find(function(p){
+                return p.barcode && p.barcode.toLowerCase() === val.toLowerCase();
+            });
+            if (found) {
+                searchEl.value = '';
+                _invtOpenScanForProduct(found);
+                return;
+            }
+        }
+        _invtRenderProductList();
+    };
+
+    window._invtProductTap = function(pid) {
+        if (!window._invtSession) return;
+        var prods = typeof products !== 'undefined' ? products : [];
+        var p = prods.find(function(x){ return String(x.id) === String(pid); });
+        if (p) _invtOpenScanForProduct(p);
+    };
+
+    function _invtOpenScanForProduct(p) {
+        if (!window._invtSession) return;
+        window._invtScanCurrentPid = String(p.id);
+        var nameEl  = document.getElementById('invt-scan-name');
+        var stockEl = document.getElementById('invt-scan-stock');
+        var cntEl   = document.getElementById('invt-scan-counted');
+        var qtyEl   = document.getElementById('invt-scan-qty');
+        if (nameEl)  nameEl.textContent  = p.name || '—';
+        if (stockEl) stockEl.textContent = (p.stock || 0) + (p.unitType === 'kg' ? ' kg' : ' u.');
+        var existing = window._invtSession.counts[String(p.id)];
+        var initQty  = existing != null ? existing : (p.stock || 0);
+        if (qtyEl) { qtyEl.value = initQty; qtyEl.focus(); qtyEl.select(); }
+        if (cntEl) cntEl.textContent = existing != null ? existing : '—';
+        var readyEl  = document.getElementById('invt-scan-ready');
+        var resultEl = document.getElementById('invt-scan-result');
+        if (readyEl)  readyEl.style.display  = 'none';
+        if (resultEl) resultEl.style.display = '';
+        clearTimeout(window._invtScanAutoReset);
+        window._invtScanAutoReset = setTimeout(function(){ window._invtScanResetToReady(); }, 12000);
+    }
+
+    window._invtScanResetToReady = function() {
+        var readyEl  = document.getElementById('invt-scan-ready');
+        var resultEl = document.getElementById('invt-scan-result');
+        if (readyEl)  readyEl.style.display  = '';
+        if (resultEl) resultEl.style.display = 'none';
+        window._invtScanCurrentPid = null;
+        clearTimeout(window._invtScanAutoReset);
+    };
+
+    window._invtScanAdjust = function(delta) {
+        var qtyEl = document.getElementById('invt-scan-qty');
+        if (!qtyEl) return;
+        var p = window._invtScanCurrentPid && typeof products !== 'undefined'
+            ? products.find(function(x){ return String(x.id) === window._invtScanCurrentPid; })
+            : null;
+        var step = p && p.unitType === 'kg' ? 0.1 : 1;
+        var val = Math.max(0, parseFloat(qtyEl.value) + delta * step);
+        qtyEl.value = p && p.unitType === 'kg' ? val.toFixed(3) : Math.round(val);
+        window._invtScanQtyChange(qtyEl.value);
+    };
+
+    window._invtScanQtyChange = function(val) {
+        if (!window._invtSession || !window._invtScanCurrentPid) return;
+        var qty = parseFloat(val) || 0;
+        window._invtSession.counts[window._invtScanCurrentPid] = qty;
+        var cntEl = document.getElementById('invt-scan-counted');
+        if (cntEl) cntEl.textContent = qty;
+        clearTimeout(window._invtScanAutoReset);
+        window._invtScanAutoReset = setTimeout(function(){ window._invtScanResetToReady(); }, 12000);
+    };
+
+    window._invtScanConfirm = function() {
+        if (!window._invtSession || !window._invtScanCurrentPid) return;
+        var qtyEl = document.getElementById('invt-scan-qty');
+        var qty = parseFloat(qtyEl ? qtyEl.value : 0) || 0;
+        window._invtSession.counts[window._invtScanCurrentPid] = qty;
+        var resultEl = document.getElementById('invt-scan-result');
+        if (resultEl) {
+            resultEl.style.background = 'rgba(255,255,255,0.25)';
+            setTimeout(function(){ resultEl.style.background = ''; }, 200);
+        }
+        if (typeof showScanToast === 'function') showScanToast('✅ Comptage enregistré', 'success');
+        window._invtScanResetToReady();
+        _invtRenderProductList();
+    };
+
+    window.invtScanOne = function() {
+        if (!window._invtSession) return;
+        var inp = document.getElementById('invt-scan-input');
+        var barcode = inp ? inp.value.trim() : '';
+        if (!barcode) return;
+        if (inp) inp.value = '';
+        var prods = typeof products !== 'undefined' ? products : [];
+        var found = prods.find(function(p){
+            return p.barcode && p.barcode.toLowerCase() === barcode.toLowerCase();
+        });
+        if (found) {
+            _invtOpenScanForProduct(found);
+            if (typeof playBeep === 'function') playBeep();
+        } else {
+            if (typeof showScanToast === 'function') showScanToast('⚠️ Code-barre inconnu : ' + barcode, 'warning');
+        }
+    };
+
+    // ===================================================================
+    // ===== MODAL DÉTAIL HISTORIQUE INVENTAIRE ==========================
+    // ===================================================================
+
+    window._invtHistData = [];
+
+    window._invtShowDetail = function(idx) {
+        var inventaires = window._invtHistData;
+        if (!inventaires || !inventaires[idx]) {
+            inventaires = JSON.parse(localStorage.getItem('covo_inventaires') || '[]');
+        }
+        var inv = inventaires[idx];
+        if (!inv) return;
+        var prods  = typeof products !== 'undefined' ? products : [];
+        var counts = inv.counts || {};
+        var snap   = inv.stockSnapshot || {};
+        var dt     = inv.date ? new Date(inv.date).toLocaleString('fr-FR') : '—';
+
+        // En-tête
+        var titleEl = document.getElementById('invt-detail-title');
+        var metaEl  = document.getElementById('invt-detail-meta');
+        if (titleEl) titleEl.textContent = '📋 Inventaire du ' + dt;
+        if (metaEl)  metaEl.textContent  = (inv.counted || 0) + ' article(s) compté(s) sur ' + (inv.total || 0) + (inv.caissier ? ' · par ' + inv.caissier : '');
+
+        var bodyEl = document.getElementById('invt-detail-body');
+        if (!bodyEl) return;
+        var ids = Object.keys(counts);
+        if (ids.length === 0) {
+            bodyEl.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray,#888);font-size:0.82rem;">Aucun article comptabilisé</div>';
+        } else {
+            // Trier par nom de produit
+            ids.sort(function(a, b) {
+                var pa = prods.find(function(x){ return String(x.id) === a; });
+                var pb = prods.find(function(x){ return String(x.id) === b; });
+                return ((pa ? pa.name : a) || '').localeCompare((pb ? pb.name : b) || '');
+            });
+            bodyEl.innerHTML = ids.map(function(id) {
+                var p       = prods.find(function(x){ return String(x.id) === id; });
+                var name    = p ? (p.name || 'Article #' + id) : 'Article #' + id;
+                var cat     = p ? (p.category || '—') : '—';
+                var unit    = p && p.unitType === 'kg' ? ' kg' : ' u.';
+                var counted = counts[id];
+                // Stock au moment de l'inventaire (stockSnapshot si dispo, sinon stock actuel)
+                var stockRef = snap[id] != null ? snap[id] : (p ? (p.stock || 0) : null);
+                var diff     = stockRef != null ? (counted - stockRef) : null;
+                var diffStr  = diff != null ? (diff >= 0 ? '+' + diff : String(diff)) : '?';
+                var diffClr  = diff == null ? '#888' : (diff > 0 ? '#27ae60' : diff < 0 ? '#e74c3c' : '#888');
+                var diffBg   = diff == null ? 'rgba(128,128,128,0.08)' : (diff > 0 ? 'rgba(39,174,96,0.1)' : diff < 0 ? 'rgba(231,76,60,0.1)' : 'rgba(128,128,128,0.08)');
+
+                return '<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;'
+                     + 'background:var(--bg-body,#f4f7f6);border-radius:9px;">'
+                     +   '<div style="flex:1;min-width:0;">'
+                     +     '<div style="font-weight:700;font-size:0.84rem;color:var(--text-main,#2c3e50);">' + name + '</div>'
+                     +     '<div style="font-size:0.7rem;color:var(--gray,#888);">' + cat + '</div>'
+                     +   '</div>'
+                     +   '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:2px;">'
+                     +     '<div style="font-size:0.88rem;font-weight:900;color:var(--text-main,#2c3e50);">' + counted + unit + '</div>'
+                     +     '<div style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:10px;background:' + diffBg + ';color:' + diffClr + ';">'
+                     +       diffStr + (stockRef != null ? ' vs ' + stockRef + unit : ' (écart inconnu)')
+                     +     '</div>'
+                     +   '</div>'
+                     + '</div>';
+            }).join('');
+        }
+
+        var modal = document.getElementById('invt-detail-modal');
+        if (modal) modal.style.display = 'flex';
+    };
+
 
 })();
 
