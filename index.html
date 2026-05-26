@@ -329,7 +329,10 @@ const _store = {
         }
         #qmsg-editor:focus { border-color: var(--qmsg-tab-active-color, #1a73e8); box-shadow: 0 0 0 3px rgba(26,115,232,0.1); }
         #qmsg-fmt-bar button:hover { filter: brightness(0.93); }
-        #qmsg-pane-compose select option { background: var(--qmsg-card-bg, #fff); color: var(--qmsg-text, #1e2d3d); }
+        #qmsg-pane-compose select option { background: var(--bg-card, #fff); color: var(--text-main, #1e2d3d); }
+        body.dark-mode select option { background: #1e1e1e; color: #f0f0f0; }
+        body.dark-mode select option:hover,
+        body.dark-mode select option:checked { background: #2a2a2a; color: #fff; }
         /* Header banners — dark mode selects */
         body.dark-mode .stats-header-banner select,
         body.dark-mode #tab-workhours .stats-header-banner select {
@@ -6320,6 +6323,54 @@ button, .btn, .retours-btn {
             <div style="font-size:0.8rem; color:#666; margin-bottom:15px; padding:5px; background:#f0f8ff; border-radius:4px;">
                 💡 Note: Les fichiers (tickets et sauvegardes) seront téléchargés dans le dossier sélectionné lors de chaque vente.
             </div>
+            <!-- Rotation des sauvegardes locales -->
+            <div id="backup-rotation-panel" style="margin-top:14px;border:1.5px solid #e0e0e0;border-radius:10px;overflow:hidden;">
+              <div style="background:#111;color:#fff;padding:10px 16px;display:flex;align-items:center;gap:8px;">
+                <span style="font-size:1.1rem;">&#x1F504;</span>
+                <span style="font-weight:900;font-size:0.92rem;">Rotation des sauvegardes locales</span>
+                <span id="bkp-rot-badge" style="margin-left:auto;font-size:0.7rem;background:rgba(255,255,255,0.15);padding:2px 10px;border-radius:12px;font-weight:700;"></span>
+              </div>
+              <div style="padding:14px 16px;background:#fafafa;display:flex;flex-direction:column;gap:11px;">
+                <div>
+                  <div style="font-size:0.65rem;font-weight:800;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px;">Durée de conservation des fichiers .json</div>
+                  <div style="display:flex;gap:7px;">
+                    <button id="bkp-rot-w1" onclick="window._backupRotation.setWeeks(1)"
+                      style="flex:1;padding:10px 4px;border:1.5px solid #ccc;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:800;">
+                      🗓 1 semaine
+                    </button>
+                    <button id="bkp-rot-w2" onclick="window._backupRotation.setWeeks(2)"
+                      style="flex:1;padding:10px 4px;border:1.5px solid #ccc;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:800;">
+                      🗓 2 semaines
+                    </button>
+                    <button id="bkp-rot-w3" onclick="window._backupRotation.setWeeks(3)"
+                      style="flex:1;padding:10px 4px;border:1.5px solid #ccc;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:800;">
+                      🗓 3 semaines
+                    </button>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:#f0f8ff;border-radius:7px;border:1px solid #cce5ff;">
+                  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.82rem;font-weight:700;color:#1a5276;">
+                    <input type="checkbox" id="bkp-rot-auto" onchange="window._backupRotation.setAuto(this.checked)"
+                      style="width:16px;height:16px;cursor:pointer;">
+                    Nettoyage automatique après chaque sauvegarde
+                  </label>
+                </div>
+                <div id="bkp-rot-status" style="font-size:0.75rem;color:#888;font-style:italic;min-height:16px;">
+                  Aucun nettoyage effectué.
+                </div>
+                <div style="display:flex;gap:8px;">
+                  <button onclick="window._backupRotation.run(false)"
+                    style="flex:1;padding:9px 10px;background:#111;color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.84rem;cursor:pointer;">
+                    🧹 Nettoyer maintenant
+                  </button>
+                  <button onclick="window._backupRotation.scan()"
+                    style="padding:9px 16px;background:#f4f4f4;color:#111;border:1.5px solid #ccc;border-radius:8px;font-weight:700;font-size:0.82rem;cursor:pointer;">
+                    🔍 Analyser
+                  </button>
+                </div>
+                <div id="bkp-rot-scan-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:180px;overflow-y:auto;"></div>
+              </div>
+            </div>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
                 <button onclick="exportData()" style="background:var(--excel); color:white;">
                     📥 Exporter données
@@ -6657,6 +6708,168 @@ button, .btn, .retours-btn {
                 if (typeof origToggle === 'function') origToggle(id);
                 if (id === 'admin-sec-10-body') setTimeout(_admBkpRefresh, 80);
             };
+
+
+            // ═══ Rotation des sauvegardes locales ═══
+            window._backupRotation = {
+                _key: 'covo_backup_rotation',
+
+                get: function() {
+                    try { return JSON.parse(localStorage.getItem(this._key) || '{}'); }
+                    catch(e) { return {}; }
+                },
+
+                save: function(patch) {
+                    var cfg = Object.assign(this.get(), patch);
+                    localStorage.setItem(this._key, JSON.stringify(cfg));
+                    this.renderUI();
+                },
+
+                setWeeks: function(w) { this.save({ weeks: w }); },
+                setAuto:  function(v) { this.save({ autoClean: v }); },
+
+                renderUI: function() {
+                    var cfg = this.get();
+                    var weeks = cfg.weeks || 1;
+                    var auto  = cfg.autoClean !== false;
+                    [1, 2, 3].forEach(function(w) {
+                        var btn = document.getElementById('bkp-rot-w' + w);
+                        if(!btn) return;
+                        if(w === weeks) {
+                            btn.style.background = '#111'; btn.style.color = '#fff'; btn.style.borderColor = '#111';
+                        } else {
+                            btn.style.background = '#f4f4f4'; btn.style.color = '#111'; btn.style.borderColor = '#ccc';
+                        }
+                    });
+                    var cb = document.getElementById('bkp-rot-auto');
+                    if(cb) cb.checked = auto;
+                    var badge = document.getElementById('bkp-rot-badge');
+                    if(badge) badge.textContent = weeks + (weeks === 1 ? ' semaine' : ' semaines');
+                    var st = document.getElementById('bkp-rot-status');
+                    if(st) {
+                        if(cfg.lastRun) {
+                            var d = new Date(cfg.lastRun);
+                            st.textContent = 'Dernier nettoyage : ' + d.toLocaleString('fr-FR')
+                                + (cfg.lastCount !== undefined ? ' — ' + cfg.lastCount + ' fichier(s) supprimé(s)' : '');
+                        } else {
+                            st.textContent = 'Aucun nettoyage effectué.';
+                        }
+                    }
+                },
+
+                scan: async function() {
+                    var resEl = document.getElementById('bkp-rot-scan-result');
+                    if(!resEl) return;
+                    if(!window.selectedDirectoryHandle) {
+                        resEl.style.display = 'block';
+                        resEl.innerHTML = '<span style="color:#e74c3c;">⚠ Aucun dossier sélectionné. Choisissez d’abord un dossier.</span>';
+                        return;
+                    }
+                    var cfg   = this.get();
+                    var weeks = cfg.weeks || 1;
+                    var cutoff = Date.now() - weeks * 7 * 24 * 3600 * 1000;
+                    var files = [];
+                    try {
+                        for await (var entry of window.selectedDirectoryHandle.values()) {
+                            if(entry.kind !== 'file') continue;
+                            if(!/^covo_backup_.*\.json$/.test(entry.name)) continue;
+                            var fd = this._parseDate(entry.name);
+                            if(!fd) {
+                                try { var fi = await entry.getFile(); fd = new Date(fi.lastModified); } catch(e) {}
+                            }
+                            files.push({ name: entry.name, date: fd, old: fd && fd.getTime() < cutoff });
+                        }
+                    } catch(e) {
+                        resEl.style.display = 'block';
+                        resEl.innerHTML = '<span style="color:#e74c3c;">Erreur : ' + e.message + '</span>';
+                        return;
+                    }
+                    if(!files.length) {
+                        resEl.style.display = 'block';
+                        resEl.innerHTML = '<em style="color:#888;">Aucun fichier covo_backup_*.json trouvé.</em>';
+                        return;
+                    }
+                    files.sort(function(a,b){ return (b.date||0) - (a.date||0); });
+                    var oldCount = files.filter(function(f){ return f.old; }).length;
+                    var html = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
+                        + files.length + ' fichier(s) — <span style="color:#dc2626;">' + oldCount + ' à supprimer</span></div>';
+                    files.forEach(function(f) {
+                        var col  = f.old ? '#dc2626' : '#16a34a';
+                        var icon = f.old ? '🗑' : '✅';
+                        html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
+                            + '<span>' + icon + '</span>'
+                            + '<span style="flex:1;font-family:monospace;font-size:0.74rem;color:' + col + ';">' + f.name + '</span>'
+                            + '<span style="font-size:0.7rem;color:#888;">'
+                            + (f.date ? f.date.toLocaleDateString('fr-FR') : '?') + '</span>'
+                            + '</div>';
+                    });
+                    resEl.style.display = 'block';
+                    resEl.innerHTML = html;
+                },
+
+                run: async function(silent) {
+                    if(!window.selectedDirectoryHandle) {
+                        if(!silent && typeof showScanToast === 'function')
+                            showScanToast('⚠️ Sélectionnez d’abord un dossier', 'warning');
+                        return 0;
+                    }
+                    var cfg    = this.get();
+                    var weeks  = cfg.weeks || 1;
+                    var cutoff = Date.now() - weeks * 7 * 24 * 3600 * 1000;
+                    var deleted = 0, names = [];
+                    try {
+                        for await (var entry of window.selectedDirectoryHandle.values()) {
+                            if(entry.kind !== 'file') continue;
+                            if(!/^covo_backup_.*\.json$/.test(entry.name)) continue;
+                            names.push(entry.name);
+                        }
+                        for(var i = 0; i < names.length; i++) {
+                            var nm = names[i];
+                            var fd = this._parseDate(nm);
+                            if(!fd) {
+                                try {
+                                    var fh = await window.selectedDirectoryHandle.getFileHandle(nm);
+                                    var fi = await fh.getFile();
+                                    fd = new Date(fi.lastModified);
+                                } catch(e) { continue; }
+                            }
+                            if(fd.getTime() < cutoff) {
+                                try { await window.selectedDirectoryHandle.removeEntry(nm); deleted++; }
+                                catch(e) {}
+                            }
+                        }
+                    } catch(e) { console.error('backup rotation:', e); }
+                    this.save({ lastRun: new Date().toISOString(), lastCount: deleted });
+                    var scanEl = document.getElementById('bkp-rot-scan-result');
+                    if(scanEl && scanEl.style.display !== 'none') this.scan();
+                    if(!silent && typeof showScanToast === 'function')
+                        showScanToast('🧹 ' + deleted + ' fichier(s) supprimé(s) — rétention : ' + weeks + ' semaine(s)', 'success');
+                    return deleted;
+                },
+
+                autoRun: async function() {
+                    var cfg = this.get();
+                    if(cfg.autoClean !== false) await this.run(true);
+                },
+
+                _parseDate: function(name) {
+                    var m = name.match(/^covo_backup_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})\.json$/);
+                    if(!m) return null;
+                    try { return new Date(m[1] + 'T' + m[2].replace(/-/g, ':')); }
+                    catch(e) { return null; }
+                }
+            };
+
+            (function() {
+                function _initRotUI() {
+                    if(document.getElementById('bkp-rot-w1')) window._backupRotation.renderUI();
+                }
+                if(document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', function(){ setTimeout(_initRotUI, 300); });
+                } else {
+                    setTimeout(_initRotUI, 300);
+                }
+            })();
 
             // Init
             if (document.readyState === 'loading') {
@@ -23012,6 +23225,7 @@ logout = function(skipConfirmation = false) {
 
         if (saved) {
             showScanToast(`✅ Sauvegarde complète enregistrée dans le dossier sélectionné`, 'success');
+            if(typeof window._backupRotation !== 'undefined') window._backupRotation.autoRun();
         } else {
             // Blob créé seulement si nécessaire
             const blob = new Blob([content], { type: 'application/json' });
@@ -35283,6 +35497,20 @@ function initAdminSections() {
         await _gdDoSave();
         _gdClearDriveDirty();
         showScanToast('✅ Sauvegarde Google Drive effectuée · 📁 ' + _gdFolderName, 'success');
+        // Mise à jour du panneau admin après sync
+        setTimeout(function() {
+            try {
+                var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
+                var lastSaveEl = document.getElementById('aw-drive-last-save');
+                if (lastSaveEl) {
+                    var ts = gdState.lastSave || new Date().toISOString();
+                    lastSaveEl.textContent = '⏱ Dernière sauvegarde : ' + new Date(ts).toLocaleString('fr-FR');
+                }
+                if (typeof awLoadBackupList === 'function') {
+                    awLoadBackupList(gdState.connected, gdState);
+                }
+            } catch(e) { console.warn('gdriveSaveNow admin refresh:', e); }
+        }, 1200);
     };
 
     // ---- Sauvegarde périodique de secours toutes les 10 min (fallback si debounce raté) ----
@@ -36739,16 +36967,16 @@ function initAdminSections() {
         var font     = opts.font  || '"Courier New",Courier,monospace';
         var sizeKey  = opts.size  || 'normal';
         var weightKey= opts.weight|| 'bold';
-        var fmt      = opts.format || '80mm';
-        var fmt80    = (fmt === '80mm');
-        var fmt57    = (fmt === '57mm');
-        var fmtA4    = (fmt === 'a4');
+        var fmtKey   = opts.format || '80mm';
+        var fmt80    = (fmtKey === '80mm');
+        var fmt57    = (fmtKey === '57mm');
+        var fmtA4    = (fmtKey === 'a4');
         // custom format : {w,h} en mm depuis covo_print_formats
         var fmtCustom = null;
         if(!fmt80 && !fmt57 && !fmtA4){
             try{
                 var _cfmts=JSON.parse(localStorage.getItem('covo_print_formats')||'[]');
-                fmtCustom=_cfmts.find(function(f){return f.id===fmt;})||null;
+                fmtCustom=_cfmts.find(function(f){return f.id===fmtKey;})||null;
             }catch(e){}
         }
 
@@ -36866,16 +37094,25 @@ function initAdminSections() {
 
     // ── Modal config + impression ─────────────────────────────────────────────
     window._clotPrintTicket = function(id) {
-        if(!id)return;
-        var hist=typeof _loadCaisseHistorique==='function'?_loadCaisseHistorique():[];
-        var h=hist.find(function(e){return e.id===id;});
-        if(!h){if(typeof showScanToast==='function')showScanToast('❌ Clôture introuvable','error');return;}
-        window._clotPrintH=h;
-        var modal=document.getElementById('clot-print-cfg-modal');
-        if(!modal){_clotDoPrint();return;}
-        _clotPrintCfgSetUI(window._clotPrintOpts);
-        _clotPrintCfgUpdatePreview();
-        modal.style.display='flex';
+        if(!id) return;
+        var hist = typeof _loadCaisseHistorique==='function' ? _loadCaisseHistorique() : [];
+        var h = hist.find(function(e){ return e.id===id; });
+        if(!h) {
+            if(typeof showScanToast==='function') showScanToast('â ClÃ´ture introuvable','error');
+            return;
+        }
+        window._clotPrintH = h;
+        var modal = document.getElementById('clot-print-cfg-modal');
+        // Si pas de modal config, imprimer directement
+        if(!modal) { _clotDoPrint(); return; }
+        // Ouvrir le modal EN PREMIER (avant tout calcul qui pourrait planter)
+        modal.style.display = 'flex';
+        // Initialiser l'UI en sÃ©curitÃ©
+        try { _clotPrintCfgSetUI(window._clotPrintOpts || {}); } catch(e) { console.warn('SetUI:', e); }
+        // Mettre Ã  jour l'aperÃ§u aprÃ¨s un tick (iframe visible)
+        setTimeout(function() {
+            try { _clotPrintCfgUpdatePreview(); } catch(e) { console.warn('Preview:', e); }
+        }, 80);
     };
 
     window._clotPrintCfgSetUI = function(opts) {
@@ -36914,13 +37151,14 @@ function initAdminSections() {
     };
 
     window._clotPrintCfgUpdatePreview = function() {
-        var h=window._clotPrintH;
-        if(!h)return;
-        var html=window._clotBuildTicketHTML(h,window._clotPrintOpts);
-        var iframe=document.getElementById('clot-print-preview');
-        if(!iframe)return;
-        try{iframe.contentDocument.open();iframe.contentDocument.write(html);iframe.contentDocument.close();}
-        catch(e){iframe.srcdoc=html;}
+        var h = window._clotPrintH;
+        if(!h) return;
+        var html;
+        try { html = window._clotBuildTicketHTML(h, window._clotPrintOpts || {}); }
+        catch(e) { console.error('buildTicketHTML:', e); return; }
+        var iframe = document.getElementById('clot-print-preview');
+        if(!iframe) return;
+        iframe.srcdoc = html;
     };
 
     // ── Formats papier personnalisés ────────────────────────────────────────
@@ -36981,57 +37219,59 @@ function initAdminSections() {
     window._clotDoPrint = function() {
         var h = window._clotPrintH;
         if(!h) return;
-        var tHTML = window._clotBuildTicketHTML(h, window._clotPrintOpts);
+        var tHTML;
+        try { tHTML = window._clotBuildTicketHTML(h, window._clotPrintOpts || {}); }
+        catch(e) { console.error('buildTicketHTML:', e); return; }
 
         // Fermer le modal config
         var cfgModal = document.getElementById('clot-print-cfg-modal');
         if(cfgModal) cfgModal.style.display = 'none';
 
-        // Tenter popup (peut Ãªtre bloquÃ© par le navigateur)
-        var win = null;
-        try { win = window.open('', '_blank', 'width=520,height=740,toolbar=0,menubar=0,scrollbars=1'); } catch(e) {}
+        // Overlay plein ecran
+        var old = document.getElementById('_clot_pframe_overlay');
+        if(old) old.remove();
 
-        if(win && !win.closed) {
-            // Popup acceptÃ©e
-            var pHTML = tHTML.replace('<\/body><\/html>',
-                '<scr'+'ipt>setTimeout(function(){window.print();},400);<\/sc'+'ript><\/body><\/html>');
-            win.document.open();
-            win.document.write(pHTML);
-            win.document.close();
-        } else {
-            // Fallback : panneau plein Ã©cran (pas de popup bloquÃ©)
-            var old = document.getElementById('_clot_pframe_overlay');
-            if(old) old.remove();
+        var overlay = document.createElement('div');
+        overlay.id = '_clot_pframe_overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#e8e8e8;display:flex;flex-direction:column;';
 
-            var overlay = document.createElement('div');
-            overlay.id = '_clot_pframe_overlay';
-            overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:#fff;display:flex;flex-direction:column;';
+        var bar = document.createElement('div');
+        bar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 16px;background:#111;color:#fff;flex-shrink:0;font-family:Arial,sans-serif;';
+        bar.innerHTML =
+            '<span style="font-weight:900;font-size:0.95rem;flex:1;">🖨️ Aperçu du ticket</span>'
+            + '<button id="_clot_do_print_btn" style="padding:9px 24px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.9rem;cursor:pointer;">🖨️ Imprimer</button>'
+            + '<button id="_clot_close_prev_btn" style="padding:9px 16px;background:rgba(255,255,255,0.18);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:8px;font-weight:700;cursor:pointer;">✕ Fermer</button>';
+        overlay.appendChild(bar);
 
-            var bar = document.createElement('div');
-            bar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 16px;background:#111;color:#fff;flex-shrink:0;';
-            bar.innerHTML = '<span style="font-weight:900;font-size:0.95rem;flex:1;">ð¨ï¸ AperÃ§u du ticket<\/span>'
-                + '<button id="_clot_do_print_btn" style="padding:8px 22px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.9rem;cursor:pointer;">ð¨ï¸ Imprimer<\/button>'
-                + '<button onclick="document.getElementById(\'_clot_pframe_overlay\').remove()" style="padding:8px 16px;background:rgba(255,255,255,0.15);color:#fff;border:1px solid rgba(255,255,255,0.3);border-radius:8px;font-weight:700;cursor:pointer;">\u2715 Fermer<\/button>';
-            overlay.appendChild(bar);
+        var center = document.createElement('div');
+        center.style.cssText = 'flex:1;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto;';
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText = 'width:340px;min-height:500px;border:none;background:white;box-shadow:0 4px 24px rgba(0,0,0,0.2);border-radius:4px;';
+        center.appendChild(iframe);
+        overlay.appendChild(center);
+        document.body.appendChild(overlay);
 
-            var iframe = document.createElement('iframe');
-            iframe.style.cssText = 'flex:1;border:none;width:100%;background:#e8e8e8;';
-            overlay.appendChild(iframe);
-            document.body.appendChild(overlay);
+        // Charger via srcdoc - aucun probleme d'origine
+        iframe.srcdoc = tHTML;
 
-            try {
-                iframe.contentDocument.open();
-                iframe.contentDocument.write(tHTML);
-                iframe.contentDocument.close();
-            } catch(e) {
-                iframe.srcdoc = tHTML;
+        // Bouton Imprimer - ouvre un blob dans un nouvel onglet et imprime
+        document.getElementById('_clot_do_print_btn').addEventListener('click', function() {
+            var printHTML = tHTML.replace('<\/body><\/html>',
+                '<scr'+'ipt>window.onload=function(){setTimeout(function(){window.print();},350);}<\/sc'+'ript><\/body><\/html>');
+            var blob = new Blob([printHTML], {type: 'text/html'});
+            var url  = URL.createObjectURL(blob);
+            var win  = window.open(url, '_blank');
+            if(!win) {
+                // Popup bloque : imprimer l'iframe directement
+                iframe.focus();
+                try { iframe.contentWindow.print(); } catch(e) {}
             }
+            setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+        });
 
-            document.getElementById('_clot_do_print_btn').onclick = function() {
-                try { iframe.contentWindow.print(); }
-                catch(e) { window.print(); }
-            };
-        }
+        document.getElementById('_clot_close_prev_btn').addEventListener('click', function() {
+            overlay.remove();
+        });
     };
 
 
@@ -37829,12 +38069,12 @@ function initAdminSections() {
                 <button id="btn-print-a4" onclick="_clotPrintCfgSet('format','a4')" style="flex:1;min-width:50px;padding:7px 4px;border:1.5px solid #ccc;border-radius:7px;cursor:pointer;font-size:0.74rem;font-weight:700;background:#f4f4f4;color:#111;">A4</button>
               </div>
               <div id="custom-format-list" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;"></div>
-              <div style="margin-top:9px;padding:8px;background:#f9f9f9;border-radius:8px;border:1px dashed #ccc;">
-                <div style="font-size:0.6rem;font-weight:800;color:#888;text-transform:uppercase;margin-bottom:6px;">Ajouter un format</div>
+              <div style="margin-top:9px;padding:8px;background:#2a2a2a;border-radius:8px;border:1px dashed #555;">
+                <div style="font-size:0.6rem;font-weight:800;color:#aaa;text-transform:uppercase;margin-bottom:6px;">Ajouter un format</div>
                 <div style="display:flex;gap:4px;align-items:center;">
-                  <input id="fmt-w-input" type="number" placeholder="L" min="20" max="400" style="width:44px;padding:5px 3px;border:1.5px solid #ccc;border-radius:6px;font-size:0.8rem;font-weight:700;text-align:center;color:#111;">
-                  <span style="font-size:0.85rem;font-weight:900;color:#888;">Ã</span>
-                  <input id="fmt-h-input" type="number" placeholder="H" min="10" max="600" style="width:44px;padding:5px 3px;border:1.5px solid #ccc;border-radius:6px;font-size:0.8rem;font-weight:700;text-align:center;color:#111;">
+                  <input id="fmt-w-input" type="number" placeholder="L" min="20" max="400" style="width:44px;padding:5px 3px;border:1.5px solid #555;border-radius:6px;font-size:0.8rem;font-weight:700;text-align:center;color:#fff;background:#333;">
+                  <span style="font-size:0.85rem;font-weight:900;color:#aaa;">×</span>
+                  <input id="fmt-h-input" type="number" placeholder="H" min="10" max="600" style="width:44px;padding:5px 3px;border:1.5px solid #555;border-radius:6px;font-size:0.8rem;font-weight:700;text-align:center;color:#fff;background:#333;">
                   <span style="font-size:0.65rem;color:#aaa;font-weight:600;">mm</span>
                   <button onclick="_clotAddCustomFormat()" style="flex:1;padding:6px 5px;background:#111;color:#fff;border:none;border-radius:6px;font-size:0.8rem;font-weight:800;cursor:pointer;">+ OK</button>
                 </div>
