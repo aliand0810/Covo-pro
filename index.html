@@ -6201,6 +6201,48 @@ button, .btn, .retours-btn {
                 <div id="gdrive-account-info" style="display:none; font-size:0.8rem; color:#2e7d32; padding:6px 10px; background:#c8e6c9; border-radius:6px; margin-top:6px;">
                     <span id="gdrive-user-email"></span>
                 </div>
+
+                <!-- ===== Rotation sauvegardes Drive ===== -->
+                <div id="gd-rot-section" style="margin-top:12px;background:#f8f9fa;border:1.5px solid #dee2e6;border-radius:10px;padding:12px 14px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <span style="font-weight:800;font-size:0.85rem;color:#1565c0;">&#128260; Rotation des sauvegardes Drive</span>
+                    <span id="gd-rot-badge" style="background:#1565c0;color:#fff;font-size:0.7rem;font-weight:800;padding:2px 9px;border-radius:12px;">1 semaine</span>
+                  </div>
+                  <div style="display:flex;gap:6px;margin-bottom:8px;">
+                    <button id="gd-rot-w1" onclick="window._gdBackupRotation && window._gdBackupRotation.setWeeks(1)"
+                      style="flex:1;padding:8px 4px;border:1.5px solid #1565c0;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:800;background:#1565c0;color:#fff;">
+                      &#128197; 1 semaine
+                    </button>
+                    <button id="gd-rot-w2" onclick="window._gdBackupRotation && window._gdBackupRotation.setWeeks(2)"
+                      style="flex:1;padding:8px 4px;border:1.5px solid #ccc;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:800;background:#f4f4f4;color:#111;">
+                      &#128197; 2 semaines
+                    </button>
+                    <button id="gd-rot-w3" onclick="window._gdBackupRotation && window._gdBackupRotation.setWeeks(3)"
+                      style="flex:1;padding:8px 4px;border:1.5px solid #ccc;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:800;background:#f4f4f4;color:#111;">
+                      &#128197; 3 semaines
+                    </button>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:#e3f2fd;border-radius:7px;border:1px solid #bbdefb;margin-bottom:8px;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.82rem;font-weight:700;color:#0d47a1;">
+                      <input type="checkbox" id="gd-rot-auto" onchange="window._gdBackupRotation && window._gdBackupRotation.setAuto(this.checked)"
+                        style="width:16px;height:16px;cursor:pointer;">
+                      Nettoyage automatique après chaque Sync Drive
+                    </label>
+                  </div>
+                  <div id="gd-rot-status" style="font-size:0.75rem;color:#888;font-style:italic;min-height:16px;margin-bottom:8px;">Aucun nettoyage effectué.</div>
+                  <div style="display:flex;gap:8px;">
+                    <button onclick="window._gdBackupRotation && window._gdBackupRotation.run(false)"
+                      style="flex:1;padding:9px 10px;background:#1565c0;color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.84rem;cursor:pointer;">
+                      &#129529; Nettoyer Drive maintenant
+                    </button>
+                    <button onclick="window._gdBackupRotation && window._gdBackupRotation.scan()"
+                      style="padding:9px 16px;background:#f4f4f4;color:#111;border:1.5px solid #ccc;border-radius:8px;font-weight:700;font-size:0.82rem;cursor:pointer;">
+                      &#128269; Analyser
+                    </button>
+                  </div>
+                  <div id="gd-rot-scan-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:180px;overflow-y:auto;margin-top:8px;"></div>
+                </div>
+
             </div>
             <script>
             /* ===== GDrive Backup Config (core) ===== */
@@ -6877,6 +6919,166 @@ button, .btn, .retours-btn {
             } else {
                 setTimeout(_admBkpRefresh, 200);
             }
+
+            // ═══════════════════════════════════════════════════
+            // Rotation sauvegardes Google Drive
+            // ═══════════════════════════════════════════════════
+            window._gdBackupRotation = {
+                _key: 'covo_gd_backup_rotation',
+
+                get: function() {
+                    try { return JSON.parse(localStorage.getItem(this._key) || '{}'); }
+                    catch(e) { return {}; }
+                },
+
+                save: function(patch) {
+                    var cfg = Object.assign(this.get(), patch);
+                    localStorage.setItem(this._key, JSON.stringify(cfg));
+                    this.renderUI();
+                },
+
+                setWeeks: function(w) { this.save({ weeks: w }); },
+                setAuto:  function(v) { this.save({ autoClean: v }); },
+
+                renderUI: function() {
+                    var cfg = this.get();
+                    var weeks = cfg.weeks || 1;
+                    var auto  = cfg.autoClean !== false;
+                    [1, 2, 3].forEach(function(w) {
+                        var btn = document.getElementById('gd-rot-w' + w);
+                        if (!btn) return;
+                        if (w === weeks) {
+                            btn.style.background = '#1565c0'; btn.style.color = '#fff'; btn.style.borderColor = '#1565c0';
+                        } else {
+                            btn.style.background = '#f4f4f4'; btn.style.color = '#111'; btn.style.borderColor = '#ccc';
+                        }
+                    });
+                    var cb = document.getElementById('gd-rot-auto');
+                    if (cb) cb.checked = auto;
+                    var badge = document.getElementById('gd-rot-badge');
+                    if (badge) badge.textContent = weeks + (weeks === 1 ? ' semaine' : ' semaines');
+                    var st = document.getElementById('gd-rot-status');
+                    if (st) {
+                        var cfg2 = this.get();
+                        if (cfg2.lastRun) {
+                            var d = new Date(cfg2.lastRun);
+                            st.textContent = 'Dernier nettoyage : ' + d.toLocaleString('fr-FR')
+                                + (cfg2.lastCount !== undefined ? ' — ' + cfg2.lastCount + ' fichier(s) supprimé(s)' : '');
+                        } else {
+                            st.textContent = 'Aucun nettoyage effectué.';
+                        }
+                    }
+                },
+
+                _listOldFiles: async function() {
+                    var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
+                    if (!gdState.connected || !gdState.folderId) return null;
+                    var fetchFn = window._gdFetchPublic || window.fetch;
+                    var q = encodeURIComponent(
+                        "'" + gdState.folderId + "' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'"
+                    );
+                    var resp = await fetchFn(
+                        'https://www.googleapis.com/drive/v3/files?q=' + q
+                        + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500'
+                    );
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    var data = await resp.json();
+                    var files = data.files || [];
+                    var cfg = this.get();
+                    var weeks = cfg.weeks || 1;
+                    var cutoff = Date.now() - weeks * 7 * 24 * 3600 * 1000;
+                    files.forEach(function(f) {
+                        f._date = new Date(f.modifiedTime);
+                        f._old  = f._date.getTime() < cutoff;
+                    });
+                    return files;
+                },
+
+                scan: async function() {
+                    var resEl = document.getElementById('gd-rot-scan-result');
+                    if (!resEl) return;
+                    var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
+                    if (!gdState.connected) {
+                        resEl.style.display = 'block';
+                        resEl.innerHTML = '<span style="color:#e74c3c;">⚠ Google Drive non connecté.</span>';
+                        return;
+                    }
+                    resEl.style.display = 'block';
+                    resEl.innerHTML = '<em style="color:#888;">⏳ Analyse en cours…</em>';
+                    try {
+                        var files = await this._listOldFiles();
+                        if (!files || !files.length) {
+                            resEl.innerHTML = '<em style="color:#888;">Aucun fichier covo_backup_*.json trouvé sur Drive.</em>';
+                            return;
+                        }
+                        var oldCount = files.filter(function(f){ return f._old; }).length;
+                        var html = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
+                            + files.length + ' fichier(s) — <span style="color:#dc2626;">' + oldCount + ' à supprimer</span></div>';
+                        files.forEach(function(f) {
+                            var col  = f._old ? '#dc2626' : '#16a34a';
+                            var icon = f._old ? '🗑' : '✅';
+                            html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
+                                + '<span>' + icon + '</span>'
+                                + '<span style="flex:1;font-family:monospace;font-size:0.74rem;color:' + col + ';">' + f.name + '</span>'
+                                + '<span style="font-size:0.7rem;color:#888;">' + (f._date ? f._date.toLocaleDateString('fr-FR') : '?') + '</span>'
+                                + '</div>';
+                        });
+                        resEl.innerHTML = html;
+                    } catch(e) {
+                        resEl.innerHTML = '<span style="color:#e74c3c;">Erreur : ' + e.message + '</span>';
+                    }
+                },
+
+                run: async function(silent) {
+                    var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
+                    if (!gdState.connected) {
+                        if (!silent && typeof showScanToast === 'function')
+                            showScanToast('⚠️ Google Drive non connecté', 'warning');
+                        return 0;
+                    }
+                    var fetchFn = window._gdFetchPublic || window.fetch;
+                    var deleted = 0;
+                    try {
+                        var files = await this._listOldFiles();
+                        if (!files) return 0;
+                        var oldFiles = files.filter(function(f){ return f._old; });
+                        for (var i = 0; i < oldFiles.length; i++) {
+                            try {
+                                var delResp = await fetchFn(
+                                    'https://www.googleapis.com/drive/v3/files/' + oldFiles[i].id,
+                                    { method: 'DELETE' }
+                                );
+                                if (delResp.status === 204 || delResp.ok) deleted++;
+                            } catch(e) { console.warn('GD rotation delete:', e); }
+                        }
+                    } catch(e) { console.error('GD backup rotation:', e); }
+                    this.save({ lastRun: new Date().toISOString(), lastCount: deleted });
+                    var scanEl = document.getElementById('gd-rot-scan-result');
+                    if (scanEl && scanEl.style.display !== 'none') this.scan();
+                    if (!silent && typeof showScanToast === 'function') {
+                        var cfg = this.get();
+                        showScanToast('🧹 ' + deleted + ' fichier(s) Drive supprimé(s) — rétention : ' + (cfg.weeks||1) + ' semaine(s)', 'success');
+                    }
+                    return deleted;
+                },
+
+                autoRun: async function() {
+                    var cfg = this.get();
+                    if (cfg.autoClean !== false) await this.run(true);
+                }
+            };
+
+            // Init UI Drive rotation
+            (function() {
+                function _initGdRotUI() {
+                    if (document.getElementById('gd-rot-w1')) window._gdBackupRotation.renderUI();
+                }
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', function(){ setTimeout(_initGdRotUI, 400); });
+                } else {
+                    setTimeout(_initGdRotUI, 400);
+                }
+            })();
         })();
         </script>
 
@@ -35517,6 +35719,10 @@ function initAdminSections() {
                 }
             } catch(e) { console.warn('gdriveSaveNow admin refresh:', e); }
         }, 1200);
+        // Rotation Drive auto
+        setTimeout(function() {
+            if (typeof window._gdBackupRotation !== 'undefined') window._gdBackupRotation.autoRun();
+        }, 2500);
     };
 
     // ---- Sauvegarde périodique de secours toutes les 10 min (fallback si debounce raté) ----
