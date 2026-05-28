@@ -8419,6 +8419,11 @@ button, .btn, .retours-btn {
             </div>
         </div>
 
+        <!-- Bouton validation (affiché quand tout est terminé) -->
+        <button id="dpo-continue-btn" onclick="window._dpoEnterApp()" style="display:none;margin-top:4px;padding:14px 32px;background:linear-gradient(135deg,#27ae60,#1e8449);color:#fff;border:none;border-radius:14px;cursor:pointer;font-size:1.05rem;font-weight:800;letter-spacing:0.01em;box-shadow:0 6px 22px rgba(39,174,96,0.45);animation:splashStepIn 0.4s ease;">
+            ✅ Accéder à COVO PRO
+        </button>
+
     </div>
     <!-- /OVERLAY PROGRESSION -->
 
@@ -17355,10 +17360,10 @@ function toggleInfoSection(headerElement) {
 
         // ── TERMINÉ ───────────────────────────────────────────────────────
         _dpoSet(4, 'done', '🎉');
-        _dpoProgress(100, 'Application prête !');
-        await _splashDelay(600);
+        _dpoProgress(100, 'Tout est prêt — cliquez pour continuer !');
+        await _splashDelay(400);
 
-        // Démarrer polling + restaurer messages/historique
+        // Démarrer polling + restaurer messages/historique en arrière-plan
         if (typeof _splashStartPolling === 'function') {
             _splashStartPolling(_gdState.folderId, _latestFile.id, null);
         }
@@ -17367,8 +17372,27 @@ function toggleInfoSection(headerElement) {
             try { if (typeof window._gdRestoreHistory  === 'function') await window._gdRestoreHistory();  } catch(e) {}
         }, 600);
 
-        _progressOverlayDismiss(user);
+        // Enregistrer user pour le bouton et afficher le bouton de validation
+        window._dpoCurrentUser = user;
+        var dpoBtn = document.getElementById('dpo-continue-btn');
+        if (dpoBtn) {
+            dpoBtn.style.display = '';
+            // Scroll pour s'assurer que le bouton est visible
+            var dpoOverlay = document.getElementById('data-progress-overlay');
+            if (dpoOverlay) dpoOverlay.scrollTo({ top: dpoOverlay.scrollHeight, behavior: 'smooth' });
+        } else {
+            // Fallback : fermeture auto si le bouton est absent
+            _progressOverlayDismiss(user);
+        }
     }
+
+    // Appelé par le bouton "Accéder à COVO PRO"
+    window._dpoEnterApp = function() {
+        var u = window._dpoCurrentUser || null;
+        var dpoBtn = document.getElementById('dpo-continue-btn');
+        if (dpoBtn) dpoBtn.style.display = 'none';
+        _progressOverlayDismiss(u);
+    };
 
     // ── Polling post-splash : détection nouvelle sauvegarde toutes 2s ─
     let _splashPollTimer = null;
@@ -41554,33 +41578,151 @@ function initAdminSections() {
         });
     };
 
-    // ─── Joindre fichier Drive ──────────────────────────────────────────────
-    window._notifPickDriveFile = function() {
-        var st = document.getElementById('notif-drive-status');
-        // Vérifier que Drive est connecté
+    // ─── Joindre fichier Drive — liste les sauvegardes COVO_PRO_BACKUPS ──────
+    var _notifDriveFiles = [];   // cache pour le picker actuel
+
+    window._notifPickDriveFile = async function() {
+        var st  = document.getElementById('notif-drive-status');
+        function setStatus(msg, color) {
+            if (!st) return;
+            st.textContent = msg; st.style.color = color || '#888'; st.style.display = msg ? '' : 'none';
+        }
         var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
-        if (!gdState || !gdState.connected) {
-            if (st) { st.style.display = ''; st.textContent = '⚠️ Google Drive non connecté. Connectez Drive dans la section Gestion des sauvegardes.'; }
+        if (!gdState || !gdState.connected || !gdState.folderId) {
+            setStatus('⚠️ Google Drive non connecté. Connectez-le dans "Gestion des sauvegardes".', '#e67e22');
             return;
         }
-        // Essayer d'utiliser le picker Google si disponible
-        if (typeof window._gdPickFile === 'function') {
-            window._gdPickFile(function(file) {
-                if (!file) return;
-                _notifAttachments.push({ name: file.name, url: file.url || file.webViewLink || '', fileId: file.id || '' });
-                _notifRenderAttachments();
-            });
-        } else {
-            // Fallback : saisie manuelle URL
-            var url = prompt('URL du fichier Google Drive (lien de partage) :');
-            if (!url || !url.trim()) return;
-            var name = prompt('Nom du fichier :') || 'Fichier Drive';
-            _notifAttachments.push({ name: name.trim(), url: url.trim(), fileId: '' });
-            _notifRenderAttachments();
+        setStatus('⏳ Chargement des sauvegardes depuis ' + (gdState.folderName || 'Drive') + '…', '#1a73e8');
+        try {
+            var fetchFn = window._gdFetchPublic;
+            if (typeof fetchFn !== 'function') { setStatus('⚠️ Authentification Drive non disponible.', '#e74c3c'); return; }
+            var q = encodeURIComponent("'" + gdState.folderId + "' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'");
+            var resp = await fetchFn('https://www.googleapis.com/drive/v3/files?q=' + q
+                + '&orderBy=modifiedTime+desc&pageSize=50&fields=files(id,name,modifiedTime,size)');
+            var data = await resp.json();
+            _notifDriveFiles = (data.files || []).filter(function(f) { return f.name && f.name.startsWith('covo_backup'); });
+            if (!_notifDriveFiles.length) {
+                setStatus('📭 Aucune sauvegarde trouvée dans ' + (gdState.folderName || 'COVO_PRO_BACKUPS') + '.', '#888');
+                return;
+            }
+            setStatus('', '');
+            _notifShowDrivePicker(gdState.folderName || 'COVO_PRO_BACKUPS');
+        } catch(e) {
+            setStatus('❌ Erreur : ' + (e.message || e), '#e74c3c');
         }
     };
 
-    function _notifRenderAttachments() {
+    // ─── Modal de sélection de fichier Drive (index-based, sans onclick inline) ──
+    function _notifShowDrivePicker(folderName) {
+        var files  = _notifDriveFiles;
+        var isDark = document.body.classList.contains('dark-mode');
+        var bg     = isDark ? '#1e2233' : '#ffffff';
+        var bgRow  = isDark ? '#252840' : '#f8fafc';
+        var bgHov  = isDark ? '#2d3455' : '#eef4ff';
+        var txtC   = isDark ? '#e8eaf0' : '#1a1a2e';
+        var txtSub = isDark ? '#9fafc0' : '#5d6d7e';
+        var bdr    = isDark ? '#2d3550' : '#dde3ee';
+
+        function fmtDate(iso) {
+            var d = new Date(iso);
+            var isToday = d.toDateString() === new Date().toDateString();
+            return isToday
+                ? "Aujourd'hui " + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+                : d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' '
+                  + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        }
+        function fmtSize(b) {
+            if (!b) return '—';
+            var n = parseInt(b);
+            return n >= 1048576 ? (n/1048576).toFixed(2)+' Mo' : (n/1024).toFixed(1)+' Ko';
+        }
+
+        // Build rows using DOM — no inline onclick with string data
+        var old = document.getElementById('notif-drive-picker-modal');
+        if (old) old.remove();
+
+        var modal = document.createElement('div');
+        modal.id = 'notif-drive-picker-modal';
+        modal.setAttribute('role','dialog');
+        modal.setAttribute('aria-modal','true');
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);z-index:25000;display:flex;justify-content:center;align-items:center;';
+        modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+
+        var card = document.createElement('div');
+        card.style.cssText = 'background:' + bg + ';border-radius:16px;width:92%;max-width:520px;max-height:82vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.5);';
+
+        // Header
+        var hdr = document.createElement('div');
+        hdr.style.cssText = 'background:linear-gradient(135deg,#1565c0,#0d47a1);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;';
+        hdr.innerHTML = '<div>'
+            + '<div style="color:white;font-weight:800;font-size:0.95rem;">&#x2601;&#xfe0f; Choisir une sauvegarde</div>'
+            + '<div style="color:rgba(255,255,255,0.75);font-size:0.72rem;margin-top:1px;">'
+            + files.length + ' sauvegarde(s) &nbsp;&middot;&nbsp; &#x1f4c1; ' + _he(folderName)
+            + '</div></div>';
+        var closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '&#x2715;';
+        closeBtn.style.cssText = 'background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:1rem;';
+        closeBtn.addEventListener('click', function() { modal.remove(); });
+        hdr.appendChild(closeBtn);
+
+        // List
+        var list = document.createElement('div');
+        list.style.cssText = 'overflow-y:auto;flex:1;';
+
+        files.forEach(function(f, idx) {
+            var row = document.createElement('div');
+            var isLatest = idx === 0;
+            var rowBg = idx % 2 === 0 ? bg : bgRow;
+            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid ' + bdr + ';cursor:pointer;transition:background 0.15s;background:' + rowBg + ';';
+            row.addEventListener('mouseenter', function() { this.style.background = bgHov; });
+            row.addEventListener('mouseleave', function() { this.style.background = rowBg; });
+            row.addEventListener('click', (function(fileId, fileName) {
+                return function() { window._notifAttachDriveFile(fileId, fileName); modal.remove(); };
+            })(f.id, f.name));
+
+            var badge = isLatest ? '<span style="background:#1565c0;color:white;font-size:0.62rem;padding:1px 6px;border-radius:8px;font-weight:700;margin-left:6px;">Derni&#xe8;re</span>' : '';
+            row.innerHTML = '<div style="min-width:0;">'
+                + '<div style="font-size:0.82rem;font-weight:700;color:' + txtC + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                + '&#x1f4c4; ' + fmtDate(f.modifiedTime) + badge
+                + '</div>'
+                + '<div style="font-size:0.72rem;color:' + txtSub + ';margin-top:2px;">' + _he(f.name) + '</div>'
+                + '</div>'
+                + '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'
+                + '<div style="font-size:0.75rem;color:' + txtSub + ';">' + fmtSize(f.size) + '</div>'
+                + '<div style="font-size:0.7rem;color:#1565c0;margin-top:2px;font-weight:600;">&#x2b; Joindre</div>'
+                + '</div>';
+            list.appendChild(row);
+        });
+
+        // Footer
+        var ftr = document.createElement('div');
+        ftr.style.cssText = 'padding:10px 14px;border-top:1px solid ' + bdr + ';text-align:center;background:' + bg + ';flex-shrink:0;';
+        ftr.innerHTML = '<span style="font-size:0.75rem;color:' + txtSub + ';">Cliquez pour joindre &agrave; la notification</span>';
+
+        card.appendChild(hdr);
+        card.appendChild(list);
+        card.appendChild(ftr);
+        modal.appendChild(card);
+        document.body.appendChild(modal);
+    }
+
+    // ─── Callback sélection d'un fichier Drive (pièce jointe notif) ────────
+    window._notifAttachDriveFile = function(fileId, fileName) {
+        var url = 'https://drive.google.com/file/d/' + fileId + '/view';
+        _notifAttachments.push({ name: fileName, url: url, fileId: fileId });
+        _notifRenderAttachments();
+        var picker = document.getElementById('notif-drive-picker-modal');
+        if (picker) picker.remove();
+        var st = document.getElementById('notif-drive-status');
+        if (st) {
+            st.textContent = '✅ Fichier joint : ' + fileName;
+            st.style.color  = '#27ae60';
+            st.style.display = '';
+            setTimeout(function() { if (st) st.style.display = 'none'; }, 3000);
+        }
+    };
+
+        function _notifRenderAttachments() {
         var container = document.getElementById('notif-attachments-list');
         if (!container) return;
         if (!_notifAttachments.length) { container.innerHTML = ''; return; }
