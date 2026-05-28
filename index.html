@@ -17305,31 +17305,68 @@ function toggleInfoSection(headerElement) {
         _dpoProgress(42, 'Recherche de la dernière sauvegarde…');
         await _splashDelay(200);
 
-        // 3a — Recherche des fichiers
+        // 3a — Recherche des fichiers (avec fallback élargi si aucun résultat)
         var _latestFile  = null;
         var _latestVFile = null;
         var _latestPFile = null;
+        var _searchError = null;
+
+        var _doSearch = async function(withNameFilter) {
+            var qStr = '\'' + _gdState.folderId + '\' in parents and trashed=false and mimeType=\'application/json\'';
+            if (withNameFilter) qStr += ' and name contains \'covo_backup\'';
+            var _q = encodeURIComponent(qStr);
+            var _resp = await Promise.race([
+                window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=' + _q + '&orderBy=modifiedTime+desc&pageSize=50&fields=files(id,name,modifiedTime,size)'),
+                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 8000); })
+            ]);
+            var _data = await _resp.json();
+            if (_data.error) throw new Error('API ' + _data.error.code + ': ' + _data.error.message);
+            return _data.files || [];
+        };
+
         try {
             if (_gdState.folderId) {
-                var _q = encodeURIComponent(
-                    '\'' + _gdState.folderId + '\' in parents and trashed=false and mimeType=\'application/json\' and name contains \'covo_backup\''
-                );
-                var _listResp = await Promise.race([
-                    window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=' + _q + '&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime)'),
-                    new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 6000); })
-                ]);
-                var _listData = await _listResp.json();
-                if (_listData.files && _listData.files.length > 0) {
-                    _latestFile  = _listData.files[0];
-                    _latestVFile = _listData.files.find(function(f) { return f.name.includes('_VENTES_'); }) || null;
-                    _latestPFile = _listData.files.find(function(f) { return f.name.includes('_PARAMS_'); }) || null;
+                _dpoProgress(44, 'Recherche fichiers covo_backup…');
+                var _files = await _doSearch(true);
+
+                // Fallback : chercher TOUS les JSON si aucun résultat avec filtre
+                if (_files.length === 0) {
+                    _dpoProgress(46, 'Aucun résultat — recherche élargie…');
+                    _files = await _doSearch(false);
+                    // Garder uniquement les fichiers JSON qui ressemblent à des sauvegardes
+                    _files = _files.filter(function(f) {
+                        return f.name && (
+                            f.name.toLowerCase().includes('backup') ||
+                            f.name.toLowerCase().includes('covo') ||
+                            f.name.toLowerCase().includes('sauvegarde') ||
+                            /^\d{4}/.test(f.name)
+                        );
+                    });
+                    // Si toujours rien, prendre le JSON le plus récent
+                    if (_files.length === 0) {
+                        _files = await _doSearch(false);
+                    }
+                }
+
+                if (_files.length > 0) {
+                    // Trier par date décroissante (sécurité)
+                    _files.sort(function(a, b) { return new Date(b.modifiedTime) - new Date(a.modifiedTime); });
+                    _latestFile  = _files[0];
+                    _latestVFile = _files.find(function(f) { return f.name && f.name.includes('_VENTES_'); }) || null;
+                    _latestPFile = _files.find(function(f) { return f.name && f.name.includes('_PARAMS_'); }) || null;
                 }
             }
-        } catch(e) { console.warn('[dpo] search:', e); }
+        } catch(e) {
+            console.warn('[dpo] search error:', e);
+            _searchError = e.message || 'Erreur inconnue';
+        }
 
         if (!_latestFile) {
-            _dpoSet(3, 'warn', 'Aucune save');
-            _dpoFinish('Aucune sauvegarde trouvée — démarrage vierge', false);
+            var _errMsg = _searchError
+                ? 'Erreur Drive (' + _searchError + ') — données locales'
+                : 'Aucune sauvegarde dans ' + (_gdState.folderName || 'le dossier') + ' — démarrage local';
+            _dpoSet(3, 'warn', _searchError ? 'Erreur API' : 'Vide');
+            _dpoFinish(_errMsg, false);
             return;
         }
 
