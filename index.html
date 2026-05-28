@@ -8386,24 +8386,24 @@ button, .btn, .retours-btn {
         <div class="dpo-steps">
             <div id="dpo-s1" class="dpo-step">
                 <div class="dpo-step-num">1</div>
-                <div class="dpo-step-lbl">Connexion</div>
+                <div class="dpo-step-lbl">Réseau</div>
                 <div class="dpo-step-sub" id="dpo-sub1"></div>
             </div>
             <div class="dpo-arrow">›</div>
-            <div id="dpo-s2" class="dpo-step" style="flex:1.4;">
+            <div id="dpo-s2" class="dpo-step" style="flex:1.2;">
                 <div class="dpo-step-num">2</div>
-                <div class="dpo-step-lbl">Téléchargement</div>
+                <div class="dpo-step-lbl">Drive</div>
                 <div class="dpo-step-sub" id="dpo-sub2"></div>
             </div>
             <div class="dpo-arrow">›</div>
-            <div id="dpo-s3" class="dpo-step" style="flex:1.1;">
+            <div id="dpo-s3" class="dpo-step" style="flex:1.4;">
                 <div class="dpo-step-num">3</div>
-                <div class="dpo-step-lbl">Traitement</div>
+                <div class="dpo-step-lbl">Restauration</div>
                 <div class="dpo-step-sub" id="dpo-sub3"></div>
             </div>
             <div class="dpo-arrow">›</div>
             <div id="dpo-s4" class="dpo-step" style="flex:0.8;">
-                <div class="dpo-step-lbl" style="font-size:0.78rem;">Terminé&#160;!</div>
+                <div class="dpo-step-lbl" style="font-size:0.78rem;">Prêt&#160;!</div>
                 <div class="dpo-step-sub" id="dpo-sub4"></div>
             </div>
         </div>
@@ -17183,19 +17183,21 @@ function toggleInfoSection(headerElement) {
 
     async function _progressOverlayRun(user) {
         var overlay = document.getElementById('data-progress-overlay');
-        // Si pas d'overlay → fallback sur splash classique
         if (!overlay) { _splashStart(user); return; }
 
-        // Afficher l'overlay
+        // Afficher l'overlay, masquer le login
         overlay.style.display = 'flex';
         document.getElementById('login-modal').style.display = 'none';
+
+        // Masquer le bouton de validation (état initial)
+        var dpoBtn = document.getElementById('dpo-continue-btn');
+        if (dpoBtn) dpoBtn.style.display = 'none';
 
         // Logo personnalisé
         var logoEl = document.getElementById('dpo-logo');
         if (logoEl && typeof appSettings !== 'undefined' && appSettings.logoUrl) {
             logoEl.innerHTML = '<img src="' + appSettings.logoUrl + '" style="width:44px;height:44px;object-fit:contain;border-radius:8px;" onerror="this.parentNode.textContent=\'COVO\'">';
         }
-        // Nom utilisateur
         var nameEl = document.getElementById('dpo-username');
         if (nameEl) nameEl.textContent = '👋 ' + (user.username || 'Utilisateur');
 
@@ -17204,10 +17206,30 @@ function toggleInfoSection(headerElement) {
         _dpoSet(2, 'pending', '');
         _dpoSet(3, 'pending', '');
         _dpoSet(4, 'pending', '');
-        _dpoProgress(5, 'Vérification de la connexion…');
-        await _splashDelay(300);
+        _dpoProgress(5, 'Vérification de la connexion réseau…');
+        await _splashDelay(280);
 
-        // ── ÉTAPE 1 : Connexion Internet ──────────────────────────────────
+        // Helper : montrer le bouton de validation et arrêter
+        function _dpoFinish(label, isOk) {
+            _dpoSet(4, isOk ? 'done' : 'warn', isOk ? '🎉' : '⚠️');
+            _dpoProgress(100, label);
+            window._dpoCurrentUser = user;
+            if (dpoBtn) {
+                dpoBtn.textContent = isOk ? '✅ Accéder à COVO PRO' : '⚠️ Continuer en mode local';
+                dpoBtn.style.background = isOk
+                    ? 'linear-gradient(135deg,#27ae60,#1e8449)'
+                    : 'linear-gradient(135deg,#e67e22,#d35400)';
+                dpoBtn.style.display = '';
+                setTimeout(function() {
+                    if (overlay) overlay.scrollTo({ top: overlay.scrollHeight, behavior: 'smooth' });
+                }, 80);
+            } else {
+                // Fallback si le bouton est absent
+                setTimeout(function() { _progressOverlayDismiss(user); }, 1800);
+            }
+        }
+
+        // ── ÉTAPE 1 : Réseau ─────────────────────────────────────────────
         var _isOnline = false;
         try {
             await Promise.race([
@@ -17219,174 +17241,201 @@ function toggleInfoSection(headerElement) {
 
         if (!_isOnline) {
             _dpoSet(1, 'warn', 'Hors ligne');
-            _dpoProgress(100, 'Mode hors ligne — données locales');
-            _dpoSet(4, 'done', '✓');
-            await _splashDelay(900);
-            _progressOverlayDismiss(user);
+            _dpoSet(2, 'warn', 'N/A');
+            _dpoSet(3, 'warn', 'Local');
+            _dpoFinish('Mode hors ligne — données locales chargées', false);
             return;
         }
-
         _dpoSet(1, 'done', 'OK');
-        _dpoProgress(20, 'Internet OK — connexion Drive…');
-        _dpoSet(2, 'active', 'EN COURS…');
-        await _splashDelay(250);
+        _dpoProgress(18, 'Réseau OK — connexion Google Drive…');
+        _dpoSet(2, 'active', 'Connexion…');
+        await _splashDelay(220);
 
-        // ── ÉTAPE 2 : Drive — reconnexion + téléchargement ───────────────
+        // ── ÉTAPE 2 : Google Drive ────────────────────────────────────────
         var _gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
         var _wasCon  = localStorage.getItem('gdrive_connected') === '1';
         var _cid     = localStorage.getItem('gdrive_client_id') || '';
-        var _driveOk = false;
+        var _driveOk = (_gdState && _gdState.connected) ? true : false;
 
-        // Attendre la reconnexion silencieuse déjà lancée au démarrage (max 5 s)
-        if (!(_gdState && _gdState.connected) && _wasCon && _cid) {
-            for (var _att = 0; _att < 12; _att++) {
-                await _splashDelay(420);
+        // Attente reconnexion silencieuse (max 8 s / 10 tentatives)
+        if (!_driveOk && _wasCon && _cid) {
+            for (var _att = 0; _att < 10; _att++) {
+                await _splashDelay(800);
                 _gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
-                var _p = 22 + Math.round(_att / 12 * 16);
-                _dpoSet(2, 'active', 'EN COURS - ' + _p + '%');
-                _dpoProgress(_p, 'Reconnexion Drive… (' + (_att + 1) + '/12)');
+                var _p = 20 + Math.round((_att + 1) / 10 * 15);
+                _dpoSet(2, 'active', 'Tentative ' + (_att + 1) + '/10…');
+                _dpoProgress(_p, 'Reconnexion Drive… (' + (_att + 1) + '/10)');
                 if (_gdState && _gdState.connected) { _driveOk = true; break; }
             }
-        } else if (_gdState && _gdState.connected) {
-            _driveOk = true;
         }
 
         if (!_driveOk) {
-            // Pas de Drive → données locales
             _dpoSet(2, 'warn', 'Non dispo');
-            _dpoProgress(40, 'Drive non disponible — données locales');
-            await _splashDelay(900);
-            _progressOverlayDismiss(user);
+            _dpoSet(3, 'warn', 'Local');
+            _dpoFinish('Drive non disponible — données locales utilisées', false);
             return;
         }
 
-        _dpoProgress(40, 'Drive connecté — recherche sauvegarde…');
-        _dpoSet(2, 'active', 'EN COURS - 40%');
+        // Vérification token par appel API léger
+        var _tokenOk = false;
+        try {
+            var _fid = _gdState.folderId || 'root';
+            var _chkResp = await Promise.race([
+                window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=\'' + _fid + '\' in parents and trashed=false&pageSize=1&fields=files(id)'),
+                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 5000); })
+            ]);
+            _tokenOk = !!_chkResp;
+        } catch(e) { _tokenOk = false; }
+
+        if (!_tokenOk) {
+            _dpoSet(2, 'warn', 'Token expiré');
+            _dpoSet(3, 'warn', 'Local');
+            _dpoFinish('Session Drive expirée — données locales utilisées', false);
+            return;
+        }
+
+        var _email = _gdState.email || localStorage.getItem('gdrive_hint_email') || 'Connecté';
+        var _folder = _gdState.folderName || localStorage.getItem('gdrive_folder_name') || 'COVO';
+        _dpoSet(2, 'done', _folder);
+        _dpoProgress(38, 'Drive OK (' + _email + ') — recherche sauvegarde…');
+        await _splashDelay(180);
+
+        // ── ÉTAPE 3 : Restauration ────────────────────────────────────────
+        _dpoSet(3, 'active', 'Recherche…');
+        _dpoProgress(42, 'Recherche de la dernière sauvegarde…');
         await _splashDelay(200);
 
-        // Chercher le fichier de sauvegarde le plus récent
+        // 3a — Recherche des fichiers
         var _latestFile  = null;
         var _latestVFile = null;
+        var _latestPFile = null;
         try {
-            if (_gdState.folderId && typeof window._gdFetchPublic === 'function') {
+            if (_gdState.folderId) {
                 var _q = encodeURIComponent(
-                    "'" + _gdState.folderId + "' in parents and trashed=false and mimeType='application/json' and name contains 'covo_backup'"
+                    '\'' + _gdState.folderId + '\' in parents and trashed=false and mimeType=\'application/json\' and name contains \'covo_backup\''
                 );
                 var _listResp = await Promise.race([
-                    window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=' + _q + '&orderBy=modifiedTime+desc&pageSize=10&fields=files(id,name,modifiedTime)'),
-                    new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 5000); })
+                    window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=' + _q + '&orderBy=modifiedTime+desc&pageSize=20&fields=files(id,name,modifiedTime)'),
+                    new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 6000); })
                 ]);
                 var _listData = await _listResp.json();
                 if (_listData.files && _listData.files.length > 0) {
                     _latestFile  = _listData.files[0];
                     _latestVFile = _listData.files.find(function(f) { return f.name.includes('_VENTES_'); }) || null;
+                    _latestPFile = _listData.files.find(function(f) { return f.name.includes('_PARAMS_'); }) || null;
                 }
             }
         } catch(e) { console.warn('[dpo] search:', e); }
 
         if (!_latestFile) {
-            _dpoSet(2, 'warn', 'Aucune save');
-            _dpoProgress(50, 'Aucune sauvegarde trouvée');
-            await _splashDelay(800);
-            _progressOverlayDismiss(user);
+            _dpoSet(3, 'warn', 'Aucune save');
+            _dpoFinish('Aucune sauvegarde trouvée — démarrage vierge', false);
             return;
         }
 
-        // Télécharger le fichier
-        _dpoProgress(52, 'Téléchargement de la sauvegarde…');
-        _dpoSet(2, 'active', 'EN COURS - 52%');
+        var _saveDate = new Date(_latestFile.modifiedTime);
+        var _saveFmt  = _saveDate.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+                      + ' ' + _saveDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        _dpoSet(3, 'active', 'DL…');
+        _dpoProgress(50, 'Téléchargement : ' + _latestFile.name);
+        await _splashDelay(150);
 
+        // 3b — Téléchargement fichier principal
         var _restoreData = null;
         try {
             var _dlResp = await Promise.race([
                 window._gdFetchPublic('https://www.googleapis.com/drive/v3/files/' + _latestFile.id + '?alt=media'),
-                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 12000); })
+                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 15000); })
             ]);
-            // Simul progression pendant download
-            for (var _pi = 55; _pi <= 68; _pi += 3) {
-                await _splashDelay(100);
-                _dpoProgress(_pi, 'Téléchargement… ' + Math.round((_pi - 52) / 18 * 100) + '%');
-                _dpoSet(2, 'active', 'EN COURS - ' + _pi + '%');
+            // Progression simulée pendant téléchargement
+            for (var _pi = 52; _pi <= 64; _pi += 4) {
+                await _splashDelay(90);
+                _dpoProgress(_pi, 'Téléchargement… ' + Math.round((_pi - 50) / 16 * 100) + ' %');
             }
             var _dlText  = await _dlResp.text();
             _restoreData = JSON.parse(_dlText);
         } catch(e) {
             console.warn('[dpo] download:', e);
-            _dpoSet(2, 'warn', 'Erreur DL');
-            _dpoProgress(65, 'Erreur de téléchargement');
-            await _splashDelay(900);
-            _progressOverlayDismiss(user);
+            _dpoSet(3, 'warn', 'Erreur DL');
+            _dpoFinish('Erreur de téléchargement — données locales utilisées', false);
             return;
         }
 
-        _dpoSet(2, 'done', '100%');
-        _dpoProgress(70, 'Téléchargement terminé');
-        await _splashDelay(200);
+        _dpoProgress(66, 'Fichier reçu — application des données…');
+        await _splashDelay(150);
 
-        // ── ÉTAPE 3 : Traitement des données ─────────────────────────────
-        _dpoSet(3, 'active', 'En cours…');
-        _dpoProgress(74, 'Application des données…');
-        await _splashDelay(250);
-
+        // 3c — Restauration données principales
+        var _nbProd  = 0;
+        var _nbVente = 0;
         if (_restoreData && (_restoreData.products || _restoreData.salesHistory)) {
             try {
                 if (typeof window._doRestoreFromData === 'function') {
                     window._doRestoreFromData(_restoreData, _latestFile.name);
                 }
-                // Ventes scindées plus récentes ?
-                if (_latestVFile && _latestVFile.id !== _latestFile.id && typeof window._gdFetchPublic === 'function') {
-                    try {
-                        var _vd = new Date(_latestVFile.modifiedTime);
-                        var _md = new Date(_latestFile.modifiedTime);
-                        if (_vd > _md) {
-                            var _vr = await window._gdFetchPublic('https://www.googleapis.com/drive/v3/files/' + _latestVFile.id + '?alt=media');
-                            var _vdata = JSON.parse(await _vr.text());
-                            if (_vdata.salesHistory) localStorage.setItem('covo_sales_history', JSON.stringify(_vdata.salesHistory));
-                        }
-                    } catch(e) {}
-                }
+                _nbProd  = (_restoreData.products    || []).length;
+                _nbVente = (_restoreData.salesHistory || []).length;
                 localStorage.setItem('gdrive_last_restore', new Date().toISOString());
             } catch(e) { console.warn('[dpo] restore:', e); }
         }
 
-        var _nbProd  = (_restoreData && _restoreData.products   ) ? _restoreData.products.length    : 0;
-        var _nbVente = (_restoreData && _restoreData.salesHistory) ? _restoreData.salesHistory.length : 0;
-        _dpoProgress(90, 'Données restaurées — ' + _nbProd + ' produits · ' + _nbVente + ' ventes');
+        _dpoProgress(72, _nbProd + ' produits · ' + _nbVente + ' ventes restaurés');
+        await _splashDelay(150);
+
+        // 3d — Ventes scindées plus récentes
+        if (_latestVFile && _latestVFile.id !== _latestFile.id) {
+            try {
+                var _vd = new Date(_latestVFile.modifiedTime);
+                var _md = new Date(_latestFile.modifiedTime);
+                if (_vd > _md) {
+                    _dpoProgress(74, 'Ventes récentes : synchronisation…');
+                    var _vr = await Promise.race([
+                        window._gdFetchPublic('https://www.googleapis.com/drive/v3/files/' + _latestVFile.id + '?alt=media'),
+                        new Promise(function(_, rej) { setTimeout(function() { rej(new Error('t')); }, 8000); })
+                    ]);
+                    var _vdata = JSON.parse(await _vr.text());
+                    if (_vdata.salesHistory) {
+                        localStorage.setItem('covo_sales_history', JSON.stringify(_vdata.salesHistory));
+                        _nbVente = _vdata.salesHistory.length;
+                    }
+                }
+            } catch(e) { console.warn('[dpo] ventes:', e); }
+        }
+
+        _dpoProgress(80, 'Produits : ' + _nbProd + ' · Ventes : ' + _nbVente);
+        await _splashDelay(150);
+
+        // 3e — Messages & Historique connexions
+        _dpoProgress(83, 'Restauration messages & historique…');
+        await _splashDelay(150);
+        try {
+            var _msgPromise = (typeof window._gdRestoreMessages === 'function') ? window._gdRestoreMessages() : Promise.resolve();
+            var _hisPromise = (typeof window._gdRestoreHistory  === 'function') ? window._gdRestoreHistory()  : Promise.resolve();
+            await Promise.race([
+                Promise.all([_msgPromise, _hisPromise]),
+                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 8000); })
+            ]);
+            _dpoProgress(90, 'Messages et historique restaurés');
+        } catch(e) {
+            _dpoProgress(90, 'Messages / historique : synchronisation partielle');
+        }
+        await _splashDelay(150);
+
+        // 3f — Interface & polling
+        _dpoProgress(94, 'Initialisation de l\'interface…');
+        await _splashDelay(150);
+        if (typeof _splashStartPolling === 'function') {
+            _splashStartPolling(_gdState.folderId, _latestFile.id, _saveFmt);
+        }
+
         _dpoSet(3, 'done', _nbProd + ' prod.');
+        _dpoProgress(98, 'Finalisation…');
         await _splashDelay(200);
 
-        _dpoProgress(96, 'Finalisation…');
-        await _splashDelay(180);
-
-        // ── TERMINÉ ───────────────────────────────────────────────────────
-        _dpoSet(4, 'done', '🎉');
-        _dpoProgress(100, 'Tout est prêt — cliquez pour continuer !');
-        await _splashDelay(400);
-
-        // Démarrer polling + restaurer messages/historique en arrière-plan
-        if (typeof _splashStartPolling === 'function') {
-            _splashStartPolling(_gdState.folderId, _latestFile.id, null);
-        }
-        setTimeout(async function() {
-            try { if (typeof window._gdRestoreMessages === 'function') await window._gdRestoreMessages(); } catch(e) {}
-            try { if (typeof window._gdRestoreHistory  === 'function') await window._gdRestoreHistory();  } catch(e) {}
-        }, 600);
-
-        // Enregistrer user pour le bouton et afficher le bouton de validation
-        window._dpoCurrentUser = user;
-        var dpoBtn = document.getElementById('dpo-continue-btn');
-        if (dpoBtn) {
-            dpoBtn.style.display = '';
-            // Scroll pour s'assurer que le bouton est visible
-            var dpoOverlay = document.getElementById('data-progress-overlay');
-            if (dpoOverlay) dpoOverlay.scrollTo({ top: dpoOverlay.scrollHeight, behavior: 'smooth' });
-        } else {
-            // Fallback : fermeture auto si le bouton est absent
-            _progressOverlayDismiss(user);
-        }
+        // ── ÉTAPE 4 : Prêt ! ─────────────────────────────────────────────
+        _dpoFinish('Tout est prêt — ' + _nbProd + ' produits · ' + _nbVente + ' ventes · ' + _saveFmt, true);
     }
 
-    // Appelé par le bouton "Accéder à COVO PRO"
+        // Appelé par le bouton "Accéder à COVO PRO"
     window._dpoEnterApp = function() {
         var u = window._dpoCurrentUser || null;
         var dpoBtn = document.getElementById('dpo-continue-btn');
