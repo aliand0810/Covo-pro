@@ -9815,6 +9815,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
                 covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
                 covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]'),
+                covo_admin_notifications: JSON.parse(localStorage.getItem('covo_admin_notifications') || '[]'),
                 gdrive_backup_config:    localStorage.getItem('gdrive_backup_config') || null,
                 _version: 17, _savedAt
             }, null, 2);
@@ -9882,6 +9883,13 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_dettes)            localStorage.setItem('covo_dettes',            JSON.stringify(data.covo_dettes));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_admin_notifications) {
+                localStorage.setItem('covo_admin_notifications', JSON.stringify(data.covo_admin_notifications));
+                // Déclencher le poll pour afficher les notifications restaurées
+                setTimeout(function() {
+                    if (typeof window._notifCheckForCashier === 'function') window._notifCheckForCashier();
+                }, 1500);
+            }
             if (typeof refreshRetours === 'function') setTimeout(() => refreshRetours(), 200);
             // Sync localStorage principal
             localStorage.setItem('covo_products',      JSON.stringify(products));
@@ -41910,9 +41918,8 @@ function initAdminSections() {
         if (!message) { showStatus('⚠️ Le message est obligatoire.', '#e67e22'); return; }
 
         var authorName = 'Administrateur';
-        if (typeof currentUser !== 'undefined' && currentUser && currentUser.username) {
-            authorName = currentUser.username;
-        }
+        var _cu = (typeof window._covoCurrentUser === 'function') ? window._covoCurrentUser() : null;
+        if (_cu && _cu.username) authorName = _cu.username;
 
         var notif = {
             id:          'NOTIF-' + Date.now(),
@@ -41942,30 +41949,72 @@ function initAdminSections() {
         window._notifRenderAdmin();
         _notifUpdateAdminBadge();
 
-        // Afficher la modale immédiatement pour l'expéditeur lui-même
-        setTimeout(function() {
-            var u = (typeof currentUser !== 'undefined') ? currentUser : null;
-            if (u && typeof window._notifCheckForCashier === 'function') {
-                window._notifCheckForCashier(u);
-            }
-        }, 400);
+        // Déclencher le polling immédiatement pour afficher la modale
+        _notifPollCheck();
     };
+
+    // ─── Utilitaire : obtenir l'utilisateur courant depuis n'importe quel scope
+    function _notifGetCurrentUser() {
+        // Essayer window._covoCurrentUser() (exposé par le script principal)
+        if (typeof window._covoCurrentUser === 'function') {
+            var u = window._covoCurrentUser();
+            if (u && u.id) return u;
+        }
+        // Fallback : lire depuis localStorage
+        try {
+            var stored = localStorage.getItem('covo_current_user');
+            if (stored) {
+                var u2 = JSON.parse(stored);
+                if (u2 && u2.id) return u2;
+            }
+        } catch(e) {}
+        return null;
+    }
 
     // ─── Vérifier notifications non lues pour un utilisateur ───────────────
     window._notifCheckForCashier = function(user) {
+        if (!user) user = _notifGetCurrentUser();
         if (!user) return;
         _notifUser = user;
 
         var list = window._notifLoad();
-        // Trouver la première notification active non acquittée
+        // Trouver la première notification active non acquittée par cet utilisateur
         var pending = list.find(function(n) {
             return n.active && !(n.acks && n.acks[user.id]);
         });
 
         if (pending) {
+            // Ne pas réouvrir si la même notification est déjà affichée
+            var modal = document.getElementById('notif-block-modal');
+            if (modal && modal.style.display === 'flex' && _notifCurrent && _notifCurrent.id === pending.id) return;
             _notifShowBlocking(pending, user);
         }
     };
+
+    // ─── Polling automatique : vérifier toutes les 4 secondes ───────────────
+    function _notifPollCheck() {
+        var modal = document.getElementById('notif-block-modal');
+        // Ne pas interrompre si une modale est déjà ouverte
+        if (modal && modal.style.display === 'flex') return;
+        var user = _notifGetCurrentUser();
+        if (!user) return;
+        window._notifCheckForCashier(user);
+    }
+
+    // Lancer le polling dès que le DOM est prêt
+    (function() {
+        function _startNotifPolling() {
+            // Premier check après 2 secondes (laisser le temps à l'app de démarrer)
+            setTimeout(_notifPollCheck, 2000);
+            // Puis toutes les 4 secondes
+            setInterval(_notifPollCheck, 4000);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _startNotifPolling);
+        } else {
+            _startNotifPolling();
+        }
+    })();
 
     // ─── Afficher la modale bloquante ───────────────────────────────────────
     function _notifShowBlocking(notif, user) {
@@ -42000,10 +42049,13 @@ function initAdminSections() {
         if (author)  author.textContent       = notif.createdBy || 'Administrateur';
         if (dateEl) {
             try {
-                dateEl.textContent = new Date(notif.createdAt).toLocaleString('fr-FR', {
-                    day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'
-                });
-            } catch(e) { dateEl.textContent = notif.createdAt; }
+                var _d = new Date(notif.createdAt);
+                var _isToday = _d.toDateString() === new Date().toDateString();
+                dateEl.textContent = _isToday
+                    ? "Aujourd'hui à " + _d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+                    : _d.toLocaleDateString('fr-FR', { weekday:'short', day:'2-digit', month:'2-digit', year:'numeric' })
+                      + ' à ' + _d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+            } catch(e) { dateEl.textContent = notif.createdAt || ''; }
         }
         if (msgEl) msgEl.textContent = notif.message;
 
@@ -42061,10 +42113,7 @@ function initAdminSections() {
         window._notifRenderAdmin();
 
         // Vérifier s'il y a une autre notification en attente
-        setTimeout(function() {
-            var u = _notifUser || (typeof currentUser !== 'undefined' ? currentUser : null);
-            if (u && typeof window._notifCheckForCashier === 'function') window._notifCheckForCashier(u);
-        }, 500);
+        setTimeout(_notifPollCheck, 500);
     };
 
     // ─── Activer/désactiver une notification ────────────────────────────────
@@ -42076,12 +42125,9 @@ function initAdminSections() {
             window._notifSave(list);
             window._notifRenderAdmin();
             _notifUpdateAdminBadge();
-            // Si activée → montrer immédiatement à l'utilisateur courant
+            // Si activée → montrer immédiatement
             if (notif.active) {
-                setTimeout(function() {
-                    var u = _notifUser || (typeof currentUser !== 'undefined' ? currentUser : null);
-                    if (u && typeof window._notifCheckForCashier === 'function') window._notifCheckForCashier(u);
-                }, 300);
+                setTimeout(_notifPollCheck, 300);
             }
         }
     };
@@ -42135,14 +42181,26 @@ function initAdminSections() {
             var totalCashiers = users.filter(function(u) { return u.role === 'caissier'; }).length;
 
             var dateStr = '';
-            try { dateStr = new Date(n.createdAt).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
-            catch(e) { dateStr = n.createdAt; }
+            try {
+                var _nd = new Date(n.createdAt);
+                var _isToday = _nd.toDateString() === new Date().toDateString();
+                dateStr = _isToday
+                    ? "Aujourd'hui à " + _nd.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+                    : _nd.toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric' })
+                      + ' à ' + _nd.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+            } catch(e) { dateStr = n.createdAt || ''; }
 
             var ackList = Object.entries(n.acks || {}).map(function(entry) {
                 var ackInfo = entry[1];
                 var ackDate = '';
-                try { ackDate = new Date(ackInfo.at).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); }
-                catch(e) { ackDate = ackInfo.at; }
+                try {
+                    var _ad = new Date(ackInfo.at);
+                    var _isAckToday = _ad.toDateString() === new Date().toDateString();
+                    ackDate = _isAckToday
+                        ? "Aujourd'hui " + _ad.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+                        : _ad.toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric' })
+                          + ' ' + _ad.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+                } catch(e) { ackDate = ackInfo.at || ''; }
                 return '<div style="display:flex;align-items:center;gap:6px;font-size:0.75rem;padding:4px 8px;background:rgba(39,174,96,0.08);border-radius:6px;">' +
                     '<span style="color:#27ae60;">&#x2705;</span>' +
                     '<span style="color:var(--text-main);font-weight:700;">' + _he(ackInfo.username) + '</span>' +
