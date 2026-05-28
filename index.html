@@ -17257,15 +17257,31 @@ function toggleInfoSection(headerElement) {
         var _cid     = localStorage.getItem('gdrive_client_id') || '';
         var _driveOk = (_gdState && _gdState.connected) ? true : false;
 
-        // Attente reconnexion silencieuse (max 8 s / 10 tentatives)
+        // Attente reconnexion silencieuse (max 12 s / 15 tentatives)
+        // On attend connected=true ET folderId défini (folderId est set après connected)
         if (!_driveOk && _wasCon && _cid) {
-            for (var _att = 0; _att < 10; _att++) {
+            for (var _att = 0; _att < 15; _att++) {
                 await _splashDelay(800);
                 _gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
-                var _p = 20 + Math.round((_att + 1) / 10 * 15);
-                _dpoSet(2, 'active', 'Tentative ' + (_att + 1) + '/10…');
-                _dpoProgress(_p, 'Reconnexion Drive… (' + (_att + 1) + '/10)');
-                if (_gdState && _gdState.connected) { _driveOk = true; break; }
+                var _p = 20 + Math.round((_att + 1) / 15 * 15);
+                _dpoSet(2, 'active', 'Connexion ' + (_att + 1) + '/15…');
+                _dpoProgress(_p, 'Reconnexion Drive…');
+                // Attendre connected ET folderId (folderId est défini après _gdRestoreSavedFolder)
+                if (_gdState && _gdState.connected && _gdState.folderId) {
+                    _driveOk = true;
+                    break;
+                }
+                // Si connected mais folderId pas encore là, attendre un peu plus
+                if (_gdState && _gdState.connected && !_gdState.folderId) {
+                    _dpoProgress(_p, 'Dossier Drive en cours…');
+                    // Attendre encore 2s max pour le folderId
+                    for (var _wi = 0; _wi < 5; _wi++) {
+                        await _splashDelay(400);
+                        _gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
+                        if (_gdState && _gdState.folderId) { _driveOk = true; break; }
+                    }
+                    if (_driveOk) break;
+                }
             }
         }
 
@@ -17274,6 +17290,23 @@ function toggleInfoSection(headerElement) {
             _dpoSet(3, 'warn', 'Local');
             _dpoFinish('Drive non disponible — données locales utilisées', false);
             return;
+        }
+
+        // Fallback : si folderId toujours null, lire depuis localStorage
+        if (_gdState && !_gdState.folderId) {
+            var _lsFolderId   = localStorage.getItem('gdrive_folder_id')   || '';
+            var _lsFolderName = localStorage.getItem('gdrive_folder_name') || '';
+            if (_lsFolderId) {
+                // Créer un objet état avec les données localStorage
+                _gdState = {
+                    connected:  true,
+                    folderId:   _lsFolderId,
+                    folderName: _lsFolderName,
+                    email:      localStorage.getItem('gdrive_hint_email') || localStorage.getItem('gdrive_email') || '',
+                    lastSave:   localStorage.getItem('gdrive_last_save') || null
+                };
+                console.log('[dpo] folderId depuis localStorage:', _lsFolderId);
+            }
         }
 
         // Vérification token par appel API léger
