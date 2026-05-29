@@ -17338,6 +17338,37 @@ function toggleInfoSection(headerElement) {
         _dpoProgress(38, 'Drive OK (' + _email + ') — recherche sauvegarde…');
         await _splashDelay(180);
 
+        // ── COURT-CIRCUIT : restauration manuelle récente ───────────────
+        // Si l'utilisateur vient de sélectionner un fichier spécifique, ne PAS
+        // aller sur Drive — les données sont déjà en localStorage.
+        var _manualRestoreFile = localStorage.getItem('gdrive_manual_restore_file') || '';
+        var _manualRestoreTs   = localStorage.getItem('gdrive_manual_restore_ts')   || '';
+        if (_manualRestoreFile && _manualRestoreTs) {
+            var _manualElapsed = Date.now() - new Date(_manualRestoreTs).getTime();
+            if (_manualElapsed < 300000) { // 5 minutes de grâce
+                // Nettoyer les flags immédiatement
+                localStorage.removeItem('gdrive_manual_restore_file');
+                localStorage.removeItem('gdrive_manual_restore_ts');
+                // Lire les données déjà en localStorage (posées par la restauration manuelle)
+                var _mProds  = 0; var _mVentes = 0;
+                try {
+                    _mProds  = JSON.parse(localStorage.getItem('covo_products')      || '[]').length;
+                    _mVentes = JSON.parse(localStorage.getItem('covo_sales_history') || '[]').length;
+                } catch(e) {}
+                var _mShort = _manualRestoreFile.replace('covo_backup_','').replace('.json','');
+                _dpoSet(3, 'done', _mShort);
+                _dpoProgress(98, _mProds + ' produits · ' + _mVentes + ' ventes — ' + _mShort);
+                await _splashDelay(200);
+                _dpoFinish('Restauration appliquée — ' + _mProds + ' produits · ' + _mVentes + ' ventes · ' + _mShort, true);
+                console.log('[dpo] 🎯 Court-circuit restauration manuelle:', _manualRestoreFile);
+                return;
+            } else {
+                // Flag expiré — nettoyer
+                localStorage.removeItem('gdrive_manual_restore_file');
+                localStorage.removeItem('gdrive_manual_restore_ts');
+            }
+        }
+
         // ── ÉTAPE 3 : Restauration ────────────────────────────────────────
         _dpoSet(3, 'active', 'Recherche…');
         _dpoProgress(42, 'Recherche de la dernière sauvegarde…');
