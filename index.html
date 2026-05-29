@@ -17366,42 +17366,40 @@ function toggleInfoSection(headerElement) {
         };
 
         try {
-            // ── Stratégie 1 : fichier exact mémorisé (gdrive_last_file) ─────
+            // ── Collecte complète : on récupère TOUS les fichiers disponibles ─
+            // Toutes les stratégies sont exécutées pour dresser la liste complète,
+            // le fichier le plus récent (dernier) est ensuite sélectionné pour la restauration.
+            var _allFound = [];
+
+            // Stratégie 1 : fichier exact mémorisé (gdrive_last_file) ─────────
             var _lastFileName = localStorage.getItem('gdrive_last_file') || '';
             if (_lastFileName && _folderId) {
-                _dpoProgress(43, 'Recherche : ' + _lastFileName);
+                _dpoProgress(43, 'Vérification : ' + _lastFileName);
                 var _exactQ = '\'' + _folderId + '\' in parents and name = \'' + _lastFileName.replace(/'/g, "\\'") + '\' and trashed=false';
                 var _exact  = await _driveList(_exactQ, 2);
-                if (_exact.length > 0) {
-                    _latestFile = _exact[0];
-                    console.log('[dpo] ✅ Fichier exact trouvé:', _latestFile.name);
-                }
+                _exact.forEach(function(f) {
+                    if (!_allFound.find(function(x){ return x.id === f.id; })) _allFound.push(f);
+                });
+                if (_exact.length > 0) console.log('[dpo] ✅ Fichier exact trouvé:', _exact[0].name);
             }
 
-            // ── Stratégie 2 : name contains 'covo_backup' ────────────────────
-            if (!_latestFile && _folderId) {
-                _dpoProgress(45, 'Recherche covo_backup dans ' + (_gdState.folderName || 'Drive') + '…');
+            // Stratégie 2 : name contains 'covo_backup' ──────────────────────
+            _dpoProgress(45, 'Recensement des sauvegardes dans ' + (_gdState.folderName || 'Drive') + '…');
+            if (_folderId) {
                 var _nameQ = '\'' + _folderId + '\' in parents and name contains \'covo_backup\' and trashed=false';
-                var _named = await _driveList(_nameQ, 50);
-                if (_named.length > 0) {
-                    // Trier par date modif décroissante + par nom de fichier décroissant
-                    _named.sort(function(a, b) {
-                        var td = new Date(b.modifiedTime) - new Date(a.modifiedTime);
-                        return td !== 0 ? td : b.name.localeCompare(a.name);
-                    });
-                    _latestFile  = _named[0];
-                    _latestVFile = _named.find(function(f) { return f.name && f.name.includes('_VENTES_'); }) || null;
-                    console.log('[dpo] ✅ Fichier trouvé (name filter):', _latestFile.name, '(' + _named.length + ' total)');
-                }
+                var _named = await _driveList(_nameQ, 100);
+                _named.forEach(function(f) {
+                    if (!_allFound.find(function(x){ return x.id === f.id; })) _allFound.push(f);
+                });
+                if (_named.length > 0) console.log('[dpo] fichiers covo_backup:', _named.length);
             }
 
-            // ── Stratégie 3 : tous les fichiers du dossier ───────────────────
-            if (!_latestFile && _folderId) {
-                _dpoProgress(47, 'Recherche élargie dans le dossier…');
+            // Stratégie 3 : tous les fichiers du dossier ─────────────────────
+            if (_folderId) {
+                _dpoProgress(47, 'Analyse complète du dossier…');
                 var _allQ    = '\'' + _folderId + '\' in parents and trashed=false';
-                var _allFiles = await _driveList(_allQ, 100);
-                // Filtrer : préférence aux fichiers ressemblant à des sauvegardes
-                var _backups = _allFiles.filter(function(f) {
+                var _allDrive = await _driveList(_allQ, 100);
+                var _backups = _allDrive.filter(function(f) {
                     return f.name && (
                         f.name.toLowerCase().includes('covo') ||
                         f.name.toLowerCase().includes('backup') ||
@@ -17409,12 +17407,30 @@ function toggleInfoSection(headerElement) {
                         /\d{4}-\d{2}-\d{2}/.test(f.name)
                     );
                 });
-                var _pool = _backups.length > 0 ? _backups : _allFiles;
-                if (_pool.length > 0) {
-                    _pool.sort(function(a, b) { return new Date(b.modifiedTime) - new Date(a.modifiedTime); });
-                    _latestFile = _pool[0];
-                    console.log('[dpo] ✅ Fichier trouvé (recherche élargie):', _latestFile.name);
-                }
+                var _pool = _backups.length > 0 ? _backups : _allDrive;
+                _pool.forEach(function(f) {
+                    if (!_allFound.find(function(x){ return x.id === f.id; })) _allFound.push(f);
+                });
+                if (_pool.length > 0) console.log('[dpo] fichiers total dossier:', _pool.length);
+            }
+
+            // Trier toute la collection par date décroissante
+            _allFound.sort(function(a, b) {
+                var td = new Date(b.modifiedTime) - new Date(a.modifiedTime);
+                return td !== 0 ? td : (b.name || '').localeCompare(a.name || '');
+            });
+
+            var _totalFiles = _allFound.length;
+            if (_totalFiles > 0) {
+                // Le plus récent = premier après tri = celui qui sera restauré
+                _latestFile  = _allFound[0];
+                // Fichier ventes scindées s'il existe parmi les autres
+                _latestVFile = _allFound.find(function(f) { return f.name && f.name.includes('_VENTES_') && f.id !== _latestFile.id; }) || null;
+                var _otherCount = _totalFiles - 1; // tous sauf le dernier sélectionné
+                console.log('[dpo] ✅ ' + _totalFiles + ' fichier(s) trouvé(s), restauration de:', _latestFile.name,
+                    '(' + _otherCount + ' autre(s) disponible(s))');
+                _dpoProgress(48, _totalFiles + ' sauvegarde' + (_totalFiles > 1 ? 's' : '') + ' trouvée' + (_totalFiles > 1 ? 's' : '')
+                    + (_otherCount > 0 ? ' · ' + _otherCount + ' antérieure' + (_otherCount > 1 ? 's' : '') : ''));
             }
 
         } catch(e) {
@@ -17431,9 +17447,12 @@ function toggleInfoSection(headerElement) {
             return;
         }
 
-        // Afficher le nom du fichier trouvé
+        // Afficher : nb total de fichiers trouvés + nom du plus récent
         var _shortName = _latestFile.name.replace('covo_backup_', '').replace('.json', '');
-        _dpoSet(3, 'active', _shortName);
+        var _totalLabel = (typeof _totalFiles !== 'undefined' && _totalFiles > 1)
+            ? _totalFiles + ' saves'
+            : _shortName;
+        _dpoSet(3, 'active', _totalLabel);
 
         var _saveDate = new Date(_latestFile.modifiedTime);
         var _saveFmt  = _saveDate.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
@@ -17529,7 +17548,10 @@ function toggleInfoSection(headerElement) {
             _splashStartPolling(_gdState.folderId, _latestFile.id, _saveFmt);
         }
 
-        _dpoSet(3, 'done', _nbProd + ' prod.');
+        var _doneLabel = (typeof _totalFiles !== 'undefined' && _totalFiles > 1)
+            ? _totalFiles + ' saves · ' + _nbProd + ' prod.'
+            : _nbProd + ' prod.';
+        _dpoSet(3, 'done', _doneLabel);
         _dpoProgress(98, 'Finalisation…');
         await _splashDelay(200);
 
@@ -37596,11 +37618,17 @@ function initAdminSections() {
         try {
             // ── Helper: list JSON files inside a Drive folder id ──────────────
             async function _drFetchFiles(folderId) {
-                const q = encodeURIComponent("'" + folderId + "' in parents and trashed=false and mimeType='application/json'");
+                // Pas de filtre mimeType : les fichiers peuvent être application/octet-stream ou application/json
+                const q = encodeURIComponent("'" + folderId + "' in parents and trashed=false");
                 const r = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q
-                    + '&fields=files(id,name,size,modifiedTime,createdTime)&orderBy=createdTime%20desc&pageSize=50');
+                    + '&fields=files(id,name,size,modifiedTime,createdTime)&orderBy=createdTime%20desc&pageSize=100');
                 const d = await r.json();
-                return d.files || [];
+                // Filtrer localement : garder uniquement les fichiers de sauvegarde COVO
+                const all = d.files || [];
+                return all.filter(function(f) {
+                    const n = (f.name || '').toLowerCase();
+                    return n.includes('covo') || n.includes('backup') || n.includes('sauvegarde') || /\d{4}-\d{2}-\d{2}/.test(f.name || '');
+                });
             }
 
             // ── Helper: find a subfolder by name under a parent id ────────────
