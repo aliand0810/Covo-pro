@@ -17186,9 +17186,17 @@ function toggleInfoSection(headerElement) {
         } catch(e) { console.error('[_progressOverlayDismiss]', e); }
     }
 
+    var _progressOverlayRunning = false; // Verrou anti-concurrence
     async function _progressOverlayRun(user) {
+        // Bloquer toute exécution concurrente (double appel au démarrage)
+        if (_progressOverlayRunning) {
+            console.log('[dpo] ⚠️ Exécution concurrente bloquée');
+            return;
+        }
+        _progressOverlayRunning = true;
+
         var overlay = document.getElementById('data-progress-overlay');
-        if (!overlay) { _splashStart(user); return; }
+        if (!overlay) { _progressOverlayRunning = false; _splashStart(user); return; }
 
         // Afficher l'overlay, masquer le login
         overlay.style.display = 'flex';
@@ -17216,6 +17224,7 @@ function toggleInfoSection(headerElement) {
 
         // Helper : montrer le bouton de validation et arrêter
         function _dpoFinish(label, isOk) {
+            _progressOverlayRunning = false; // Libérer le verrou
             _dpoSet(4, isOk ? 'done' : 'warn', isOk ? '🎉' : '⚠️');
             _dpoProgress(100, label);
             window._dpoCurrentUser = user;
@@ -26050,9 +26059,9 @@ logout = function(skipConfirmation = false) {
             if (roleEl) roleEl.textContent = lastRole === 'admin' ? 'Administrateur' : 'Caissier';
         }
     } else {
-        // Session active (refresh) → barre de progression
+        // Session active (refresh) → barre de progression déjà lancée ci-dessus
         isAdmin = currentUser.role === 'admin';
-        setTimeout(function() { _progressOverlayRun(currentUser); }, 100);
+        // NE PAS rappeler _progressOverlayRun ici — déjà lancé à la ligne précédente
     }
 
     // ===== SCANNER DE CODE-BARRES GLOBAL =====
