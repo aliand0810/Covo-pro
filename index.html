@@ -17422,11 +17422,40 @@ function toggleInfoSection(headerElement) {
 
             var _totalFiles = _allFound.length;
             if (_totalFiles > 0) {
-                // Le plus récent = premier après tri = celui qui sera restauré
-                _latestFile  = _allFound[0];
+                // ── Vérifier si l'utilisateur a effectué une restauration manuelle récente ──
+                // Si oui, honorer son choix au lieu de prendre automatiquement le plus récent.
+                var _manualFile = localStorage.getItem('gdrive_manual_restore_file') || '';
+                var _manualTs   = localStorage.getItem('gdrive_manual_restore_ts')   || '';
+                var _isRecentManual = false;
+                if (_manualFile && _manualTs) {
+                    var _elapsed = Date.now() - new Date(_manualTs).getTime();
+                    _isRecentManual = _elapsed < 180000; // 3 minutes de grâce
+                }
+
+                if (_isRecentManual) {
+                    // Chercher le fichier correspondant à la sélection manuelle
+                    var _manualMatch = _allFound.find(function(f) { return f.name === _manualFile; });
+                    if (_manualMatch) {
+                        _latestFile = _manualMatch;
+                        console.log('[dpo] 🎯 Restauration manuelle honorée:', _latestFile.name);
+                        // Nettoyer le flag après utilisation
+                        localStorage.removeItem('gdrive_manual_restore_file');
+                        localStorage.removeItem('gdrive_manual_restore_ts');
+                    } else {
+                        // Fichier introuvable — prendre le plus récent par sécurité
+                        _latestFile = _allFound[0];
+                        localStorage.removeItem('gdrive_manual_restore_file');
+                        localStorage.removeItem('gdrive_manual_restore_ts');
+                        console.log('[dpo] ⚠️ Fichier manuel introuvable, fallback:', _latestFile.name);
+                    }
+                } else {
+                    // Comportement normal : fichier le plus récent
+                    _latestFile = _allFound[0];
+                }
+
                 // Fichier ventes scindées s'il existe parmi les autres
                 _latestVFile = _allFound.find(function(f) { return f.name && f.name.includes('_VENTES_') && f.id !== _latestFile.id; }) || null;
-                var _otherCount = _totalFiles - 1; // tous sauf le dernier sélectionné
+                var _otherCount = _totalFiles - 1;
                 console.log('[dpo] ✅ ' + _totalFiles + ' fichier(s) trouvé(s), restauration de:', _latestFile.name,
                     '(' + _otherCount + ' autre(s) disponible(s))');
                 _dpoProgress(48, _totalFiles + ' sauvegarde' + (_totalFiles > 1 ? 's' : '') + ' trouvée' + (_totalFiles > 1 ? 's' : '')
@@ -37863,6 +37892,12 @@ function initAdminSections() {
             } catch(saveErr) {
                 console.error('GDrive restore: save error', saveErr);
             }
+            // Mémoriser le fichier manuellement sélectionné — sera respecté au rechargement
+            if (fileName) {
+                localStorage.setItem('gdrive_last_file',           fileName);
+                localStorage.setItem('gdrive_manual_restore_file', fileName);
+                localStorage.setItem('gdrive_manual_restore_ts',   new Date().toISOString());
+            }
             // Marquer la restauration — empêche l'auto-restore en boucle au redémarrage
             var _restoreTs = new Date().toISOString();
             localStorage.setItem('gdrive_last_restore', _restoreTs);
@@ -38839,6 +38874,12 @@ function initAdminSections() {
                 }
             } catch(saveErr) {
                 console.error('Smart restore: save error', saveErr);
+            }
+            // Mémoriser le fichier manuellement sélectionné — sera respecté au rechargement
+            if (fname) {
+                localStorage.setItem('gdrive_last_file',           fname);
+                localStorage.setItem('gdrive_manual_restore_file', fname);
+                localStorage.setItem('gdrive_manual_restore_ts',   new Date().toISOString());
             }
             var _smartTs = new Date().toISOString();
             localStorage.setItem('gdrive_last_restore', _smartTs);
