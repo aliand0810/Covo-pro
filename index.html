@@ -37076,14 +37076,21 @@ function initAdminSections() {
 
     // Exposer pour que le bouton inline dans la modale puisse y accéder
     window._gdTriggerSmartRestore = function() {
-        const d = _gdPendingRestoreData || _gdLastDetectedFileData;
-        const n = _gdPendingRestoreName || _gdLastDetectedFileName;
+        const d = _gdPendingRestoreData;
+        const n = _gdPendingRestoreName;
         const modal = document.getElementById('gdrive-compare-modal');
         if (modal) modal.remove();
         if (d && typeof window._gdSmartRestoreOpen === 'function') {
             window._gdSmartRestoreOpen(null, n, d);
         } else {
-            showScanToast('⚠️ Aucune donnée de sauvegarde disponible', 'info');
+            // Fallback : uniquement si aucune sélection explicite n'est en cours
+            const df = _gdLastDetectedFileData;
+            const nf = _gdLastDetectedFileName;
+            if (df && typeof window._gdSmartRestoreOpen === 'function') {
+                window._gdSmartRestoreOpen(null, nf, df);
+            } else {
+                showScanToast('⚠️ Aucune donnée de sauvegarde disponible', 'info');
+            }
         }
     };
 
@@ -37453,7 +37460,12 @@ function initAdminSections() {
         if (modal) modal.remove();
         const data = _gdPendingRestoreData || _gdLastDetectedFileData;
         const name = _gdPendingRestoreName || _gdLastDetectedFileName;
-        if (!data) { showScanToast('❌ Aucune donnée à restaurer', 'error'); return; }
+        if (!data) { showScanToast('❌ Sélectionnez d\'abord un fichier à restaurer', 'error'); return; }
+        // Vérification : si aucune sélection explicite, bloquer la restauration automatique
+        if (!_gdPendingRestoreData) {
+            showScanToast('⚠️ Aucun fichier sélectionné — ouvrez la liste des sauvegardes', 'info');
+            return;
+        }
         await _gdApplyRestore(data, name);
         _gdPendingRestoreData = null;
         _gdPendingRestoreName = null;
@@ -38618,6 +38630,11 @@ function initAdminSections() {
         }
         if (!data) { showScanToast('❌ Aucune donnée à restaurer', 'error'); return; }
 
+        // Token de session unique : empêche qu'une autre ouverture écrase les données avant confirmation
+        var _srSessionToken = 'sr_' + Date.now() + '_' + Math.floor(Math.random() * 9999);
+        window._gdSmartRestoreSessions = window._gdSmartRestoreSessions || {};
+        window._gdSmartRestoreSessions[_srSessionToken] = { data: data, fname: fileName };
+        // Compat legacy (ne PAS utiliser pour la restauration — sert uniquement au debug)
         window._gdSmartRestoreData = data;
         window._gdSmartRestoreFile = fileName;
 
@@ -38692,7 +38709,7 @@ function initAdminSections() {
             '<div style="padding:12px 20px;border-top:1px solid ' + bdr + ';display:flex;gap:8px;flex-shrink:0;background:' + bg + ';">' +
               '<button onclick="document.getElementById(\'gd-smart-restore-modal\').remove()" ' +
                 'style="flex:1;padding:10px;background:' + (isDark?'#2a2d3e':'#f0f0f0') + ';border:1px solid ' + bdr + ';border-radius:8px;cursor:pointer;font-weight:700;color:' + textS + ';font-size:0.85rem;">✖ Annuler</button>' +
-              '<button onclick="_gdSmartRestoreApply()" ' +
+              '<button onclick="_gdSmartRestoreApply(\'' + _srSessionToken + '\')" ' +
                 'style="flex:2;padding:10px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:0.85rem;">🔄 Restaurer les modules sélectionnés</button>' +
             '</div>' +
           '</div>' +
@@ -38741,11 +38758,18 @@ function initAdminSections() {
         }, 1000);
     }
 
-    window._gdSmartRestoreApply = function() {
+    window._gdSmartRestoreApply = function(sessionToken) {
         var modal = document.getElementById('gd-smart-restore-modal');
-        var data  = window._gdSmartRestoreData;
-        var fname = window._gdSmartRestoreFile;
-        if (!data) return;
+        // Priorité : token de session (données du fichier EXACTEMENT sélectionné)
+        // Fallback : legacy window._gdSmartRestoreData (compatibilité)
+        var _session = sessionToken && window._gdSmartRestoreSessions && window._gdSmartRestoreSessions[sessionToken];
+        var data  = _session ? _session.data  : window._gdSmartRestoreData;
+        var fname = _session ? _session.fname : window._gdSmartRestoreFile;
+        // Nettoyage du token pour éviter les fuites mémoire
+        if (sessionToken && window._gdSmartRestoreSessions) {
+            delete window._gdSmartRestoreSessions[sessionToken];
+        }
+        if (!data) { console.error('[SmartRestore] Aucune donnée — token:', sessionToken); return; }
 
         var selected = new Set(
             Array.from(modal ? modal.querySelectorAll('input[name=sr-module]:checked') : []).map(function(cb){ return cb.value; })
