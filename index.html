@@ -42510,6 +42510,158 @@ function initAdminSections() {
         }).join('');
     };
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ─── DRIVE SYNC — Dossiers Notifications / Information / Important / Urgent
+    // ═══════════════════════════════════════════════════════════════════════════
+    var _nDriveFolders    = {};   // { root, information, important, urgent }
+    var _nDriveMasterId   = null; // ID du fichier covo_notifications.json
+    var _nDriveLastMod    = null; // modifiedTime du dernier fichier chargé
+    var _nDriveSyncing    = false;
+    var _nDrivePollTimer  = null;
+
+    // Trouve ou crée un sous-dossier Drive
+    async function _nGetOrCreateFolder(parentId, name) {
+        var fn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+        var q  = encodeURIComponent("'" + parentId + "' in parents and name='" + name.replace(/'/g,"\\'") + "' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+        try {
+            var r = await fn('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)&pageSize=5');
+            var d = await r.json();
+            if (d.files && d.files.length) return d.files[0].id;
+            // Créer
+            var cr = await fn('https://www.googleapis.com/drive/v3/files', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] })
+            });
+            var cd = await cr.json();
+            return cd.id || null;
+        } catch(e) { console.warn('[notif] folder:', name, e); return null; }
+    }
+
+    // Upload multipart (créer ou mettre à jour un fichier JSON)
+    async function _nUpsertJson(folderId, fileName, payload, existingId) {
+        var fn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+        var jsonStr = JSON.stringify(payload);
+        var boundary = 'notif_boundary_' + Date.now();
+        var body = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
+            + (existingId ? '{}' : JSON.stringify({ name: fileName, parents: [folderId] }))
+            + '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n'
+            + jsonStr + '\r\n--' + boundary + '--';
+        var url = existingId
+            ? 'https://www.googleapis.com/upload/drive/v3/files/' + existingId + '?uploadType=multipart&fields=id,modifiedTime'
+            : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime';
+        var r = await fn(url, {
+            method: existingId ? 'PATCH' : 'POST',
+            headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+            body: body
+        });
+        return await r.json();
+    }
+
+    // Initialise les dossiers Drive (une seule fois par session)
+    async function _nEnsureFolders() {
+        var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
+        if (!gdState || !gdState.connected || !gdState.folderId) return false;
+        if (!_nDriveFolders.root) {
+            _nDriveFolders.root = await _nGetOrCreateFolder(gdState.folderId, 'Notifications');
+        }
+        if (!_nDriveFolders.root) return false;
+        if (!_nDriveFolders.information) _nDriveFolders.information = await _nGetOrCreateFolder(_nDriveFolders.root, 'Information');
+        if (!_nDriveFolders.important)   _nDriveFolders.important   = await _nGetOrCreateFolder(_nDriveFolders.root, 'Important');
+        if (!_nDriveFolders.urgent)      _nDriveFolders.urgent      = await _nGetOrCreateFolder(_nDriveFolders.root, 'Urgent');
+        return true;
+    }
+
+    // Sauvegarde les notifications vers Drive (appelé par _notifSave)
+    window._notifDriveSync = async function() {
+        if (_nDriveSyncing) return;
+        _nDriveSyncing = true;
+        try {
+            if (!await _nEnsureFolders()) return;
+            var list = window._notifLoad();
+
+            // Fichier maître : toutes les notifications
+            var res = await _nUpsertJson(_nDriveFolders.root, 'covo_notifications.json', list, _nDriveMasterId);
+            if (res.id) { _nDriveMasterId = res.id; _nDriveLastMod = res.modifiedTime || _nDriveLastMod; }
+
+            // Fichiers par priorité dans leurs sous-dossiers
+            var byP = { information: [], important: [], urgent: [] };
+            list.forEach(function(n) {
+                if (n.priority === 'info')      byP.information.push(n);
+                else if (n.priority === 'important') byP.important.push(n);
+                else if (n.priority === 'urgent')    byP.urgent.push(n);
+            });
+            var keys = Object.keys(byP);
+            for (var ki = 0; ki < keys.length; ki++) {
+                var k = keys[ki];
+                if (byP[k].length > 0 && _nDriveFolders[k]) {
+                    await _nUpsertJson(_nDriveFolders[k], 'notifications_' + k + '.json', byP[k], null);
+                }
+            }
+        } catch(e) { console.warn('[notif drive sync]', e); }
+        finally { _nDriveSyncing = false; }
+    };
+
+    // Polling toutes les 60s — détecte les nouvelles notifications depuis Drive
+    async function _nDrivePollFn() {
+        var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
+        if (!gdState || !gdState.connected || !gdState.folderId) return;
+        try {
+            var fn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+            // Trouver le dossier Notifications s'il n'est pas encore connu
+            if (!_nDriveFolders.root) {
+                var q = encodeURIComponent("'" + gdState.folderId + "' in parents and name='Notifications' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+                var fr = await fn('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)&pageSize=5');
+                var fd = await fr.json();
+                if (!fd.files || !fd.files.length) return; // Pas encore créé
+                _nDriveFolders.root = fd.files[0].id;
+            }
+            // Chercher covo_notifications.json
+            var q2 = encodeURIComponent("'" + _nDriveFolders.root + "' in parents and name='covo_notifications.json' and trashed=false");
+            var r2 = await fn('https://www.googleapis.com/drive/v3/files?q=' + q2 + '&fields=files(id,modifiedTime)&pageSize=5');
+            var d2 = await r2.json();
+            if (!d2.files || !d2.files.length) return;
+            var file = d2.files[0];
+            if (!_nDriveMasterId) _nDriveMasterId = file.id;
+            // Pas de changement → rien à faire
+            if (_nDriveLastMod && file.modifiedTime === _nDriveLastMod) return;
+            _nDriveLastMod = file.modifiedTime;
+            // Télécharger et fusionner
+            var r3 = await fn('https://www.googleapis.com/drive/v3/files/' + file.id + '?alt=media');
+            var driveList = JSON.parse(await r3.text());
+            if (!Array.isArray(driveList)) return;
+            // Fusionner : ajouter les notifications Drive absentes en local
+            var localList = window._notifLoad();
+            var localIds = {};
+            localList.forEach(function(n) { localIds[n.id] = true; });
+            var hasNew = driveList.some(function(n) { return !localIds[n.id]; });
+            if (hasNew) {
+                // Drive est la source de vérité
+                localStorage.setItem(NOTIF_KEY, JSON.stringify(driveList));
+                if (typeof window._notifRenderAdmin === 'function') window._notifRenderAdmin();
+                _notifUpdateAdminBadge();
+                _notifPollCheck();
+                console.log('[notif] 🔔 Nouvelles notifications Drive synchronisées');
+            }
+        } catch(e) { console.warn('[notif drive poll]', e); }
+    }
+
+    function _nDrivePollStart() {
+        if (_nDrivePollTimer) clearInterval(_nDrivePollTimer);
+        _nDrivePollTimer = setInterval(_nDrivePollFn, 60000); // toutes les 60s
+        setTimeout(_nDrivePollFn, 8000); // premier poll après 8s (Drive connecté)
+    }
+
+    // Patch _notifSave pour déclencher la sync Drive automatiquement
+    var _origNotifSave = window._notifSave;
+    window._notifSave = function(list) {
+        _origNotifSave(list);
+        // Sync Drive en arrière-plan (non-bloquant)
+        setTimeout(function() {
+            if (typeof window._notifDriveSync === 'function') window._notifDriveSync();
+        }, 500);
+    };
+
     // ─── Init ────────────────────────────────────────────────────────────────
     function _notifInit() {
         // Sélectionner priorité info par défaut
@@ -42517,6 +42669,8 @@ function initAdminSections() {
         if (infoBtn) window._notifSelectPriority(infoBtn);
         // Mettre à jour le badge
         _notifUpdateAdminBadge();
+        // Démarrer le polling Drive des notifications (toutes les 60s)
+        _nDrivePollStart();
         // Auto-refresh quand la section s'ouvre
         var origToggle = window.toggleAdminSection;
         window.toggleAdminSection = function(id) {
