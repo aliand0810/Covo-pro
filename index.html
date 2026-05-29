@@ -24474,15 +24474,17 @@ logout = function(skipConfirmation = false) {
             const nb30 = predictions.filter(p => p.daysLeft >= 14 && p.daysLeft < 30).length;
             const nbOk = predictions.filter(p => p.daysLeft >= 30).length;
             kpiEl.innerHTML =
-                `<div style="background:linear-gradient(135deg,#e74c3c,#c0392b);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+                `<div onclick="window._showStockLevelModal('urgent')" style="background:linear-gradient(135deg,#e74c3c,#c0392b);border-radius:12px;padding:14px 12px;color:white;text-align:center;cursor:pointer;transition:transform 0.15s,box-shadow 0.15s;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(231,76,60,0.45)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
                     <div style="font-size:1.3rem;font-weight:800;">${nbReorder}</div>
                     <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">🔴 Urgent (&lt;7j)</div>
                     <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">à réapprovisionner</div>
+                    <div style="font-size:0.58rem;margin-top:4px;background:rgba(255,255,255,0.2);border-radius:8px;padding:1px 6px;">Cliquer pour voir ›</div>
                 </div>` +
-                `<div style="background:linear-gradient(135deg,#e67e22,#d35400);border-radius:12px;padding:14px 12px;color:white;text-align:center;">
+                `<div onclick="window._showStockLevelModal('attention')" style="background:linear-gradient(135deg,#e67e22,#d35400);border-radius:12px;padding:14px 12px;color:white;text-align:center;cursor:pointer;transition:transform 0.15s,box-shadow 0.15s;" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(230,126,34,0.45)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
                     <div style="font-size:1.3rem;font-weight:800;">${nb14}</div>
                     <div style="font-size:0.68rem;opacity:0.85;margin-top:2px;">🟠 Attention (7–14j)</div>
                     <div style="font-size:0.6rem;opacity:0.7;margin-top:1px;">à surveiller</div>
+                    <div style="font-size:0.58rem;margin-top:4px;background:rgba(255,255,255,0.2);border-radius:8px;padding:1px 6px;">Cliquer pour voir ›</div>
                 </div>` +
                 `<div style="background:var(--bg-card,#fff);border:1.5px solid rgba(39,174,96,0.3);border-radius:12px;padding:14px 12px;text-align:center;">
                     <div style="font-size:1.3rem;font-weight:800;color:#27ae60;">${nbOk}</div>
@@ -24686,9 +24688,17 @@ logout = function(skipConfirmation = false) {
             }
 
             if (legendEl) {
+                const levelMap = {
+                    '🔴 Urgent':    'urgent',
+                    '🟠 Attention': 'attention',
+                    '🟡 Surveiller':'surveiller',
+                    '🟢 OK':        'ok'
+                };
                 legendEl.innerHTML = segs.map(s => {
-                    const pct = total > 0 ? Math.round(s.value/total*100) : 0;
-                    return `<div style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:${s.color}18;border:1px solid ${s.color}40;border-radius:20px;font-size:0.68rem;font-weight:700;color:var(--text-main,#2c3e50);">
+                    const pct   = total > 0 ? Math.round(s.value/total*100) : 0;
+                    const lvl   = levelMap[s.label] || '';
+                    const click = lvl ? `onclick="window._showStockLevelModal('${lvl}')"` : '';
+                    return `<div ${click} style="display:flex;align-items:center;gap:4px;padding:3px 8px;background:${s.color}18;border:1px solid ${s.color}40;border-radius:20px;font-size:0.68rem;font-weight:700;color:var(--text-main,#2c3e50);${lvl?'cursor:pointer;':''}transition:transform 0.12s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform=''">
                         <div style="width:8px;height:8px;border-radius:50%;background:${s.color};flex-shrink:0;"></div>
                         ${s.label} <span style="color:${s.color};">${s.value} (${pct}%)</span>
                     </div>`;
@@ -24697,7 +24707,65 @@ logout = function(skipConfirmation = false) {
         }
     }
 
-    function calculateStockPredictions() {
+    // ── Modale détail niveau de stock ────────────────────────────────────────
+    window._showStockLevelModal = function(level) {
+        var cfg = {
+            urgent:     { label:'🔴 Urgent — Réapprovisionner',    subLabel:'Stock restant < 7 jours',    color:'#e74c3c', bg:'linear-gradient(135deg,#e74c3c,#c0392b)', filter: function(p){ return p.daysLeft <  7; } },
+            attention:  { label:'🟠 Attention — À surveiller',     subLabel:'Stock restant 7 à 14 jours', color:'#e67e22', bg:'linear-gradient(135deg,#e67e22,#d35400)', filter: function(p){ return p.daysLeft >= 7  && p.daysLeft < 14; } },
+            surveiller: { label:'🟡 Surveiller',                   subLabel:'Stock restant 14 à 30 jours',color:'#f39c12', bg:'linear-gradient(135deg,#f39c12,#e67e22)', filter: function(p){ return p.daysLeft >= 14 && p.daysLeft < 30; } },
+            ok:         { label:'🟢 Stock OK',                     subLabel:'Stock restant > 30 jours',   color:'#27ae60', bg:'linear-gradient(135deg,#27ae60,#1e8449)', filter: function(p){ return p.daysLeft >= 30; } }
+        };
+        var c = cfg[level]; if (!c) return;
+        var preds = calculateStockPredictions().filter(c.filter);
+        var isDark = document.body.classList.contains('dark-mode');
+        var bg    = isDark ? '#1e2233' : '#ffffff';
+        var bgRow = isDark ? '#252840' : '#f8fafc';
+        var text  = isDark ? '#e8eaf0' : '#1a1a2e';
+        var textS = isDark ? '#9fafc0' : '#5d6d7e';
+        var bdr   = isDark ? '#2d3550' : '#dde3ee';
+
+        var rows = preds.length === 0
+            ? '<div style="text-align:center;padding:40px 20px;color:' + textS + '"><div style="font-size:2.5rem;margin-bottom:10px;">✅</div><div style="font-weight:700;">Aucun article dans cette catégorie</div></div>'
+            : preds.map(function(p, i) {
+                var prod = products.find(function(pr){ return pr.id === p.id; }) || {};
+                var catLabel = prod.category || '—';
+                var stockColor = p.daysLeft < 3 ? '#e74c3c' : p.daysLeft < 7 ? '#e67e22' : p.daysLeft < 14 ? '#f39c12' : '#27ae60';
+                var barW = Math.min(100, Math.round(p.daysLeft / 30 * 100));
+                return '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;background:' + (i%2===0?bg:bgRow) + ';border-bottom:1px solid ' + bdr + ';">'
+                    + '<div style="flex:1;min-width:0;">'
+                    +   '<div style="font-size:0.84rem;font-weight:700;color:' + text + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (p.name||'') + '</div>'
+                    +   '<div style="font-size:0.7rem;color:' + textS + ';margin-top:2px;">📁 ' + catLabel + ' · 📦 Stock : ' + p.currentStock + ' · 📈 ' + p.avgSalesPerDay.toFixed(1) + '/j</div>'
+                    +   '<div style="margin-top:5px;height:4px;background:' + bdr + ';border-radius:2px;overflow:hidden;">'
+                    +     '<div style="height:100%;width:' + barW + '%;background:' + stockColor + ';border-radius:2px;transition:width 0.4s;"></div>'
+                    +   '</div>'
+                    + '</div>'
+                    + '<div style="flex-shrink:0;text-align:right;">'
+                    +   '<div style="font-size:1.1rem;font-weight:800;color:' + stockColor + ';">' + p.daysLeft + 'j</div>'
+                    +   '<div style="font-size:0.62rem;color:' + textS + ';">restants</div>'
+                    + '</div>'
+                    + '</div>';
+            }).join('');
+
+        var html = '<div id="stock-level-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.72);backdrop-filter:blur(8px);z-index:21000;display:flex;justify-content:center;align-items:center;" onclick="if(event.target===this)this.remove()">'
+            + '<div style="background:' + bg + ';border-radius:16px;width:92%;max-width:520px;max-height:85vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.5);">'
+            +   '<div style="background:' + c.bg + ';padding:15px 18px;display:flex;align-items:flex-start;justify-content:space-between;flex-shrink:0;">'
+            +     '<div>'
+            +       '<div style="color:white;font-weight:800;font-size:0.98rem;">' + c.label + '</div>'
+            +       '<div style="color:rgba(255,255,255,0.8);font-size:0.72rem;margin-top:2px;">' + c.subLabel + ' · ' + preds.length + ' article' + (preds.length>1?'s':'') + '</div>'
+            +     '</div>'
+            +     '<button onclick="document.getElementById(\'stock-level-modal\').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:1rem;font-weight:700;flex-shrink:0;">✕</button>'
+            +   '</div>'
+            +   '<div style="overflow-y:auto;flex:1;">' + rows + '</div>'
+            +   '<div style="padding:10px 14px;border-top:1px solid ' + bdr + ';background:' + bg + ';text-align:center;font-size:0.72rem;color:' + textS + ';flex-shrink:0;">Basé sur les ventes des 30 derniers jours</div>'
+            + '</div>'
+            + '</div>';
+
+        var old = document.getElementById('stock-level-modal');
+        if (old) old.remove();
+        document.body.insertAdjacentHTML('beforeend', html);
+    };
+
+        function calculateStockPredictions() {
         const predictions = [];
         const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         products.forEach(product => {
