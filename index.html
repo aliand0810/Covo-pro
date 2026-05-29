@@ -36993,7 +36993,30 @@ function initAdminSections() {
         }
     };
 
-    window._gdChipClick = async function() {
+    // ── Récupère TOUS les fichiers Drive (toutes pages via nextPageToken) ──────
+    window._gdFetchAllBackups = async function(folderId) {
+        var allFiles = [];
+        var pageToken = null;
+        var fetchFn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : _gdFetch;
+        var q = encodeURIComponent("'" + folderId + "' in parents and trashed=false and name contains 'covo_backup'");
+        var baseUrl = 'https://www.googleapis.com/drive/v3/files?q=' + q
+            + '&orderBy=modifiedTime+desc&pageSize=1000'
+            + '&fields=nextPageToken,files(id,name,modifiedTime,size)';
+        do {
+            var url = baseUrl + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
+            var resp = await Promise.race([
+                fetchFn(url),
+                new Promise(function(_, rej) { setTimeout(function() { rej(new Error('timeout')); }, 15000); })
+            ]);
+            var data = await resp.json();
+            if (data.error) throw new Error('Drive API: ' + (data.error.message || data.error.code));
+            (data.files || []).forEach(function(f) { allFiles.push(f); });
+            pageToken = data.nextPageToken || null;
+        } while (pageToken);
+        return allFiles;
+    };
+
+        window._gdChipClick = async function() {
         if (!_gdConnected || !_gdFolderId) return;
         const chip = document.getElementById('gd-last-file-chip');
         const chipTimeEl = document.getElementById('gd-chip-time');
@@ -37003,15 +37026,7 @@ function initAdminSections() {
         if (chip) chip.style.pointerEvents = 'none';
 
         try {
-            const q = encodeURIComponent(
-                `'${_gdFolderId}' in parents and trashed=false and name contains 'covo_backup'`
-            );
-            const resp = await _gdFetch(
-                'https://www.googleapis.com/drive/v3/files?q=' + q +
-                '&orderBy=modifiedTime+desc&pageSize=30&fields=files(id,name,modifiedTime,size)'
-            );
-            const data = await resp.json();
-            const files = (data.files || []).filter(f => f.name.startsWith('covo_backup'));
+            const files = await window._gdFetchAllBackups(_gdFolderId);
             if (chipTimeEl) chipTimeEl.textContent = origTime;
             if (chip) chip.style.pointerEvents = '';
             if (!files.length) { showScanToast('Aucune sauvegarde trouvée dans le dossier', 'info'); return; }
@@ -38281,13 +38296,8 @@ function initAdminSections() {
 
         // Charger la liste
         try {
-            var q = encodeURIComponent("'" + _gdFolderId + "' in parents and trashed=false and name contains 'covo_backup'");
-            var resp = await window._gdFetchPublic(
-                'https://www.googleapis.com/drive/v3/files?q=' + q +
-                '&orderBy=modifiedTime+desc&pageSize=30&fields=files(id,name,modifiedTime,size)'
-            );
-            var data = await resp.json();
-            var files = (data.files || []).sort((a,b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
+            var files = await window._gdFetchAllBackups(_gdFolderId);
+            files.sort(function(a,b){ return new Date(b.modifiedTime) - new Date(a.modifiedTime); });
             var listEl = document.getElementById('gd-picker-list');
             if (!listEl) return;
             if (!files.length) {
@@ -38674,11 +38684,7 @@ function initAdminSections() {
         }
         try {
             await _gdEnsureParamsFolder();
-            const q = encodeURIComponent('\'' + _gdParamsHistId + '\' in parents and trashed=false and mimeType=\'application/json\'');
-            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q +
-                '&fields=files(id,name,modifiedTime,size)&orderBy=modifiedTime+desc&pageSize=50');
-            const data = await resp.json();
-            const files = data.files || [];
+            const files = await window._gdFetchAllBackups(_gdParamsHistId);
             if (!files.length) { showScanToast('📂 Aucune version historique trouvée dans Paramètres et Catalogues', 'info'); return; }
             _gdShowPickerModal(files);
         } catch(e) {
