@@ -1019,6 +1019,48 @@ const _store = {
         }
         
         .header-left { display: flex; align-items: center; gap: 15px; }
+
+        /* ── Indicateur de synchronisation des notifications ── */
+        #notif-sync-indicator {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 10px; border-radius: 20px;
+            cursor: default; user-select: none;
+            transition: background 0.3s, box-shadow 0.3s;
+            font-size: 0.72rem; font-weight: 700;
+            background: rgba(158,158,158,0.15);
+            border: 1.5px solid rgba(158,158,158,0.3);
+            position: relative;
+        }
+        #notif-sync-indicator.nsi-synced   { background:rgba(39,174,96,0.12);  border-color:rgba(39,174,96,0.4);  }
+        #notif-sync-indicator.nsi-syncing  { background:rgba(52,152,219,0.12); border-color:rgba(52,152,219,0.4); }
+        #notif-sync-indicator.nsi-error    { background:rgba(231,76,60,0.12);  border-color:rgba(231,76,60,0.4);  }
+        #notif-sync-indicator.nsi-pending  { background:rgba(158,158,158,0.12);border-color:rgba(158,158,158,0.3);}
+        #notif-sync-dot {
+            width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+            background: #9e9e9e; transition: background 0.3s;
+        }
+        #notif-sync-indicator.nsi-synced  #notif-sync-dot { background:#27ae60; }
+        #notif-sync-indicator.nsi-syncing #notif-sync-dot { background:#3498db; animation: nsiPulse 0.9s infinite; }
+        #notif-sync-indicator.nsi-error   #notif-sync-dot { background:#e74c3c; animation: nsiError 0.6s infinite; }
+        #notif-sync-label { color: var(--text-main,#333); white-space: nowrap; }
+        #notif-sync-indicator.nsi-synced  #notif-sync-label { color:#1e8449; }
+        #notif-sync-indicator.nsi-syncing #notif-sync-label { color:#1a5276; }
+        #notif-sync-indicator.nsi-error   #notif-sync-label { color:#922b21; }
+        #notif-sync-tooltip {
+            display: none; position: absolute; top: calc(100% + 8px); left: 0;
+            background: rgba(20,20,30,0.92); color: #fff; font-size: 0.68rem;
+            padding: 5px 10px; border-radius: 8px; white-space: nowrap;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.3); z-index: 9999; pointer-events:none;
+        }
+        #notif-sync-indicator:hover #notif-sync-tooltip { display: block; }
+        @keyframes nsiPulse {
+            0%,100% { opacity:1; transform:scale(1); }
+            50%      { opacity:0.5; transform:scale(1.3); }
+        }
+        @keyframes nsiError {
+            0%,100% { opacity:1; }
+            50%      { opacity:0.3; }
+        }
         
         /* LOGO */
         .brand-container { 
@@ -3651,10 +3693,16 @@ button, .btn, .retours-btn {
 
     <header id="main-header">
         <div class="header-left">
-          
+
                 <img id="header-logo" src="" alt="Logo Entreprise">
-                <div class="brand-container">  
-                
+                <div class="brand-container">
+
+            </div>
+            <!-- Voyant de synchronisation des notifications -->
+            <div id="notif-sync-indicator" class="nsi-pending" title="">
+                <div id="notif-sync-dot"></div>
+                <span id="notif-sync-label">Notif…</span>
+                <div id="notif-sync-tooltip">Initialisation…</div>
             </div>
         </div>
         <div style="display:flex; align-items:center; gap:15px;">
@@ -41969,20 +42017,202 @@ function initAdminSections() {
     var _notifPriority = 'info'; // priorité sélectionnée dans le composer
     var _notifAttachments = [];  // pièces jointes en attente
 
-    // ─── Persistance ────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ─── STOCKAGE DRIVE — dossier "notif" (source de vérité unique) ────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    var _notifMemCache      = null;   // cache mémoire session (jamais localStorage)
+    var _notifDriveFolderId = null;   // ID du dossier "notif" dans Drive
+    var _notifDriveFileId   = null;   // ID du fichier notifications.json
+    var _notifDriveLastMod  = null;   // modifiedTime du dernier fichier chargé
+    var _notifDriveSyncing  = false;
+    var _notifPollTimer     = null;
+    var _notifLastUpdate    = null;   // Heure de la dernière sync réussie
+
+    // ─── Indicateur visuel ────────────────────────────────────────────────────
+    function _nsiSet(state, label, tooltip) {
+        var el  = document.getElementById('notif-sync-indicator');
+        var dot = document.getElementById('notif-sync-dot');
+        var lbl = document.getElementById('notif-sync-label');
+        var tip = document.getElementById('notif-sync-tooltip');
+        if (!el) return;
+        el.className = 'nsi-' + (state || 'pending');
+        if (lbl) lbl.textContent = label || '';
+        if (tip) tip.textContent = tooltip || '';
+    }
+
+    function _nsiNow() {
+        return new Date().toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    }
+
+    // ─── Persistance — mémoire uniquement (pas localStorage) ─────────────────
     window._notifLoad = function() {
-        try { return JSON.parse(localStorage.getItem(NOTIF_KEY) || '[]'); }
-        catch(e) { return []; }
+        return _notifMemCache || [];
     };
 
     window._notifSave = function(list) {
-        try { localStorage.setItem(NOTIF_KEY, JSON.stringify(list)); }
-        catch(e) {}
-        // Synchronisation Drive si disponible
-        if (typeof window._gdTriggerSave === 'function') {
-            try { window._gdTriggerSave(); } catch(e) {}
-        }
+        _notifMemCache = list;
+        // Upload Drive en arrière-plan
+        setTimeout(function() { _notifDriveUpload(list); }, 200);
     };
+
+    // ─── Drive : trouver ou créer le dossier "notif" ──────────────────────────
+    async function _notifEnsureFolder() {
+        var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
+        if (!gdState || !gdState.connected || !gdState.folderId) return false;
+        if (_notifDriveFolderId) return true;
+        var fn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+        try {
+            // Chercher "notif" sous le dossier racine Drive
+            var q = encodeURIComponent("'" + gdState.folderId + "' in parents and name='notif' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+            var r = await fn('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)&pageSize=5');
+            var d = await r.json();
+            if (d.files && d.files.length) {
+                _notifDriveFolderId = d.files[0].id;
+            } else {
+                // Créer le dossier "notif"
+                var cr = await fn('https://www.googleapis.com/drive/v3/files', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'notif', mimeType: 'application/vnd.google-apps.folder', parents: [gdState.folderId] })
+                });
+                var cd = await cr.json();
+                _notifDriveFolderId = cd.id || null;
+            }
+            return !!_notifDriveFolderId;
+        } catch(e) { console.warn('[notif] folder:', e); return false; }
+    }
+
+    // ─── Drive : upload notifications.json ───────────────────────────────────
+    async function _notifDriveUpload(list) {
+        if (_notifDriveSyncing) return;
+        _notifDriveSyncing = true;
+        _nsiSet('syncing', '⟳ Sync…', 'Synchronisation en cours…');
+        try {
+            if (!await _notifEnsureFolder()) {
+                _nsiSet('error', '✗ Erreur', 'Drive non connecté — Dernière tentative : ' + _nsiNow());
+                return;
+            }
+            var fn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+            var jsonStr  = JSON.stringify(list);
+            var boundary = 'notif_b_' + Date.now();
+            var meta     = _notifDriveFileId ? '{}' : JSON.stringify({ name:'notifications.json', parents:[_notifDriveFolderId] });
+            var body     = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
+                         + meta + '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n'
+                         + jsonStr + '\r\n--' + boundary + '--';
+            var url = _notifDriveFileId
+                ? 'https://www.googleapis.com/upload/drive/v3/files/' + _notifDriveFileId + '?uploadType=multipart&fields=id,modifiedTime'
+                : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime';
+            var res = await fn(url, {
+                method: _notifDriveFileId ? 'PATCH' : 'POST',
+                headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+                body: body
+            });
+            var rd = await res.json();
+            if (rd.id)           _notifDriveFileId  = rd.id;
+            if (rd.modifiedTime) _notifDriveLastMod = rd.modifiedTime;
+            _notifLastUpdate = _nsiNow();
+            // Compter les notifs en attente pour l'utilisateur courant
+            var user = _notifGetCurrentUser ? _notifGetCurrentUser() : null;
+            var pending = list.filter(function(n) {
+                if (!n.active) return false;
+                if (user && n.acks && n.acks[user.id]) return false;
+                if (user && _notifIsAckedLocally(user.id, n.id)) return false;
+                return true;
+            }).length;
+            if (pending > 0) {
+                _nsiSet('synced', '🔔 ' + pending + ' en attente', 'Dernière mise à jour : ' + _notifLastUpdate);
+            } else {
+                _nsiSet('synced', '✓ Synchronisé', 'Dernière mise à jour : ' + _notifLastUpdate);
+            }
+        } catch(e) {
+            console.warn('[notif upload]', e);
+            _nsiSet('error', '✗ Erreur', 'Erreur Drive — ' + _nsiNow());
+        } finally {
+            _notifDriveSyncing = false;
+        }
+    }
+
+    // ─── Drive : télécharger et fusionner les notifications ───────────────────
+    async function _notifDriveDownload(force) {
+        var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
+        if (!gdState || !gdState.connected || !gdState.folderId) {
+            _nsiSet('error', '✗ Hors ligne', 'Drive non connecté — ' + _nsiNow());
+            return false;
+        }
+        _nsiSet('syncing', '⟳ Vérif…', 'Vérification en cours…');
+        try {
+            if (!await _notifEnsureFolder()) {
+                _nsiSet('error', '✗ Erreur', 'Impossible d\'accéder au dossier notif — ' + _nsiNow());
+                return false;
+            }
+            var fn = (typeof window._gdFetchPublic === 'function') ? window._gdFetchPublic : fetch;
+            // Chercher notifications.json dans le dossier notif
+            if (!_notifDriveFileId) {
+                var q = encodeURIComponent("'" + _notifDriveFolderId + "' in parents and name='notifications.json' and trashed=false");
+                var r = await fn('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,modifiedTime)&pageSize=5');
+                var d = await r.json();
+                if (d.files && d.files.length) {
+                    _notifDriveFileId  = d.files[0].id;
+                    _notifDriveLastMod = d.files[0].modifiedTime;
+                } else {
+                    // Pas encore de fichier → liste vide
+                    _notifMemCache = _notifMemCache || [];
+                    _notifLastUpdate = _nsiNow();
+                    _nsiSet('synced', '✓ Synchronisé', 'Dernière mise à jour : ' + _notifLastUpdate);
+                    return false;
+                }
+            } else {
+                // Vérifier si le fichier a changé
+                var r2 = await fn('https://www.googleapis.com/drive/v3/files/' + _notifDriveFileId + '?fields=id,modifiedTime');
+                var d2 = await r2.json();
+                if (!force && d2.modifiedTime === _notifDriveLastMod) {
+                    // Rien de nouveau
+                    _notifLastUpdate = _nsiNow();
+                    var user0 = _notifGetCurrentUser ? _notifGetCurrentUser() : null;
+                    var p0 = (_notifMemCache || []).filter(function(n) {
+                        if (!n.active) return false;
+                        if (user0 && n.acks && n.acks[user0.id]) return false;
+                        if (user0 && _notifIsAckedLocally(user0.id, n.id)) return false;
+                        return true;
+                    }).length;
+                    _nsiSet('synced', p0 > 0 ? '🔔 ' + p0 + ' en attente' : '✓ Synchronisé', 'Dernière mise à jour : ' + _notifLastUpdate);
+                    return false;
+                }
+                _notifDriveLastMod = d2.modifiedTime;
+            }
+            // Télécharger
+            var r3 = await fn('https://www.googleapis.com/drive/v3/files/' + _notifDriveFileId + '?alt=media');
+            var driveList = JSON.parse(await r3.text());
+            if (!Array.isArray(driveList)) { _notifMemCache = _notifMemCache || []; return false; }
+            // Fusion intelligente : préserver les acks locaux
+            var localList = _notifMemCache || [];
+            var localMap  = {};
+            localList.forEach(function(n) { localMap[n.id] = n; });
+            _notifMemCache = driveList.map(function(dn) {
+                var ln = localMap[dn.id];
+                if (!ln) return dn;
+                return Object.assign({}, dn, { acks: Object.assign({}, dn.acks || {}, ln.acks || {}) });
+            });
+            // Ajouter locaux absents de Drive (créés offline)
+            localList.forEach(function(ln) {
+                if (!driveList.find(function(dn) { return dn.id === ln.id; })) _notifMemCache.push(ln);
+            });
+            _notifLastUpdate = _nsiNow();
+            var user1 = _notifGetCurrentUser ? _notifGetCurrentUser() : null;
+            var p1 = _notifMemCache.filter(function(n) {
+                if (!n.active) return false;
+                if (user1 && n.acks && n.acks[user1.id]) return false;
+                if (user1 && _notifIsAckedLocally(user1.id, n.id)) return false;
+                return true;
+            }).length;
+            _nsiSet('synced', p1 > 0 ? '🔔 ' + p1 + ' en attente' : '✓ Synchronisé', 'Dernière mise à jour : ' + _notifLastUpdate);
+            return true; // des changements
+        } catch(e) {
+            console.warn('[notif download]', e);
+            _nsiSet('error', '✗ Erreur Drive', 'Erreur lors de la vérification — ' + _nsiNow());
+            return false;
+        }
+    }
 
     // ─── Sélecteur priorité (composer) ─────────────────────────────────────
     window._notifSelectPriority = function(btn) {
@@ -42329,34 +42559,28 @@ function initAdminSections() {
         window._notifCheckForCashier(user);
     }
 
-    // ─── Polling Drive : récupère les nouvelles notifs toutes les 60s ─────────
+    // ─── Polling combiné : Drive + check local, toutes les 60s ──────────────
     async function _notifDrivePollCheck() {
-        var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : null;
-        if (!gdState || !gdState.connected || !gdState.folderId) {
-            // Pas de Drive → polling local seulement
-            _notifPollCheck();
-            return;
+        var changed = await _notifDriveDownload(false);
+        if (changed) {
+            if (typeof window._notifRenderAdmin === 'function') window._notifRenderAdmin();
+            _notifUpdateAdminBadge();
         }
-        try {
-            // Utiliser le polling Drive déjà en place (_nDrivePollFn)
-            if (typeof _nDrivePollFn === 'function') await _nDrivePollFn();
-        } catch(e) { console.warn('[notif poll drive]', e); }
-        // Toujours faire le check local après
-        _notifPollCheck();
+        _notifPollCheck(); // Toujours vérifier pour l'utilisateur courant
     }
 
     // ─── Démarrage du polling (Admin + Caissier, toutes les 60s) ─────────────
     (function() {
-        var _notifPollInterval = null;
-
         function _startNotifPolling() {
-            // Check immédiat au démarrage
-            setTimeout(_notifPollCheck, 2000);
-            // Puis polling combiné local + Drive toutes les 60 secondes
-            if (_notifPollInterval) clearInterval(_notifPollInterval);
-            _notifPollInterval = setInterval(function() {
-                _notifDrivePollCheck();
-            }, 60000);
+            _nsiSet('pending', '● Attente', 'En attente de connexion Drive…');
+            // Chargement initial depuis Drive après 3s (laisser Drive se connecter)
+            setTimeout(async function() {
+                await _notifDriveDownload(true);
+                _notifPollCheck();
+            }, 3000);
+            // Puis toutes les 60 secondes
+            if (_notifPollTimer) clearInterval(_notifPollTimer);
+            _notifPollTimer = setInterval(_notifDrivePollCheck, 60000);
         }
 
         if (document.readyState === 'loading') {
@@ -42735,15 +42959,7 @@ function initAdminSections() {
         setTimeout(_nDrivePollFn, 8000); // premier poll après 8s (Drive connecté)
     }
 
-    // Patch _notifSave pour déclencher la sync Drive automatiquement
-    var _origNotifSave = window._notifSave;
-    window._notifSave = function(list) {
-        _origNotifSave(list);
-        // Sync Drive en arrière-plan (non-bloquant)
-        setTimeout(function() {
-            if (typeof window._notifDriveSync === 'function') window._notifDriveSync();
-        }, 500);
-    };
+    // _notifSave est déjà défini dans le nouveau système Drive — pas besoin de patch ici
 
     // ─── Init ────────────────────────────────────────────────────────────────
     function _notifInit() {
@@ -42752,8 +42968,6 @@ function initAdminSections() {
         if (infoBtn) window._notifSelectPriority(infoBtn);
         // Mettre à jour le badge
         _notifUpdateAdminBadge();
-        // Démarrer le polling Drive des notifications (toutes les 60s)
-        _nDrivePollStart();
         // Auto-refresh quand la section s'ouvre
         var origToggle = window.toggleAdminSection;
         window.toggleAdminSection = function(id) {
