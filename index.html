@@ -30651,6 +30651,25 @@ function invLoad() {
         if (needSave) {
             localStorage.setItem(INV_KEY, JSON.stringify(list));
         }
+
+        // ── Migration resteADoit : toute entrée crédit sans resteADoit le reçoit ──
+        var needSave2 = false;
+        list.forEach(function(e) {
+            if (e.paiement === 'credit' && e.resteADoit == null) {
+                var montant  = parseFloat(e.montant  || 0);
+                var acompte  = parseFloat(e.acompte  || 0);
+                var alreadyPaid = Array.isArray(e.paymentLogs)
+                    ? e.paymentLogs.reduce(function(s, p) { return s + (p.amount || 0); }, 0)
+                    : 0;
+                e.resteADoit = parseFloat((montant - acompte - alreadyPaid).toFixed(2));
+                if (e.resteADoit < 0) e.resteADoit = 0;
+                needSave2 = true;
+            }
+        });
+        if (needSave2) {
+            localStorage.setItem(INV_KEY, JSON.stringify(list));
+        }
+
         return list;
     } catch(e) { return []; }
 }
@@ -30916,6 +30935,7 @@ window.invScanApproConfirm = function() {
         paiement: payMode,
         acompte:  payMode === 'credit' && acompte > 0 ? acompte : null,
         echeance: payMode === 'credit' && echeance    ? echeance : null,
+        resteADoit: payMode === 'credit' ? parseFloat((qty * cost - (acompte || 0)).toFixed(2)) : null,
         comment: note || 'Ajout par scan approvisionnement',
         source: 'scan'
     });
@@ -31389,7 +31409,7 @@ window.invModalSubmit = function() {
         fournisseur: fournisseur || null, qte: qte, unitType: unitType, prixUnit: prixUnit,
         nbPacks: nbPacks, packSize: packSize, prixPack: prixPack,
         dlc: dlc || null, paiement: payMode, acompte: acompte, echeance: echeance,
-        resteADoit: acompte != null ? parseFloat((montant - acompte).toFixed(2)) : null,
+        resteADoit: payMode === 'credit' ? parseFloat((montant - (acompte || 0)).toFixed(2)) : null,
         note: comment || null
     });
     invSave(list);
@@ -33776,66 +33796,209 @@ function _invDrawCharts(filtered, allList) {
 }
 
 // ============================================================================
-// ALERTES CRÉDITS EN ATTENTE — bannière globale
+// CRÉDITS EN ATTENTE — représentation visuelle enrichie
 // ============================================================================
+if (typeof window._invCreditListExpanded === 'undefined') window._invCreditListExpanded = true;
+
+window._invToggleCreditList = function() {
+    window._invCreditListExpanded = !window._invCreditListExpanded;
+    var body   = document.getElementById('inv-credit-list-body');
+    var btn    = document.getElementById('inv-credit-toggle-btn');
+    var arrow  = document.getElementById('inv-credit-toggle-arrow');
+    var open   = window._invCreditListExpanded;
+    if (body)  body.style.display  = open ? 'block' : 'none';
+    if (arrow) { arrow.style.transform = open ? 'rotate(0deg)' : 'rotate(-90deg)'; arrow.textContent = '▼'; }
+    if (btn)   { btn.title = open ? 'Masquer la liste' : 'Déployer la liste';
+                 btn.lastChild.textContent = open ? 'Masquer' : 'Déployer'; }
+};
+
 function invRenderCreditAlerts() {
     var el = document.getElementById('inv-credit-alerts');
     if (!el) return;
-    var list = invLoad();
+    var list  = invLoad();
     var today = new Date(); today.setHours(0,0,0,0);
+
     var credits = list.filter(function(e) {
         return e.paiement === 'credit' && e.resteADoit != null && e.resteADoit > 0;
     });
     if (!credits.length) { el.innerHTML = ''; return; }
-    credits.sort(function(a, b) {
-        var da = a.echeance ? new Date(a.echeance) : new Date('2099-01-01');
-        var db = b.echeance ? new Date(b.echeance) : new Date('2099-01-01');
-        return da - db;
-    });
-    var overdue = [], urgent = [], upcoming = [];
-    credits.forEach(function(e) {
-        if (!e.echeance) { upcoming.push(e); return; }
-        var due = new Date(e.echeance); due.setHours(0,0,0,0);
-        var days = Math.ceil((due - today) / 86400000);
-        if (days < 0) overdue.push({ entry:e, days:Math.abs(days) });
-        else if (days <= 7) urgent.push({ entry:e, days:days });
-        else upcoming.push(e);
-    });
-    var totalDue = credits.reduce(function(s, e) { return s + (e.resteADoit || 0); }, 0);
-    var borderClr = overdue.length ? '#e74c3c' : urgent.length ? '#f39c12' : '#3498db';
-    var bgClr = overdue.length ? 'rgba(231,76,60,0.08)' : urgent.length ? 'rgba(243,156,18,0.08)' : 'rgba(52,152,219,0.05)';
-    var headClr = overdue.length ? '#c0392b' : urgent.length ? '#d35400' : '#2980b9';
-    var icon = overdue.length ? '\ud83d\udea8' : '\ud83d\udd04';
-    var html = '<div style="border-radius:12px;overflow:hidden;border:1.5px solid ' + borderClr + ';">';
-    html += '<div style="padding:10px 14px;background:' + bgClr + ';display:flex;align-items:center;justify-content:space-between;">';
-    html += '<div style="font-size:0.82rem;font-weight:700;color:' + headClr + ';">' + icon + ' ' + credits.length + ' cr\u00e9dit' + (credits.length > 1 ? 's' : '') + ' en attente</div>';
-    html += '<div style="font-size:0.85rem;font-weight:800;color:' + (overdue.length ? '#e74c3c' : '#e67e22') + ';">' + totalDue.toFixed(2) + ' \u20ac</div></div>';
-    html += '<div style="padding:6px 8px;">';
-    function _makeRow(e, clr, label, bgRow) {
-        var tp = (e.acompte || 0) + (Array.isArray(e.paymentLogs) ? e.paymentLogs.reduce(function(s,p){return s+p.amount;},0) : 0);
-        var pct = e.montant > 0 ? Math.round((tp / e.montant) * 100) : 0;
-        var r = '<div onclick="invOpenEdit(\'' + (e.id||'').replace(/\x27/g,"\\'") + '\')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin:4px 0;background:' + bgRow + ';border-radius:8px;cursor:pointer;border-left:3px solid ' + clr + ';">';
-        r += '<div style="flex:1;min-width:0;">';
-        r += '<div style="font-weight:700;font-size:0.8rem;color:' + clr + ';">' + label + ' ' + (e.desc || '-') + '</div>';
-        r += '<div style="font-size:0.68rem;color:#888;margin-top:2px;">' + (e.fournisseur || '') + ' \u00b7 Pay\u00e9 ' + pct + '%</div>';
-        r += '<div style="height:4px;background:' + clr + '18;border-radius:2px;margin-top:4px;"><div style="height:100%;width:' + pct + '%;background:' + clr + ';border-radius:2px;"></div></div>';
-        r += '</div><div style="text-align:right;flex-shrink:0;"><div style="font-weight:800;font-size:0.88rem;color:' + clr + ';">' + e.resteADoit.toFixed(2) + ' \u20ac</div></div></div>';
-        return r;
-    }
-    overdue.forEach(function(item) { html += _makeRow(item.entry, '#e74c3c', '\u26d4 Retard ' + item.days + 'j \u2014', 'rgba(231,76,60,0.04)'); });
-    urgent.forEach(function(item) { html += _makeRow(item.entry, '#f39c12', '\u26a0\ufe0f ' + item.days + 'j \u2014', 'rgba(243,156,18,0.04)'); });
-    if (upcoming.length && (overdue.length || urgent.length)) {
-        html += '<div style="font-size:0.68rem;color:#888;padding:4px 10px;margin-top:4px;">+ ' + upcoming.length + ' autre(s) cr\u00e9dit(s) en cours</div>';
-    } else {
-        upcoming.forEach(function(e) {
-            var dueStr = e.echeance ? new Date(e.echeance+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) : 'N/A';
-            html += _makeRow(e, '#3498db', '\ud83d\udd04 \u00c9ch. ' + dueStr + ' \u2014', 'rgba(52,152,219,0.03)');
-        });
-    }
-    html += '</div></div>';
-    el.innerHTML = html;
-}
 
+    // Classer par urgence
+    var overdue = [], urgent = [], upcoming = [], noDate = [];
+    credits.forEach(function(e) {
+        if (!e.echeance) { noDate.push({ e:e, days:null }); return; }
+        var due  = new Date(e.echeance); due.setHours(0,0,0,0);
+        var days = Math.ceil((due - today) / 86400000);
+        if      (days < 0)  overdue.push ({ e:e, days:Math.abs(days) });
+        else if (days <= 7) urgent.push  ({ e:e, days:days });
+        else                upcoming.push({ e:e, days:days });
+    });
+
+    var totalDue    = credits.reduce(function(s,e){ return s+(e.resteADoit||0); },0);
+    var totalMontant= credits.reduce(function(s,e){ return s+(e.montant||0); },0);
+    var totalPaye   = totalMontant - totalDue;
+    var globalPct   = totalMontant > 0 ? Math.round(totalPaye/totalMontant*100) : 0;
+
+    var accentClr = overdue.length ? '#e74c3c' : urgent.length ? '#f39c12' : '#3498db';
+
+    // ── En-tête global ──────────────────────────────────────────────────────
+    var h = '<div style="background:var(--bg-card,#fff);border-radius:14px;overflow:hidden;'
+          + 'border:1.5px solid var(--border-color,#e0e0e0);margin-bottom:4px;">';
+
+    // Bandeau de synthèse
+    h += '<div style="background:linear-gradient(135deg,'
+       + (overdue.length?'#c0392b,#e74c3c':urgent.length?'#d35400,#f39c12':'#1a5276,#2980b9')
+       + ');padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">';
+    h += '<div style="display:flex;align-items:center;gap:10px;">';
+    h += '<div style="width:38px;height:38px;background:rgba(255,255,255,0.2);border-radius:10px;'
+       + 'display:flex;align-items:center;justify-content:center;font-size:1.2rem;">'
+       + (overdue.length?'🚨':urgent.length?'⚠️':'🔄')+'</div>';
+    h += '<div><div style="color:white;font-weight:900;font-size:0.95rem;">'
+       + credits.length+' crédit'+(credits.length>1?'s':'')+' en attente</div>'
+       + '<div style="color:rgba(255,255,255,0.75);font-size:0.7rem;margin-top:1px;">'
+       + (overdue.length?overdue.length+' en retard · ':'')
+       + (urgent.length?urgent.length+' urgent'+(urgent.length>1?'s':'')+' · ':'')
+       + upcoming.length+' à venir'+(noDate.length?' · '+noDate.length+' sans échéance':'')
+       +'</div></div></div>';
+    h += '<div style="display:flex;align-items:center;gap:10px;">';
+    h += '<div style="text-align:right;">'
+       + '<div style="font-weight:900;font-size:1.15rem;color:white;">'+totalDue.toFixed(2)+' €</div>'
+       + '<div style="font-size:0.68rem;color:rgba(255,255,255,0.7);">restant dû</div></div>';
+    // Bouton toggle masquer/déployer
+    var isExpanded = (window._invCreditListExpanded == null) ? true : window._invCreditListExpanded;
+    h += '<button onclick="_invToggleCreditList()" id="inv-credit-toggle-btn"'
+       + ' title="'+(isExpanded?'Masquer':'Déployer')+' la liste"'
+       + ' style="background:rgba(255,255,255,0.18);border:1.5px solid rgba(255,255,255,0.35);'
+       + 'color:white;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:0.8rem;'
+       + 'font-weight:700;transition:background 0.15s;white-space:nowrap;display:flex;align-items:center;gap:5px;"'
+       + ' onmouseover="this.style.background=\'rgba(255,255,255,0.3)\'"'
+       + ' onmouseout="this.style.background=\'rgba(255,255,255,0.18)\'">'
+       + '<span id="inv-credit-toggle-arrow" style="font-size:0.85rem;transition:transform 0.25s;display:inline-block;'
+       + 'transform:'+(isExpanded?'rotate(0deg)':'rotate(-90deg)')+'">'
+       + (isExpanded?'▼':'▼')+'</span>'
+       + (isExpanded?'Masquer':'Déployer')
+       + '</button>';
+    h += '</div>';
+    h += '</div>';
+
+    // Barre de progression globale
+    h += '<div style="padding:10px 16px;border-bottom:1px solid var(--border-color,#eee);">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">';
+    h += '<span style="font-size:0.68rem;font-weight:700;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:0.04em;">Progression globale des règlements</span>';
+    h += '<span style="font-size:0.75rem;font-weight:800;color:'+(globalPct>=75?'#27ae60':globalPct>=40?'#e67e22':'#e74c3c')+';">'+globalPct+'% réglé</span>';
+    h += '</div>';
+    h += '<div style="height:8px;background:var(--bg-card-2,#f0f4f8);border-radius:4px;overflow:hidden;">';
+    h += '<div style="height:100%;width:'+globalPct+'%;background:linear-gradient(90deg,'
+       + (globalPct>=75?'#27ae60,#2ecc71':globalPct>=40?'#e67e22,#f39c12':'#e74c3c,#e91e63')
+       + ');border-radius:4px;transition:width 0.5s;"></div></div>';
+    h += '<div style="display:flex;justify-content:space-between;margin-top:4px;">';
+    h += '<span style="font-size:0.65rem;color:var(--text-muted,#aaa);">Payé : '+totalPaye.toFixed(2)+' €</span>';
+    h += '<span style="font-size:0.65rem;color:var(--text-muted,#aaa);">Total : '+totalMontant.toFixed(2)+' €</span>';
+    h += '</div></div>';
+
+    // ── Cartes crédit ───────────────────────────────────────────────────────
+    function _makeCard(item, urgency) {
+        var e    = item.e;
+        var days = item.days;
+        var paid = (e.acompte||0)+(Array.isArray(e.paymentLogs)?e.paymentLogs.reduce(function(s,p){return s+(p.amount||0);},0):0);
+        var pct  = e.montant>0 ? Math.round(paid/e.montant*100) : 0;
+        var safeId = (e.id||'').replace(/'/g,"\\'");
+
+        var clr, badge, badgeBg;
+        if (urgency==='overdue') {
+            clr='#e74c3c'; badge='⛔ '+days+'j retard'; badgeBg='rgba(231,76,60,0.12)';
+        } else if (urgency==='urgent') {
+            clr='#f39c12'; badge='⚠️ '+days+'j restant'+(days>1?'s':''); badgeBg='rgba(243,156,18,0.1)';
+        } else if (urgency==='upcoming') {
+            var dStr = new Date(e.echeance+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});
+            clr='#3498db'; badge='📅 Éch. '+dStr; badgeBg='rgba(52,152,219,0.08)';
+        } else {
+            clr='#7c3aed'; badge='📌 Sans échéance'; badgeBg='rgba(124,58,237,0.07)';
+        }
+
+        var barGrad = pct>=75?'#27ae60,#2ecc71':pct>=40?'#3498db,#5dade2':'#e74c3c,#e67e22';
+
+        var c = '<div onclick="invOpenEdit(\''+safeId+'\')" style="display:flex;flex-direction:column;gap:0;'
+              + 'background:var(--bg-card,#fff);border-radius:11px;overflow:hidden;cursor:pointer;'
+              + 'border:1.5px solid var(--border-color,#e8e8e8);border-left:4px solid '+clr+';'
+              + 'box-shadow:0 2px 8px rgba(0,0,0,0.05);transition:box-shadow 0.15s;"'
+              + ' onmouseover="this.style.boxShadow=\'0 6px 18px rgba(0,0,0,0.12)\'"'
+              + ' onmouseout="this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.05)\'">';
+
+        // Ligne principale
+        c += '<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 13px 8px;">';
+
+        // Pastille urgence
+        c += '<div style="flex-shrink:0;margin-top:1px;background:'+badgeBg+';border-radius:7px;'
+           + 'padding:4px 8px;font-size:0.65rem;font-weight:800;color:'+clr+';white-space:nowrap;">'+badge+'</div>';
+
+        // Infos centre
+        c += '<div style="flex:1;min-width:0;">';
+        c += '<div style="font-weight:800;font-size:0.85rem;color:var(--text-main,#2c3e50);'
+           + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+(e.desc||'—')+'</div>';
+        c += '<div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:3px;display:flex;flex-wrap:wrap;gap:5px;">';
+        if (e.fournisseur) c += '<span>🏢 '+e.fournisseur+'</span>';
+        if (e.numero)      c += '<span style="color:'+clr+';">N°'+e.numero+'</span>';
+        c += '</div>';
+        // ── Dates : achat + échéance ──
+        c += '<div style="font-size:0.67rem;color:var(--text-muted,#aaa);margin-top:4px;display:flex;flex-wrap:wrap;gap:8px;">';
+        if (e.date) {
+            var dAchat = new Date(e.date+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+            c += '<span>📥 Achat : <strong style="color:var(--text-main,#2c3e50);">'+dAchat+'</strong></span>';
+        }
+        if (e.echeance) {
+            var dEch = new Date(e.echeance+'T12:00:00').toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+            c += '<span>📅 Échéance : <strong style="color:'+clr+';">'+dEch+'</strong></span>';
+        } else {
+            c += '<span style="color:#aaa;">📅 Sans echéance</span>';
+        }
+        c += '</div>';
+        c += '</div>';
+
+        // Montant droit
+        c += '<div style="flex-shrink:0;text-align:right;">';
+        c += '<div style="font-weight:900;font-size:1rem;color:'+clr+';">'+e.resteADoit.toFixed(2)+' €</div>';
+        c += '<div style="font-size:0.65rem;color:var(--text-muted,#aaa);">sur '+e.montant.toFixed(2)+' €</div>';
+        c += '</div></div>';
+
+        // Barre paiement
+        c += '<div style="padding:0 13px 10px;">';
+        c += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">';
+        c += '<span style="font-size:0.62rem;color:var(--text-muted,#aaa);">Payé : '+paid.toFixed(2)+' €</span>';
+        c += '<span style="font-size:0.65rem;font-weight:800;color:'+(pct>=75?'#27ae60':pct>=40?'#3498db':'#e74c3c')+';">'+pct+'%</span>';
+        c += '</div>';
+        c += '<div style="height:5px;background:var(--bg-card-2,#f0f4f8);border-radius:3px;overflow:hidden;">';
+        c += '<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,'+barGrad+');border-radius:3px;"></div></div>';
+        c += '</div></div>';
+        return c;
+    }
+
+    // Sections par urgence
+    var sections = [
+        { title:'🚨 En retard', items:overdue,  urgency:'overdue',  clr:'#e74c3c' },
+        { title:'⚠️ Urgent (≤7j)', items:urgent, urgency:'urgent',  clr:'#f39c12' },
+        { title:'📅 À venir',   items:upcoming, urgency:'upcoming', clr:'#3498db' },
+        { title:'📌 Sans échéance', items:noDate, urgency:'nodate', clr:'#7c3aed' }
+    ].filter(function(s){ return s.items.length > 0; });
+
+    var isExpanded2 = (window._invCreditListExpanded == null) ? true : window._invCreditListExpanded;
+    h += '<div id="inv-credit-list-body" style="display:'+(isExpanded2?'block':'none')+';padding:10px 12px;">';
+    h += '<div style="display:flex;flex-direction:column;gap:10px;">';
+    sections.forEach(function(sec) {
+        h += '<div>';
+        h += '<div style="font-size:0.68rem;font-weight:800;color:'+sec.clr+';text-transform:uppercase;'
+           + 'letter-spacing:0.06em;margin-bottom:6px;display:flex;align-items:center;gap:5px;">'
+           + sec.title
+           + ' <span style="background:'+sec.clr+'22;color:'+sec.clr+';border-radius:10px;'
+           + 'padding:1px 7px;font-size:0.65rem;font-weight:900;">'+sec.items.length+'</span></div>';
+        h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;">';
+        sec.items.forEach(function(item){ h += _makeCard(item, sec.urgency); });
+        h += '</div></div>';
+    });
+    h += '</div></div></div>';
+
+    el.innerHTML = h;
+}
 
 function invUpdateStatsRow(filtered, month) {
     const rowEl = document.getElementById('inv-stats-row');
