@@ -3714,6 +3714,7 @@ button, .btn, .retours-btn {
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
     <!-- ===== BARRE STATUS UNIFIÉE ===== -->
@@ -7884,6 +7885,12 @@ button, .btn, .retours-btn {
                         <button onclick="_devToggleShowPwd()"
                             style="padding:9px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;background:var(--bg-card,#fff);cursor:pointer;font-size:0.88rem;color:var(--gray,#888);transition:all 0.15s;"
                             title="Afficher / masquer" id="dev-show-pwd-btn">👁️</button>
+                        <button onclick="_openMasterPwdBarcode()"
+                            style="padding:9px 14px;border:1.5px solid rgba(99,102,241,0.4);border-radius:9px;background:linear-gradient(135deg,rgba(99,102,241,0.1),rgba(139,92,246,0.08));cursor:pointer;font-size:0.88rem;color:#6366f1;transition:all 0.18s;font-weight:700;"
+                            title="Aperçu code-barres du mot de passe"
+                            onmouseover="this.style.background='linear-gradient(135deg,#6366f1,#4f46e5)';this.style.color='white'"
+                            onmouseout="this.style.background='linear-gradient(135deg,rgba(99,102,241,0.1),rgba(139,92,246,0.08))';this.style.color='#6366f1'"
+                            >🔲 Aperçu</button>
                     </div>
                     <div style="font-size:0.73rem;color:var(--gray,#aaa);margin-top:7px;padding-left:2px;">⚠️ Le mot de passe d'usine reste toujours actif en cas de perte.</div>
                 </div>
@@ -7892,13 +7899,21 @@ button, .btn, .retours-btn {
                 <div style="background:var(--bg-body,#f8fafc);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;padding:18px 20px;">
                     <div style="font-size:0.72rem;font-weight:800;color:#6366f1;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:14px;">✏️ Changer le mot de passe</div>
                     <div style="display:flex;flex-direction:column;gap:10px;">
-                        <div style="position:relative;">
+                        <div style="display:flex;gap:8px;align-items:center;">
+                          <div style="position:relative;flex:1;">
                             <input type="password" id="dev-new-pwd"
                                 placeholder="Nouveau mot de passe (min. 6 caractères)"
                                 style="width:100%;padding:11px 44px 11px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;background:var(--bg-card,#fff);color:var(--text-main);outline:none;box-sizing:border-box;transition:border-color 0.2s;"
                                 onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='var(--border-color,#e0e0e0)'">
                             <button onclick="_devToggleField('dev-new-pwd')"
                                 style="position:absolute;right:10px;top:50%;transform:translateY(-50%);border:none;background:none;cursor:pointer;font-size:0.88rem;color:var(--gray,#aaa);padding:4px;">👁️</button>
+                          </div>
+                          <button onclick="_previewNewPwdBarcode()"
+                              title="Aperçu code-barres du nouveau mot de passe"
+                              style="padding:9px 13px;border:1.5px solid rgba(99,102,241,0.4);border-radius:9px;background:linear-gradient(135deg,rgba(99,102,241,0.1),rgba(139,92,246,0.08));cursor:pointer;font-size:0.82rem;color:#6366f1;font-weight:700;white-space:nowrap;transition:all 0.18s;flex-shrink:0;"
+              onmouseover="this.style.background='linear-gradient(135deg,#6366f1,#4f46e5)';this.style.color='white'"
+              onmouseout="this.style.background='linear-gradient(135deg,rgba(99,102,241,0.1),rgba(139,92,246,0.08))';this.style.color='#6366f1'"
+              >🔲 Aperçu</button>
                         </div>
                         <div style="position:relative;">
                             <input type="password" id="dev-confirm-pwd"
@@ -11475,6 +11490,18 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         banque:'#2980b9', autre:'#7f8c8d'
     };
 
+    function _cfCurrentMonth() {
+        var d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    }
+    function _cfIsPayeThisMonth(row) {
+        var mk = _cfCurrentMonth();
+        if (row.payeParMois) return !!row.payeParMois[mk];
+        return !!row.paye; // compat ancien format
+    }
+    window._cfCurrentMonth    = _cfCurrentMonth;
+    window._cfIsPayeThisMonth = _cfIsPayeThisMonth;
+
     function _cfLoad() {
         try { return JSON.parse(localStorage.getItem(CF_KEY) || '[]'); } catch(e) { return []; }
     }
@@ -11504,7 +11531,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         list.forEach(function(r) {
             var m = _cfMensuel(r);
             total += m;
-            if (r.paye) totalPaye += m; else totalNonPaye += m;
+            if (_cfIsPayeThisMonth(r)) totalPaye += m; else totalNonPaye += m;
             var cat = r.categorie || 'autre';
             byCat[cat] = (byCat[cat] || 0) + m;
         });
@@ -11512,8 +11539,19 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         // Header card
         var hdr = document.getElementById('cf-total-header');
         if (hdr) {
+            // Calcul mois reportés (passés non payés)
+            var mkNowRcl = _cfCurrentMonth();
+            var totalReporte = 0;
+            list.forEach(function(r2) {
+                if (r2.payeParMois) {
+                    Object.keys(r2.payeParMois).forEach(function(mk2) {
+                        if (mk2 < mkNowRcl && !r2.payeParMois[mk2]) totalReporte += _cfMensuel(r2);
+                    });
+                }
+            });
             hdr.innerHTML = _cfFmt(total)
-                + (totalNonPaye > 0 ? ' <span style="font-size:0.65rem;background:#e74c3c;color:white;padding:1px 5px;border-radius:8px;margin-left:4px;font-weight:700;">⚠️ ' + _cfFmt(totalNonPaye) + ' non payé</span>' : '');
+                + (totalNonPaye > 0 ? ' <span style="font-size:0.65rem;background:#e74c3c;color:white;padding:1px 5px;border-radius:8px;margin-left:4px;font-weight:700;">⚠️ ' + _cfFmt(totalNonPaye) + ' non payé</span>' : '')
+                + (totalReporte > 0 ? ' <span style="font-size:0.65rem;background:#e67e22;color:white;padding:1px 5px;border-radius:8px;margin-left:4px;font-weight:700;">↩️ ' + _cfFmt(totalReporte) + ' reporté</span>' : '');
         }
         var big = document.getElementById('cf-total-big');
         if (big) big.textContent = _cfFmt(total);
@@ -11527,7 +11565,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         // Section charges non payées
         var npSec = document.getElementById('cf-nonpaye-section');
         var npList = document.getElementById('cf-nonpaye-list');
-        var nonPayes = list.filter(function(r){ return !r.paye && _cfMensuel(r) > 0; });
+        var nonPayes = list.filter(function(r){ return !_cfIsPayeThisMonth(r) && _cfMensuel(r) > 0; });
         if (npSec) npSec.style.display = nonPayes.length ? '' : 'none';
         if (npList && nonPayes.length) {
             npList.innerHTML = nonPayes.map(function(r) {
@@ -11580,7 +11618,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         tbody.innerHTML = list.map(function(row, i) {
             var clr = CF_CAT_COLORS[row.categorie] || '#888';
             var mensuel = _cfMensuel(row);
-            var paye = !!row.paye;
+            var paye = _cfIsPayeThisMonth(row);
             var rowBg = paye ? '' : 'background:rgba(231,76,60,0.04);';
             var catOpts = CF_CATS.map(function(c){
                 return '<option value="' + c.val + '"' + (row.categorie===c.val?' selected':'') + '>' + c.label + '</option>';
@@ -11590,9 +11628,35 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             ].map(function(p){
                 return '<option value="' + p[0] + '"' + (row.periode===p[0]?' selected':'') + '>' + p[1] + '</option>';
             }).join('');
-            var payeBtn = paye
-                ? '<button onclick="window._cfTogglePaye(' + i + ')" title="Marquer non payé" style="padding:4px 9px;border-radius:7px;border:1.5px solid #27ae60;background:rgba(39,174,96,0.12);color:#27ae60;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Payé</button>'
-                : '<button onclick="window._cfTogglePaye(' + i + ')" title="Marquer payé" style="padding:4px 9px;border-radius:7px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.1);color:#e74c3c;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap;">⚠️ Non payé</button>';
+            var _mkNow   = _cfCurrentMonth();
+            var _mLabel  = new Date().toLocaleDateString('fr-FR',{month:'short',year:'numeric'});
+            var _payCore = paye
+                ? '<button onclick="window._cfTogglePaye(' + i + ')" style="padding:5px 10px;border-radius:8px;border:1.5px solid #27ae60;background:rgba(39,174,96,0.12);color:#27ae60;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap;">✅ ' + _mLabel + '</button>'
+                : '<button onclick="window._cfTogglePaye(' + i + ')" style="padding:5px 10px;border-radius:8px;border:1.5px solid #e74c3c;background:rgba(231,76,60,0.1);color:#e74c3c;font-size:0.72rem;font-weight:700;cursor:pointer;white-space:nowrap;">⚠️ ' + _mLabel + '</button>';
+            // Historique 3 mois précédents
+            var _histDots = '';
+            if (row.payeParMois) {
+                var _hParts = [];
+                for (var _mi = 1; _mi <= 3; _mi++) {
+                    var _hd = new Date(); _hd.setMonth(_hd.getMonth() - _mi);
+                    var _hmk = _hd.getFullYear()+'-'+String(_hd.getMonth()+1).padStart(2,'0');
+                    var _hml = _hd.toLocaleDateString('fr-FR',{month:'short'});
+                    var _hp  = !!row.payeParMois[_hmk];
+                    _hParts.push('<span title="'+_hml+'" style="font-size:0.65rem;">'+(_hp?'✅':'❌')+'</span>');
+                }
+                _histDots = '<div style="display:flex;gap:2px;justify-content:center;margin-top:2px;">'+_hParts.join('')+'</div>';
+            }
+            // Mois reportés (passés non payés)
+            var _missedN = 0, _missedAmt = 0;
+            if (row.payeParMois) {
+                Object.keys(row.payeParMois).forEach(function(mk3){
+                    if (mk3 < _mkNow && !row.payeParMois[mk3]) { _missedN++; _missedAmt += mensuel; }
+                });
+            }
+            var _missedBadge = _missedN > 0
+                ? '<div style="font-size:0.62rem;color:#e67e22;font-weight:700;margin-top:2px;">↩️ '+_missedN+' mois reporté'+(_missedN>1?'s':'')+' · '+_cfFmt(_missedAmt)+'</div>'
+                : '';
+            var payeBtn = '<div style="display:flex;flex-direction:column;align-items:center;gap:0;">'+_payCore+_histDots+_missedBadge+'</div>';
             return '<tr style="border-bottom:1px solid var(--border-color,#eee);' + rowBg + '">'
                 + '<td style="padding:7px 8px;">'
                 +   '<input type="text" value="' + (row.nom||'').replace(/"/g,'&quot;') + '" placeholder="Ex: Abonnement fibre…"'
@@ -11629,6 +11693,9 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
         _cfRecalc();
     }
 
+    window._cfRenderRows = _cfRenderRows;
+    window._cfRecalc     = _cfRecalc;
+
     window._cfToggle = function() {
         var body = document.getElementById('charges-fixes-body');
         var arrow = document.getElementById('cf-toggle-arrow');
@@ -11641,7 +11708,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
 
     window._cfAddRow = function() {
         var list = _cfLoad();
-        list.push({ id: 'CF-' + Date.now(), nom: '', categorie: 'autre', montant: 0, periode: 'mensuel' });
+        list.push({ id: 'CF-' + Date.now(), nom: '', categorie: 'autre', montant: 0, periode: 'mensuel', payeParMois: {} });
         _cfSave(list);
         _cfRenderRows();
         // Focus nouveau champ
@@ -11681,17 +11748,26 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
     window._cfTogglePaye = function(idx) {
         var list = _cfLoad();
         if (!list[idx]) return;
-        var row      = list[idx];
-        var nowPaid  = !row.paye;   // basculement
-        row.paye     = nowPaid;
+        var row = list[idx];
+        var mk  = _cfCurrentMonth();
+
+        // ── Migration ancien format ───────────────────────────────────────
+        if (!row.payeParMois) {
+            row.payeParMois = {};
+            if (row.paye) row.payeParMois[mk] = true;
+            delete row.paye;
+        }
+
+        var wasPaid = !!row.payeParMois[mk];
+        var nowPaid = !wasPaid;
+        row.payeParMois[mk] = nowPaid;
         _cfSave(list);
 
         // ── Synchronisation historique paiements ──────────────────────────
         var pays = _payLoad();
-        var cfId = row.id || ('CF-' + idx);   // identifiant stable de la charge
+        var cfId = (row.id || ('CF-' + idx)) + '-' + mk; // unique charge+mois
 
         if (nowPaid) {
-            // Marquer payé → injecter dans paiements/factures
             var catMap = {
                 electricite:'facture', internet:'facture', loyer:'facture',
                 assurance:'facture',   abonnement:'facture', transport:'carburant',
@@ -11699,22 +11775,23 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             };
             var payCat  = catMap[row.categorie] || 'facture';
             var mensuel = _cfMensuel(row);
+            var mLong   = new Date().toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
             var entry   = {
                 id:         'CFPAY-' + Date.now(),
                 date:       new Date().toISOString().slice(0, 10),
                 datetime:   new Date().toISOString(),
                 categorie:  payCat,
-                libelle:    (row.nom || 'Charge fixe'),
+                libelle:    (row.nom || 'Charge fixe') + ' — ' + mLong,
                 montant:    mensuel,
                 dette:      false,
                 paye:       true,
-                note:       'Charge fixe ' + (row.periode === 'annuel' ? 'annuelle' : row.periode === 'trimestriel' ? 'trimestrielle' : row.periode === 'hebdo' ? 'hebdomadaire' : 'mensuelle'),
+                note:       'Charge fixe mensuelle · ' + mk,
                 _cfId:      cfId
             };
             pays.unshift(entry);
             _paySave(pays);
             if (typeof showScanToast === 'function')
-                showScanToast('✅ Facture enregistrée — ' + (row.nom || 'Charge fixe') + ' · ' + _cfFmt(mensuel), 'success');
+                showScanToast('✅ Paiement validé — ' + (row.nom || 'Charge fixe') + ' · ' + _cfFmt(mensuel) + ' (' + mLong + ')', 'success');
         } else {
             // Démarquer payé → retirer l'entrée auto-créée
             var before   = pays.length;
@@ -12644,10 +12721,15 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             html += '<div style="font-size:0.68rem;font-weight:700;color:var(--gray,#888);text-transform:uppercase;margin-bottom:8px;">📦 Créances fournisseurs (approvisionnements)</div>';
             html += '<div style="display:flex;flex-direction:column;gap:8px;">';
             creancesInv.forEach(function(i) {
-                var montant  = parseFloat(i.montant  || 0);
-                var acompte  = parseFloat(i.acompte  || 0);
-                var reste    = parseFloat(i.resteADoit || 0);
-                var pctPaye  = montant > 0 ? Math.round(acompte / montant * 100) : 0;
+                var montant   = parseFloat(i.montant  || 0);
+                var acompte   = parseFloat(i.acompte  || 0);
+                var logTotal  = Array.isArray(i.paymentLogs)
+                    ? i.paymentLogs.reduce(function(s,p){ return s+(parseFloat(p.amount)||0); }, 0) : 0;
+                var totalPaid = acompte + logTotal;
+                var reste     = i.resteADoit != null
+                    ? parseFloat(i.resteADoit)
+                    : Math.max(0, parseFloat((montant - totalPaid).toFixed(2)));
+                var pctPaye   = montant > 0 ? Math.round(totalPaid / montant * 100) : 0;
                 var d        = new Date(i.date || Date.now()).toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'});
                 var overdue  = i.echeance && new Date(i.echeance) < new Date();
                 var echStr   = i.echeance ? new Date(i.echeance).toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'}) : null;
@@ -12679,7 +12761,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 // Montant reste
                 html += '<div style="text-align:right;flex-shrink:0;">';
                 html +=   '<div style="font-weight:900;font-size:1rem;color:#e74c3c;">Reste : ' + reste.toFixed(2) + ' €</div>';
-                html +=   '<div style="font-size:0.68rem;color:var(--gray,#888);">Total ' + montant.toFixed(2) + ' € · Payé ' + acompte.toFixed(2) + ' €</div>';
+                html +=   '<div style="font-size:0.68rem;color:var(--gray,#888);">Total ' + montant.toFixed(2) + ' € · Payé ' + totalPaid.toFixed(2) + ' €</div>';
                 html += '</div>';
                 html += '</div>';
 
@@ -48400,4 +48482,1446 @@ body.dark-mode ._ss-pin-input { background:#0f172a; color:#f1f5f9; border-color:
 
 })();
 </script>
+
+
+<!-- ══════════════════════════════════════════════════
+     ADMIN WELCOME MODAL — smart switch + améliorations
+     ══════════════════════════════════════════════════ -->
+<style>
+/* ── ZONE SWITCH RAPIDE ──────────────────────────────────────── */
+#_awSwitchZone {
+  margin: 0 0 10px 0;
+  animation: _awZoneIn .35s cubic-bezier(.34,1.2,.64,1) both;
+}
+@keyframes _awZoneIn {
+  from { opacity:0; transform:translateY(8px) scale(.97); }
+  to   { opacity:1; transform:none; }
+}
+
+/* Carte caissier associé */
+._awAssocCard {
+  display:flex; align-items:center; gap:13px;
+  padding:12px 16px; border-radius:14px; cursor:pointer;
+  background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(139,92,246,.12));
+  border:1.5px solid rgba(99,102,241,.38);
+  transition:all .22s cubic-bezier(.34,1.3,.64,1);
+  position:relative; overflow:hidden;
+}
+._awAssocCard::before {
+  content:''; position:absolute; inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.04),transparent);
+  animation:_awShimmer 3.5s ease-in-out infinite; pointer-events:none;
+}
+@keyframes _awShimmer{ 0%{transform:translateX(-100%)} 60%{transform:translateX(200%)} 100%{transform:translateX(200%)} }
+._awAssocCard:hover {
+  transform:translateY(-2px);
+  box-shadow:0 8px 22px rgba(99,102,241,.35);
+  border-color:rgba(99,102,241,.6);
+}
+._awAssocCard:active { transform:translateY(0) scale(.97); }
+
+._awAssocAv {
+  width:44px; height:44px; border-radius:50%; flex-shrink:0; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; font-size:1.3rem;
+  background:linear-gradient(135deg,#0ea5e9,#0369a1);
+  border:2.5px solid rgba(255,255,255,.2);
+  box-shadow:0 4px 12px rgba(0,0,0,.3);
+}
+._awAssocAv img { width:100%; height:100%; object-fit:cover; }
+
+._awAssocInfo { flex:1; min-width:0; }
+._awAssocLbl {
+  font-size:.62rem; font-weight:800; text-transform:uppercase;
+  letter-spacing:.07em; color:rgba(196,181,253,.8); margin-bottom:3px;
+}
+._awAssocName {
+  font-size:.93rem; font-weight:800; color:#f1f5f9;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+._awAssocId {
+  font-size:.63rem; color:rgba(148,163,184,.65); margin-top:2px; font-family:monospace;
+}
+._awAssocArrow {
+  flex-shrink:0; color:rgba(196,181,253,.65); font-size:1.05rem;
+}
+
+/* Public list (no assoc) */
+._awPublicList { display:flex; flex-direction:column; gap:7px; }
+._awPublicItem {
+  display:flex; align-items:center; gap:11px; padding:10px 13px;
+  border-radius:11px; cursor:pointer;
+  background:rgba(255,255,255,.06); border:1.5px solid rgba(255,255,255,.1);
+  transition:all .18s cubic-bezier(.34,1.4,.64,1); text-align:left; width:100%;
+}
+._awPublicItem:hover {
+  background:rgba(39,174,96,.14); border-color:rgba(39,174,96,.4);
+  transform:translateY(-2px); box-shadow:0 5px 14px rgba(0,0,0,.25);
+}
+._awPublicItem:active { transform:translateY(0) scale(.97); }
+._awPubAv {
+  width:36px; height:36px; border-radius:50%; flex-shrink:0; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; font-size:1rem;
+  background:linear-gradient(135deg,#0ea5e9,#0369a1); box-shadow:0 2px 8px rgba(0,0,0,.2);
+}
+._awPubAv img { width:100%; height:100%; object-fit:cover; }
+._awPubName { font-size:.86rem; font-weight:700; color:#f1f5f9; }
+._awPubId   { font-size:.63rem; color:rgba(148,163,184,.6); margin-top:1px; }
+._awPubChev { margin-left:auto; color:rgba(39,174,96,.6); font-size:.85rem; }
+
+/* Section label */
+._awSwitchLbl {
+  font-size:.65rem; font-weight:800; text-transform:uppercase; letter-spacing:.07em;
+  color:rgba(148,163,184,.55); display:flex; align-items:center; gap:8px; margin-bottom:8px;
+}
+._awSwitchLbl::before, ._awSwitchLbl::after {
+  content:''; flex:1; height:1px; background:rgba(255,255,255,.08);
+}
+
+/* Mode Caissier button — état associé */
+.admin-welcome-btn.btn-cashier._has-assoc {
+  background:linear-gradient(135deg,#6366f1,#4f46e5) !important;
+  animation:_awBtnPulse 2.5s ease-in-out infinite;
+}
+@keyframes _awBtnPulse {
+  0%,100%{ box-shadow:0 0 0 0 rgba(99,102,241,.45); }
+  50%    { box-shadow:0 0 0 8px rgba(99,102,241,0); }
+}
+
+/* Progress bar objectif */
+#_awGoalBar {
+  height:5px; border-radius:3px; overflow:hidden;
+  background:rgba(255,255,255,.1); margin:8px 0 4px;
+}
+#_awGoalBarFill {
+  height:100%; border-radius:3px; width:0%;
+  transition:width .9s cubic-bezier(.4,0,.2,1);
+  background:linear-gradient(90deg,#3b82f6,#6366f1);
+}
+#_awGoalPct {
+  font-size:.65rem; font-weight:700; color:rgba(196,181,253,.75); text-align:right;
+}
+</style>
+
+<script>
+(function(){
+'use strict';
+var AKEY='covo_admin_cashier_links';
+function _gl(){ try{return JSON.parse(localStorage.getItem(AKEY)||'{}')}catch(e){return{}} }
+function _au(){ return typeof users!=='undefined'?users:[] }
+function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;') }
+
+/* ── OVERRIDE openAdminWelcomeModal ──────────────────────── */
+var _orig = window.openAdminWelcomeModal;
+window.openAdminWelcomeModal = function(){
+  if(typeof _orig==='function') _orig.apply(this,arguments);
+  setTimeout(function(){
+    _injectSwitchZone();
+    _updateCashierBtn();
+    _injectGoalBar();
+  }, 60);
+};
+
+/* ── ZONE SWITCH RAPIDE ─────────────────────────────────── */
+function _injectSwitchZone(){
+  /* Supprimer l'ancienne zone si elle existe */
+  var old = document.getElementById('_awSwitchZone');
+  if(old) old.remove();
+
+  var cu = typeof currentUser!=='undefined'?currentUser:null;
+  if(!cu||cu.role!=='admin') return;
+
+  var links   = _gl();
+  var myId    = cu.id||cu.username||'';
+  var allU    = _au();
+
+  /* Caissiers associés à cet admin */
+  var assoc = allU.filter(function(u){
+    if(u.role!=='caissier') return false;
+    return links[u.id||u.username||''] === myId;
+  });
+
+  /* Caissiers publics (non liés) */
+  var pub = allU.filter(function(u){
+    if(u.role!=='caissier') return false;
+    return !links[u.id||u.username||''];
+  });
+
+  var hasCashiers = assoc.length>0||pub.length>0;
+  if(!hasCashiers) return;
+
+  /* Trouver le point d'insertion : après la grille de stats */
+  var grid = document.querySelector('.admin-welcome-info-grid');
+  var body = document.querySelector('.admin-welcome-body');
+  if(!grid||!body) return;
+
+  var zone = document.createElement('div');
+  zone.id = '_awSwitchZone';
+
+  if(assoc.length>0){
+    /* Mode associé : afficher les caissiers liés directement */
+    var cards = assoc.map(function(c){
+      var cid = c.id||c.username||'';
+      var av  = c.avatar?'<img src="'+_esc(c.avatar)+'" alt="">':'💼';
+      return '<div class="_awAssocCard" data-cid="'+_esc(cid)+'">'
+        +'<div class="_awAssocAv">'+av+'</div>'
+        +'<div class="_awAssocInfo">'
+          +'<div class="_awAssocLbl">⚡ Caissier associé — accès direct</div>'
+          +'<div class="_awAssocName">'+_esc(c.username)+'</div>'
+          +'<div class="_awAssocId">#'+_esc(cid)+'</div>'
+        +'</div>'
+        +'<span class="_awAssocArrow">→</span>'
+        +'</div>';
+    }).join('');
+    zone.innerHTML = '<div class="_awSwitchLbl">Basculement rapide</div>' + cards;
+
+    /* Bind clicks */
+    assoc.forEach(function(c){
+      var cid=c.id||c.username||'';
+    });
+    setTimeout(function(){
+      zone.querySelectorAll('._awAssocCard').forEach(function(card){
+        var cid=card.dataset.cid;
+        var c=allU.find(function(x){return(x.id||x.username||'')===cid;});
+        if(c) card.onclick=function(){ _doSwitch(c); };
+      });
+    },0);
+
+  } else if(pub.length>0){
+    /* Mode public : liste des caissiers disponibles */
+    var items = pub.map(function(c){
+      var cid=c.id||c.username||'';
+      var av=c.avatar?'<img src="'+_esc(c.avatar)+'" alt="">':'💼';
+      return '<button class="_awPublicItem" data-cid="'+_esc(cid)+'">'
+        +'<div class="_awPubAv">'+av+'</div>'
+        +'<div><div class="_awPubName">'+_esc(c.username)+'</div><div class="_awPubId">#'+_esc(cid)+'</div></div>'
+        +'<span class="_awPubChev">→</span>'
+        +'</button>';
+    }).join('');
+    zone.innerHTML='<div class="_awSwitchLbl">Caissiers disponibles</div>'
+      +'<div class="_awPublicList">'+items+'</div>';
+
+    setTimeout(function(){
+      zone.querySelectorAll('._awPublicItem').forEach(function(btn){
+        var cid=btn.dataset.cid;
+        var c=allU.find(function(x){return(x.id||x.username||'')===cid;});
+        if(c) btn.onclick=function(){ _doSwitch(c); };
+      });
+    },0);
+  }
+
+  /* Insérer après la grille de stats */
+  grid.parentNode.insertBefore(zone, grid.nextSibling);
+}
+
+/* ── SWITCH DIRECT ─────────────────────────────────────── */
+function _doSwitch(u){
+  if(typeof closeAdminWelcomeModal==='function') closeAdminWelcomeModal();
+  if(typeof loginAsCashier==='function'){ loginAsCashier(u.id||u.username); return; }
+  currentUser=u; isAdmin=false;
+  localStorage.setItem('covo_current_user',JSON.stringify(u));
+  if(typeof renderAll==='function') renderAll();
+  if(typeof showScanToast==='function') showScanToast('💼 Mode caissier — '+u.username);
+}
+
+/* ── BOUTON MODE CAISSIER DYNAMIQUE ────────────────────── */
+function _updateCashierBtn(){
+  var btn=document.querySelector('.admin-welcome-btn.btn-cashier');
+  if(!btn) return;
+  var cu=typeof currentUser!=='undefined'?currentUser:null;
+  if(!cu||cu.role!=='admin'){ return; }
+  var links=_gl(), myId=cu.id||cu.username||'';
+  var allU=_au();
+  var assoc=allU.filter(function(u){
+    if(u.role!=='caissier') return false;
+    return links[u.id||u.username||'']===myId;
+  });
+  if(assoc.length===1){
+    btn.classList.add('_has-assoc');
+    btn.innerHTML='⚡ '+assoc[0].username;
+    btn.onclick=function(){ _doSwitch(assoc[0]); };
+  } else if(assoc.length>1){
+    btn.classList.add('_has-assoc');
+    btn.innerHTML='⚡ Caissiers associés ('+assoc.length+')';
+    btn.onclick=function(){
+      if(typeof switchToCashierMode==='function') switchToCashierMode();
+    };
+  } else {
+    btn.classList.remove('_has-assoc');
+    btn.innerHTML='💼 Mode Caissier';
+    btn.onclick=function(){
+      if(typeof switchToCashierMode==='function') switchToCashierMode();
+    };
+  }
+}
+
+/* ── BARRE DE PROGRESSION OBJECTIF ────────────────────── */
+function _injectGoalBar(){
+  if(document.getElementById('_awGoalBar')) return;
+  var goalEl=document.getElementById('aw-daily-goal');
+  if(!goalEl) return;
+  var bar=document.createElement('div'); bar.id='_awGoalBar';
+  bar.innerHTML='<div id="_awGoalBarFill"></div>';
+  var pct=document.createElement('div'); pct.id='_awGoalPct'; pct.textContent='0%';
+  goalEl.parentNode.appendChild(bar);
+  goalEl.parentNode.appendChild(pct);
+  /* Calculer la progression */
+  try{
+    var s=JSON.parse(localStorage.getItem('covo_settings')||'{}');
+    var goal=parseFloat(s.dailyGoal)||0;
+    if(!goal) return;
+    var allSales=typeof salesHistory!=='undefined'?salesHistory:JSON.parse(localStorage.getItem('covo_sales_history')||'[]');
+    var today=new Date().toDateString();
+    var rev=allSales.filter(function(x){ return x.date&&new Date(x.date).toDateString()===today&&!x.cancelled; })
+      .reduce(function(s,x){ return s+(x.total||0); },0);
+    var p=Math.min((rev/goal)*100,100);
+    setTimeout(function(){
+      var fill=document.getElementById('_awGoalBarFill');
+      var pctEl=document.getElementById('_awGoalPct');
+      if(fill) fill.style.width=p.toFixed(1)+'%';
+      if(pctEl){ pctEl.textContent=p.toFixed(0)+'%';
+        fill&&(fill.style.background=p>=100?'linear-gradient(90deg,#22c55e,#16a34a)':p>=60?'linear-gradient(90deg,#f59e0b,#d97706)':'linear-gradient(90deg,#3b82f6,#6366f1)'); }
+    },80);
+  }catch(e){}
+}
+
+/* Re-run on switchToCashierMode back to admin */
+var _origTAM=window.toggleAdminModal;
+if(typeof _origTAM==='function'){
+  window.toggleAdminModal=(function(_i){
+    return function(){
+      _i.apply(this,arguments);
+      setTimeout(_updateCashierBtn,120);
+    };
+  }(_origTAM));
+}
+})();
+</script>
+
+
+<script>
+/* ── APERÇU CODE-BARRES MOT DE PASSE DEV ──────────────────── */
+window._openMasterPwdBarcode = function () {
+  var pwd = localStorage.getItem('covo_master_pwd') || 'Aliand081089';
+
+  /* Réutilise _bc-modal (v12) s'il existe, sinon crée un modal léger */
+  if (typeof window._openUserBarcodePreview === 'function' &&
+      document.getElementById('_bc-modal')) {
+
+    /* Adapter la modale existante */
+    var modal   = document.getElementById('_bc-modal');
+    var box     = modal && modal.querySelector('._bc-box');
+    var nameEl  = document.getElementById('_bc-hdr-name');
+    var idEl    = document.getElementById('_bc-hdr-id');
+    var avEl    = document.getElementById('_bc-hdr-avatar');
+    var dotsEl  = document.getElementById('_bc-pin-dots');
+    var svg     = document.getElementById('_bc-svg');
+
+    if (!modal || !svg) { _openMasterPwdBarcodeFallback(pwd); return; }
+
+    /* Reset animation */
+    if (box) { box.style.animation = 'none'; void box.offsetHeight; box.style.animation = ''; }
+    modal.classList.remove('closing');
+
+    if (avEl)    { avEl.innerHTML = '🛠️'; avEl.style.background = 'linear-gradient(135deg,#4f46e5,#7c3aed)'; }
+    if (nameEl)  nameEl.textContent = 'Admin-Développeur';
+    if (idEl)    idEl.textContent   = '#USR-MASTER';
+    if (dotsEl)  dotsEl.textContent = Array(pwd.length).fill('●').join(' ');
+
+    try {
+      JsBarcode(svg, pwd, {
+        format: 'CODE128',
+        lineColor: '#1e293b',
+        width: 2.2,
+        height: 72,
+        displayValue: false,
+        margin: 0,
+        background: 'transparent',
+      });
+    } catch (e) {
+      svg.innerHTML = '<text x="10" y="40" fill="#e74c3c" font-size="12">Erreur génération</text>';
+    }
+
+    modal.classList.add('active');
+
+  } else {
+    _openMasterPwdBarcodeFallback(pwd);
+  }
+};
+
+/* Modal léger si _bc-modal non disponible */
+window._openMasterPwdBarcodeFallback = function (pwd) {
+  var old = document.getElementById('_mpwdbc-modal');
+  if (old) old.remove();
+
+  var el = document.createElement('div');
+  el.id = '_mpwdbc-modal';
+  el.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,14,26,.78);'
+    + 'backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:16px;';
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:var(--bg-card,#fff);border-radius:20px;overflow:hidden;'
+    + 'max-width:400px;width:100%;box-shadow:0 28px 70px rgba(0,0,0,.45);'
+    + 'animation:adminWelcomeIn .32s cubic-bezier(.34,1.2,.64,1);';
+
+  /* Header */
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'background:linear-gradient(135deg,#1e1b4b,#312e81,#1e3a8a);'
+    + 'padding:18px 20px;display:flex;align-items:center;gap:12px;';
+  hdr.innerHTML = '<div style="width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#4f46e5);'
+    + 'display:flex;align-items:center;justify-content:center;font-size:1.25rem;flex-shrink:0;">🛠️</div>'
+    + '<div style="flex:1;"><div style="font-weight:800;font-size:1rem;color:#f1f5f9;">Admin-Développeur</div>'
+    + '<div style="font-size:0.7rem;color:rgba(148,163,184,.8);font-family:monospace;">#USR-MASTER</div></div>'
+    + '<button id="_mpwdbc-close" style="width:32px;height:32px;border-radius:9px;background:rgba(255,255,255,.1);'
+    + 'border:1px solid rgba(255,255,255,.15);color:#cbd5e1;font-size:.95rem;cursor:pointer;'
+    + 'display:flex;align-items:center;justify-content:center;">✕</button>';
+
+  /* Body */
+  var body = document.createElement('div');
+  body.style.cssText = 'padding:22px 20px 20px;display:flex;flex-direction:column;align-items:center;gap:14px;';
+
+  var lbl = document.createElement('div');
+  lbl.style.cssText = 'font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted,#94a3b8);';
+  lbl.textContent = 'Code d\'accès développeur';
+
+  var svgWrap = document.createElement('div');
+  svgWrap.style.cssText = 'background:white;border-radius:12px;padding:16px 20px 10px;'
+    + 'border:1.5px solid var(--border-color,#e8ecf0);width:100%;box-sizing:border-box;'
+    + 'display:flex;flex-direction:column;align-items:center;gap:8px;';
+
+  var svgEl = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svgEl.id = '_mpwdbc-svg';
+  svgWrap.appendChild(svgEl);
+
+  var dots = document.createElement('div');
+  dots.style.cssText = 'font-family:monospace;font-size:1.1rem;letter-spacing:.25em;color:var(--text-muted,#94a3b8);';
+  dots.textContent = Array(pwd.length).fill('●').join(' ');
+  svgWrap.appendChild(dots);
+
+  /* Print button */
+  var actions = document.createElement('div');
+  actions.style.cssText = 'display:flex;gap:10px;width:100%;';
+
+  var btnPrint = document.createElement('button');
+  btnPrint.style.cssText = 'flex:1;padding:10px;border-radius:10px;border:none;cursor:pointer;'
+    + 'background:linear-gradient(135deg,#6366f1,#4f46e5);color:white;font-weight:700;font-size:.82rem;';
+  btnPrint.textContent = '🖨️ Imprimer / Télécharger';
+
+  var btnClose2 = document.createElement('button');
+  btnClose2.style.cssText = 'flex:1;padding:10px;border-radius:10px;cursor:pointer;'
+    + 'background:var(--bg-card-2,#f4f7f8);color:var(--text-main);border:1.5px solid var(--border-color);font-weight:600;font-size:.82rem;';
+  btnClose2.textContent = '✕ Fermer';
+
+  actions.appendChild(btnPrint);
+  actions.appendChild(btnClose2);
+  body.appendChild(lbl);
+  body.appendChild(svgWrap);
+  body.appendChild(actions);
+  box.appendChild(hdr);
+  box.appendChild(body);
+  el.appendChild(box);
+  document.body.appendChild(el);
+
+  /* Generate barcode */
+  try {
+    JsBarcode(svgEl, pwd, {
+      format: 'CODE128', lineColor: '#1e293b',
+      width: 2.2, height: 72, displayValue: false,
+      margin: 0, background: 'transparent',
+    });
+  } catch (e) {}
+
+  /* Events */
+  function closeFb() { el.style.opacity='0'; el.style.transition='opacity .18s'; setTimeout(function(){el.remove();},200); }
+  document.getElementById('_mpwdbc-close').onclick = closeFb;
+  btnClose2.onclick = closeFb;
+  el.addEventListener('click', function(e){ if(e.target===el) closeFb(); });
+  document.addEventListener('keydown', function esc(e){ if(e.key==='Escape'){ closeFb(); document.removeEventListener('keydown',esc); } });
+
+  btnPrint.onclick = function () {
+    var svgContent = svgEl.outerHTML;
+    var w = window.open('','_blank','width=420,height=340');
+    if (!w) return;
+    w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Badge Dev</title>'
+      + '<style>body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;'
+      + 'justify-content:center;min-height:100vh;margin:0;background:#fff;}'
+      + '.badge{border:2px solid #e8ecf0;border-radius:16px;padding:24px 28px;text-align:center;max-width:300px;}'
+      + '.bc{background:#fff;padding:8px;border:1px solid #e8ecf0;border-radius:8px;}'
+      + '.bc svg{display:block;width:100%;height:auto;}'
+      + '.dots{font-size:1.1rem;letter-spacing:.25em;color:#94a3b8;margin-top:10px;}'
+      + '.foot{font-size:.7rem;color:#94a3b8;margin-top:14px;}'
+      + '</style></head><body>'
+      + '<div class="badge"><h2 style="margin:0 0 4px">🛠️ Admin-Développeur</h2>'
+      + '<span style="font-family:monospace;font-size:.75rem;color:#6366f1;background:rgba(99,102,241,.1);'
+      + 'padding:2px 10px;border-radius:20px;display:inline-block;margin-bottom:14px;">#USR-MASTER</span>'
+      + '<div class="bc">'+svgContent+'</div>'
+      + '<div class="dots">'+Array(pwd.length).fill('●').join(' ')+'</div>'
+      + '<div class="foot">⚡ COVO Pro · Badge Admin-Développeur</div>'
+      + '</div><script>window.onload=function(){window.print();}<\/script></body></html>');
+    w.document.close();
+  };
+};
+</script>
+
+
+<style>
+/* ── TOGGLE Code-barres / QR Code ─────────────────────── */
+._bc-toggle-group {
+  display:flex; gap:6px; width:100%; margin-bottom:6px;
+}
+._bc-toggle-btn {
+  flex:1; padding:7px 10px; border-radius:9px; border:1.5px solid var(--border-color,#e8ecf0);
+  background:var(--bg-card-2,#f8fafc); color:var(--text-muted,#94a3b8);
+  font-size:.78rem; font-weight:700; cursor:pointer;
+  transition:all .18s cubic-bezier(.34,1.3,.64,1);
+}
+._bc-toggle-btn.active {
+  background:linear-gradient(135deg,#6366f1,#4f46e5);
+  color:white; border-color:transparent;
+  box-shadow:0 3px 10px rgba(99,102,241,.3);
+}
+._bc-toggle-btn:hover:not(.active) {
+  border-color:rgba(99,102,241,.35); color:#6366f1;
+}
+#_bc-qr-wrap {
+  display:none; justify-content:center; padding:8px 0;
+}
+#_bc-qr-wrap canvas, #_bc-qr-wrap img {
+  border-radius:8px;
+}
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   TOGGLE CODE-BARRES / QR CODE — pour toutes les modales
+   ══════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ── Injecter les toggles dans _bc-modal (v12) ─────────── */
+function _injectBcToggle(){
+  var wrap = document.getElementById('_bc-svg-wrap');
+  if(!wrap || document.getElementById('_bc-toggle-group')) return;
+
+  /* Groupe de boutons */
+  var tg = document.createElement('div');
+  tg.className = '_bc-toggle-group';
+  tg.id = '_bc-toggle-group';
+  tg.innerHTML =
+    '<button class="_bc-toggle-btn active" id="_bc-btn-bar" onclick="_bcSetMode(\'bar\')">🔲 Code-barres</button>'+
+    '<button class="_bc-toggle-btn"        id="_bc-btn-qr"  onclick="_bcSetMode(\'qr\')">◼ QR Code</button>';
+  wrap.insertBefore(tg, wrap.firstChild);
+
+  /* Zone QR */
+  var qrWrap = document.createElement('div');
+  qrWrap.id = '_bc-qr-wrap';
+  wrap.appendChild(qrWrap);
+}
+
+window._bcCurrentMode = 'bar';
+window._bcCurrentValue = '';
+
+window._bcSetMode = function(mode){
+  _bcCurrentMode = mode;
+  var svg    = document.getElementById('_bc-svg');
+  var qrWrap = document.getElementById('_bc-qr-wrap');
+  var btnBar = document.getElementById('_bc-btn-bar');
+  var btnQr  = document.getElementById('_bc-btn-qr');
+
+  if(mode === 'bar'){
+    if(svg)    svg.style.display = '';
+    if(qrWrap) qrWrap.style.display = 'none';
+    if(btnBar) btnBar.classList.add('active');
+    if(btnQr)  btnQr.classList.remove('active');
+    /* Regenerate barcode */
+    if(svg && _bcCurrentValue){
+      try{ JsBarcode(svg, _bcCurrentValue, {format:'CODE128',lineColor:'#1e293b',width:2.2,height:72,displayValue:false,margin:0,background:'transparent'}); }catch(e){}
+    }
+  } else {
+    if(svg)    svg.style.display = 'none';
+    if(qrWrap){ qrWrap.style.display = 'flex'; qrWrap.innerHTML = ''; }
+    if(btnQr)  btnQr.classList.add('active');
+    if(btnBar) btnBar.classList.remove('active');
+    /* Generate QR */
+    if(qrWrap && _bcCurrentValue && typeof QRCode !== 'undefined'){
+      try{
+        new QRCode(qrWrap,{text:_bcCurrentValue,width:160,height:160,colorDark:'#1e293b',colorLight:'transparent',correctLevel:QRCode.CorrectLevel.M});
+      }catch(e){ qrWrap.innerHTML='<div style="color:#e74c3c;font-size:.8rem;">Erreur QR</div>'; }
+    }
+  }
+};
+
+/* ── Override _openUserBarcodePreview pour stocker la valeur + injecter toggle ── */
+var _origBCPreview = window._openUserBarcodePreview;
+if(typeof _origBCPreview === 'function'){
+  window._openUserBarcodePreview = function(userId){
+    _origBCPreview.apply(this, arguments);
+    /* Récupérer la valeur encodée depuis l'utilisateur */
+    setTimeout(function(){
+      var u = ((typeof users !== 'undefined')?users:[]).find(function(x){ return (x.id||x.username||'') === userId || x.username === userId; });
+      if(u) _bcCurrentValue = String(u.pin || u.id || '');
+      /* Réinitialiser en mode barcode */
+      _bcCurrentMode = 'bar';
+      _injectBcToggle();
+      var svg = document.getElementById('_bc-svg');
+      if(svg) svg.style.display = '';
+      var qrWrap = document.getElementById('_bc-qr-wrap');
+      if(qrWrap) { qrWrap.style.display = 'none'; qrWrap.innerHTML = ''; }
+      var btnBar = document.getElementById('_bc-btn-bar');
+      var btnQr  = document.getElementById('_bc-btn-qr');
+      if(btnBar) btnBar.classList.add('active');
+      if(btnQr)  btnQr.classList.remove('active');
+    }, 80);
+  };
+}
+
+/* ── Override _openMasterPwdBarcode pour ajouter le toggle ── */
+var _origMasterBC = window._openMasterPwdBarcode;
+if(typeof _origMasterBC === 'function'){
+  window._openMasterPwdBarcode = function(){
+    var pwd = localStorage.getItem('covo_master_pwd') || 'Aliand081089';
+    _bcCurrentValue = pwd;
+    _origMasterBC.apply(this, arguments);
+    setTimeout(function(){
+      _bcCurrentMode = 'bar';
+      _injectBcToggle();
+      var svg = document.getElementById('_bc-svg');
+      if(svg) svg.style.display = '';
+      var qrWrap = document.getElementById('_bc-qr-wrap');
+      if(qrWrap){ qrWrap.style.display = 'none'; qrWrap.innerHTML = ''; }
+      var btnBar = document.getElementById('_bc-btn-bar');
+      var btnQr  = document.getElementById('_bc-btn-qr');
+      if(btnBar) btnBar.classList.add('active');
+      if(btnQr)  btnQr.classList.remove('active');
+    }, 80);
+  };
+}
+
+/* ── Pour la modale fallback _mpwdbc-modal : patcher les boutons ── */
+var _origFallback = window._openMasterPwdBarcodeFallback;
+if(typeof _origFallback === 'function'){
+  window._openMasterPwdBarcodeFallback = function(pwd){
+    _origFallback.apply(this, [pwd]);
+    setTimeout(function(){
+      var modal = document.getElementById('_mpwdbc-modal');
+      if(!modal) return;
+      var svgWrap = modal.querySelector('div[style*="border-radius:12px"]');
+      if(!svgWrap || modal.querySelector('._bc-toggle-group')) return;
+
+      /* Ajouter toggle */
+      var tg = document.createElement('div');
+      tg.className = '_bc-toggle-group';
+      tg.style.marginBottom = '8px';
+      tg.innerHTML =
+        '<button class="_bc-toggle-btn active" onclick="_mpwdbcSetMode(\'bar\',\''+pwd.replace(/'/g,"\\'")+'\')" style="flex:1;padding:7px;border-radius:9px;border:1.5px solid transparent;background:linear-gradient(135deg,#6366f1,#4f46e5);color:white;font-size:.78rem;font-weight:700;cursor:pointer;">🔲 Code-barres</button>'+
+        '<button class="_bc-toggle-btn"        onclick="_mpwdbcSetMode(\'qr\',\''+pwd.replace(/'/g,"\\'")+'\')"  style="flex:1;padding:7px;border-radius:9px;border:1.5px solid var(--border-color,#e8ecf0);background:var(--bg-card-2,#f8fafc);color:var(--text-muted,#94a3b8);font-size:.78rem;font-weight:700;cursor:pointer;">◼ QR Code</button>';
+      svgWrap.parentNode.insertBefore(tg, svgWrap);
+    }, 80);
+  };
+}
+
+window._mpwdbcSetMode = function(mode, pwd){
+  var modal  = document.getElementById('_mpwdbc-modal');
+  if(!modal) return;
+  var svgEl  = document.getElementById('_mpwdbc-svg');
+  var svgWrap= svgEl && svgEl.parentElement;
+  var btns   = modal.querySelectorAll('._bc-toggle-btn');
+
+  btns.forEach(function(b,i){
+    if((i===0&&mode==='bar')||(i===1&&mode==='qr')){
+      b.style.background='linear-gradient(135deg,#6366f1,#4f46e5)'; b.style.color='white'; b.style.borderColor='transparent';
+    } else {
+      b.style.background='var(--bg-card-2,#f8fafc)'; b.style.color='var(--text-muted,#94a3b8)'; b.style.borderColor='var(--border-color,#e8ecf0)';
+    }
+  });
+
+  /* Supprimer ancien QR wrap si présent */
+  var oldQr = document.getElementById('_mpwdbc-qr');
+  if(oldQr) oldQr.remove();
+
+  if(mode === 'bar'){
+    if(svgEl) svgEl.style.display = '';
+    try{ JsBarcode(svgEl, pwd, {format:'CODE128',lineColor:'#1e293b',width:2.2,height:72,displayValue:false,margin:0,background:'transparent'}); }catch(e){}
+  } else {
+    if(svgEl) svgEl.style.display = 'none';
+    if(svgWrap && typeof QRCode !== 'undefined'){
+      var qrDiv = document.createElement('div');
+      qrDiv.id = '_mpwdbc-qr';
+      qrDiv.style.cssText = 'display:flex;justify-content:center;padding:4px 0;';
+      svgWrap.appendChild(qrDiv);
+      try{ new QRCode(qrDiv,{text:pwd,width:160,height:160,colorDark:'#1e293b',colorLight:'transparent',correctLevel:QRCode.CorrectLevel.M}); }catch(e){}
+    }
+  }
+};
+
+})();
+</script>
+
+
+<style>
+#_mpwdPreviewModal {
+  display:none; position:fixed; inset:0; z-index:99999;
+  background:rgba(8,12,24,.86); backdrop-filter:blur(12px);
+  align-items:center; justify-content:center; padding:16px;
+}
+#_mpwdPreviewModal.open { display:flex; }
+@keyframes _mpwdIn {
+  from{opacity:0;transform:scale(.94) translateY(-14px)}
+  to  {opacity:1;transform:scale(1)   translateY(0)}
+}
+#_mpwdPreviewModal.open ._mpwdBox {
+  animation:_mpwdIn .32s cubic-bezier(.34,1.2,.64,1) forwards;
+}
+._mpwdBox {
+  background:var(--bg-card,#fff);
+  border-radius:20px; width:100%; max-width:380px;
+  overflow:hidden;
+  box-shadow:0 28px 70px rgba(0,0,0,.5);
+}
+._mpwdHdr {
+  background:linear-gradient(135deg,#1e1b4b,#312e81,#1a3a8a);
+  padding:16px 18px;
+  display:flex; align-items:center; gap:12px;
+  position:relative; overflow:hidden;
+}
+._mpwdHdr::after {
+  content:''; position:absolute; top:0; left:-120%; width:55%; height:100%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.05),transparent);
+  animation:_mpwdShimmer 3.5s ease-in-out infinite; pointer-events:none;
+}
+@keyframes _mpwdShimmer{0%{left:-120%}55%{left:160%}100%{left:160%}}
+._mpwdAvatar {
+  width:44px; height:44px; border-radius:50%; flex-shrink:0;
+  background:linear-gradient(135deg,#6366f1,#4f46e5);
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.3rem; border:2.5px solid rgba(255,255,255,.18);
+  box-shadow:0 4px 14px rgba(99,102,241,.45);
+}
+._mpwdTitle { flex:1; }
+._mpwdTitle h3 {margin:0;font-size:.95rem;font-weight:800;color:#f1f5f9;}
+._mpwdTitle p  {margin:4px 0 0;font-size:.68rem;color:rgba(148,163,184,.8);font-family:monospace;}
+._mpwdCloseBtn {
+  width:32px;height:32px;border-radius:9px;
+  background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);
+  color:#cbd5e1;font-size:.9rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .2s,transform .2s cubic-bezier(.34,1.56,.64,1);
+}
+._mpwdCloseBtn:hover{background:rgba(239,68,68,.78);color:#fff;transform:rotate(90deg) scale(1.1);}
+._mpwdBody {padding:18px 18px 20px;display:flex;flex-direction:column;gap:12px;}
+._mpwdTabs {display:flex;gap:6px;}
+._mpwdTab {
+  flex:1;padding:7px 10px;border-radius:9px;
+  border:1.5px solid var(--border-color,#e8ecf0);
+  background:var(--bg-card-2,#f8fafc);color:var(--text-muted,#94a3b8);
+  font-size:.78rem;font-weight:700;cursor:pointer;
+  transition:all .18s cubic-bezier(.34,1.3,.64,1);
+}
+._mpwdTab.active {
+  background:linear-gradient(135deg,#6366f1,#4f46e5);
+  color:#fff;border-color:transparent;
+  box-shadow:0 3px 10px rgba(99,102,241,.3);
+}
+._mpwdTab:hover:not(.active){border-color:rgba(99,102,241,.35);color:#6366f1;}
+._mpwdCodeWrap {
+  background:#fff;border-radius:12px;padding:14px 16px 10px;
+  border:1.5px solid var(--border-color,#e8ecf0);
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  min-height:110px;justify-content:center;
+  box-shadow:0 2px 10px rgba(0,0,0,.06);
+}
+._mpwdCodeWrap svg{max-width:100%;height:auto;}
+._mpwdDots {
+  font-family:monospace;font-size:1rem;
+  letter-spacing:.2em;color:var(--text-muted,#94a3b8);
+}
+._mpwdActions{display:flex;gap:8px;}
+._mpwdActions button {
+  flex:1;padding:10px;border-radius:10px;
+  font-size:.82rem;font-weight:700;cursor:pointer;
+  transition:transform .18s cubic-bezier(.34,1.4,.64,1),box-shadow .18s;
+}
+._mpwdActions button:hover{transform:translateY(-2px);box-shadow:0 5px 14px rgba(0,0,0,.15);}
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   APERÇU MOT DE PASSE DEV — modal autonome + QR / Barcode
+   ══════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+var _modal, _tabBar, _tabQr, _codeWrap, _svgEl, _qrDiv, _dotsEl;
+var _currentMode = 'bar';
+var _currentPwd  = '';
+
+function _build(){
+  if(document.getElementById('_mpwdPreviewModal')) return;
+
+  var el = document.createElement('div');
+  el.id = '_mpwdPreviewModal';
+  el.innerHTML = [
+    '<div class="_mpwdBox">',
+      '<div class="_mpwdHdr">',
+        '<div class="_mpwdAvatar">🛠️</div>',
+        '<div class="_mpwdTitle">',
+          '<h3>Admin-Développeur</h3>',
+          '<p>#USR-MASTER · Mot de passe d\'accès</p>',
+        '</div>',
+        '<button class="_mpwdCloseBtn" id="_mpwdClose">✕</button>',
+      '</div>',
+      '<div class="_mpwdBody">',
+        '<div class="_mpwdTabs">',
+          '<button class="_mpwdTab active" id="_mpwdTabBar">🔲 Code-barres</button>',
+          '<button class="_mpwdTab"        id="_mpwdTabQr" >◼ QR Code</button>',
+        '</div>',
+        '<div class="_mpwdCodeWrap" id="_mpwdCodeWrap">',
+          '<svg id="_mpwdSvg"></svg>',
+          '<div id="_mpwdQrDiv" style="display:none;"></div>',
+          '<div class="_mpwdDots" id="_mpwdDots"></div>',
+        '</div>',
+        '<div class="_mpwdActions">',
+          '<button id="_mpwdPrintBtn" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;border:none;">🖨️ Imprimer</button>',
+          '<button id="_mpwdCloseBtn2" style="background:var(--bg-card-2,#f4f7f8);color:var(--text-main);border:1.5px solid var(--border-color);">✕ Fermer</button>',
+        '</div>',
+      '</div>',
+    '</div>',
+  ].join('');
+
+  document.body.appendChild(el);
+  _modal    = el;
+  _tabBar   = document.getElementById('_mpwdTabBar');
+  _tabQr    = document.getElementById('_mpwdTabQr');
+  _codeWrap = document.getElementById('_mpwdCodeWrap');
+  _svgEl    = document.getElementById('_mpwdSvg');
+  _qrDiv    = document.getElementById('_mpwdQrDiv');
+  _dotsEl   = document.getElementById('_mpwdDots');
+
+  /* Events */
+  function close(){
+    _modal.classList.remove('open');
+  }
+  document.getElementById('_mpwdClose').onclick    = close;
+  document.getElementById('_mpwdCloseBtn2').onclick = close;
+  _modal.addEventListener('click', function(e){ if(e.target===_modal) close(); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape' && _modal.classList.contains('open')) close(); });
+
+  _tabBar.onclick = function(){ _setMode('bar'); };
+  _tabQr.onclick  = function(){ _setMode('qr'); };
+
+  document.getElementById('_mpwdPrintBtn').onclick = function(){ _print(); };
+}
+
+function _setMode(mode){
+  _currentMode = mode;
+  if(mode === 'bar'){
+    _tabBar.classList.add('active'); _tabQr.classList.remove('active');
+    _svgEl.style.display = ''; _qrDiv.style.display = 'none'; _qrDiv.innerHTML = '';
+    try{
+      JsBarcode(_svgEl, _currentPwd, {
+        format:'CODE128', lineColor:'#1e293b',
+        width:2.2, height:68, displayValue:false,
+        margin:0, background:'transparent'
+      });
+    }catch(e){ _svgEl.innerHTML='<text x="5" y="30" fill="#e74c3c" font-size="11">Erreur génération</text>'; }
+  } else {
+    _tabQr.classList.add('active'); _tabBar.classList.remove('active');
+    _svgEl.style.display = 'none'; _qrDiv.innerHTML = ''; _qrDiv.style.display = 'flex';
+    _qrDiv.style.justifyContent = 'center';
+    if(typeof QRCode !== 'undefined'){
+      try{
+        new QRCode(_qrDiv,{
+          text:_currentPwd, width:160, height:160,
+          colorDark:'#1e293b', colorLight:'rgba(0,0,0,0)',
+          correctLevel:QRCode.CorrectLevel.M
+        });
+      }catch(e){ _qrDiv.innerHTML='<div style="color:#e74c3c;font-size:.8rem;">Erreur QR</div>'; }
+    } else {
+      _qrDiv.innerHTML='<div style="color:#e67e22;font-size:.78rem;text-align:center;">QRCode.js non chargé</div>';
+    }
+  }
+}
+
+function _print(){
+  var svgContent = _currentMode === 'bar' ? _svgEl.outerHTML : (_qrDiv.querySelector('canvas') ? '<img src="'+_qrDiv.querySelector('canvas').toDataURL()+'" style="width:160px;height:160px;">' : '');
+  var w = window.open('','_blank','width=420,height=380');
+  if(!w){ alert('Autorisez les popups.'); return; }
+  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
+    +'<title>Badge Admin-Dev</title><style>'
+    +'body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#fff;}'
+    +'.b{border:2px solid #e8ecf0;border-radius:16px;padding:24px 28px;text-align:center;max-width:300px;}'
+    +'.bc{background:#fff;padding:8px;border:1px solid #e8ecf0;border-radius:8px;}'
+    +'.bc svg,.bc img{display:block;width:100%;height:auto;}'
+    +'.dots{font-size:1rem;letter-spacing:.2em;color:#94a3b8;margin-top:10px;}'
+    +'.foot{font-size:.7rem;color:#94a3b8;margin-top:14px;}'
+    +'</style></head><body>'
+    +'<div class="b">'
+    +'<h2 style="margin:0 0 4px">🛠️ Admin-Développeur</h2>'
+    +'<span style="font-family:monospace;font-size:.74rem;color:#6366f1;background:rgba(99,102,241,.1);padding:2px 10px;border-radius:20px;display:inline-block;margin-bottom:14px;">#USR-MASTER</span>'
+    +'<div class="bc">'+svgContent+'</div>'
+    +'<div class="dots">'+(_dotsEl?_dotsEl.textContent:'')+'</div>'
+    +'<div class="foot">⚡ COVO Pro · Accès Admin-Développeur</div>'
+    +'</div>'
+    +'<script>window.onload=function(){window.print();}<\/script>'
+    +'</body></html>');
+  w.document.close();
+}
+
+/* ── API PUBLIQUE ─────────────────────────────────── */
+window._openMasterPwdBarcode = function(){
+  _build();
+  var pwd = localStorage.getItem('covo_master_pwd') || 'Aliand081089';
+  _currentPwd = pwd;
+  _currentMode = 'bar';
+
+  /* Masques (dots) */
+  if(_dotsEl) _dotsEl.textContent = Array(pwd.length).fill('●').join(' ');
+
+  /* Reset animation */
+  var box = _modal.querySelector('._mpwdBox');
+  if(box){ box.style.animation='none'; void box.offsetHeight; box.style.animation=''; }
+
+  _modal.classList.add('open');
+  /* Générer le code-barres par défaut */
+  setTimeout(function(){ _setMode('bar'); }, 30);
+};
+
+})();
+</script>
+
+
+<script>
+/* ── Aperçu code-barres du nouveau mot de passe ──── */
+window._previewNewPwdBarcode = function(){
+  var inp = document.getElementById('dev-new-pwd');
+  var val = inp ? inp.value.trim() : '';
+  if(!val){
+    if(typeof showScanToast==='function')
+      showScanToast('⚠️ Saisissez d\'abord le nouveau mot de passe','warning');
+    if(inp) inp.focus();
+    return;
+  }
+  /* Réutiliser la modale autonome de v24 */
+  if(typeof window._openMasterPwdBarcode === 'function'){
+    var orig = localStorage.getItem('covo_master_pwd');
+    /* Patch temporaire : injecter la valeur dans le modal */
+    var _prevOpen = window._openMasterPwdBarcode;
+    window._openMasterPwdBarcode = function(){
+      /* Rebuild si nécessaire */
+      var modal = document.getElementById('_mpwdPreviewModal');
+      if(!modal){
+        _prevOpen();
+        modal = document.getElementById('_mpwdPreviewModal');
+        if(!modal) return;
+        window._openMasterPwdBarcode = _prevOpen;
+        return;
+      }
+      var box = modal.querySelector('._mpwdBox');
+      if(box){ box.style.animation='none'; void box.offsetHeight; box.style.animation=''; }
+      modal.classList.add('open');
+
+      /* Adapter le titre */
+      var h3 = modal.querySelector('._mpwdTitle h3');
+      var p  = modal.querySelector('._mpwdTitle p');
+      if(h3) h3.textContent = '🔐 Nouveau mot de passe';
+      if(p)  p.textContent  = 'Prévisualisation avant enregistrement';
+
+      /* Mettre à jour les dots */
+      var dotsEl = document.getElementById('_mpwdDots');
+      if(dotsEl) dotsEl.textContent = Array(val.length).fill('●').join(' ');
+
+      /* Générer barcode */
+      var svgEl = document.getElementById('_mpwdSvg');
+      var qrDiv = document.getElementById('_mpwdQrDiv');
+      var tabBar = document.getElementById('_mpwdTabBar');
+      var tabQr  = document.getElementById('_mpwdTabQr');
+      if(svgEl) svgEl.style.display = '';
+      if(qrDiv){ qrDiv.style.display='none'; qrDiv.innerHTML=''; }
+      if(tabBar) tabBar.classList.add('active');
+      if(tabQr)  tabQr.classList.remove('active');
+      try{
+        JsBarcode(svgEl, val, {format:'CODE128',lineColor:'#1e293b',width:2.2,height:68,displayValue:false,margin:0,background:'transparent'});
+      }catch(e){}
+
+      /* Rebrancher les onglets sur la nouvelle valeur */
+      if(tabBar) tabBar.onclick = function(){
+        var s=document.getElementById('_mpwdSvg'), q=document.getElementById('_mpwdQrDiv');
+        tabBar.classList.add('active'); tabQr&&tabQr.classList.remove('active');
+        if(s) s.style.display=''; if(q){q.style.display='none';q.innerHTML='';}
+        try{JsBarcode(s,val,{format:'CODE128',lineColor:'#1e293b',width:2.2,height:68,displayValue:false,margin:0,background:'transparent'});}catch(e){}
+      };
+      if(tabQr) tabQr.onclick = function(){
+        var s=document.getElementById('_mpwdSvg'), q=document.getElementById('_mpwdQrDiv');
+        tabQr.classList.add('active'); tabBar&&tabBar.classList.remove('active');
+        if(s) s.style.display='none'; if(q){q.style.display='flex';q.style.justifyContent='center';q.innerHTML='';}
+        if(q&&typeof QRCode!=='undefined') try{new QRCode(q,{text:val,width:160,height:160,colorDark:'#1e293b',colorLight:'rgba(0,0,0,0)',correctLevel:QRCode.CorrectLevel.M});}catch(e){}
+      };
+
+      /* Restaurer la fonction originale à la fermeture */
+      var closeBtn = document.getElementById('_mpwdClose');
+      var closeBtn2 = document.getElementById('_mpwdCloseBtn2');
+      function restoreAndClose(){
+        var h3b=modal.querySelector('._mpwdTitle h3');
+        var pb =modal.querySelector('._mpwdTitle p');
+        if(h3b) h3b.textContent='Admin-Développeur';
+        if(pb)  pb.textContent='#USR-MASTER · Mot de passe d\'accès';
+        window._openMasterPwdBarcode = _prevOpen;
+        modal.classList.remove('open');
+      }
+      if(closeBtn)  closeBtn.onclick  = restoreAndClose;
+      if(closeBtn2) closeBtn2.onclick = restoreAndClose;
+
+      window._openMasterPwdBarcode = _prevOpen;
+    };
+    window._openMasterPwdBarcode();
+  }
+};
+</script>
+
+
+<script>
+/* ── renderUserList : cacher les autres admins pour les admins non-master ── */
+(function(){
+  var _prev = window.renderUserList;
+  window.renderUserList = function(){
+    var userSection = document.getElementById('admin-users-section');
+    var isAdm = (typeof isAdmin !== 'undefined') ? isAdmin : true;
+    if(userSection) userSection.style.display = isAdm ? 'block' : 'none';
+    if(!isAdm) return;
+
+    var list = document.getElementById('user-list');
+    if(!list) return;
+
+    var cu    = (typeof currentUser !== 'undefined') ? currentUser : null;
+    var usrs  = (typeof users !== 'undefined') ? users : [];
+    var links = (typeof window._assocGetLinks === 'function') ? window._assocGetLinks() : {};
+
+    /* Filtrage :
+       - isMaster : voit tout
+       - Admin non-master : voit uniquement les caissiers qui lui sont accessibles
+       - On cache les autres comptes admin                                      */
+    var visible = usrs.filter(function(u){
+      if(!cu) return false;
+      if(cu.isMaster) return true;                         // master voit tout
+      if(u.role === 'admin') return false;                 // cacher autres admins
+      if(u.role === 'caissier'){
+        if(typeof window._assocCanSee === 'function')
+          return window._assocCanSee(u.id || u.username || '');
+        return true;
+      }
+      return false;
+    });
+
+    if(!visible.length){
+      list.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:18px;">Aucun caissier disponible</p>';
+      return;
+    }
+
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+    list.innerHTML = visible.map(function(u){
+      var isAdminRole = u.role === 'admin';
+      var accent  = isAdminRole ? '#6366f1' : '#0ea5e9';
+      var avBg    = isAdminRole ? 'linear-gradient(135deg,#6366f1,#4f46e5)' : 'linear-gradient(135deg,#0ea5e9,#0369a1)';
+      var roleLbl = isAdminRole ? '👑 Admin' : '💼 Caissier';
+      var roleBg  = isAdminRole ? 'rgba(99,102,241,0.12)' : 'rgba(14,165,233,0.12)';
+      var roleClr = isAdminRole ? '#6366f1' : '#0369a1';
+      var avHtml  = u.avatar ? '<img src="'+esc(u.avatar)+'" alt="">' : (isAdminRole ? '👑' : '💼');
+      var uid     = u.id || ('USR-' + String(usrs.indexOf(u)+1).padStart(4,'0'));
+
+      /* Badge association (master seulement) */
+      var assocBadge = '';
+      if(!isAdminRole && cu && cu.isMaster){
+        var ownerId = links[uid];
+        if(ownerId){
+          var ownerU = usrs.find(function(x){ return (x.id||x.username||'')===ownerId; });
+          assocBadge = '<span style="font-size:0.6rem;font-weight:700;color:#6366f1;background:rgba(99,102,241,.1);padding:1px 6px;border-radius:8px;border:1px solid rgba(99,102,241,.2);margin-left:5px;">🔗 '+(ownerU?esc(ownerU.username):esc(ownerId))+'</span>';
+        }
+      }
+
+      var deleteBtn = (visible.length > 1)
+        ? '<button class="usr-btn usr-btn-del" onclick="deleteUser(''+esc(u.username)+'')" title="Supprimer">🗑️</button>'
+        : '';
+
+      return [
+        '<div class="usr-card" style="--_usr-accent:'+accent+'">',
+          '<div class="usr-avatar" style="background:'+avBg+'">'+avHtml+'</div>',
+          '<div class="usr-info">',
+            '<div class="usr-name">'+esc(u.username)+'<span class="usr-id-badge">#'+esc(uid)+'</span>'+assocBadge+'</div>',
+            '<div class="usr-meta">',
+              '<span class="usr-role-badge" style="background:'+roleBg+';color:'+roleClr+'">'+roleLbl+'</span>',
+              (u.email ? '<span style="font-size:0.68rem;color:var(--text-muted,#94a3b8);">✉️ '+esc(u.email)+'</span>' : ''),
+            '</div>',
+          '</div>',
+          '<div class="usr-actions">',
+            '<button class="usr-btn usr-btn-preview" onclick="_openUserBarcodePreview(''+esc(uid)+'')" title="Aperçu">🔲 Aperçu</button>',
+            '<button class="usr-btn usr-btn-edit" onclick="editUser(''+esc(u.username)+'')" title="Modifier">✏️</button>',
+            deleteBtn,
+          '</div>',
+        '</div>',
+      ].join('');
+    }).join('');
+  };
+})();
+</script>
 </body>
+
+<script>
+/* ── Protection admin v27 : blocage edit / delete des comptes admin par non-master ── */
+(function () {
+  'use strict';
+
+  function _isMaster() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    return !!(cu && cu.isMaster);
+  }
+
+  function _targetIsAdmin(username) {
+    var usrs = (typeof users !== 'undefined') ? users : [];
+    var u = usrs.find(function (x) { return x.username === username; });
+    return !!(u && u.role === 'admin');
+  }
+
+  /* Gate deleteUser : bloquer suppression d'un admin par non-master */
+  var _prevDel = window.deleteUser;
+  window.deleteUser = function (username) {
+    if (!_isMaster() && _targetIsAdmin(username)) {
+      if (typeof showScanToast === 'function')
+        showScanToast('⛔ Accès refusé — impossible de supprimer un compte admin');
+      return;
+    }
+    if (typeof _prevDel === 'function') _prevDel(username);
+  };
+
+  /* Gate editUser : bloquer modification (PIN inclus) d'un admin par non-master */
+  var _prevEdit = window.editUser;
+  window.editUser = function (username) {
+    if (!_isMaster() && _targetIsAdmin(username)) {
+      if (typeof showScanToast === 'function')
+        showScanToast('⛔ Accès refusé — impossible de modifier un compte admin');
+      return;
+    }
+    if (typeof _prevEdit === 'function') _prevEdit(username);
+  };
+
+})();
+</script>
+
+<script>
+/* ── Association : visible uniquement pour Admin-Développeur (isMaster) ── */
+(function () {
+  'use strict';
+
+  var ASSOC_IDS = ['_assoc-main-section', '_assoc-nav-btn', '_assoc-wrapper'];
+
+  function _syncAssocVisibility() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    var show = !!(cu && cu.isMaster);
+    ASSOC_IDS.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = show ? '' : 'none';
+    });
+  }
+
+  /* Hook toggleAdminModal — sync à chaque ouverture/fermeture du panneau */
+  var _prevTAM = window.toggleAdminModal;
+  if (typeof _prevTAM === 'function') {
+    window.toggleAdminModal = function () {
+      _prevTAM.apply(this, arguments);
+      setTimeout(_syncAssocVisibility, 250);
+    };
+  }
+
+  /* Hook attemptLogin — sync après chaque connexion */
+  var _prevLogin = window.attemptLogin;
+  if (typeof _prevLogin === 'function') {
+    window.attemptLogin = function () {
+      _prevLogin.apply(this, arguments);
+      setTimeout(_syncAssocVisibility, 400);
+    };
+  }
+
+  /* Init au chargement */
+  setTimeout(_syncAssocVisibility, 900);
+})();
+</script>
+
+<script>
+/* ── Protection utilisateurs v27b : admin non-master ne voit/édite/supprime pas les autres admins ── */
+(function () {
+  'use strict';
+
+  function _isMaster() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    return !!(cu && cu.isMaster);
+  }
+
+  /* 1. Masquer l'option "Admin" dans le select du formulaire pour non-master */
+  function _syncRoleSelect() {
+    var sel = document.getElementById('new-role');
+    if (!sel) return;
+    var adminOpt = sel.querySelector('option[value="admin"]');
+    if (!adminOpt) return;
+    if (_isMaster()) {
+      adminOpt.style.display = '';
+    } else {
+      adminOpt.style.display = 'none';
+      if (sel.value === 'admin') sel.value = 'caissier';
+    }
+  }
+
+  /* 2. Filtre de sécurité secondaire : masquer les cartes admin restantes dans #user-list */
+  function _filterAdminCards() {
+    if (_isMaster()) return;
+    var list = document.getElementById('user-list');
+    if (!list) return;
+    var usrs = (typeof users !== 'undefined') ? users : [];
+    list.querySelectorAll('.usr-card').forEach(function (card) {
+      var nameEl = card.querySelector('.usr-name');
+      if (!nameEl) return;
+      var txt = nameEl.textContent || '';
+      var u = usrs.find(function (x) { return txt.indexOf(x.username) !== -1; });
+      if (u && u.role === 'admin') card.style.display = 'none';
+    });
+  }
+
+  /* 3. Bloquer submitUserForm si un non-master tente de créer/promouvoir en admin */
+  var _prevSub = window.submitUserForm;
+  if (typeof _prevSub === 'function') {
+    window.submitUserForm = function () {
+      if (!_isMaster()) {
+        var roleEl = document.getElementById('new-role');
+        if (roleEl && roleEl.value === 'admin') {
+          if (typeof showScanToast === 'function')
+            showScanToast('⛔ Accès refusé — création de compte admin non autorisée');
+          roleEl.value = 'caissier';
+          return;
+        }
+      }
+      _prevSub.apply(this, arguments);
+    };
+  }
+
+  /* 4. Sync globale */
+  function _syncAll() {
+    _syncRoleSelect();
+    setTimeout(_filterAdminCards, 100);
+  }
+
+  /* Hook toggleAdminModal */
+  var _prevTAM = window.toggleAdminModal;
+  if (typeof _prevTAM === 'function') {
+    window.toggleAdminModal = function () {
+      _prevTAM.apply(this, arguments);
+      setTimeout(_syncAll, 300);
+    };
+  }
+
+  /* Hook attemptLogin */
+  var _prevLogin = window.attemptLogin;
+  if (typeof _prevLogin === 'function') {
+    window.attemptLogin = function () {
+      _prevLogin.apply(this, arguments);
+      setTimeout(_syncAll, 500);
+    };
+  }
+
+  /* Init au chargement */
+  setTimeout(_syncAll, 1000);
+})();
+</script>
+
+<script>
+/* ── Bascule caissier → admin associé sans mot de passe ── */
+(function () {
+  'use strict';
+
+  var BTN_ID = '_assoc-switch-admin-btn';
+
+  /* ── Crée le bouton dans le header ───────────────────── */
+  function _ensureBtn() {
+    if (document.getElementById(BTN_ID)) return;
+    var ref = document.getElementById('switch-cashier-btn');
+    if (!ref || !ref.parentNode) return;
+
+    var btn = document.createElement('button');
+    btn.id = BTN_ID;
+    btn.title = 'Basculer vers votre admin associé (sans mot de passe)';
+    btn.style.cssText = [
+      'background:linear-gradient(135deg,#6366f1,#4f46e5)',
+      'color:white',
+      'padding:8px 15px',
+      'font-size:0.9rem',
+      'display:none',
+      'border:none',
+      'cursor:pointer',
+      'border-radius:4px',
+      'font-weight:700',
+    ].join(';');
+    btn.innerHTML = '👑 Admin';
+    btn.onclick = _switchToLinkedAdmin;
+    /* Insérer juste après le bouton "switch-cashier-btn" */
+    ref.parentNode.insertBefore(btn, ref.nextSibling);
+  }
+
+  /* ── Bascule vers l'admin associé ────────────────────── */
+  function _switchToLinkedAdmin() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || cu.role !== 'caissier') {
+      if (typeof showScanToast === 'function') showScanToast('⛔ Réservé aux caissiers associés');
+      return;
+    }
+
+    /* Récupérer les liens */
+    var links = (typeof window._assocGetLinks === 'function')
+      ? window._assocGetLinks()
+      : (function () {
+          try { return JSON.parse(localStorage.getItem('covo_admin_cashier_links') || '{}'); }
+          catch (e) { return {}; }
+        })();
+
+    var cashierId = cu.id || cu.username || '';
+    var adminId   = links[cashierId];
+    if (!adminId) {
+      if (typeof showScanToast === 'function') showScanToast('⚠️ Aucun admin associé à ce compte');
+      return;
+    }
+
+    /* Trouver l'admin */
+    var usrs  = (typeof users !== 'undefined') ? users : [];
+    var admin = usrs.find(function (u) {
+      return (u.id || u.username || '') === adminId && u.role === 'admin';
+    });
+    if (!admin) {
+      if (typeof showScanToast === 'function') showScanToast('⚠️ Admin associé introuvable');
+      return;
+    }
+
+    /* Bascule sans PIN */
+    currentUser = admin;
+    isAdmin = true;
+    localStorage.setItem('covo_current_user', JSON.stringify(currentUser));
+    sessionStorage.setItem('covo_session',    JSON.stringify(currentUser));
+
+    if (typeof updateAdminButton   === 'function') updateAdminButton();
+    if (typeof updateInterfaceTitle === 'function') updateInterfaceTitle();
+    if (typeof renderAll           === 'function') renderAll();
+    if (typeof renderUserList      === 'function') renderUserList();
+
+    if (typeof showScanToast === 'function')
+      showScanToast('👑 Connecté en tant qu\'admin : ' + admin.username, 'success');
+
+    /* Ouvrir la modale d'accueil admin */
+    setTimeout(function () {
+      var modal  = document.getElementById('admin-welcome-modal');
+      var nameEl = document.getElementById('admin-welcome-name');
+      if (modal)  modal.classList.add('active');
+      if (nameEl) nameEl.textContent = admin.username;
+    }, 180);
+
+    _syncBtn();
+  }
+
+  /* ── Afficher / masquer le bouton selon l'association ── */
+  function _syncBtn() {
+    _ensureBtn();
+    var btn = document.getElementById(BTN_ID);
+    if (!btn) return;
+
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || cu.role !== 'caissier') { btn.style.display = 'none'; return; }
+
+    var links = (typeof window._assocGetLinks === 'function')
+      ? window._assocGetLinks()
+      : (function () {
+          try { return JSON.parse(localStorage.getItem('covo_admin_cashier_links') || '{}'); }
+          catch (e) { return {}; }
+        })();
+
+    var cashierId = cu.id || cu.username || '';
+    btn.style.display = links[cashierId] ? '' : 'none';
+  }
+
+  /* ── Hooks ──────────────────────────────────────────── */
+  var _prevUAB = window.updateAdminButton;
+  if (typeof _prevUAB === 'function') {
+    window.updateAdminButton = function () {
+      _prevUAB.apply(this, arguments);
+      setTimeout(_syncBtn, 60);
+    };
+  }
+
+  var _prevLAC = window.loginAsCashier;
+  if (typeof _prevLAC === 'function') {
+    window.loginAsCashier = function (userId) {
+      _prevLAC.apply(this, arguments);
+      setTimeout(_syncBtn, 350);
+    };
+  }
+
+  /* ── Init ────────────────────────────────────────────── */
+  setTimeout(function () { _ensureBtn(); _syncBtn(); }, 1000);
+})();
+</script>
+
+<script>
+/* ── Fix _canSeeCostPrice : compatibilité format global + format par-admin ── */
+(function () {
+  'use strict';
+
+  var COST_KEY = 'covo_perm_admin_costprice';
+
+  window._canSeeCostPrice = function () {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu) return false;
+    if (cu.isMaster) return true;
+    if (cu.role !== 'admin') return false;
+
+    try {
+      var perms = JSON.parse(localStorage.getItem(COST_KEY) || 'null');
+      if (!perms) return false;
+
+      /* ── Format global (ancien) : { granted: true, expiresAt: ... }
+             → accordé à tous les admins via le bouton "Accorder l'accès" ── */
+      if (perms.granted) {
+        if (perms.expiresAt && new Date(perms.expiresAt) < new Date()) return false;
+        return true;
+      }
+
+      /* ── Format par-admin (nouveau) : { admins: { uid: { granted, expiresAt } } } ── */
+      if (!perms.admins) return false;
+      var uid   = cu.id || cu.username || '';
+      var entry = perms.admins[uid];
+      if (!entry || !entry.granted) return false;
+      if (entry.expiresAt && new Date(entry.expiresAt) < new Date()) {
+        delete perms.admins[uid];
+        localStorage.setItem(COST_KEY, JSON.stringify(perms));
+        return false;
+      }
+      return true;
+    } catch (e) { return false; }
+  };
+
+  /* ── Fix _getCostPriceDiscount : même compatibilité ── */
+  window._getCostPriceDiscount = function () {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || cu.isMaster) return 100;
+    try {
+      var perms = JSON.parse(localStorage.getItem(COST_KEY) || 'null');
+      if (!perms) return 100;
+
+      /* Format global → position 0 (= prix d'achat exact) sauf si discount défini */
+      if (perms.granted) {
+        return (perms.discount != null) ? Math.max(0, Math.min(100, parseFloat(perms.discount))) : 0;
+      }
+
+      /* Format par-admin */
+      if (!perms.admins) return 100;
+      var uid   = cu.id || cu.username || '';
+      var entry = perms.admins[uid];
+      if (!entry || !entry.granted) return 100;
+      return (entry.discount != null) ? Math.max(0, Math.min(100, parseFloat(entry.discount))) : 0;
+    } catch (e) { return 100; }
+  };
+
+})();
+</script>
