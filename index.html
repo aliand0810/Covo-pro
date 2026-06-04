@@ -51,7 +51,7 @@ function setTextSafe(element, text) {
 // ===== COUCHE D'ABSTRACTION LOCALSTORAGE =====
 // Centralise les accès au stockage local pour faciliter la migration future
 // vers IndexedDB et améliorer la gestion des erreurs.
-const _store = {
+var _store = {
     /**
      * Lire une valeur (avec JSON.parse automatique)
      * @param {string} key
@@ -401,11 +401,18 @@ const _store = {
         }
         /* Admin panel dark mode */
         body.dark-mode #admin-panel .admin-section-header {
-            background: var(--bg-card-2);
+            background: var(--bg-card, #161616);
             border-bottom-color: var(--border-color);
         }
         body.dark-mode #admin-panel .admin-section-header:hover {
-            background: var(--bg-card-3);
+            filter: brightness(1.1);
+        }
+        body.dark-mode #admin-panel .admin-section {
+            border-color: var(--border-color) !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+        }
+        body.dark-mode #admin-panel > div:last-child {
+            background: var(--bg-body, #0a0a0a) !important;
         }
         body.dark-mode .deploy-toggle-btn {
             background: var(--bg-card);
@@ -3581,60 +3588,85 @@ const _store = {
         }
     
 /* ===== SECTIONS ADMIN PLIABLES ===== */
+/* ══ ADMIN PANEL — REFONTE UI ══ */
+.admin-section {
+    border-radius: 14px !important;
+    overflow: hidden;
+    border: 1.5px solid var(--border-color, #e8ecf0) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    transition: box-shadow 0.18s;
+    margin-bottom: 0 !important;
+}
+.admin-section:hover { box-shadow: 0 4px 18px rgba(0,0,0,0.08); }
+
 .admin-section-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     cursor: pointer;
     user-select: none;
-    padding: 14px 16px;
+    padding: 15px 18px;
     border-radius: 0;
-    transition: background 0.15s;
-    gap: 10px;
+    transition: background 0.15s, filter 0.15s;
+    gap: 12px;
     margin-bottom: 0;
-    border-bottom: 1.5px solid var(--border-color, #e8ecf0);
-    background: var(--bg-card-2, #f8fafc);
+    border-bottom: none;
+    background: var(--bg-card, #fff);
+    position: relative;
 }
-.admin-section-header:hover { background: rgba(52,152,219,0.06); }
+.admin-section-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 18px; right: 18px;
+    height: 1px;
+    background: var(--border-color, #e8ecf0);
+}
+.admin-section-body.open + .admin-section-header::after,
+.admin-section-header:only-child::after { display: none; }
+.admin-section-header:hover { filter: brightness(0.97); }
 .admin-section-header h3 { margin: 0; flex: 1; pointer-events: none; font-size: 0.9rem; font-weight: 800; }
+
+/* Icône de section plus grande et plus visible */
+.admin-section-header .sec-icon {
+    width: 38px; height: 38px;
+    border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.05rem; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
 .deploy-toggle-btn {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    padding: 5px 12px;
+    padding: 5px 13px;
     border-radius: 20px;
     border: 1.5px solid var(--border-color, #ddd);
-    background: var(--bg-card, #fff);
-    color: var(--text-secondary, #555);
+    background: var(--bg-card-2, #f4f7f8);
+    color: var(--text-muted, #888);
     cursor: pointer;
     transition: all 0.18s;
     white-space: nowrap;
     flex-shrink: 0;
     letter-spacing: 0.02em;
 }
-.deploy-toggle-btn:hover {
-    border-color: #3498db;
-    color: #3498db;
-    background: rgba(52,152,219,0.06);
-}
-.deploy-toggle-btn:hover { background: #3498db; color: white; }
+.deploy-toggle-btn:hover { background: #3498db; color: white; border-color: #3498db; }
 .deploy-toggle-btn.deployed { background: #3498db; color: white; border-color: #2980b9; }
-.deploy-toggle-btn .arrow { transition: transform 0.25s; display: inline-block; font-style: normal; }
+.deploy-toggle-btn .arrow { transition: transform 0.28s ease; display: inline-block; font-style: normal; }
 .deploy-toggle-btn.deployed .arrow { transform: rotate(180deg); }
+
 .admin-section-body {
     overflow: hidden;
-    transition: max-height 0.38s cubic-bezier(0.4,0,0.2,1), opacity 0.3s ease, margin-top 0.2s;
+    transition: max-height 0.38s cubic-bezier(0.4,0,0.2,1), opacity 0.3s ease;
     max-height: 0;
     opacity: 0;
-    margin-top: 0;
 }
 .admin-section-body.open {
     max-height: 9999px;
     opacity: 1;
-    margin-top: 0;
-    padding: 16px 18px 18px;
+    padding: 18px 20px 20px;
 }
 /* ===== FIN SECTIONS PLIABLES ===== */
 
@@ -5401,23 +5433,42 @@ button, .btn, .retours-btn {
 
                     <!-- Écarts de caisse -->
                     <div id="clot-card-ecarts" style="background:var(--bg-card,#fff);border-radius:14px;border:1.5px solid var(--border-color,#eee);padding:14px;overflow:hidden;transition:all 0.3s;">
-                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <!-- Titre + sélecteur de modèle + agrandir -->
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                             <div>
                                 <div style="font-size:0.78rem;font-weight:800;color:var(--text-main,#2c3e50);">⚖️ Écarts de caisse</div>
-                                <div style="font-size:0.63rem;color:var(--text-muted,#888);">Esp. vs CB — axe zéro</div>
+                                <div style="font-size:0.63rem;color:var(--text-muted,#888);">Esp. · CB · Total — 8 dernières sessions</div>
                             </div>
-                            <div style="display:flex;align-items:center;gap:6px;">
-                              <span style="font-size:0.6rem;font-weight:700;color:var(--text-muted,#999);background:var(--bg-card-2,#f0f4f8);padding:3px 8px;border-radius:20px;border:1px solid var(--border-color,#eee);">Divergence</span>
+                            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                              <!-- Chips modèle -->
+                              <div style="display:flex;gap:3px;background:var(--bg-card-2,#f0f4f8);border-radius:8px;padding:2px;">
+                                <button onclick="_clotSetEcartsMode('divergence')" id="clot-ec-btn-divergence"
+                                  class="clot-ec-mode-btn"
+                                  style="padding:3px 8px;border:none;border-radius:6px;font-size:0.65rem;font-weight:700;cursor:pointer;background:#9b59b6;color:white;transition:all 0.15s;">Divergence</button>
+                                <button onclick="_clotSetEcartsMode('ligne')" id="clot-ec-btn-ligne"
+                                  class="clot-ec-mode-btn"
+                                  style="padding:3px 8px;border:none;border-radius:6px;font-size:0.65rem;font-weight:700;cursor:pointer;background:transparent;color:var(--text-muted,#888);transition:all 0.15s;">Courbe</button>
+                                <button onclick="_clotSetEcartsMode('histo')" id="clot-ec-btn-histo"
+                                  class="clot-ec-mode-btn"
+                                  style="padding:3px 8px;border:none;border-radius:6px;font-size:0.65rem;font-weight:700;cursor:pointer;background:transparent;color:var(--text-muted,#888);transition:all 0.15s;">Histo.</button>
+                                <button onclick="_clotSetEcartsMode('tableau')" id="clot-ec-btn-tableau"
+                                  class="clot-ec-mode-btn"
+                                  style="padding:3px 8px;border:none;border-radius:6px;font-size:0.65rem;font-weight:700;cursor:pointer;background:transparent;color:var(--text-muted,#888);transition:all 0.15s;">Tableau</button>
+                              </div>
                               <button onclick="_clotFocus('ecarts')" id="clot-expand-ecarts"
                                 style="padding:3px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;
                                        background:var(--bg-card-2,#f4f7f6);color:var(--text-muted,#888);
                                        font-size:0.7rem;font-weight:700;cursor:pointer;transition:all 0.15s;white-space:nowrap;"
-                                title="Agrandir ce graphique"
                                 onmouseover="this.style.borderColor='#9b59b6';this.style.color='#9b59b6'"
                                 onmouseout="this.style.borderColor='';this.style.color=''">⤢ Agrandir</button>
                             </div>
                         </div>
-                        <canvas id="clot-chart-ecarts" style="width:100%;height:185px;display:block;"></canvas>
+                        <!-- KPI strip dynamique -->
+                        <div id="clot-ec-kpis" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;"></div>
+                        <!-- Zone graphique / tableau -->
+                        <div id="clot-ec-chart-wrap">
+                          <canvas id="clot-chart-ecarts" style="width:100%;height:185px;display:block;"></canvas>
+                        </div>
                     </div>
                 </div>
 
@@ -5727,82 +5778,118 @@ button, .btn, .retours-btn {
 
     <div class="container" id="product-list"></div>
 
-    <div role="dialog" aria-modal="true" id="admin-panel" style="padding:0;border-radius:12px;overflow:hidden;">
+    <div role="dialog" aria-modal="true" id="admin-panel" style="padding:0;border-radius:16px;overflow:hidden;">
 
-        <!-- ══ HEADER BANNER ADMIN ══ -->
-        <div style="background:linear-gradient(135deg,#1c2833 0%,#2c3e50 50%,#1a5276 100%);padding:18px 20px 16px;position:relative;overflow:hidden;border-radius:0 0 16px 16px;">
-            <div style="position:absolute;top:-30px;right:-20px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.05);pointer-events:none;"></div>
-            <div style="position:absolute;bottom:-20px;right:90px;width:75px;height:75px;border-radius:50%;background:rgba(255,255,255,0.03);pointer-events:none;"></div>
-            <div style="position:absolute;top:12px;left:-18px;width:60px;height:60px;border-radius:50%;background:rgba(41,128,185,0.2);pointer-events:none;"></div>
-            <div style="position:relative;">
-                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+        <!-- ══ HEADER ADMIN ══ -->
+        <div style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#1e3a5f 100%);padding:20px 24px 0;position:relative;overflow:hidden;">
+            <!-- Décorations -->
+            <div style="position:absolute;top:-40px;right:-30px;width:160px;height:160px;border-radius:50%;background:rgba(59,130,246,0.08);pointer-events:none;"></div>
+            <div style="position:absolute;bottom:20px;left:-20px;width:80px;height:80px;border-radius:50%;background:rgba(99,102,241,0.07);pointer-events:none;"></div>
+
+            <!-- Ligne titre + master-bar -->
+            <div style="position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:18px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:13px;">
+                    <div style="width:46px;height:46px;background:linear-gradient(135deg,#3b82f6,#6366f1);border-radius:14px;
+                                display:flex;align-items:center;justify-content:center;font-size:1.3rem;
+                                box-shadow:0 4px 16px rgba(99,102,241,0.4);flex-shrink:0;">⚙️</div>
                     <div>
-                        <div style="font-size:1.2rem;font-weight:900;color:#fff;letter-spacing:-0.3px;">⚙️ Panneau d'administration</div>
-                        <div style="font-size:0.72rem;color:rgba(255,255,255,0.7);margin-top:3px;">Configuration · Produits · Utilisateurs · Permissions · Catégories</div>
-                    </div>
-                    <!-- Accès rapide Admin-Développeur -->
-                    <div id="master-quick-bar" style="display:none;align-items:center;gap:6px;flex-wrap:wrap;">
-                        <span style="font-size:0.75rem;font-weight:700;color:rgba(255,255,255,0.7);">🛠️</span>
-                        <button onclick="_openModulesPanel()"
-                            style="padding:6px 12px;background:rgba(13,148,136,0.6);color:white;border:1.5px solid rgba(13,148,136,0.8);border-radius:20px;cursor:pointer;font-size:0.78rem;font-weight:700;display:flex;align-items:center;gap:5px;backdrop-filter:blur(4px);">
-                            ⚙️ Modules
-                        </button>
-                        <button onclick="_openLoginHistory()"
-                            style="padding:6px 12px;background:rgba(109,40,217,0.6);color:white;border:1.5px solid rgba(109,40,217,0.8);border-radius:20px;cursor:pointer;font-size:0.78rem;font-weight:700;display:flex;align-items:center;gap:5px;backdrop-filter:blur(4px);">
-                            📋 Connexions
-                        </button>
-                        <button onclick="_openDevPwdModal()"
-                            style="padding:6px 12px;background:rgba(79,70,229,0.65);color:white;border:1.5px solid rgba(99,102,241,0.8);border-radius:20px;cursor:pointer;font-size:0.78rem;font-weight:700;display:flex;align-items:center;gap:5px;backdrop-filter:blur(4px);">
-                            🔐 Mot de passe
-                        </button>
-                        <button onclick="toggleAdminSection('admin-sec-9-body');document.getElementById('admin-sec-9-body').scrollIntoView({behavior:'smooth',block:'start'})"
-                            style="padding:6px 12px;background:rgba(243,156,18,0.6);color:white;border:1.5px solid rgba(243,156,18,0.85);border-radius:20px;cursor:pointer;font-size:0.78rem;font-weight:700;display:flex;align-items:center;gap:5px;backdrop-filter:blur(4px);">
-                            🏷️ Étiquettes
-                        </button>
+                        <div style="font-size:1.1rem;font-weight:900;color:#f1f5f9;letter-spacing:-0.3px;">Panneau d'administration</div>
+                        <div style="font-size:0.68rem;color:rgba(148,163,184,0.85);margin-top:3px;display:flex;align-items:center;gap:5px;">
+                            <span style="width:6px;height:6px;border-radius:50%;background:#22d3ee;display:inline-block;"></span>
+                            Configuration · Produits · Utilisateurs · Permissions
+                        </div>
                     </div>
                 </div>
-                <!-- Navigation rapide vers les sections -->
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <button onclick="toggleAdminSection('admin-sec-0');this.closest('[id=admin-panel]').querySelector('#admin-sec-0').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        🎨 Config
-                    </button>
-                    <button onclick="toggleAdminSection('admin-sec-1');document.getElementById('admin-sec-1').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        ➕ Produit
-                    </button>
-                    <button onclick="toggleAdminSection('admin-sec-2');document.getElementById('admin-sec-2').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        🏷️ Promos
-                    </button>
-                    <button onclick="toggleAdminSection('admin-sec-3');document.getElementById('admin-sec-3').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        👥 Utilisateurs
-                    </button>
-                    <button onclick="toggleAdminSection('admin-sec-4');document.getElementById('admin-sec-4').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        🔐 Permissions
-                    </button>
-                    <button onclick="toggleAdminSection('admin-sec-5');document.getElementById('admin-sec-5').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        📦 Catégories
-                    </button>
-                    <button onclick="toggleAdminSection('admin-sec-6');document.getElementById('admin-sec-6').scrollIntoView({behavior:'smooth',block:'start'})"
-                        style="padding:5px 11px;background:rgba(255,255,255,0.13);color:rgba(255,255,255,0.88);border:1.5px solid rgba(255,255,255,0.25);border-radius:16px;cursor:pointer;font-size:0.75rem;font-weight:700;transition:all 0.18s;"
-                        onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.13)'">
-                        📜 Historique
-                    </button>
+
+                <!-- Barre Admin-Développeur -->
+                <div id="master-quick-bar" style="display:none;align-items:center;gap:5px;flex-wrap:wrap;padding:6px 10px;
+                     background:rgba(99,102,241,0.12);border-radius:12px;border:1px solid rgba(99,102,241,0.25);">
+                    <span style="font-size:0.65rem;font-weight:800;color:rgba(148,163,184,0.7);text-transform:uppercase;letter-spacing:0.05em;margin-right:2px;">🛠️ Dev</span>
+                    <button onclick="_openModulesPanel()"
+                        style="padding:5px 10px;background:rgba(13,148,136,0.5);color:#5eead4;border:1px solid rgba(13,148,136,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
+                        onmouseover="this.style.background='rgba(13,148,136,0.8)';this.style.color='white'"
+                        onmouseout="this.style.background='rgba(13,148,136,0.5)';this.style.color='#5eead4'">⚙️ Modules</button>
+                    <button onclick="_openLoginHistory()"
+                        style="padding:5px 10px;background:rgba(109,40,217,0.5);color:#c4b5fd;border:1px solid rgba(109,40,217,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
+                        onmouseover="this.style.background='rgba(109,40,217,0.8)';this.style.color='white'"
+                        onmouseout="this.style.background='rgba(109,40,217,0.5)';this.style.color='#c4b5fd'">📋 Connexions</button>
+                    <button onclick="_openDevPwdModal()"
+                        style="padding:5px 10px;background:rgba(79,70,229,0.5);color:#a5b4fc;border:1px solid rgba(99,102,241,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
+                        onmouseover="this.style.background='rgba(79,70,229,0.8)';this.style.color='white'"
+                        onmouseout="this.style.background='rgba(79,70,229,0.5)';this.style.color='#a5b4fc'">🔐 Mot de passe</button>
+                    <button onclick="_openCostPermModal()"
+                        style="padding:5px 10px;background:rgba(217,119,6,0.5);color:#fcd34d;border:1px solid rgba(245,158,11,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
+                        onmouseover="this.style.background='rgba(217,119,6,0.8)';this.style.color='white'"
+                        onmouseout="this.style.background='rgba(217,119,6,0.5)';this.style.color='#fcd34d'">🔓 Tarif achat</button>
+                    <button onclick="toggleAdminSection('admin-sec-9-body');document.getElementById('admin-sec-9-body').scrollIntoView({behavior:'smooth',block:'start'})"
+                        style="padding:5px 10px;background:rgba(243,156,18,0.5);color:#fde68a;border:1px solid rgba(243,156,18,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
+                        onmouseover="this.style.background='rgba(243,156,18,0.8)';this.style.color='white'"
+                        onmouseout="this.style.background='rgba(243,156,18,0.5)';this.style.color='#fde68a'">🏷️ Étiquettes</button>
                 </div>
+            </div>
+
+            <!-- Grille de navigation rapide -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;padding-bottom:16px;position:relative;">
+                <button onclick="toggleAdminSection('admin-sec-0');this.closest('[id=admin-panel]').querySelector('#admin-sec-0').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(52,152,219,0.15);
+                           border:1px solid rgba(52,152,219,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(52,152,219,0.3)'" onmouseout="this.style.background='rgba(52,152,219,0.15)'">
+                    <span style="font-size:1.1rem;">🎨</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(147,210,255,0.9);">Config</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-1');document.getElementById('admin-sec-1').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(39,174,96,0.15);
+                           border:1px solid rgba(39,174,96,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(39,174,96,0.3)'" onmouseout="this.style.background='rgba(39,174,96,0.15)'">
+                    <span style="font-size:1.1rem;">➕</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(134,239,172,0.9);">Produit</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-2');document.getElementById('admin-sec-2').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(230,126,34,0.15);
+                           border:1px solid rgba(230,126,34,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(230,126,34,0.3)'" onmouseout="this.style.background='rgba(230,126,34,0.15)'">
+                    <span style="font-size:1.1rem;">🏷️</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(253,186,116,0.9);">Promos</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-3');document.getElementById('admin-sec-3').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(142,68,173,0.15);
+                           border:1px solid rgba(142,68,173,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(142,68,173,0.3)'" onmouseout="this.style.background='rgba(142,68,173,0.15)'">
+                    <span style="font-size:1.1rem;">👥</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(216,180,254,0.9);">Utilisateurs</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-4');document.getElementById('admin-sec-4').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(231,76,60,0.15);
+                           border:1px solid rgba(231,76,60,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(231,76,60,0.3)'" onmouseout="this.style.background='rgba(231,76,60,0.15)'">
+                    <span style="font-size:1.1rem;">🔐</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(252,165,165,0.9);">Permissions</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-5');document.getElementById('admin-sec-5').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(22,160,133,0.15);
+                           border:1px solid rgba(22,160,133,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(22,160,133,0.3)'" onmouseout="this.style.background='rgba(22,160,133,0.15)'">
+                    <span style="font-size:1.1rem;">📦</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(94,234,212,0.9);">Catégories</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-6');document.getElementById('admin-sec-6').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(44,111,173,0.15);
+                           border:1px solid rgba(44,111,173,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(44,111,173,0.3)'" onmouseout="this.style.background='rgba(44,111,173,0.15)'">
+                    <span style="font-size:1.1rem;">📜</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(147,197,253,0.9);">Historique</span>
+                </button>
+                <button onclick="toggleAdminSection('admin-sec-rcpt-body');document.getElementById('admin-sec-rcpt-body').scrollIntoView({behavior:'smooth',block:'start'})"
+                    style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(22,160,133,0.12);
+                           border:1px solid rgba(22,160,133,0.25);border-radius:11px;cursor:pointer;transition:all 0.18s;"
+                    onmouseover="this.style.background='rgba(22,160,133,0.25)'" onmouseout="this.style.background='rgba(22,160,133,0.12)'">
+                    <span style="font-size:1.1rem;">🧾</span>
+                    <span style="font-size:0.66rem;font-weight:700;color:rgba(94,234,212,0.85);">Ticket</span>
+                </button>
             </div>
         </div>
 
-        <div style="padding:18px 20px;">
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:8px;background:var(--bg-body,#f4f7f6);">
 
         <div class="admin-section">
             <div class="admin-section-header" onclick="toggleAdminSection('admin-sec-0')" style="border-left:4px solid #3498db;">
@@ -7746,6 +7833,48 @@ button, .btn, .retours-btn {
                 <button class="deploy-toggle-btn" id="btn-admin-sec-dev-body" onclick="event.stopPropagation();toggleAdminSection('admin-sec-dev-body')"><span class="arrow">&#9660;</span> <span class="btn-label">D&eacute;ployer</span></button>
             </div>
             <div class="admin-section-body" id="admin-sec-dev-body">
+
+                <!-- ── Droits spéciaux : tarif d'achat ───────────────────────── -->
+                <div style="background:var(--bg-body,#f8fafc);border:1.5px solid rgba(245,158,11,0.4);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                        <div style="width:30px;height:30px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">🔓</div>
+                        <div>
+                            <div style="font-size:0.72rem;font-weight:800;color:#d97706;text-transform:uppercase;letter-spacing:0.8px;">Droits spéciaux — Tarif d'achat</div>
+                            <div style="font-size:0.65rem;color:var(--text-muted,#888);margin-top:1px;">Autorisez ponctuellement les admins à voir les prix d'achat et marges</div>
+                        </div>
+                    </div>
+
+                    <!-- Statut actuel -->
+                    <div id="dev-costperm-status" style="padding:10px 14px;border-radius:9px;margin-bottom:12px;font-size:0.8rem;font-weight:600;"></div>
+
+                    <!-- Durée -->
+                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+                        <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);">Durée de l'accès :</label>
+                        <select id="dev-costperm-duration"
+                            style="padding:6px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.8rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                            <option value="24h">⏱️ 24 heures</option>
+                            <option value="72h">⏱️ 3 jours</option>
+                            <option value="7j">📅 1 semaine</option>
+                            <option value="30j">📅 30 jours</option>
+                            <option value="permanent">♾️ Permanent</option>
+                        </select>
+                    </div>
+
+                    <!-- Boutons -->
+                    <div style="display:flex;gap:8px;">
+                        <button onclick="_devGrantCostPrice()"
+                            style="flex:2;padding:9px 14px;background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;
+                                   border-radius:9px;font-weight:800;font-size:0.84rem;cursor:pointer;
+                                   box-shadow:0 3px 10px rgba(245,158,11,0.3);">
+                            ✅ Accorder l'accès aux admins
+                        </button>
+                        <button onclick="_devRevokeCostPrice()"
+                            style="flex:1;padding:9px 14px;background:var(--bg-card,#fff);color:#e74c3c;border:1.5px solid #e74c3c;
+                                   border-radius:9px;font-weight:700;font-size:0.82rem;cursor:pointer;">
+                            🚫 Révoquer
+                        </button>
+                    </div>
+                </div>
 
                 <!-- Mot de passe actuel -->
                 <div style="background:var(--bg-body,#f8fafc);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
@@ -9819,7 +9948,9 @@ let cashierPermissions = JSON.parse(localStorage.getItem('covo_cashier_permissio
         price: false,
         dlc: false,
         promo: false
-    }
+    },
+    canDiscount: false,
+    maxDiscount: 0
 };
 
 let editingProductId = null; // Store the ID of product being edited
@@ -12690,6 +12821,8 @@ function toggleInfoSection(headerElement) {
                 cashierPermissions.permissions = { ...userPerms.fields };
                 cashierPermissions.canRetourClient = userPerms.canRetourClient || false;
                 cashierPermissions.canDeclareDefect = userPerms.canDeclareDefect || false;
+                cashierPermissions.canDiscount  = userPerms.canDiscount  || false;
+                cashierPermissions.maxDiscount  = userPerms.maxDiscount  || 0;
             }
 
             document.getElementById('login-modal').style.display = 'none';
@@ -20192,19 +20325,36 @@ logout = function(skipConfirmation = false) {
         if (!product || product.stock <= 0) return;
 
         const existing = cart.find(c => c.id === productId);
+
+        // ── Tarif d'achat admin autorisé ? ──────────────────────────────────
+        const _useCostPrice = (typeof window._canSeeCostPrice === 'function')
+            && window._canSeeCostPrice()
+            && (typeof currentUser !== 'undefined' && currentUser && !currentUser.isMaster)
+            && (typeof isAdmin !== 'undefined' && isAdmin);
         
         // Night tariff multiplier
         const nightActive = isNightTariffCurrentlyActive();
-        const applyNight = product.nightTariff && nightActive;
+        const applyNight = product.nightTariff && nightActive && !_useCostPrice;
         const nightPct = (product.nightTariffPercent !== undefined && product.nightTariffPercent !== null && product.nightTariffPercent !== '')
             ? parseFloat(product.nightTariffPercent)
             : nightTariffSettings.defaultPercent;
         const nightMultiplier = applyNight ? (1 + nightPct / 100) : 1;
+        // Position curseur : 0 = prix d'achat, 100 = prix de vente
+        const _costPosition  = _useCostPrice && typeof window._getCostPriceDiscount === 'function'
+            ? window._getCostPriceDiscount() : 100;
 
         if (product.unitType === 'kg') {
-            const step = 0.1; // incrément par défaut : 100g
-            const disc = product.promo || 0;
-            const basePrice = product.pricePerKg * (1 - disc / 100) * nightMultiplier;
+            const step = 0.1;
+            const disc = _useCostPrice ? 0 : (product.promo || 0);
+            // Prix : remise sur prix de vente, plancher = prix d'achat
+            let effectivePrice;
+            if (_useCostPrice && product.costPrice != null) {
+                const prixAchat = parseFloat(product.costPrice);
+                // interpolation : 0%=achat, 100%=vente
+                effectivePrice = prixAchat + (product.pricePerKg - prixAchat) * (_costPosition / 100);
+            } else {
+                effectivePrice = product.pricePerKg * (1 - disc / 100) * nightMultiplier;
+            }
             if (existing) {
                 const newQty = parseFloat((existing.quantity + step).toFixed(3));
                 if (newQty <= product.stock) {
@@ -20216,14 +20366,15 @@ logout = function(skipConfirmation = false) {
             } else {
                 cart.push({
                     id: product.id,
-                    name: product.name + (applyNight ? ' 🌙' : ''),
-                    price: basePrice,
+                    name: product.name + (_useCostPrice ? ' 🏷️' : applyNight ? ' 🌙' : ''),
+                    price: effectivePrice,
                     originalPrice: product.pricePerKg,
                     quantity: step,
                     unitType: 'kg',
                     discount: disc,
                     nightTariff: applyNight,
                     nightPercent: nightPct,
+                    costPriceApplied: _useCostPrice,
                     tvaRate: (product.tvaRate != null) ? product.tvaRate : null
                 });
             }
@@ -20236,27 +20387,40 @@ logout = function(skipConfirmation = false) {
                     return;
                 }
             } else {
-                const disc = product.promo || 0;
+                const disc = _useCostPrice ? 0 : (product.promo || 0);
+                // Prix : coût d'achat si autorisé, sinon prix de vente normal
+                const effectivePrice = _useCostPrice && product.costPrice != null
+                    ? parseFloat(product.costPrice) + (product.price - parseFloat(product.costPrice)) * (_costPosition / 100)
+                    : product.price * (1 - disc / 100) * nightMultiplier;
                 cart.push({
                     id: product.id,
-                    name: product.name + (applyNight ? ' 🌙' : ''),
-                    price: product.price * (1 - disc / 100) * nightMultiplier,
+                    name: product.name + (_useCostPrice ? ' 🏷️' : applyNight ? ' 🌙' : ''),
+                    price: effectivePrice,
                     originalPrice: product.price,
-                    unitPrice: product.price * (1 - disc / 100) * nightMultiplier,
+                    unitPrice: effectivePrice,
                     quantity: 1,
                     unitType: 'unit',
                     discount: disc,
                     nightTariff: applyNight,
                     nightPercent: nightPct,
-                    packSize:  (product.packSize  && product.packSize  >= 2) ? product.packSize  : 0,
-                    packPrice: (product.packPrice && product.packPrice > 0)  ? product.packPrice : 0,
+                    packSize:  _useCostPrice ? 0 : ((product.packSize && product.packSize >= 2) ? product.packSize : 0),
+                    packPrice: _useCostPrice ? 0 : ((product.packPrice && product.packPrice > 0) ? product.packPrice : 0),
+                    costPriceApplied: _useCostPrice,
                     tvaRate: (product.tvaRate != null) ? product.tvaRate : null
                 });
             }
         }
 
         updateCartUI();
-        showScanToast(`✅ ${product.name} ajouté${applyNight ? ' 🌙 (tarif nuit)' : ''}`);
+        if (_useCostPrice) {
+            const _baseCP   = product.costPrice != null ? parseFloat(product.costPrice) : 0;
+            const _baseVte  = product.unitType === 'kg' ? (product.pricePerKg || 0) : (product.price || 0);
+            const _effCP    = (_baseCP + (_baseVte - _baseCP) * (_costPosition / 100)).toFixed(2);
+            const discStr   = _costPosition < 100 ? ` (pos. ${_costPosition}%)` : '';
+            showScanToast(`🏷️ ${product.name} — tarif achat${discStr} : ${_effCP} €`);
+        } else {
+            showScanToast(`✅ ${product.name} ajouté${applyNight ? ' 🌙 (tarif nuit)' : ''}`);
+        }
     }
 
     function updateCartQuantity(productId, change) {
@@ -20371,6 +20535,47 @@ logout = function(skipConfirmation = false) {
     }
 
     function validateSale() {
+        if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
+
+        // ── Vérifier si des articles au tarif d'achat sont dans le panier ──
+        const _costItems = cart.filter(function(item){ return item.costPriceApplied; });
+        if (_costItems.length > 0) {
+            // Afficher la modale de confirmation
+            const _total = cart.reduce(function(s,item){ return s + _cartLineTotal(item); }, 0);
+            const itemsEl = document.getElementById('cost-confirm-items');
+            const totalEl = document.getElementById('cost-confirm-total');
+            if (itemsEl) {
+                itemsEl.innerHTML = _costItems.map(function(item) {
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;'
+                        + 'padding:7px 12px;background:rgba(245,158,11,0.06);border-radius:8px;'
+                        + 'border-left:3px solid #f59e0b;">'
+                        + '<div>'
+                        + '<div style="font-weight:700;font-size:0.82rem;color:var(--text-main,#2c3e50);">'
+                        +   item.name.replace(' 🏷️','') + ' <span style="color:#d97706;">🏷️</span></div>'
+                        + '<div style="font-size:0.68rem;color:var(--text-muted,#888);margin-top:1px;">'
+                        +   'Qté ' + (item.unitType==='kg' ? item.quantity.toFixed(3)+' kg' : 'x'+item.quantity)
+                        +   ' · Prix achat : ' + item.price.toFixed(2) + ' €/u.'
+                        + '</div></div>'
+                        + '<div style="font-weight:800;font-size:0.9rem;color:#d97706;">'
+                        +   _cartLineTotal(item).toFixed(2) + ' €</div>'
+                        + '</div>';
+                }).join('');
+            }
+            if (totalEl) totalEl.textContent = _total.toFixed(2) + ' €';
+            const modal = document.getElementById('cost-price-confirm-modal');
+            if (modal) modal.style.display = 'flex';
+            return; // attendre la confirmation
+        }
+        _doValidateSale();
+    }
+
+    window._costPriceConfirmValidate = function() {
+        const modal = document.getElementById('cost-price-confirm-modal');
+        if (modal) modal.style.display = 'none';
+        _doValidateSale();
+    };
+
+    function _doValidateSale() {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
         const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const method = document.getElementById('payment-method').value;
@@ -20534,7 +20739,10 @@ logout = function(skipConfirmation = false) {
                     </div>`;
             } else {
                 const style = isCancelled ? 'text-decoration:line-through; opacity:0.5;' : '';
-                return `<div style="display:flex; justify-content:space-between; margin:5px 0; ${style}"><span>${item.name} ${qtyLabel}</span><span>${lineTotal}€</span></div>`;
+                const htBadge = item.costPriceApplied
+                    ? `<span style="background:#d97706;color:white;font-size:0.6rem;padding:1px 5px;border-radius:6px;font-weight:700;margin-left:4px;vertical-align:middle;">HT</span>`
+                    : '';
+                return `<div style="display:flex; justify-content:space-between; margin:5px 0; ${style}"><span>${item.name}${htBadge} ${qtyLabel}</span><span>${lineTotal}€</span></div>`;
             }
         }).join('');
 
@@ -23340,7 +23548,7 @@ logout = function(skipConfirmation = false) {
         if (benefBlock) {
             const pv=parseFloat(p.price||p.pricePerKg||0);
             const pa=p.costPrice!=null?parseFloat(p.costPrice):null;
-            if (isAdmin && pa!==null && pv>0) {
+            if ((typeof window._canSeeCostPrice==='function'?window._canSeeCostPrice():isAdmin) && pa!==null && pv>0) {
                 const bn=pv-pa, mg=((bn/pv)*100).toFixed(1), st=parseFloat(p.stock||0), co=bn>=0?'#27ae60':'#e74c3c';
                 document.getElementById('pd-benef-val').textContent=(bn>=0?'+':'')+bn.toFixed(2)+' €';
                 document.getElementById('pd-benef-val').style.color=co;
@@ -23444,6 +23652,13 @@ logout = function(skipConfirmation = false) {
         if (stockIn) { stockIn.step = isKg ? '0.001' : '1'; stockIn.value = p.stock || 0; }
         document.getElementById('pem-price').value = isKg ? (p.pricePerKg || '') : (p.price || '');
         document.getElementById('pem-cost').value = p.costPrice != null ? p.costPrice : '';
+        // Masquer le champ prix d'achat si l'admin n'a pas la permission
+        var _pemCostWrap = document.getElementById('pem-cost')?.closest('div');
+        if (_pemCostWrap) {
+            var _canCost = (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)
+                || (typeof window._canSeeCostPrice === 'function' && window._canSeeCostPrice());
+            _pemCostWrap.style.display = _canCost ? '' : 'none';
+        }
         // Promo select
         const promoSel = document.getElementById('pem-promo');
         if (promoSel) {
@@ -29350,6 +29565,198 @@ logout = function(skipConfirmation = false) {
   </div>
 </div>
 
+<!-- ===== MODALE DROITS TARIF ACHAT (accès rapide Admin-Dev) ===== -->
+<div role="dialog" aria-modal="true" id="costperm-modal"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);
+            backdrop-filter:blur(12px);z-index:19600;justify-content:center;align-items:center;padding:14px;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:500px;
+              max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
+              box-shadow:0 28px 72px rgba(0,0,0,0.45);
+              animation:adminWelcomeIn 0.28s cubic-bezier(0.22,1,0.36,1);">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#92400e,#d97706,#f59e0b);padding:16px 20px;
+                display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:36px;height:36px;background:rgba(255,255,255,0.2);border-radius:10px;
+                    display:flex;align-items:center;justify-content:center;font-size:1.2rem;">🔓</div>
+        <div>
+          <div style="color:white;font-weight:900;font-size:0.96rem;">Droits — Tarif d'achat</div>
+          <div style="color:rgba(255,255,255,0.75);font-size:0.68rem;margin-top:1px;">Choisissez l'admin, le curseur de prix et la durée</div>
+        </div>
+      </div>
+      <button onclick="document.getElementById('costperm-modal').style.display='none'"
+        style="background:rgba(255,255,255,0.18);border:none;color:white;width:30px;height:30px;
+               border-radius:50%;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;">✕</button>
+    </div>
+
+    <!-- Corps scrollable -->
+    <div style="overflow-y:auto;flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:14px;">
+
+      <!-- Liste admins -->
+      <div>
+        <label style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;
+                      letter-spacing:0.05em;display:block;margin-bottom:8px;">👤 Administrateurs</label>
+        <div id="costperm-admin-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+      </div>
+
+      <div style="border-top:1.5px solid var(--border-color,#eee);"></div>
+
+      <!-- Formulaire par admin -->
+      <div id="costperm-form" style="display:none;flex-direction:column;gap:12px;">
+
+        <div style="padding:8px 12px;background:rgba(245,158,11,0.08);border-radius:9px;
+                    border-left:3px solid #f59e0b;font-size:0.82rem;font-weight:700;color:#92400e;"
+             id="costperm-selected-label"></div>
+
+        <!-- Curseur position prix -->
+        <div>
+          <label style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;
+                        letter-spacing:0.05em;display:block;margin-bottom:10px;">↕️ Prix de vente accordé</label>
+
+          <!-- Bornes -->
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:0.68rem;font-weight:700;color:#ef4444;">0% · Prix d'achat</span>
+            <span style="font-size:0.68rem;font-weight:700;color:#22c55e;">100% · Prix de vente</span>
+          </div>
+
+          <!-- Track coloré -->
+          <div style="height:5px;border-radius:3px;background:linear-gradient(90deg,#ef4444 0%,#f59e0b 50%,#22c55e 100%);margin-bottom:2px;"></div>
+
+          <!-- Range slider -->
+          <input type="range" id="costperm-disc-custom" min="0" max="100" step="1" value="100"
+            style="width:100%;accent-color:#6366f1;cursor:pointer;margin:0 0 10px;"
+            oninput="_costPermSelectDisc(null, parseInt(this.value))">
+
+          <!-- Label dynamique -->
+          <div style="text-align:center;padding:9px 14px;border-radius:10px;margin-bottom:10px;
+                      background:rgba(99,102,241,0.07);border:1.5px solid rgba(99,102,241,0.2);">
+            <span id="costperm-pos-label"
+              style="font-size:0.95rem;font-weight:900;color:#22c55e;transition:color 0.2s;">
+              100 % — Prix de vente complet
+            </span>
+          </div>
+
+          <!-- Saisie directe -->
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:0.72rem;color:var(--text-muted,#888);">Saisie directe :</span>
+            <input type="number" id="costperm-pos-direct" min="0" max="100" step="1" placeholder="100"
+              style="width:72px;padding:5px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;
+                     font-size:0.82rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);"
+              oninput="_costPermSelectDisc(null, Math.max(0,Math.min(100,parseInt(this.value)||0)))">
+            <span style="font-size:0.82rem;font-weight:700;color:#6366f1;">%</span>
+          </div>
+
+          <input type="hidden" id="costperm-modal-disc" value="100">
+        </div>
+
+        <!-- Durée -->
+        <div>
+          <label style="font-size:0.72rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;
+                        letter-spacing:0.05em;display:block;margin-bottom:8px;">⏱️ Durée de l'accès</label>
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:5px;" id="costperm-dur-btns">
+            <button class="costperm-dur-btn" data-dur="24h"
+              style="padding:7px 4px;border-radius:9px;border:1.5px solid #d97706;background:#d97706;
+                     color:white;cursor:pointer;font-size:0.68rem;font-weight:700;text-align:center;">24h</button>
+            <button class="costperm-dur-btn" data-dur="72h"
+              style="padding:7px 4px;border-radius:9px;border:1.5px solid var(--border-color,#ddd);
+                     background:var(--bg-card,#fff);color:var(--text-main);cursor:pointer;font-size:0.68rem;font-weight:700;text-align:center;">3j</button>
+            <button class="costperm-dur-btn" data-dur="7j"
+              style="padding:7px 4px;border-radius:9px;border:1.5px solid var(--border-color,#ddd);
+                     background:var(--bg-card,#fff);color:var(--text-main);cursor:pointer;font-size:0.68rem;font-weight:700;text-align:center;">7j</button>
+            <button class="costperm-dur-btn" data-dur="30j"
+              style="padding:7px 4px;border-radius:9px;border:1.5px solid var(--border-color,#ddd);
+                     background:var(--bg-card,#fff);color:var(--text-main);cursor:pointer;font-size:0.68rem;font-weight:700;text-align:center;">30j</button>
+            <button class="costperm-dur-btn" data-dur="permanent"
+              style="padding:7px 4px;border-radius:9px;border:1.5px solid var(--border-color,#ddd);
+                     background:var(--bg-card,#fff);color:var(--text-main);cursor:pointer;font-size:0.68rem;font-weight:700;text-align:center;">♾️</button>
+          </div>
+          <input type="hidden" id="costperm-modal-dur" value="24h">
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;gap:8px;">
+          <button onclick="_costPermModalGrant()"
+            style="flex:2;padding:11px;background:linear-gradient(135deg,#d97706,#f59e0b);color:white;
+                   border:none;border-radius:10px;font-weight:800;font-size:0.88rem;cursor:pointer;
+                   box-shadow:0 4px 12px rgba(217,119,6,0.35);">✅ Accorder l'accès</button>
+          <button onclick="_costPermModalRevoke()"
+            style="flex:1;padding:11px;background:var(--bg-card,#fff);color:#e74c3c;
+                   border:1.5px solid #e74c3c;border-radius:10px;font-weight:700;font-size:0.82rem;cursor:pointer;">🚫 Révoquer</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== MODALE CONFIRMATION TARIF ACHAT ===== -->
+<div role="dialog" aria-modal="true" id="cost-price-confirm-modal"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);
+            backdrop-filter:blur(12px);z-index:19500;justify-content:center;align-items:center;">
+  <div style="background:var(--bg-card,#fff);border-radius:20px;width:95%;max-width:480px;
+              overflow:hidden;box-shadow:0 32px 80px rgba(0,0,0,0.5);
+              animation:adminWelcomeIn 0.28s cubic-bezier(0.22,1,0.36,1);">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#d97706,#f59e0b);padding:20px 22px;text-align:center;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:-20px;right:-15px;width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,0.08);pointer-events:none;"></div>
+      <div style="font-size:2.8rem;margin-bottom:8px;line-height:1;">🏷️</div>
+      <div style="color:white;font-weight:900;font-size:1.05rem;letter-spacing:-0.2px;">Transaction au prix d'achat</div>
+      <div style="color:rgba(255,255,255,0.82);font-size:0.75rem;margin-top:4px;">Réservée aux membres autorisés</div>
+    </div>
+
+    <!-- Corps -->
+    <div style="padding:22px 24px;">
+
+      <!-- Avertissement -->
+      <div style="background:rgba(245,158,11,0.08);border:1.5px solid rgba(245,158,11,0.35);
+                  border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <span style="font-size:1.4rem;flex-shrink:0;">⚠️</span>
+          <div>
+            <div style="font-weight:800;font-size:0.9rem;color:#92400e;margin-bottom:4px;">Attention</div>
+            <div style="font-size:0.82rem;color:var(--text-main,#2c3e50);line-height:1.55;">
+              Vous êtes sur le point de valider une transaction au <strong>prix d'achat</strong>,
+              réservée aux membres autorisés par l'admin-développeur.<br><br>
+              Cette vente sera enregistrée et pourra être auditée.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Récap articles au tarif achat -->
+      <div id="cost-confirm-items" style="margin-bottom:16px;display:flex;flex-direction:column;gap:5px;"></div>
+
+      <!-- Montant total -->
+      <div style="display:flex;justify-content:space-between;align-items:center;
+                  padding:10px 14px;background:var(--bg-card-2,#f8f9fa);
+                  border-radius:10px;margin-bottom:18px;">
+        <span style="font-size:0.82rem;font-weight:700;color:var(--text-muted,#888);">Total de la transaction</span>
+        <span id="cost-confirm-total" style="font-size:1.15rem;font-weight:900;color:#d97706;"></span>
+      </div>
+
+      <!-- Boutons -->
+      <div style="display:flex;gap:10px;">
+        <button onclick="document.getElementById('cost-price-confirm-modal').style.display='none'"
+          style="flex:1;padding:12px;border:1.5px solid var(--border-color,#ddd);border-radius:11px;
+                 background:var(--bg-card,#fff);color:var(--text-muted,#888);font-weight:700;
+                 cursor:pointer;font-size:0.88rem;">
+          ✕ Annuler
+        </button>
+        <button onclick="_costPriceConfirmValidate()"
+          style="flex:2;padding:12px;background:linear-gradient(135deg,#d97706,#f59e0b);color:white;
+                 border:none;border-radius:11px;font-weight:900;font-size:0.92rem;cursor:pointer;
+                 box-shadow:0 4px 14px rgba(217,119,6,0.4);">
+          ✅ Confirmer la transaction
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
 <!-- ===== MODALE CONFIRMATION PERTES INVENTAIRE ===== -->
 <div role="dialog" aria-modal="true" id="invt-confirm-pertes-modal"
      style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);
@@ -32568,6 +32975,282 @@ function _clotStatCard(icon, value, label, color) {
 }
 
 // ── Graphiques Clôtures ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════
+// ===== GESTION DROITS TARIF D'ACHAT ==============================
+// ══════════════════════════════════════════════════════════════════
+var COST_PERM_KEY = 'covo_perm_admin_costprice';
+
+window._canSeeCostPrice = function() {
+    if (typeof currentUser === 'undefined' || !currentUser) return false;
+    if (currentUser.isMaster) return true;
+    if (currentUser.role !== 'admin') return false;
+    try {
+        var perms = JSON.parse(localStorage.getItem(COST_PERM_KEY) || 'null');
+        if (!perms || !perms.admins) return false;
+        var uid = currentUser.id || currentUser.username || '';
+        var entry = perms.admins[uid];
+        if (!entry || !entry.granted) return false;
+        if (entry.expiresAt && new Date(entry.expiresAt) < new Date()) {
+            // Expirée → nettoyer cette entrée
+            delete perms.admins[uid];
+            localStorage.setItem(COST_PERM_KEY, JSON.stringify(perms));
+            return false;
+        }
+        return true;
+    } catch(e) { return false; }
+};
+
+// Retourner la remise accordée à l'admin courant (0 si aucune)
+window._getCostPriceDiscount = function() {
+    if (typeof currentUser === 'undefined' || !currentUser || currentUser.isMaster) return 100;
+    try {
+        var perms = JSON.parse(localStorage.getItem(COST_PERM_KEY) || 'null');
+        if (!perms || !perms.admins) return 100;
+        var uid = currentUser.id || currentUser.username || '';
+        var entry = perms.admins[uid];
+        if (!entry || !entry.granted) return 100;
+        return (entry.discount != null) ? Math.max(0, Math.min(100, parseFloat(entry.discount))) : 100;
+    } catch(e) { return 100; }
+};
+
+window._costPermSelectedUid = null;
+
+window._openCostPermModal = function() {
+    var modal = document.getElementById('costperm-modal');
+    if (!modal) return;
+    window._costPermSelectedUid = null;
+    document.getElementById('costperm-form').style.display = 'none';
+    _costPermRenderAdmins();
+    // Init dur = 24h
+    document.getElementById('costperm-modal-dur').value = '24h';
+    document.getElementById('costperm-modal-disc').value = '0';
+    modal.style.display = 'flex';
+};
+
+function _costPermRenderAdmins() {
+    var el = document.getElementById('costperm-admin-list');
+    if (!el) return;
+    var admins = (typeof users !== 'undefined' ? users : [])
+        .filter(function(u){ return u.role === 'admin' && !u.isMaster; });
+    if (!admins.length) {
+        el.innerHTML = '<div style="font-size:0.8rem;color:var(--text-muted,#888);text-align:center;padding:10px;">Aucun administrateur enregistré.</div>';
+        return;
+    }
+    var perms = {};
+    try { perms = JSON.parse(localStorage.getItem(COST_PERM_KEY) || '{}').admins || {}; } catch(e) {}
+    el.innerHTML = admins.map(function(u) {
+        var uid   = u.id || u.username || '';
+        var entry = perms[uid];
+        var granted = entry && entry.granted && !(entry.expiresAt && new Date(entry.expiresAt) < new Date());
+        var badge = granted
+            ? '<span style="background:#27ae60;color:white;font-size:0.62rem;padding:2px 7px;border-radius:10px;font-weight:700;">🔓 Autorisé'+(entry.discount!=null&&entry.discount<100?' (pos. '+entry.discount+'%)':' (tarif vente)')+'</span>'
+            : '<span style="background:var(--bg-card-2,#f0f4f8);color:var(--text-muted,#888);font-size:0.62rem;padding:2px 7px;border-radius:10px;font-weight:700;">🔒 Aucun accès</span>';
+        var expStr = (granted && entry.expiresAt)
+            ? '<span style="font-size:0.65rem;color:#888;">Exp. '+new Date(entry.expiresAt).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+'</span>'
+            : '';
+        return '<div onclick="_costPermSelectAdmin(\''+uid.replace(/'/g,"\\'")+'\',\''+u.username.replace(/'/g,"\\'")+'\')"'
+            + ' style="display:flex;align-items:center;justify-content:space-between;padding:10px 13px;'
+            + 'border-radius:10px;border:1.5px solid var(--border-color,#eee);cursor:pointer;'
+            + 'background:var(--bg-card,#fff);transition:all 0.15s;"'
+            + ' onmouseover="this.style.borderColor=\'#d97706\'"'
+            + ' onmouseout="this.style.borderColor=\'var(--border-color,#eee)\'">'
+            + '<div style="display:flex;align-items:center;gap:8px;">'
+            + '<div style="width:32px;height:32px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:8px;'
+            + 'display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">👑</div>'
+            + '<div><div style="font-weight:700;font-size:0.85rem;color:var(--text-main,#2c3e50);">'+u.username+'</div>'
+            + '<div style="display:flex;align-items:center;gap:5px;margin-top:2px;">'+badge+expStr+'</div></div></div>'
+            + '<span style="color:#d97706;font-size:0.8rem;">→</span>'
+            + '</div>';
+    }).join('');
+}
+
+window._costPermSelectAdmin = function(uid, name) {
+    window._costPermSelectedUid = uid;
+    var form = document.getElementById('costperm-form');
+    var lbl  = document.getElementById('costperm-selected-label');
+    if (form) form.style.display = 'flex';
+    if (lbl)  lbl.textContent = '👑 ' + name + ' — définir les droits ci-dessous';
+    // Pré-remplir avec les droits existants
+    try {
+        var perms = JSON.parse(localStorage.getItem(COST_PERM_KEY) || '{}');
+        var entry = (perms.admins || {})[uid];
+        if (entry && entry.granted) {
+            _costPermSelectDisc(null, entry.discount || 0);
+            var dur = entry.expiresAt ? '24h' : 'permanent';
+            document.getElementById('costperm-modal-dur').value = dur;
+            document.querySelectorAll('.costperm-dur-btn').forEach(function(b){
+                var sel = b.dataset.dur === dur;
+                b.style.background  = sel ? '#d97706' : 'var(--bg-card,#fff)';
+                b.style.color       = sel ? 'white'   : 'var(--text-main,#2c3e50)';
+                b.style.borderColor = sel ? '#d97706'  : 'var(--border-color,#ddd)';
+            });
+        }
+    } catch(e) {}
+    // Durée buttons onclick
+    document.querySelectorAll('.costperm-dur-btn').forEach(function(b) {
+        b.onclick = (function(dur){ return function(){
+            document.getElementById('costperm-modal-dur').value = dur;
+            document.querySelectorAll('.costperm-dur-btn').forEach(function(x){
+                var sel = x.dataset.dur === dur;
+                x.style.background  = sel ? '#d97706' : 'var(--bg-card,#fff)';
+                x.style.color       = sel ? 'white'   : 'var(--text-main,#2c3e50)';
+                x.style.borderColor = sel ? '#d97706'  : 'var(--border-color,#ddd)';
+            });
+        }; })(b.dataset.dur);
+    });
+};
+
+window._costPermSelectDisc = function(btn, pos) {
+    var position = (pos != null) ? Math.max(0, Math.min(100, parseInt(pos) || 0)) : 100;
+    var hidden = document.getElementById('costperm-modal-disc');
+    var range  = document.getElementById('costperm-disc-custom');
+    var direct = document.getElementById('costperm-pos-direct');
+    var lbl    = document.getElementById('costperm-pos-label');
+    if (hidden) hidden.value = position;
+    if (range)  range.value  = position;
+    if (direct) direct.value = position;
+    if (lbl) {
+        if (position <= 0)        { lbl.textContent = '0 % — Prix d\'achat uniquement';   lbl.style.color = '#ef4444'; }
+        else if (position >= 100) { lbl.textContent = '100 % — Prix de vente complet';     lbl.style.color = '#22c55e'; }
+        else                      { lbl.textContent = position + ' % — Entre achat et vente'; lbl.style.color = '#f59e0b'; }
+    }
+};
+// Brancher les boutons remise au click
+document.addEventListener('DOMContentLoaded', function(){
+    document.querySelectorAll('.costperm-disc-btn').forEach(function(b){
+        b.onclick = function(){ _costPermSelectDisc(b, parseInt(b.dataset.disc)||0); };
+    });
+});
+
+function _costPermModalUpdateStatus() {}  // obsolète, conservé pour compat
+
+window._costPermModalGrant = function() {
+    var uid = window._costPermSelectedUid;
+    if (!uid) { if (typeof showScanToast==='function') showScanToast('⚠️ Sélectionnez un admin','warning'); return; }
+    var dur  = document.getElementById('costperm-modal-dur')?.value  || '24h';
+    var disc = parseInt(document.getElementById('costperm-modal-disc')?.value || '0');
+    var expiresAt = null;
+    if (dur !== 'permanent') {
+        var ms = {'24h':86400000,'72h':259200000,'7j':604800000,'30j':2592000000}[dur]||86400000;
+        expiresAt = new Date(Date.now()+ms).toISOString();
+    }
+    var perms = {};
+    try { perms = JSON.parse(localStorage.getItem(COST_PERM_KEY) || '{}'); } catch(e) {}
+    if (!perms.admins) perms.admins = {};
+    perms.admins[uid] = { granted:true, grantedAt:new Date().toISOString(), expiresAt:expiresAt, discount:disc };
+    localStorage.setItem(COST_PERM_KEY, JSON.stringify(perms));
+    _costPermRenderAdmins();
+    if (typeof window._devCostPermStatus==='function') window._devCostPermStatus();
+    var discStr = disc < 100 ? ' (pos. '+disc+'%)' : ' (tarif vente complet)';
+    if (typeof showScanToast==='function') showScanToast('✅ Accès accordé'+discStr+' — '+dur,'success');
+};
+
+window._costPermModalRevoke = function() {
+    var uid = window._costPermSelectedUid;
+    if (!uid) { if (typeof showScanToast==='function') showScanToast('⚠️ Sélectionnez un admin','warning'); return; }
+    var perms = {};
+    try { perms = JSON.parse(localStorage.getItem(COST_PERM_KEY) || '{}'); } catch(e) {}
+    if (perms.admins && perms.admins[uid]) delete perms.admins[uid];
+    localStorage.setItem(COST_PERM_KEY, JSON.stringify(perms));
+    _costPermRenderAdmins();
+    document.getElementById('costperm-form').style.display = 'none';
+    if (typeof window._devCostPermStatus==='function') window._devCostPermStatus();
+    if (typeof showScanToast==='function') showScanToast('🚫 Accès révoqué','info');
+};
+
+
+window._devCostPermStatus = function() {
+    var el = document.getElementById('dev-costperm-status');
+    if (!el) return;
+    try {
+        var p = JSON.parse(localStorage.getItem(COST_PERM_KEY) || 'null');
+        if (!p || !p.granted) {
+            el.style.background = 'rgba(231,76,60,0.08)';
+            el.style.border = '1px solid rgba(231,76,60,0.25)';
+            el.style.color = '#c0392b';
+            el.innerHTML = '🔒 Accès <strong>non accordé</strong> — les admins ne voient pas les prix d\'achat.';
+        } else {
+            var expStr = p.expiresAt
+                ? 'Expire le <strong>' + new Date(p.expiresAt).toLocaleString('fr-FR',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) + '</strong>'
+                : '<strong>Accès permanent</strong>';
+            var expired = p.expiresAt && new Date(p.expiresAt) < new Date();
+            if (expired) {
+                el.style.background = 'rgba(231,76,60,0.08)'; el.style.border = '1px solid rgba(231,76,60,0.25)'; el.style.color = '#c0392b';
+                el.innerHTML = '⌛ Accès <strong>expiré</strong> — veuillez renouveler si nécessaire.';
+            } else {
+                el.style.background = 'rgba(39,174,96,0.08)'; el.style.border = '1px solid rgba(39,174,96,0.3)'; el.style.color = '#1a7a43';
+                el.innerHTML = '🔓 Accès <strong>accordé</strong> aux admins · ' + expStr
+                    + '<br><span style="font-size:0.7rem;opacity:0.8;">Accordé le '
+                    + new Date(p.grantedAt).toLocaleString('fr-FR',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
+                    + '</span>';
+            }
+        }
+    } catch(e) {
+        el.textContent = 'Erreur de lecture.';
+    }
+};
+
+window._devGrantCostPrice = function() {
+    var dur = document.getElementById('dev-costperm-duration')?.value || '24h';
+    var expiresAt = null;
+    if (dur !== 'permanent') {
+        var ms = { '24h': 86400000, '72h': 259200000, '7j': 604800000, '30j': 2592000000 }[dur] || 86400000;
+        expiresAt = new Date(Date.now() + ms).toISOString();
+    }
+    var perm = { granted: true, grantedAt: new Date().toISOString(), expiresAt: expiresAt };
+    localStorage.setItem(COST_PERM_KEY, JSON.stringify(perm));
+    window._devCostPermStatus();
+    var labels = { '24h':'24h', '72h':'3 jours', '7j':'1 semaine', '30j':'30 jours', 'permanent':'permanent' };
+    if (typeof showScanToast === 'function')
+        showScanToast('✅ Accès tarif d\'achat accordé aux admins — ' + labels[dur], 'success');
+};
+
+window._devRevokeCostPrice = function() {
+    localStorage.removeItem(COST_PERM_KEY);
+    window._devCostPermStatus();
+    if (typeof showScanToast === 'function')
+        showScanToast('🚫 Accès tarif d\'achat révoqué', 'info');
+};
+
+// Rafraîchir le statut quand la section admin-dev est ouverte
+(function() {
+    var orig = window.toggleAdminSection;
+    window.toggleAdminSection = function(id) {
+        if (typeof orig === 'function') orig(id);
+        if (id === 'admin-sec-dev-body') setTimeout(window._devCostPermStatus, 50);
+    };
+})();
+
+window._clotEcartsMode = 'divergence';
+
+window._clotSetEcartsMode = function(mode) {
+    window._clotEcartsMode = mode;
+    // Mettre à jour les boutons
+    ['divergence','ligne','histo','tableau'].forEach(function(m) {
+        var btn = document.getElementById('clot-ec-btn-'+m);
+        if (!btn) return;
+        if (m === mode) {
+            btn.style.background = '#9b59b6';
+            btn.style.color = 'white';
+        } else {
+            btn.style.background = 'transparent';
+            btn.style.color = 'var(--text-muted,#888)';
+        }
+    });
+    // Recréer le canvas si on sort du mode tableau
+    var wrap = document.getElementById('clot-ec-chart-wrap');
+    if (wrap && mode !== 'tableau' && !wrap.querySelector('canvas')) {
+        wrap.innerHTML = '<canvas id="clot-chart-ecarts" style="width:100%;height:185px;display:block;"></canvas>';
+    }
+    // Redessiner
+    requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+            var h = JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]');
+            if (typeof _clotDrawCharts === 'function') _clotDrawCharts(h);
+        });
+    });
+};
+
 var _clotFocused = null; // null = both | 'ca' | 'ecarts'
 
 window._clotFocus = function(which) {
@@ -32710,181 +33393,238 @@ function _clotDrawCharts(filtered) {
         }
     }
 
-    // ── 2. Écarts Divergence Chart ───────────────────────────────────────────
+    // ── 2. Écarts de caisse — multi-mode ───────────────────────────────────────
     var cEC = document.getElementById('clot-chart-ecarts');
-    if (!cEC) return;
-
     var rec8    = sorted.slice(-8);
     var labEC   = rec8.map(function(h){ var d=new Date(h.datetime); return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'); });
-    var caisEC  = rec8.map(function(h){ return (h.caissier||'?').slice(0,6); });
-    var espData = rec8.map(function(h){ return h.ecartEsp != null ? h.ecartEsp : null; });
-    var cbData  = rec8.map(function(h){ return h.ecartCb  != null ? h.ecartCb  : null; });
-    var totData = rec8.map(function(h){
-        if (h.ecartEsp == null && h.ecartCb == null) return null;
-        return (h.ecartEsp||0) + (h.ecartCb||0);
-    });
+    var caisEC  = rec8.map(function(h){ return (h.caissier||'?').slice(0,5); });
+    var espData = rec8.map(function(h){ return h.ecartEsp!=null?h.ecartEsp:null; });
+    var cbData  = rec8.map(function(h){ return h.ecartCb!=null?h.ecartCb:null; });
+    var totData = rec8.map(function(h){ return (h.ecartEsp!=null||h.ecartCb!=null)?(h.ecartEsp||0)+(h.ecartCb||0):null; });
 
-    // Réinitialiser la largeur avant lecture
+    // ── KPI strip ──────────────────────────────────────────────────────────────
+    var kpiEl = document.getElementById('clot-ec-kpis');
+    if (kpiEl && rec8.length > 0) {
+        var validTots = totData.filter(function(v){return v!==null;});
+        var avgTot  = validTots.length ? validTots.reduce(function(s,v){return s+v;},0)/validTots.length : null;
+        var maxAbs  = validTots.length ? Math.max.apply(null,validTots.map(Math.abs)) : null;
+        var parfait = validTots.filter(function(v){return Math.abs(v)<0.01;}).length;
+        var avgClr  = avgTot===null?'#888':Math.abs(avgTot)<0.5?'#27ae60':avgTot>0?'#f39c12':'#e74c3c';
+        kpiEl.innerHTML = [
+            { ico:'📊', val: avgTot!==null ? (avgTot>=0?'+':'')+avgTot.toFixed(2)+' €' : '—', lbl:'Écart moyen', clr:avgClr },
+            { ico:'⚡', val: maxAbs!==null ? maxAbs.toFixed(2)+' €' : '—', lbl:'Pic max', clr:'#e74c3c' },
+            { ico:'✅', val: parfait+' / '+validTots.length, lbl:'Sessions parfaites', clr:'#27ae60' }
+        ].map(function(k){
+            return '<div style="background:var(--bg-card-2,#f8f9fa);border-radius:8px;padding:7px 8px;text-align:center;">'
+                +'<div style="font-size:0.72rem;font-weight:900;color:'+k.clr+';line-height:1;">'+k.ico+' '+k.val+'</div>'
+                +'<div style="font-size:0.58rem;color:var(--text-muted,#aaa);margin-top:2px;text-transform:uppercase;letter-spacing:0.04em;">'+k.lbl+'</div>'
+                +'</div>';
+        }).join('');
+    }
+
+    var mode = window._clotEcartsMode || 'divergence';
+
+    // ── Mode TABLEAU ───────────────────────────────────────────────────────────
+    if (mode === 'tableau') {
+        var wrap = document.getElementById('clot-ec-chart-wrap');
+        if (wrap) {
+            var rows = rec8.map(function(h,i) {
+                var esp = h.ecartEsp, cb = h.ecartCb;
+                var tot = (esp!=null||cb!=null)?(esp||0)+(cb||0):null;
+                function _fmt(v){ return v===null?'<span style="color:#aaa">—</span>':'<span style="color:'+(Math.abs(v)<0.01?'#27ae60':v>0?'#f39c12':'#e74c3c')+';font-weight:800;">'+(v>=0?'+':'')+v.toFixed(2)+'€</span>'; }
+                return '<tr style="border-bottom:1px solid var(--border-color,#eee);">'
+                    +'<td style="padding:6px 8px;font-size:0.75rem;font-weight:700;color:var(--text-main,#2c3e50);">'+labEC[i]+'</td>'
+                    +'<td style="padding:6px 8px;font-size:0.72rem;color:var(--text-muted,#888);">'+caisEC[i]+'</td>'
+                    +'<td style="padding:6px 8px;text-align:right;font-size:0.75rem;">'+_fmt(esp)+'</td>'
+                    +'<td style="padding:6px 8px;text-align:right;font-size:0.75rem;">'+_fmt(cb)+'</td>'
+                    +'<td style="padding:6px 8px;text-align:right;font-size:0.78rem;border-left:2px solid var(--border-color,#eee);">'+_fmt(tot)+'</td>'
+                    +'</tr>';
+            }).join('');
+            wrap.innerHTML = '<div style="overflow-x:auto;">'
+                +'<table style="width:100%;border-collapse:collapse;">'
+                +'<thead><tr style="background:var(--bg-card-2,#f0f4f8);">'
+                +'<th style="padding:6px 8px;font-size:0.62rem;text-align:left;color:var(--text-muted,#888);text-transform:uppercase;font-weight:800;">Date</th>'
+                +'<th style="padding:6px 8px;font-size:0.62rem;text-align:left;color:var(--text-muted,#888);text-transform:uppercase;font-weight:800;">Caissier</th>'
+                +'<th style="padding:6px 8px;font-size:0.62rem;text-align:right;color:#27ae60;text-transform:uppercase;font-weight:800;">Esp.</th>'
+                +'<th style="padding:6px 8px;font-size:0.62rem;text-align:right;color:#3498db;text-transform:uppercase;font-weight:800;">CB</th>'
+                +'<th style="padding:6px 8px;font-size:0.62rem;text-align:right;color:#9b59b6;text-transform:uppercase;font-weight:800;border-left:2px solid var(--border-color,#eee);">Total</th>'
+                +'</tr></thead><tbody>'+rows+'</tbody></table></div>';
+        }
+        return;
+    }
+
+    // ── Modes canvas ───────────────────────────────────────────────────────────
+    var wrap2 = document.getElementById('clot-ec-chart-wrap');
+    if (wrap2 && !wrap2.querySelector('canvas')) {
+        wrap2.innerHTML = '<canvas id="clot-chart-ecarts" style="width:100%;height:185px;display:block;"></canvas>';
+    }
+    cEC = document.getElementById('clot-chart-ecarts');
+    if (!cEC) return;
+
     cEC.style.width = '100%';
     var _ecParW = cEC.parentElement ? cEC.parentElement.clientWidth - 28 : 0;
     var W2 = _ecParW > 80 ? _ecParW : (cEC.offsetWidth || 320);
     var H2 = (_clotFocused==='ecarts' ? 320 : 220);
     cEC.style.height = H2+'px';
     var ctx2 = _setupHiDpiCanvas(cEC, W2, H2);
-    ctx2.clearRect(0, 0, W2, H2);
+    ctx2.clearRect(0,0,W2,H2);
+    var P2={top:18,right:14,bottom:46,left:48};
+    var CW2=W2-P2.left-P2.right, CH2=H2-P2.top-P2.bottom;
+    var n2=rec8.length;
 
-    var P2 = { top: 16, right: 14, bottom: 46, left: 48 };
-    var CW2 = W2 - P2.left - P2.right;
-    var CH2 = H2 - P2.top - P2.bottom;
-    var n2  = rec8.length;
-
-    if (n2 === 0) {
-        ctx2.fillStyle = mutedCol; ctx2.font = '13px sans-serif'; ctx2.textAlign = 'center';
-        ctx2.fillText('Aucune donnée', W2 / 2, H2 / 2);
-        return;
+    if (n2===0){
+        ctx2.fillStyle=mutedCol;ctx2.font='13px sans-serif';ctx2.textAlign='center';
+        ctx2.fillText('Aucune donnée',W2/2,H2/2); return;
     }
 
-    // ── axis scale ──
-    var allV = espData.concat(cbData).concat(totData).filter(function(v){ return v !== null; });
-    var rawMax = allV.length > 0 ? Math.max.apply(null, allV.map(Math.abs)) : 0.5;
-    rawMax = Math.max(rawMax, 0.5);
-    var mxA = (function(v){
-        var mag = Math.pow(10, Math.floor(Math.log10(v)));
-        var step = mag * 0.5;
-        return Math.ceil(v / step) * step;
-    })(rawMax);
-    var zeroY = P2.top + CH2 / 2;
+    var allV=espData.concat(cbData).concat(totData).filter(function(v){return v!==null;});
+    var rawMax=allV.length>0?Math.max.apply(null,allV.map(Math.abs)):0.5;
+    rawMax=Math.max(rawMax,0.5);
+    var mxA=(function(v){var mag=Math.pow(10,Math.floor(Math.log10(v)));var step=mag*0.5;return Math.ceil(v/step)*step;})(rawMax);
+    var zeroY=P2.top+CH2/2;
 
-    // ── average total écart ──
-    var validTots = totData.filter(function(v){ return v !== null; });
-    var avgTot = validTots.length ? validTots.reduce(function(s,v){ return s+v; },0)/validTots.length : null;
-
-    // ── zero band ──
-    var bandH = Math.max(2, (0.05 / mxA) * (CH2 / 2));
-    ctx2.fillStyle = isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
-    ctx2.fillRect(P2.left, zeroY - bandH, CW2, bandH * 2);
-
-    // ── grid ──
-    [1, 0.5, 0, -0.5, -1].forEach(function(frac) {
-        var gy2 = zeroY - frac * (CH2 / 2);
-        if (frac === 0) {
-            ctx2.strokeStyle = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.22)';
-            ctx2.lineWidth = 1.5; ctx2.setLineDash([]);
-        } else {
-            ctx2.strokeStyle = gridCol; ctx2.lineWidth = 1;
-            ctx2.setLineDash(Math.abs(frac) === 0.5 ? [2,3] : [3,4]);
-        }
-        ctx2.beginPath(); ctx2.moveTo(P2.left, gy2); ctx2.lineTo(P2.left+CW2, gy2); ctx2.stroke();
+    // Grille commune
+    [1,0.5,0,-0.5,-1].forEach(function(frac){
+        var gy2=zeroY-frac*(CH2/2);
+        if(frac===0){ctx2.strokeStyle=isDark?'rgba(255,255,255,0.35)':'rgba(0,0,0,0.22)';ctx2.lineWidth=1.5;ctx2.setLineDash([]);}
+        else{ctx2.strokeStyle=gridCol;ctx2.lineWidth=1;ctx2.setLineDash(Math.abs(frac)===0.5?[2,3]:[3,4]);}
+        ctx2.beginPath();ctx2.moveTo(P2.left,gy2);ctx2.lineTo(P2.left+CW2,gy2);ctx2.stroke();
         ctx2.setLineDash([]);
-        var lv = frac * mxA;
-        var ls = (lv>0?'+':'') + lv.toFixed(Math.abs(lv)<1?2:1);
-        ctx2.fillStyle = frac===0 ? textCol : mutedCol;
-        ctx2.font = frac===0 ? 'bold 11px sans-serif' : '10px sans-serif';
-        ctx2.textAlign = 'right';
-        ctx2.fillText(ls, P2.left - 5, gy2 + 4);
+        var lv=frac*mxA;
+        ctx2.fillStyle=frac===0?textCol:mutedCol;
+        ctx2.font=frac===0?'bold 11px sans-serif':'10px sans-serif';ctx2.textAlign='right';
+        ctx2.fillText((lv>0?'+':'')+lv.toFixed(Math.abs(lv)<1?2:1),P2.left-5,gy2+4);
     });
 
-    // ── bars ── (3 barres par session : Esp / CB / Total)
-    var slotW = CW2 / n2;
-    var bw2   = Math.max(6, slotW * 0.22);   // barre individuelle
-    var gap2  = Math.max(1.5, bw2 * 0.18);   // espace entre barres du groupe
-
-    // helper draw bar
-    function drawBar2(x, val, colPos, colNeg, colZero) {
-        if (val === null) return;
-        var isZero = Math.abs(val) < 0.01;
-        var isPos  = val >= 0;
-        var col    = isZero ? colZero : (isPos ? colPos : colNeg);
-        var bh     = Math.max(3, Math.abs(val/mxA) * (CH2/2));
-        var by     = isPos ? zeroY - bh : zeroY;
-        var rad    = Math.min(4, bh/2);
-        ctx2.fillStyle = col;
-        ctx2.beginPath();
-        if (isPos) {
-            ctx2.moveTo(x+rad,by); ctx2.lineTo(x+bw2-rad,by);
-            ctx2.quadraticCurveTo(x+bw2,by,x+bw2,by+rad);
-            ctx2.lineTo(x+bw2,by+bh); ctx2.lineTo(x,by+bh);
-            ctx2.lineTo(x,by+rad); ctx2.quadraticCurveTo(x,by,x+rad,by);
-        } else {
-            ctx2.moveTo(x,by); ctx2.lineTo(x+bw2,by);
-            ctx2.lineTo(x+bw2,by+bh-rad);
-            ctx2.quadraticCurveTo(x+bw2,by+bh,x+bw2-rad,by+bh);
-            ctx2.lineTo(x+rad,by+bh); ctx2.quadraticCurveTo(x,by+bh,x,by+bh-rad);
-            ctx2.lineTo(x,by);
+    // ── MODE DIVERGENCE (barres groupées) ─────────────────────────────────────
+    if (mode==='divergence') {
+        var slotW=CW2/n2,bw2=Math.max(6,slotW*0.22),gap2=Math.max(1.5,bw2*0.18);
+        function drawBar2(x,val,colPos,colNeg,colZero){
+            if(val===null)return;
+            var isZ=Math.abs(val)<0.01,isP=val>=0;
+            var col=isZ?colZero:(isP?colPos:colNeg);
+            var bh=Math.max(3,Math.abs(val/mxA)*(CH2/2));
+            var by=isP?zeroY-bh:zeroY,rad=Math.min(4,bh/2);
+            ctx2.fillStyle=col;
+            ctx2.beginPath();
+            if(isP){ctx2.moveTo(x+rad,by);ctx2.lineTo(x+bw2-rad,by);ctx2.quadraticCurveTo(x+bw2,by,x+bw2,by+rad);ctx2.lineTo(x+bw2,by+bh);ctx2.lineTo(x,by+bh);ctx2.lineTo(x,by+rad);ctx2.quadraticCurveTo(x,by,x+rad,by);}
+            else{ctx2.moveTo(x,by);ctx2.lineTo(x+bw2,by);ctx2.lineTo(x+bw2,by+bh-rad);ctx2.quadraticCurveTo(x+bw2,by+bh,x+bw2-rad,by+bh);ctx2.lineTo(x+rad,by+bh);ctx2.quadraticCurveTo(x,by+bh,x,by+bh-rad);ctx2.lineTo(x,by);}
+            ctx2.closePath();ctx2.fill();
+            if(bw2>10&&Math.abs(val)>=0.01){var vs=(val>=0?'+':'')+val.toFixed(1);ctx2.save();ctx2.font='bold 8px sans-serif';ctx2.textAlign='center';ctx2.fillStyle=col;ctx2.fillText(vs,x+bw2/2,isP?Math.max(by-4,P2.top+8):by+bh+9);ctx2.restore();}
         }
-        ctx2.closePath(); ctx2.fill();
-        // value label
-        if (bw2 > 10 && Math.abs(val) >= 0.01) {
-            var vs = (val>=0?'+':'') + val.toFixed(1);
-            var ly = isPos ? Math.max(by-4, P2.top+8) : by+bh+9;
-            ctx2.save();
-            ctx2.font = 'bold 8px sans-serif'; ctx2.textAlign = 'center';
-            ctx2.fillStyle = isZero ? colZero : col;
-            ctx2.fillText(vs, x+bw2/2, ly);
-            ctx2.restore();
+        for(var i2=0;i2<n2;i2++){
+            var sx=P2.left+i2*slotW+slotW/2,gW=bw2*3+gap2*2,gx=sx-gW/2;
+            drawBar2(gx,espData[i2],'#27ae60','#e74c3c','#27ae60');
+            drawBar2(gx+bw2+gap2,cbData[i2],'#3498db','#e74c3c','#3498db');
+            drawBar2(gx+2*(bw2+gap2),totData[i2],'#9b59b6','#c0392b','#27ae60');
+            ctx2.save();ctx2.fillStyle=mutedCol;ctx2.font='bold 8px sans-serif';ctx2.textAlign='right';
+            ctx2.translate(sx,H2-P2.bottom+8);ctx2.rotate(-Math.PI/5);
+            ctx2.fillText(labEC[i2]+' '+caisEC[i2],0,0);ctx2.restore();
         }
     }
 
-    for (var i2=0; i2<n2; i2++) {
-        var sx = P2.left + i2*slotW + slotW/2;
-        var groupW = bw2*3 + gap2*2;
-        var gx = sx - groupW/2;
-
-        // Esp bar
-        drawBar2(gx,           espData[i2], '#27ae60','#e74c3c','#27ae60');
-        // CB bar
-        drawBar2(gx+bw2+gap2,  cbData[i2],  '#3498db','#e74c3c','#3498db');
-        // Total bar (darker)
-        drawBar2(gx+2*(bw2+gap2), totData[i2], '#8e44ad','#c0392b','#27ae60');
-
-        // Label X : date (rotaté pour éviter overlap)
-        ctx2.save();
-        ctx2.fillStyle = mutedCol; ctx2.font = 'bold 8.5px sans-serif'; ctx2.textAlign = 'right';
-        ctx2.translate(sx, H2 - P2.bottom + 8);
-        ctx2.rotate(-Math.PI / 6);
-        ctx2.fillText(labEC[i2] + ' ' + caisEC[i2], 0, 0);
-        ctx2.restore();
+    // ── MODE COURBE (ligne lissée) ─────────────────────────────────────────────
+    else if (mode==='ligne') {
+        function drawLine(data,col,fill){
+            var pts=data.map(function(v,i){
+                return v!==null?{x:P2.left+(i+0.5)*(CW2/n2),y:zeroY-(v/mxA)*(CH2/2)}:null;
+            });
+            // Zone de remplissage
+            if(fill){
+                ctx2.beginPath();
+                var started=false;
+                pts.forEach(function(p,i){
+                    if(!p)return;
+                    if(!started){ctx2.moveTo(p.x,zeroY);ctx2.lineTo(p.x,p.y);started=true;}
+                    else ctx2.lineTo(p.x,p.y);
+                });
+                if(started){ctx2.lineTo(pts.filter(Boolean).slice(-1)[0].x,zeroY);ctx2.closePath();}
+                ctx2.fillStyle=col.replace(')',',0.12)').replace('rgb','rgba');
+                ctx2.fill();
+            }
+            // Ligne
+            ctx2.beginPath();ctx2.strokeStyle=col;ctx2.lineWidth=2.2;ctx2.lineJoin='round';
+            var first=true;
+            pts.forEach(function(p){
+                if(!p)return;
+                if(first){ctx2.moveTo(p.x,p.y);first=false;}else ctx2.lineTo(p.x,p.y);
+            });
+            ctx2.stroke();
+            // Dots
+            pts.forEach(function(p,i){
+                if(!p)return;
+                var v=data[i];
+                var dotCol=v!==null&&Math.abs(v)<0.01?'#27ae60':(v>0?'#f39c12':'#e74c3c');
+                ctx2.beginPath();ctx2.arc(p.x,p.y,4,0,2*Math.PI);
+                ctx2.fillStyle=dotCol;ctx2.fill();
+                ctx2.strokeStyle='#fff';ctx2.lineWidth=1.5;ctx2.stroke();
+                // Valeur
+                if(v!==null){
+                    ctx2.fillStyle=dotCol;ctx2.font='bold 9px sans-serif';ctx2.textAlign='center';
+                    ctx2.fillText((v>=0?'+':'')+v.toFixed(2)+'€',p.x,p.y-(v>=0?10:-2));
+                }
+            });
+            // Labels X
+            pts.forEach(function(p,i){
+                if(!p)return;
+                ctx2.save();ctx2.fillStyle=mutedCol;ctx2.font='8px sans-serif';ctx2.textAlign='right';
+                ctx2.translate(p.x,H2-P2.bottom+8);ctx2.rotate(-Math.PI/5);
+                ctx2.fillText(labEC[i]+' '+caisEC[i],0,0);ctx2.restore();
+            });
+        }
+        drawLine(espData,'rgb(39,174,96)',false);
+        drawLine(cbData,'rgb(52,152,219)',false);
+        drawLine(totData,'rgb(155,89,182)',true);
     }
 
-    // ── average line ──
-    if (avgTot !== null) {
-        var avgY = zeroY - (avgTot/mxA) * (CH2/2);
-        ctx2.save();
-        ctx2.strokeStyle = '#8e44ad';
-        ctx2.lineWidth = 1.5;
-        ctx2.setLineDash([5, 3]);
-        ctx2.beginPath(); ctx2.moveTo(P2.left, avgY); ctx2.lineTo(P2.left+CW2, avgY); ctx2.stroke();
-        ctx2.setLineDash([]);
-        // label
-        ctx2.fillStyle = '#8e44ad'; ctx2.font = 'bold 9px sans-serif'; ctx2.textAlign = 'right';
-        var avgLbl = 'moy '+(avgTot>=0?'+':'')+avgTot.toFixed(2)+'€';
-        ctx2.fillText(avgLbl, P2.left+CW2, avgY-3);
-        ctx2.restore();
+    // ── MODE HISTOGRAMME (barres total uniquement, colorées par sévérité) ──────
+    else if (mode==='histo') {
+        var slotW3=CW2/n2,bw3=Math.max(10,slotW3*0.6);
+        for(var i3=0;i3<n2;i3++){
+            var v3=totData[i3];
+            if(v3===null)continue;
+            var isP3=v3>=0,isZ3=Math.abs(v3)<0.01;
+            var col3=isZ3?'#27ae60':(Math.abs(v3)<1?(isP3?'#f39c12':'#e67e22'):(isP3?'#e67e22':'#e74c3c'));
+            var bh3=Math.max(3,Math.abs(v3/mxA)*(CH2/2));
+            var bx3=P2.left+i3*slotW3+(slotW3-bw3)/2;
+            var by3=isP3?zeroY-bh3:zeroY,rad3=Math.min(5,bh3/2);
+            // Gradient
+            var gr=ctx2.createLinearGradient(0,by3,0,by3+bh3);
+            gr.addColorStop(0,col3);gr.addColorStop(1,col3.replace(')',',0.5)').replace('#','rgba(').replace(/([0-9a-f]{2})/gi,function(m){return parseInt(m,16)+',';}));
+            ctx2.fillStyle=col3;
+            ctx2.beginPath();
+            if(isP3){ctx2.moveTo(bx3+rad3,by3);ctx2.lineTo(bx3+bw3-rad3,by3);ctx2.quadraticCurveTo(bx3+bw3,by3,bx3+bw3,by3+rad3);ctx2.lineTo(bx3+bw3,by3+bh3);ctx2.lineTo(bx3,by3+bh3);ctx2.lineTo(bx3,by3+rad3);ctx2.quadraticCurveTo(bx3,by3,bx3+rad3,by3);}
+            else{ctx2.moveTo(bx3,by3);ctx2.lineTo(bx3+bw3,by3);ctx2.lineTo(bx3+bw3,by3+bh3-rad3);ctx2.quadraticCurveTo(bx3+bw3,by3+bh3,bx3+bw3-rad3,by3+bh3);ctx2.lineTo(bx3+rad3,by3+bh3);ctx2.quadraticCurveTo(bx3,by3+bh3,bx3,by3+bh3-rad3);ctx2.lineTo(bx3,by3);}
+            ctx2.closePath();ctx2.fill();
+            // Valeur
+            ctx2.fillStyle=col3;ctx2.font='bold 9px sans-serif';ctx2.textAlign='center';
+            ctx2.fillText((v3>=0?'+':'')+v3.toFixed(2)+'€',bx3+bw3/2,isP3?Math.max(by3-4,P2.top+9):by3+bh3+10);
+            // Label X
+            ctx2.save();ctx2.fillStyle=mutedCol;ctx2.font='bold 8.5px sans-serif';ctx2.textAlign='right';
+            ctx2.translate(bx3+bw3/2,H2-P2.bottom+8);ctx2.rotate(-Math.PI/5);
+            ctx2.fillText(labEC[i3]+' '+caisEC[i3],0,0);ctx2.restore();
+        }
     }
 
-    // ── legend ──
-    var legItems = [
-        { col:'#27ae60', label:'Esp.' },
-        { col:'#3498db', label:'CB' },
-        { col:'#8e44ad', label:'Total' }
-    ];
-    var legX = P2.left;
-    var legY = H2 - 10;
-    legItems.forEach(function(li) {
-        ctx2.fillStyle = li.col;
-        ctx2.fillRect(legX, legY-8, 8, 8);
-        ctx2.fillStyle = textCol; ctx2.font = 'bold 10px sans-serif'; ctx2.textAlign = 'left';
-        ctx2.fillText(li.label, legX+10, legY-1);
-        legX += 10 + ctx2.measureText(li.label).width + 12;
-    });
-    // Ligne moy
-    ctx2.save();
-    ctx2.strokeStyle = '#8e44ad'; ctx2.lineWidth = 1.5; ctx2.setLineDash([4,3]);
-    ctx2.beginPath(); ctx2.moveTo(legX, legY-4); ctx2.lineTo(legX+16, legY-4); ctx2.stroke();
-    ctx2.setLineDash([]);
-    ctx2.fillStyle = textCol; ctx2.font = 'bold 10px sans-serif'; ctx2.textAlign = 'left';
-    ctx2.fillText('Moy.', legX+18, legY-1);
-    ctx2.restore();
+    // Légende + ligne moyenne
+    var validTots2=totData.filter(function(v){return v!==null;});
+    var avgTot2=validTots2.length?validTots2.reduce(function(s,v){return s+v;},0)/validTots2.length:null;
+    if(avgTot2!==null&&mode!=='tableau'){
+        var avgY2=zeroY-(avgTot2/mxA)*(CH2/2);
+        ctx2.save();ctx2.strokeStyle='#8e44ad';ctx2.lineWidth=1.5;ctx2.setLineDash([5,3]);
+        ctx2.beginPath();ctx2.moveTo(P2.left,avgY2);ctx2.lineTo(P2.left+CW2,avgY2);ctx2.stroke();
+        ctx2.setLineDash([]);ctx2.fillStyle='#8e44ad';ctx2.font='bold 9px sans-serif';ctx2.textAlign='right';
+        ctx2.fillText('moy '+(avgTot2>=0?'+':'')+avgTot2.toFixed(2)+'€',P2.left+CW2,avgY2-3);
+        ctx2.restore();
+    }
+    if(mode!=='histo'){
+        var legX2=P2.left,legY2=H2-8;
+        [{col:'#27ae60',lbl:'Esp.'},{col:'#3498db',lbl:'CB'},{col:'#9b59b6',lbl:'Total'}].forEach(function(li){
+            ctx2.fillStyle=li.col;ctx2.fillRect(legX2,legY2-8,8,8);
+            ctx2.fillStyle=textCol;ctx2.font='bold 9px sans-serif';ctx2.textAlign='left';
+            ctx2.fillText(li.lbl,legX2+10,legY2-1);legX2+=10+ctx2.measureText(li.lbl).width+10;
+        });
+    }
 }
 
 // ===== HELPERS FILTRE DATE CLÔTURES =====
@@ -45024,5 +45764,2640 @@ document.addEventListener('keydown', function(e) {
         setTimeout(function () { location.reload(); }, 200);
     }
 });
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     ADMIN PANEL PRO ENHANCEMENT — injected upgrade
+     ══════════════════════════════════════════════════ -->
+<style>
+/* ─── 1. MODAL ENTRANCE ANIMATION ─────────────────── */
+@keyframes _apModalIn {
+  from { opacity:0; transform:translateY(-18px) scale(0.96); }
+  to   { opacity:1; transform:translateY(0) scale(1); }
+}
+@keyframes _apBackdropIn {
+  from { opacity:0; }
+  to   { opacity:1; }
+}
+.admin-modal.active {
+  animation: _apBackdropIn 0.22s ease forwards;
+}
+.admin-modal.active .admin-modal-content {
+  animation: _apModalIn 0.35s cubic-bezier(0.34,1.2,0.64,1) forwards;
+}
+
+/* ─── 2. MODAL CONTENT ELEVATION ───────────────────── */
+.admin-modal-content {
+  box-shadow: 0 24px 64px rgba(0,0,0,0.45),
+              0 0 0 1px rgba(255,255,255,0.06) !important;
+  border-radius: 18px !important;
+}
+
+/* ─── 3. MODAL HEADER SHIMMER ──────────────────────── */
+.admin-modal-header {
+  background: linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#1a3660 100%) !important;
+  border-bottom: 1px solid rgba(99,102,241,0.25) !important;
+  position: relative;
+  overflow: hidden;
+}
+.admin-modal-header::after {
+  content:'';
+  position:absolute; top:0; left:-100%; width:60%; height:100%;
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,0.05),transparent);
+  animation: _apHeaderGlide 3.5s ease-in-out infinite;
+  pointer-events:none;
+}
+@keyframes _apHeaderGlide {
+  0%   { left:-100%; }
+  60%  { left:160%;  }
+  100% { left:160%;  }
+}
+
+/* ─── 4. CLOSE BUTTON ────────────────────────────────── */
+.admin-close-btn {
+  width:36px !important; height:36px !important;
+  border-radius:10px !important;
+  background:rgba(255,255,255,0.09) !important;
+  border:1px solid rgba(255,255,255,0.14) !important;
+  display:inline-flex !important; align-items:center !important;
+  justify-content:center !important;
+  transition: background 0.2s, transform 0.22s cubic-bezier(0.34,1.56,0.64,1),
+              border-color 0.2s, box-shadow 0.2s !important;
+}
+.admin-close-btn:hover {
+  background: rgba(239,68,68,0.82) !important;
+  border-color: transparent !important;
+  transform: rotate(90deg) scale(1.12) !important;
+  box-shadow: 0 4px 14px rgba(239,68,68,0.4) !important;
+}
+
+/* ─── 5. MODAL BODY SCROLLBAR ────────────────────────── */
+.admin-modal-body { scroll-behavior: smooth; }
+.admin-modal-body::-webkit-scrollbar { width:5px; }
+.admin-modal-body::-webkit-scrollbar-track { background:transparent; }
+.admin-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(99,102,241,0.35);
+  border-radius:3px;
+}
+.admin-modal-body::-webkit-scrollbar-thumb:hover { background:rgba(99,102,241,0.65); }
+
+/* ─── 6. SECTION CARD ────────────────────────────────── */
+.admin-section {
+  border-radius: 14px !important;
+  overflow: hidden;
+  transition: box-shadow 0.22s ease, transform 0.18s ease !important;
+  position: relative;
+}
+.admin-section:hover {
+  box-shadow: 0 6px 24px rgba(0,0,0,0.09),
+              0 0 0 1.5px rgba(99,102,241,0.12) !important;
+  transform: translateY(-1.5px);
+}
+
+/* ─── 7. SECTION HEADER ─────────────────────────────── */
+.admin-section-header {
+  overflow: hidden !important;
+  position: relative !important;
+  transition: background 0.2s ease !important;
+}
+.admin-section-header:hover {
+  background: var(--bg-card-2, #f8fafc) !important;
+  filter: none !important;
+}
+
+/* Ripple element added by JS */
+.ap-ripple {
+  position:absolute; border-radius:50%;
+  background:rgba(99,102,241,0.1);
+  transform:scale(0); pointer-events:none;
+  transition: transform 0.55s ease, opacity 0.55s ease;
+  opacity:1; z-index:0;
+}
+.ap-ripple.go { transform:scale(2.8); opacity:0; }
+
+/* Children stagger-in when section opens */
+.admin-section-body.open > * {
+  animation: _apChildIn 0.28s ease both;
+}
+@keyframes _apChildIn {
+  from { opacity:0; transform:translateY(7px); }
+  to   { opacity:1; transform:translateY(0);   }
+}
+
+/* ─── 8. DEPLOY TOGGLE BUTTON ────────────────────────── */
+.deploy-toggle-btn {
+  transition: background 0.22s ease, color 0.22s ease,
+              border-color 0.22s ease, box-shadow 0.22s ease,
+              transform 0.22s cubic-bezier(0.34,1.4,0.64,1) !important;
+}
+.deploy-toggle-btn:hover {
+  background: linear-gradient(135deg,#3b82f6,#6366f1) !important;
+  color: white !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 14px rgba(99,102,241,0.35) !important;
+  transform: translateY(-2px) !important;
+}
+.deploy-toggle-btn.deployed {
+  background: linear-gradient(135deg,#3b82f6,#6366f1) !important;
+  color: white !important;
+  border-color: transparent !important;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.28) !important;
+}
+.deploy-toggle-btn .arrow {
+  transition: transform 0.38s cubic-bezier(0.34,1.56,0.64,1) !important;
+}
+.deploy-toggle-btn.deployed .arrow { transform: rotate(180deg) !important; }
+
+/* ─── 9. QUICK NAV BUTTONS IN HEADER ─────────────────── */
+#admin-panel > div:first-child button[onclick*="toggleAdminSection"] {
+  transition: background 0.18s ease,
+              transform 0.2s cubic-bezier(0.34,1.4,0.64,1),
+              box-shadow 0.2s ease,
+              outline 0.15s ease !important;
+}
+#admin-panel > div:first-child button[onclick*="toggleAdminSection"]:hover {
+  transform: translateY(-4px) scale(1.07) !important;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.22) !important;
+}
+#admin-panel > div:first-child button[onclick*="toggleAdminSection"]:active {
+  transform: translateY(0) scale(0.95) !important;
+}
+
+/* ─── 10. INPUT FOCUS ────────────────────────────────── */
+#admin-panel input[type="text"]:focus,
+#admin-panel input[type="number"]:focus,
+#admin-panel input[type="time"]:focus,
+#admin-panel select:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.14) !important;
+  outline: none !important;
+  transition: border-color 0.18s, box-shadow 0.18s !important;
+}
+
+/* ─── 11. ACTION BUTTONS LIFT ────────────────────────── */
+#admin-panel button:not(.deploy-toggle-btn):not(.admin-close-btn):not([onclick*="toggleAdminSection"]) {
+  transition: transform 0.18s cubic-bezier(0.34,1.4,0.64,1),
+              box-shadow 0.18s ease, filter 0.18s ease !important;
+}
+#admin-panel button:not(.deploy-toggle-btn):not(.admin-close-btn):not([onclick*="toggleAdminSection"]):hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18) !important;
+  filter: brightness(1.07) !important;
+}
+#admin-panel button:not(.deploy-toggle-btn):not(.admin-close-btn):not([onclick*="toggleAdminSection"]):active {
+  transform: translateY(0) scale(0.97) !important;
+}
+
+/* ─── 12. STATUS DOT PULSE ───────────────────────────── */
+@keyframes _apDotPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(34,211,238,0.6); }
+  50%     { box-shadow: 0 0 0 5px rgba(34,211,238,0);  }
+}
+#admin-panel span[style*="22d3ee"] {
+  animation: _apDotPulse 2s ease-in-out infinite !important;
+  display: inline-block !important;
+}
+
+/* ─── 13. DARK MODE POLISH ───────────────────────────── */
+body.dark-mode .admin-section:hover {
+  box-shadow: 0 6px 24px rgba(0,0,0,0.38),
+              0 0 0 1.5px rgba(99,102,241,0.2) !important;
+}
+body.dark-mode .admin-section-header:hover {
+  background: rgba(255,255,255,0.04) !important;
+}
+body.dark-mode .admin-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(99,102,241,0.45);
+}
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   ADMIN PANEL PRO — JS Enhancement Layer
+   ══════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ── A. SMOOTH SECTION TOGGLE ─────────────────────── */
+  window.toggleAdminSection = function (sid) {
+    var body = document.getElementById(sid);
+    var btn  = document.getElementById('btn-' + sid);
+    if (!body) return;
+
+    var isOpen = body.classList.contains('open');
+
+    if (!isOpen) {
+      /* OPENING */
+      body.classList.add('open');
+      body.style.maxHeight = '0px';
+      body.style.opacity   = '0';
+      body.style.overflow  = 'hidden';
+
+      var targetH = body.scrollHeight;
+
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          body.style.transition = 'max-height 0.44s cubic-bezier(0.4,0,0.2,1), opacity 0.32s ease';
+          body.style.maxHeight  = (targetH + 2) + 'px';
+          body.style.opacity    = '1';
+
+          setTimeout(function () {
+            if (body.classList.contains('open')) {
+              body.style.maxHeight  = '9999px';
+              body.style.transition = '';
+              body.style.overflow   = '';
+            }
+          }, 460);
+        });
+      });
+
+    } else {
+      /* CLOSING */
+      var currentH = body.getBoundingClientRect().height;
+      body.style.maxHeight  = currentH + 'px';
+      body.style.overflow   = 'hidden';
+      body.style.transition = 'max-height 0.32s cubic-bezier(0.4,0,0.2,1), opacity 0.22s ease';
+
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          body.style.maxHeight = '0px';
+          body.style.opacity   = '0';
+
+          setTimeout(function () {
+            body.classList.remove('open');
+            body.style.cssText = '';
+          }, 340);
+        });
+      });
+    }
+
+    /* button */
+    if (btn) {
+      btn.classList.toggle('deployed', !isOpen);
+      var lbl = btn.querySelector('.btn-label');
+      if (lbl) lbl.textContent = isOpen ? 'Déployer' : 'Replier';
+    }
+
+    /* persist */
+    try {
+      var st = JSON.parse(localStorage.getItem('covo_sec_states') || '{}');
+      st[sid] = !isOpen;
+      localStorage.setItem('covo_sec_states', JSON.stringify(st));
+    } catch (e) {}
+
+    /* special hook */
+    if (sid === 'admin-sec-9-body' && !isOpen &&
+        typeof window._lblLoadSettings === 'function') {
+      setTimeout(window._lblLoadSettings, 80);
+    }
+
+    /* refresh nav rings */
+    setTimeout(refreshNavRings, 50);
+  };
+
+  /* ── B. RIPPLE ON SECTION HEADER ──────────────────── */
+  document.addEventListener('click', function (e) {
+    var hdr = e.target.closest('.admin-section-header');
+    if (!hdr) return;
+    var rect = hdr.getBoundingClientRect();
+    var size = Math.max(rect.width, rect.height) * 1.6;
+    var r = document.createElement('span');
+    r.className = 'ap-ripple';
+    r.style.cssText = [
+      'width:'  + size + 'px',
+      'height:' + size + 'px',
+      'left:'   + (e.clientX - rect.left - size / 2) + 'px',
+      'top:'    + (e.clientY - rect.top  - size / 2) + 'px',
+    ].join(';');
+    hdr.appendChild(r);
+    requestAnimationFrame(function () {
+      r.classList.add('go');
+      setTimeout(function () { r.remove(); }, 600);
+    });
+  }, true);
+
+  /* ── C. MODAL — re-fire entrance animation each open ── */
+  var _origToggleAdminModal = window.toggleAdminModal;
+  if (typeof _origToggleAdminModal === 'function') {
+    window.toggleAdminModal = function () {
+      var modal   = document.getElementById('admin-modal');
+      var content = modal && modal.querySelector('.admin-modal-content');
+      if (modal && !modal.classList.contains('active') && content) {
+        content.style.animation = 'none';
+        void content.offsetHeight;
+        content.style.animation = '';
+      }
+      _origToggleAdminModal.apply(this, arguments);
+      /* refresh nav rings after open */
+      var m2 = document.getElementById('admin-modal');
+      if (m2 && m2.classList.contains('active')) {
+        setTimeout(refreshNavRings, 120);
+        setTimeout(patchAlreadyOpenSections, 150);
+      }
+    };
+  }
+
+  /* ── D. NAV BUTTON ACTIVE RING ────────────────────── */
+  function refreshNavRings() {
+    var panel = document.getElementById('admin-panel');
+    if (!panel) return;
+    panel.querySelectorAll(
+      'div:first-child button[onclick*="toggleAdminSection"]'
+    ).forEach(function (btn) {
+      var m = (btn.getAttribute('onclick') || '').match(
+        /toggleAdminSection\(['"]([^'"]+)['"]\)/
+      );
+      if (!m) return;
+      var b = document.getElementById(m[1]);
+      if (!b) return;
+      if (b.classList.contains('open')) {
+        btn.style.outline       = '2px solid rgba(255,255,255,0.55)';
+        btn.style.outlineOffset = '2px';
+      } else {
+        btn.style.outline = btn.style.outlineOffset = '';
+      }
+    });
+  }
+
+  /* ── E. PATCH SECTIONS ALREADY OPEN ON LOAD ──────── */
+  function patchAlreadyOpenSections() {
+    document.querySelectorAll('.admin-section-body.open').forEach(function (b) {
+      if (!b.style.maxHeight || b.style.maxHeight === '0px') {
+        b.style.maxHeight = '9999px';
+        b.style.opacity   = '1';
+      }
+    });
+  }
+  setTimeout(patchAlreadyOpenSections, 400);
+
+  /* ── F. STAGGER ANIMATION FOR SECTION CHILDREN ───── */
+  /* Delay each direct child slightly on open */
+  var _origMO = new MutationObserver(function (mutations) {
+    mutations.forEach(function (m) {
+      if (m.type === 'attributes' && m.attributeName === 'class') {
+        var el = m.target;
+        if (el.classList.contains('admin-section-body') &&
+            el.classList.contains('open')) {
+          var children = el.children;
+          for (var i = 0; i < children.length; i++) {
+            children[i].style.animationDelay = (i * 0.04) + 's';
+          }
+        }
+      }
+    });
+  });
+  document.querySelectorAll('.admin-section-body').forEach(function (el) {
+    _origMO.observe(el, { attributes: true });
+  });
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     QUICK ACTIONS HUB — modal & trigger button
+     ══════════════════════════════════════════════════ -->
+<style>
+/* ── BACKDROP ─────────────────────────────────────── */
+#_qahub-modal {
+  display: none;
+  position: fixed; inset: 0; z-index: 9900;
+  background: rgba(10,14,26,0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  align-items: center; justify-content: center;
+  padding: 16px;
+}
+#_qahub-modal.active { display: flex; }
+
+@keyframes _qahIn {
+  from { opacity:0; transform: translateY(-22px) scale(0.95); }
+  to   { opacity:1; transform: translateY(0) scale(1); }
+}
+@keyframes _qahBackdrop {
+  from { opacity:0; } to { opacity:1; }
+}
+#_qahub-modal.active { animation: _qahBackdrop 0.2s ease forwards; }
+#_qahub-modal.active ._qahub-box {
+  animation: _qahIn 0.36s cubic-bezier(0.34,1.18,0.64,1) forwards;
+}
+
+/* ── CLOSE ANIMATION ─────────────────────────────── */
+@keyframes _qahOut {
+  from { opacity:1; transform: scale(1); }
+  to   { opacity:0; transform: scale(0.94); }
+}
+#_qahub-modal.closing ._qahub-box {
+  animation: _qahOut 0.2s ease forwards;
+}
+
+/* ── MAIN BOX ─────────────────────────────────────── */
+._qahub-box {
+  background: var(--bg-card, #fff);
+  width: 100%; max-width: 680px;
+  border-radius: 22px;
+  overflow: hidden;
+  box-shadow: 0 28px 70px rgba(0,0,0,0.45),
+              0 0 0 1px rgba(255,255,255,0.07);
+  display: flex; flex-direction: column;
+  max-height: 90vh;
+}
+
+/* ── HEADER ───────────────────────────────────────── */
+._qahub-header {
+  background: linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#1a3a6a 100%);
+  padding: 20px 24px 18px;
+  display: flex; align-items: flex-start; gap: 16px;
+  position: relative; overflow: hidden;
+  flex-shrink: 0;
+}
+._qahub-header::after {
+  content:''; position:absolute; top:0; left:-120%; width:55%; height:100%;
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,0.05),transparent);
+  animation: _qahShimmer 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes _qahShimmer {
+  0%   { left:-120%; }
+  55%  { left:160%; }
+  100% { left:160%; }
+}
+._qahub-icon-wrap {
+  width: 48px; height: 48px; flex-shrink: 0;
+  background: linear-gradient(135deg,#f59e0b,#ef4444);
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem;
+  box-shadow: 0 6px 18px rgba(239,68,68,0.4);
+}
+._qahub-title { flex: 1; }
+._qahub-title h3 {
+  margin: 0; font-size: 1.1rem; font-weight: 900;
+  color: #f1f5f9; letter-spacing: -0.3px;
+}
+._qahub-title p {
+  margin: 4px 0 0; font-size: 0.7rem;
+  color: rgba(148,163,184,0.85);
+  display: flex; align-items: center; gap: 6px;
+}
+._qahub-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #22d3ee; display: inline-block;
+  animation: _qahDotPulse 2s ease infinite;
+}
+@keyframes _qahDotPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(34,211,238,0.6); }
+  50%     { box-shadow: 0 0 0 5px rgba(34,211,238,0); }
+}
+._qahub-close-btn {
+  width: 34px; height: 34px; flex-shrink: 0;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px; color: #cbd5e1;
+  font-size: 1rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s, transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+}
+._qahub-close-btn:hover {
+  background: rgba(239,68,68,0.75);
+  color: white; transform: rotate(90deg) scale(1.1);
+}
+
+/* ── STATS STRIP ─────────────────────────────────── */
+._qahub-stats {
+  display: grid; grid-template-columns: repeat(4,1fr);
+  gap: 0; border-bottom: 1px solid var(--border-color,#e8ecf0);
+  flex-shrink: 0;
+}
+._qahub-stat {
+  padding: 14px 10px; text-align: center;
+  border-right: 1px solid var(--border-color,#e8ecf0);
+  transition: background 0.18s;
+}
+._qahub-stat:last-child { border-right: none; }
+._qahub-stat:hover { background: var(--bg-card-2,#f8fafc); }
+._qahub-stat-val {
+  display: block; font-size: 1.25rem; font-weight: 900;
+  color: var(--text-main,#1e293b); line-height: 1;
+}
+._qahub-stat-lbl {
+  display: block; font-size: 0.63rem; font-weight: 700;
+  color: var(--text-muted,#94a3b8);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-top: 4px;
+}
+
+/* ── ACTIONS GRID ─────────────────────────────────── */
+._qahub-body {
+  padding: 18px 20px 20px;
+  overflow-y: auto; flex: 1;
+}
+._qahub-body::-webkit-scrollbar { width: 4px; }
+._qahub-body::-webkit-scrollbar-thumb {
+  background: rgba(99,102,241,0.3); border-radius: 2px;
+}
+._qahub-section-title {
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-muted,#94a3b8);
+  margin: 0 0 12px;
+}
+._qahub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill,minmax(140px,1fr));
+  gap: 12px; margin-bottom: 20px;
+}
+._qahub-card {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; padding: 18px 10px;
+  border-radius: 14px; border: 1.5px solid var(--border-color,#e8ecf0);
+  background: var(--bg-card,#fff); cursor: pointer;
+  transition: transform 0.22s cubic-bezier(0.34,1.4,0.64,1),
+              box-shadow 0.2s ease, border-color 0.2s, background 0.2s;
+  position: relative; overflow: hidden;
+  text-align: center;
+}
+._qahub-card::before {
+  content: ''; position: absolute; inset: 0;
+  background: var(--_qah-color, rgba(99,102,241,0.06));
+  opacity: 0; transition: opacity 0.2s;
+}
+._qahub-card:hover { transform: translateY(-4px) scale(1.03); }
+._qahub-card:hover { box-shadow: 0 10px 28px rgba(0,0,0,0.14); }
+._qahub-card:hover::before { opacity: 1; }
+._qahub-card:hover { border-color: var(--_qah-border, rgba(99,102,241,0.35)); }
+._qahub-card:active { transform: translateY(0) scale(0.97); }
+._qahub-card-ico {
+  width: 48px; height: 48px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.4rem; flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+._qahub-card strong {
+  font-size: 0.82rem; font-weight: 800;
+  color: var(--text-main,#1e293b); line-height: 1.2;
+  pointer-events: none;
+}
+._qahub-card small {
+  font-size: 0.66rem; color: var(--text-muted,#94a3b8);
+  pointer-events: none;
+}
+
+/* ── RIPPLE ON CARD ────────────────────────────────── */
+._qah-ripple {
+  position:absolute; border-radius:50%;
+  transform:scale(0); pointer-events:none;
+  transition: transform 0.55s ease, opacity 0.55s ease;
+  opacity: 0.35;
+}
+._qah-ripple.go { transform:scale(3); opacity:0; }
+
+/* ── TRIGGER BUTTON IN ADMIN HEADER ───────────────── */
+#_qahub-trigger-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  background: linear-gradient(135deg,rgba(245,158,11,0.2),rgba(239,68,68,0.2));
+  border: 1px solid rgba(245,158,11,0.4);
+  border-radius: 10px; cursor: pointer;
+  font-size: 0.73rem; font-weight: 800;
+  color: #fcd34d; white-space: nowrap;
+  transition: all 0.22s cubic-bezier(0.34,1.4,0.64,1);
+  animation: _qahBtnPulse 3s ease-in-out infinite;
+}
+#_qahub-trigger-btn:hover {
+  background: linear-gradient(135deg,rgba(245,158,11,0.5),rgba(239,68,68,0.4));
+  border-color: rgba(245,158,11,0.7);
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 6px 18px rgba(245,158,11,0.3);
+  animation: none;
+}
+@keyframes _qahBtnPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.3); }
+  50%     { box-shadow: 0 0 0 7px rgba(245,158,11,0); }
+}
+
+/* ── DARK MODE ──────────────────────────────────────── */
+body.dark-mode ._qahub-box { background: #1e293b; }
+body.dark-mode ._qahub-stat:hover { background: rgba(255,255,255,0.04); }
+body.dark-mode ._qahub-card { background: #1e293b; border-color: rgba(255,255,255,0.1); }
+body.dark-mode ._qahub-stat-val { color: #f1f5f9; }
+body.dark-mode ._qahub-card strong { color: #f1f5f9; }
+body.dark-mode ._qahub-stats { border-color: rgba(255,255,255,0.08); }
+body.dark-mode ._qahub-stat { border-color: rgba(255,255,255,0.08); }
+
+/* responsive */
+@media (max-width: 480px) {
+  ._qahub-stats { grid-template-columns: repeat(2,1fr); }
+  ._qahub-grid  { grid-template-columns: repeat(2,1fr); }
+}
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════
+   QUICK ACTIONS HUB — logic
+   ══════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ── BUILD MODAL HTML ─────────────────────────── */
+  function _buildQAHub() {
+    if (document.getElementById('_qahub-modal')) return;
+
+    var el = document.createElement('div');
+    el.id = '_qahub-modal';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.innerHTML = [
+      '<div class="_qahub-box">',
+
+        /* header */
+        '<div class="_qahub-header">',
+          '<div class="_qahub-icon-wrap">⚡</div>',
+          '<div class="_qahub-title">',
+            '<h3>Actions Rapides</h3>',
+            '<p><span class="_qahub-live-dot"></span>Données en temps réel · Panneau d\'admin</p>',
+          '</div>',
+          '<button class="_qahub-close-btn" id="_qahub-close-btn" aria-label="Fermer">✕</button>',
+        '</div>',
+
+        /* stats strip */
+        '<div class="_qahub-stats">',
+          '<div class="_qahub-stat">',
+            '<span class="_qahub-stat-val" id="_qah-ca">—</span>',
+            '<span class="_qahub-stat-lbl">CA du jour</span>',
+          '</div>',
+          '<div class="_qahub-stat">',
+            '<span class="_qahub-stat-val" id="_qah-obj">—</span>',
+            '<span class="_qahub-stat-lbl">Objectif</span>',
+          '</div>',
+          '<div class="_qahub-stat">',
+            '<span class="_qahub-stat-val" id="_qah-txn">—</span>',
+            '<span class="_qahub-stat-lbl">Ventes</span>',
+          '</div>',
+          '<div class="_qahub-stat">',
+            '<span class="_qahub-stat-val" id="_qah-prod">—</span>',
+            '<span class="_qahub-stat-lbl">Produits</span>',
+          '</div>',
+        '</div>',
+
+        /* body */
+        '<div class="_qahub-body">',
+          '<p class="_qahub-section-title">Actions catalogue</p>',
+          '<div class="_qahub-grid" id="_qahub-grid-cat">',
+
+            /* Card 1 — Add product */
+            '<button class="_qahub-card" ',
+              'style="--_qah-color:rgba(39,174,96,0.07);--_qah-border:rgba(39,174,96,0.4)" ',
+              'onclick="_qahAction(\'product\')" aria-label="Ajouter un produit">',
+              '<div class="_qahub-card-ico" style="background:linear-gradient(135deg,#27ae60,#1e8449);color:#fff">➕</div>',
+              '<strong>Ajouter produit</strong>',
+              '<small>Nouveau catalogue</small>',
+            '</button>',
+
+            /* Card 2 — Add user */
+            '<button class="_qahub-card" ',
+              'style="--_qah-color:rgba(142,68,173,0.07);--_qah-border:rgba(142,68,173,0.4)" ',
+              'onclick="_qahAction(\'user\')" aria-label="Ajouter un utilisateur">',
+              '<div class="_qahub-card-ico" style="background:linear-gradient(135deg,#8e44ad,#6c3483);color:#fff">👤</div>',
+              '<strong>Ajouter utilisateur</strong>',
+              '<small>Accès · Rôle</small>',
+            '</button>',
+
+            /* Card 3 — Add promo */
+            '<button class="_qahub-card" ',
+              'style="--_qah-color:rgba(230,126,34,0.07);--_qah-border:rgba(230,126,34,0.4)" ',
+              'onclick="_qahAction(\'promo\')" aria-label="Créer une promotion">',
+              '<div class="_qahub-card-ico" style="background:linear-gradient(135deg,#e67e22,#ca6f1e);color:#fff">🏷️</div>',
+              '<strong>Créer promo</strong>',
+              '<small>Remise · Offre</small>',
+            '</button>',
+
+            /* Card 4 — Quick stats */
+            '<button class="_qahub-card" ',
+              'style="--_qah-color:rgba(52,152,219,0.07);--_qah-border:rgba(52,152,219,0.4)" ',
+              'onclick="_qahAction(\'stats\')" aria-label="Voir le tableau de bord">',
+              '<div class="_qahub-card-ico" style="background:linear-gradient(135deg,#3498db,#1a5276);color:#fff">📊</div>',
+              '<strong>Tableau de bord</strong>',
+              '<small>Ventes · Stock</small>',
+            '</button>',
+
+            /* Card 5 — History */
+            '<button class="_qahub-card" ',
+              'style="--_qah-color:rgba(44,111,173,0.07);--_qah-border:rgba(44,111,173,0.4)" ',
+              'onclick="_qahAction(\'history\')" aria-label="Voir l\'historique">',
+              '<div class="_qahub-card-ico" style="background:linear-gradient(135deg,#2c6fad,#1a4a7a);color:#fff">📜</div>',
+              '<strong>Historique</strong>',
+              '<small>Ventes du jour</small>',
+            '</button>',
+
+            /* Card 6 — Config */
+            '<button class="_qahub-card" ',
+              'style="--_qah-color:rgba(99,102,241,0.07);--_qah-border:rgba(99,102,241,0.4)" ',
+              'onclick="_qahAction(\'config\')" aria-label="Aller à la configuration">',
+              '<div class="_qahub-card-ico" style="background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff">🎨</div>',
+              '<strong>Configuration</strong>',
+              '<small>Thème · Objectif</small>',
+            '</button>',
+
+          '</div>',
+
+          /* progress bar section */
+          '<p class="_qahub-section-title" style="margin-top:8px">Progression objectif du jour</p>',
+          '<div style="background:var(--bg-card-2,#f8fafc);border-radius:12px;padding:14px;border:1px solid var(--border-color,#e8ecf0)">',
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">',
+              '<span style="font-size:0.78rem;font-weight:700;color:var(--text-main)">Objectif journalier</span>',
+              '<span style="font-size:0.78rem;font-weight:800;color:#6366f1" id="_qah-pct-label">0 %</span>',
+            '</div>',
+            '<div style="height:8px;border-radius:4px;background:var(--border-color,#e0e0e0);overflow:hidden;">',
+              '<div id="_qah-progress-bar" style="height:100%;border-radius:4px;',
+                   'background:linear-gradient(90deg,#3b82f6,#6366f1);',
+                   'width:0%;transition:width 0.9s cubic-bezier(0.4,0,0.2,1);"></div>',
+            '</div>',
+          '</div>',
+        '</div>',
+      '</div>',
+    ].join('');
+
+    document.body.appendChild(el);
+
+    /* close on backdrop click */
+    el.addEventListener('click', function (e) {
+      if (e.target === el) _closeQAHub();
+    });
+
+    /* close button */
+    document.getElementById('_qahub-close-btn').addEventListener('click', _closeQAHub);
+
+    /* Escape key */
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && el.classList.contains('active')) _closeQAHub();
+    });
+
+    /* ripple on cards */
+    el.querySelectorAll('._qahub-card').forEach(function (card) {
+      card.addEventListener('click', function (e) {
+        var rect = card.getBoundingClientRect();
+        var size = Math.max(rect.width, rect.height) * 1.8;
+        var r = document.createElement('span');
+        r.className = '_qah-ripple';
+        r.style.cssText = [
+          'width:'  + size + 'px',
+          'height:' + size + 'px',
+          'left:'   + (e.clientX - rect.left - size / 2) + 'px',
+          'top:'    + (e.clientY - rect.top  - size / 2) + 'px',
+          'background:' + (card.style.getPropertyValue('--_qah-border') || 'rgba(99,102,241,0.25)'),
+        ].join(';');
+        card.appendChild(r);
+        requestAnimationFrame(function () {
+          r.classList.add('go');
+          setTimeout(function () { r.remove(); }, 600);
+        });
+      });
+    });
+  }
+
+  /* ── OPEN ─────────────────────────────────────── */
+  window.openQAHub = function () {
+    _buildQAHub();
+    var modal = document.getElementById('_qahub-modal');
+    var box   = modal && modal.querySelector('._qahub-box');
+    if (!modal) return;
+
+    /* reset animation */
+    if (box) { box.style.animation = 'none'; void box.offsetHeight; box.style.animation = ''; }
+    modal.classList.remove('closing');
+    modal.classList.add('active');
+
+    /* populate live stats */
+    _refreshQAStats();
+  };
+
+  /* ── CLOSE ────────────────────────────────────── */
+  function _closeQAHub() {
+    var modal = document.getElementById('_qahub-modal');
+    if (!modal) return;
+    modal.classList.add('closing');
+    setTimeout(function () {
+      modal.classList.remove('active', 'closing');
+    }, 220);
+  }
+  window.closeQAHub = _closeQAHub;
+
+  /* ── LIVE STATS ───────────────────────────────── */
+  function _refreshQAStats() {
+    try {
+      /* CA du jour */
+      var today = new Date().toDateString();
+      var hist  = JSON.parse(localStorage.getItem('covo_history') || '[]');
+      var todaySales = hist.filter(function (h) {
+        return new Date(h.date || h.timestamp).toDateString() === today;
+      });
+      var caToday = todaySales.reduce(function (s, h) {
+        return s + (parseFloat(h.total) || 0);
+      }, 0);
+
+      /* objectif */
+      var goal = parseFloat(localStorage.getItem('covo_delivery_goal')) || 150;
+
+      /* produits */
+      var products = JSON.parse(localStorage.getItem('covo_products') || '[]');
+
+      /* update DOM */
+      var elCA  = document.getElementById('_qah-ca');
+      var elObj = document.getElementById('_qah-obj');
+      var elTxn = document.getElementById('_qah-txn');
+      var elPrd = document.getElementById('_qah-prod');
+      var elBar = document.getElementById('_qah-progress-bar');
+      var elPct = document.getElementById('_qah-pct-label');
+
+      if (elCA)  _animCount(elCA,  caToday,   true);
+      if (elObj) _animCount(elObj, goal,       true);
+      if (elTxn) _animCount(elTxn, todaySales.length, false);
+      if (elPrd) _animCount(elPrd, products.length, false);
+
+      var pct = goal > 0 ? Math.min((caToday / goal) * 100, 100) : 0;
+      if (elBar) setTimeout(function () { elBar.style.width = pct.toFixed(1) + '%'; }, 80);
+      if (elPct) elPct.textContent = pct.toFixed(0) + ' %';
+
+      /* colour progress bar */
+      if (elBar) {
+        elBar.style.background = pct >= 100
+          ? 'linear-gradient(90deg,#22c55e,#16a34a)'
+          : pct >= 60
+            ? 'linear-gradient(90deg,#f59e0b,#d97706)'
+            : 'linear-gradient(90deg,#3b82f6,#6366f1)';
+      }
+    } catch (e) {}
+  }
+
+  /* animated number count-up */
+  function _animCount(el, target, isMoney) {
+    var start = 0, dur = 700, startTime = null;
+    function step(ts) {
+      if (!startTime) startTime = ts;
+      var prog = Math.min((ts - startTime) / dur, 1);
+      var ease = 1 - Math.pow(1 - prog, 3);
+      var val  = start + (target - start) * ease;
+      el.textContent = isMoney
+        ? val.toFixed(2) + '€'
+        : Math.round(val).toString();
+      if (prog < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  /* ── ACTION DISPATCH ──────────────────────────── */
+  window._qahAction = function (action) {
+    _closeQAHub();
+    setTimeout(function () {
+      switch (action) {
+        case 'product':
+          /* Open admin modal then scroll to product section */
+          if (typeof toggleAdminModal === 'function') {
+            var adminModal = document.getElementById('admin-modal');
+            if (!adminModal || !adminModal.classList.contains('active')) {
+              toggleAdminModal();
+            }
+            setTimeout(function () {
+              var sec = document.getElementById('admin-sec-1');
+              if (sec && !sec.classList.contains('open')) {
+                if (typeof toggleAdminSection === 'function') toggleAdminSection('admin-sec-1');
+              }
+              if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 320);
+          }
+          break;
+
+        case 'user':
+          if (typeof toggleAdminModal === 'function') {
+            var am = document.getElementById('admin-modal');
+            if (!am || !am.classList.contains('active')) toggleAdminModal();
+            setTimeout(function () {
+              var sec = document.getElementById('admin-sec-3');
+              if (sec && !sec.classList.contains('open')) {
+                if (typeof toggleAdminSection === 'function') toggleAdminSection('admin-sec-3');
+              }
+              if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 320);
+          }
+          break;
+
+        case 'promo':
+          if (typeof toggleAdminModal === 'function') {
+            var am2 = document.getElementById('admin-modal');
+            if (!am2 || !am2.classList.contains('active')) toggleAdminModal();
+            setTimeout(function () {
+              var sec = document.getElementById('admin-sec-2');
+              if (sec && !sec.classList.contains('open')) {
+                if (typeof toggleAdminSection === 'function') toggleAdminSection('admin-sec-2');
+              }
+              if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 320);
+          }
+          break;
+
+        case 'history':
+          if (typeof toggleAdminModal === 'function') {
+            var am3 = document.getElementById('admin-modal');
+            if (!am3 || !am3.classList.contains('active')) toggleAdminModal();
+            setTimeout(function () {
+              var sec = document.getElementById('admin-sec-6');
+              if (sec && !sec.classList.contains('open')) {
+                if (typeof toggleAdminSection === 'function') toggleAdminSection('admin-sec-6');
+              }
+              if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 320);
+          }
+          break;
+
+        case 'config':
+          if (typeof toggleAdminModal === 'function') {
+            var am4 = document.getElementById('admin-modal');
+            if (!am4 || !am4.classList.contains('active')) toggleAdminModal();
+            setTimeout(function () {
+              var sec = document.getElementById('admin-sec-0');
+              if (sec && !sec.classList.contains('open')) {
+                if (typeof toggleAdminSection === 'function') toggleAdminSection('admin-sec-0');
+              }
+              if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 320);
+          }
+          break;
+
+        case 'stats':
+          /* Re-open hub with refreshed stats */
+          setTimeout(openQAHub, 250);
+          break;
+      }
+    }, 250);
+  };
+
+  /* ── INJECT TRIGGER BUTTON INTO ADMIN HEADER ──── */
+  function _injectTriggerBtn() {
+    if (document.getElementById('_qahub-trigger-btn')) return;
+    var panel = document.getElementById('admin-panel');
+    if (!panel) return;
+
+    /* Find the title row (first child div inside the dark header div) */
+    var headerDiv = panel.querySelector('div[style*="0f172a"]') ||
+                    panel.querySelector('div[style*="linear-gradient"]');
+    if (!headerDiv) return;
+
+    /* Find the title+master-bar row */
+    var titleRow = headerDiv.querySelector('div[style*="space-between"]') ||
+                   headerDiv.querySelector('div[style*="justify-content"]');
+    if (!titleRow) { titleRow = headerDiv.firstElementChild; }
+    if (!titleRow) return;
+
+    var btn = document.createElement('button');
+    btn.id = '_qahub-trigger-btn';
+    btn.setAttribute('aria-label', 'Ouvrir les actions rapides');
+    btn.innerHTML = '⚡ Actions Rapides';
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      openQAHub();
+    };
+    titleRow.appendChild(btn);
+  }
+
+  /* ── HOOK INTO ADMIN MODAL OPEN ───────────────── */
+  var _prevToggleAdminModal = window.toggleAdminModal;
+  if (typeof _prevToggleAdminModal === 'function') {
+    window.toggleAdminModal = (function (_inner) {
+      return function () {
+        _inner.apply(this, arguments);
+        var m = document.getElementById('admin-modal');
+        if (m && m.classList.contains('active')) {
+          setTimeout(_injectTriggerBtn, 80);
+        }
+      };
+    }(_prevToggleAdminModal));
+  }
+
+  /* also try immediately in case admin is open */
+  setTimeout(_injectTriggerBtn, 500);
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     USER LIST REDESIGN + BARCODE PREVIEW MODAL
+     ══════════════════════════════════════════════════ -->
+<style>
+/* ── USER CARD ────────────────────────────────────── */
+.usr-card {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--bg-card, #fff);
+  padding: 13px 16px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  border: 1.5px solid var(--border-color, #e8ecf0);
+  transition: box-shadow 0.2s ease, transform 0.18s ease,
+              border-color 0.2s ease;
+  position: relative; overflow: hidden;
+}
+.usr-card::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 4px;
+  border-radius: 14px 0 0 14px;
+  background: var(--_usr-accent, #6366f1);
+}
+.usr-card:hover {
+  box-shadow: 0 6px 22px rgba(0,0,0,0.09);
+  transform: translateY(-2px);
+  border-color: var(--_usr-accent, rgba(99,102,241,0.3));
+}
+
+/* Avatar */
+.usr-avatar {
+  width: 46px; height: 46px; flex-shrink: 0;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; overflow: hidden;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.14);
+  border: 2px solid rgba(255,255,255,0.8);
+}
+.usr-avatar img { width:100%; height:100%; object-fit:cover; }
+
+/* Info block */
+.usr-info { flex: 1; min-width: 0; }
+.usr-name {
+  font-weight: 800; font-size: 0.95rem;
+  color: var(--text-main, #1e293b);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.usr-id-badge {
+  display: inline-block;
+  font-family: monospace; font-size: 0.7rem; font-weight: 700;
+  background: rgba(99,102,241,0.1); color: #6366f1;
+  padding: 2px 8px; border-radius: 20px;
+  margin-left: 7px; vertical-align: middle;
+  border: 1px solid rgba(99,102,241,0.2);
+  letter-spacing: 0.03em;
+}
+.usr-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 4px; flex-wrap: wrap;
+}
+.usr-role-badge {
+  font-size: 0.68rem; font-weight: 700;
+  padding: 2px 9px; border-radius: 20px;
+}
+
+/* Actions */
+.usr-actions { display: flex; gap: 7px; align-items: center; flex-shrink: 0; }
+.usr-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; border-radius: 9px;
+  font-size: 0.78rem; font-weight: 700; cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: transform 0.18s cubic-bezier(0.34,1.4,0.64,1),
+              box-shadow 0.18s ease, filter 0.15s;
+}
+.usr-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.14); }
+.usr-btn:active { transform: translateY(0) scale(0.96); }
+.usr-btn-preview {
+  background: linear-gradient(135deg,#0ea5e9,#6366f1);
+  color: white; box-shadow: 0 2px 8px rgba(99,102,241,0.25);
+}
+.usr-btn-edit {
+  background: var(--bg-card-2,#f8fafc);
+  color: var(--warning, #f59e0b);
+  border-color: rgba(245,158,11,0.35);
+}
+.usr-btn-del {
+  background: var(--bg-card-2,#f8fafc);
+  color: var(--danger, #ef4444);
+  border-color: rgba(239,68,68,0.3);
+}
+
+/* ── BARCODE MODAL ─────────────────────────────────── */
+#_bc-modal {
+  display: none; position: fixed; inset: 0; z-index: 9950;
+  background: rgba(10,14,26,0.75);
+  backdrop-filter: blur(10px);
+  align-items: center; justify-content: center; padding: 16px;
+}
+#_bc-modal.active { display: flex; }
+@keyframes _bcIn {
+  from { opacity:0; transform: scale(0.94) translateY(-16px); }
+  to   { opacity:1; transform: scale(1) translateY(0); }
+}
+@keyframes _bcOut {
+  from { opacity:1; transform: scale(1); }
+  to   { opacity:0; transform: scale(0.94); }
+}
+#_bc-modal.active ._bc-box { animation: _bcIn 0.32s cubic-bezier(0.34,1.2,0.64,1) forwards; }
+#_bc-modal.closing ._bc-box { animation: _bcOut 0.18s ease forwards; }
+
+._bc-box {
+  background: var(--bg-card, #fff);
+  border-radius: 20px; width: 100%; max-width: 420px;
+  overflow: hidden;
+  box-shadow: 0 28px 70px rgba(0,0,0,0.45),
+              0 0 0 1px rgba(255,255,255,0.07);
+}
+
+._bc-header {
+  background: linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#1a3a6a 100%);
+  padding: 18px 22px; display: flex; align-items: center; gap: 14px;
+  position: relative; overflow: hidden;
+}
+._bc-header::after {
+  content:''; position:absolute; top:0; left:-120%; width:55%; height:100%;
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,0.05),transparent);
+  animation: _bcShimmer 3.5s ease-in-out infinite; pointer-events:none;
+}
+@keyframes _bcShimmer { 0%{left:-120%} 55%{left:160%} 100%{left:160%} }
+
+._bc-hdr-avatar {
+  width: 52px; height: 52px; border-radius: 50%; flex-shrink:0;
+  display: flex; align-items:center; justify-content:center;
+  font-size: 1.5rem; overflow:hidden;
+  border: 2.5px solid rgba(255,255,255,0.2);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+._bc-hdr-avatar img { width:100%;height:100%;object-fit:cover; }
+._bc-hdr-info { flex:1; }
+._bc-hdr-info h3 {
+  margin:0; font-size:1.05rem; font-weight:900; color:#f1f5f9;
+}
+._bc-hdr-info p {
+  margin:4px 0 0; font-size:0.7rem; color:rgba(148,163,184,0.85);
+  font-family: monospace; letter-spacing:0.04em;
+}
+._bc-close {
+  width:34px;height:34px;flex-shrink:0;
+  background:rgba(255,255,255,0.09); border:1px solid rgba(255,255,255,0.14);
+  border-radius:10px; color:#cbd5e1; font-size:1rem; cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition: background 0.2s, transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+}
+._bc-close:hover { background:rgba(239,68,68,0.75); color:white; transform:rotate(90deg) scale(1.1); }
+
+._bc-body {
+  padding: 24px 22px 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 16px;
+}
+
+._bc-label {
+  font-size: 0.68rem; font-weight:800; text-transform:uppercase;
+  letter-spacing:0.06em; color:var(--text-muted,#94a3b8);
+  display: flex; align-items: center; gap: 6px;
+}
+._bc-label::before, ._bc-label::after {
+  content:''; flex:1; height:1px;
+  background: var(--border-color,#e8ecf0);
+  width: 40px;
+}
+
+#_bc-svg-wrap {
+  background: white; border-radius: 12px;
+  padding: 16px 20px 12px;
+  border: 1.5px solid var(--border-color,#e8ecf0);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+  width: 100%; box-sizing: border-box;
+  display: flex; flex-direction:column; align-items:center; gap: 8px;
+}
+#_bc-svg-wrap svg { max-width:100%; height:auto; }
+
+._bc-pin-hidden {
+  font-family: monospace; font-size: 1.1rem;
+  letter-spacing: 0.25em; color: var(--text-muted,#94a3b8);
+  user-select: none;
+}
+
+._bc-actions {
+  display: flex; gap: 10px; width: 100%;
+}
+._bc-actions button {
+  flex: 1; padding: 10px; border-radius: 10px;
+  font-size: 0.82rem; font-weight: 700; cursor: pointer;
+  border: none;
+  transition: transform 0.18s cubic-bezier(0.34,1.4,0.64,1),
+              box-shadow 0.18s, filter 0.15s;
+}
+._bc-actions button:hover { transform:translateY(-2px); box-shadow:0 5px 14px rgba(0,0,0,0.15); }
+._bc-btn-print { background:linear-gradient(135deg,#0ea5e9,#6366f1); color:white; }
+._bc-btn-close { background:var(--bg-card-2,#f4f7f8); color:var(--text-main); border:1.5px solid var(--border-color) !important; }
+
+/* dark mode */
+body.dark-mode .usr-card { background:#1e293b; border-color:rgba(255,255,255,0.09); }
+body.dark-mode .usr-card:hover { border-color:rgba(99,102,241,0.3); }
+body.dark-mode .usr-btn-edit, body.dark-mode .usr-btn-del { background:rgba(255,255,255,0.05); }
+body.dark-mode #_bc-svg-wrap { background:#f8fafc; border-color:#dde; }
+body.dark-mode ._bc-box { background:#1e293b; }
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   USER LIST REDESIGN + BARCODE PREVIEW
+   ══════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ── BUILD BARCODE MODAL (once) ──────────────────── */
+  function _buildBcModal() {
+    if (document.getElementById('_bc-modal')) return;
+    var el = document.createElement('div');
+    el.id = '_bc-modal';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.innerHTML = [
+      '<div class="_bc-box">',
+        '<div class="_bc-header">',
+          '<div class="_bc-hdr-avatar" id="_bc-hdr-avatar">🧑</div>',
+          '<div class="_bc-hdr-info">',
+            '<h3 id="_bc-hdr-name">Utilisateur</h3>',
+            '<p id="_bc-hdr-id">#USR-0000</p>',
+          '</div>',
+          '<button class="_bc-close" id="_bc-close" aria-label="Fermer">✕</button>',
+        '</div>',
+        '<div class="_bc-body">',
+          '<div class="_bc-label">Code d\'accès · Scan ou saisie</div>',
+          '<div id="_bc-svg-wrap">',
+            '<svg id="_bc-svg"></svg>',
+            '<div class="_bc-pin-hidden" id="_bc-pin-dots">● ● ● ●</div>',
+          '</div>',
+          '<div class="_bc-actions">',
+            '<button class="_bc-btn-print" onclick="_bcPrint()">🖨️ Imprimer / Télécharger</button>',
+            '<button class="_bc-btn-close" onclick="_closeBcModal()">✕ Fermer</button>',
+          '</div>',
+        '</div>',
+      '</div>',
+    ].join('');
+    document.body.appendChild(el);
+
+    /* close on backdrop */
+    el.addEventListener('click', function (e) {
+      if (e.target === el) _closeBcModal();
+    });
+    document.getElementById('_bc-close').addEventListener('click', _closeBcModal);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && el.classList.contains('active')) _closeBcModal();
+    });
+  }
+
+  /* ── OPEN ─────────────────────────────────────── */
+  window._openUserBarcodePreview = function (userId) {
+    _buildBcModal();
+    var user = (typeof users !== 'undefined' ? users : []).find(function (u) {
+      return u.id === userId || u.username === userId;
+    });
+    if (!user) { console.warn('User not found:', userId); return; }
+
+    var modal = document.getElementById('_bc-modal');
+    var box   = modal.querySelector('._bc-box');
+
+    /* reset anim */
+    box.style.animation = 'none'; void box.offsetHeight; box.style.animation = '';
+    modal.classList.remove('closing');
+
+    /* populate header */
+    var avatarEl = document.getElementById('_bc-hdr-avatar');
+    var nameEl   = document.getElementById('_bc-hdr-name');
+    var idEl     = document.getElementById('_bc-hdr-id');
+    var dotsEl   = document.getElementById('_bc-pin-dots');
+
+    avatarEl.innerHTML = user.avatar
+      ? '<img src="' + user.avatar + '" alt="">'
+      : (user.role === 'admin' ? '👑' : '💼');
+    avatarEl.style.background = user.role === 'admin'
+      ? 'linear-gradient(135deg,#6366f1,#4f46e5)'
+      : 'linear-gradient(135deg,#0ea5e9,#0369a1)';
+
+    nameEl.textContent = user.username;
+    idEl.textContent   = '#' + (user.id || '???');
+
+    /* masked dots matching PIN length */
+    var pinLen = (user.pin || '').length;
+    dotsEl.textContent = Array(pinLen).fill('●').join(' ') || '● ● ● ●';
+
+    /* generate barcode */
+    var svg = document.getElementById('_bc-svg');
+    try {
+      JsBarcode(svg, String(user.pin || user.id), {
+        format: 'CODE128',
+        lineColor: '#1e293b',
+        width: 2.2,
+        height: 72,
+        displayValue: false,
+        margin: 0,
+        background: 'transparent',
+      });
+    } catch (e) {
+      svg.innerHTML = '<text x="10" y="40" fill="#e74c3c" font-size="12">Erreur génération code-barres</text>';
+    }
+
+    modal.classList.add('active');
+  };
+
+  /* ── CLOSE ─────────────────────────────────────── */
+  window._closeBcModal = function () {
+    var modal = document.getElementById('_bc-modal');
+    if (!modal) return;
+    modal.classList.add('closing');
+    setTimeout(function () { modal.classList.remove('active', 'closing'); }, 200);
+  };
+
+  /* ── PRINT ─────────────────────────────────────── */
+  window._bcPrint = function () {
+    var nameEl = document.getElementById('_bc-hdr-name');
+    var idEl   = document.getElementById('_bc-hdr-id');
+    var svg    = document.getElementById('_bc-svg');
+    var dotsEl = document.getElementById('_bc-pin-dots');
+
+    var name = nameEl ? nameEl.textContent : '?';
+    var uid  = idEl  ? idEl.textContent   : '?';
+    var svgContent = svg ? svg.outerHTML  : '';
+    var dots = dotsEl ? dotsEl.textContent : '';
+
+    var w = window.open('', '_blank', 'width=480,height=380');
+    if (!w) { alert('Autorisez les popups pour imprimer.'); return; }
+    w.document.write([
+      '<!DOCTYPE html><html><head><meta charset="UTF-8">',
+      '<title>Badge · ' + name + '</title>',
+      '<style>',
+        'body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;',
+             'align-items:center;justify-content:center;min-height:100vh;margin:0;',
+             'background:#fff;color:#1e293b;}',
+        '.badge{border:2px solid #e8ecf0;border-radius:16px;padding:24px 28px;',
+               'text-align:center;max-width:320px;box-shadow:0 4px 20px rgba(0,0,0,0.08);}',
+        'h2{margin:0 0 4px;font-size:1.2rem;}',
+        '.uid{font-family:monospace;font-size:0.75rem;color:#6366f1;',
+             'background:rgba(99,102,241,0.1);padding:3px 10px;border-radius:20px;',
+             'display:inline-block;margin-bottom:14px;}',
+        '.bc-wrap{background:#fff;padding:8px;border:1px solid #e8ecf0;border-radius:8px;}',
+        '.bc-wrap svg{display:block;width:100%;height:auto;}',
+        '.dots{font-size:1.1rem;letter-spacing:0.25em;color:#94a3b8;margin-top:10px;}',
+        '.footer{font-size:0.7rem;color:#94a3b8;margin-top:16px;}',
+      '</style></head><body>',
+      '<div class="badge">',
+        '<h2>' + name + '</h2>',
+        '<span class="uid">' + uid + '</span>',
+        '<div class="bc-wrap">' + svgContent + '</div>',
+        '<div class="dots">' + dots + '</div>',
+        '<div class="footer">⚡ COVO Pro · Badge d\'accès</div>',
+      '</div>',
+      '<script>window.onload=function(){window.print();}<\/script>',
+      '</body></html>',
+    ].join(''));
+    w.document.close();
+  };
+
+  /* ── NEW renderUserList ──────────────────────────── */
+  window.renderUserList = function () {
+    /* preserve original admin-visibility logic */
+    var userSection = document.getElementById('admin-users-section');
+    var isAdm = (typeof isAdmin !== 'undefined') ? isAdmin : true;
+    if (userSection) userSection.style.display = isAdm ? 'block' : 'none';
+    if (!isAdm) return;
+
+    var list = document.getElementById('user-list');
+    if (!list) return;
+
+    var usrs = (typeof users !== 'undefined') ? users : [];
+    if (!usrs.length) {
+      list.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:18px;">Aucun utilisateur</p>';
+      return;
+    }
+
+    list.innerHTML = usrs.map(function (u) {
+      var isAdminRole = u.role === 'admin';
+      var accentColor = isAdminRole ? '#6366f1' : '#0ea5e9';
+      var avatarBg    = isAdminRole
+        ? 'linear-gradient(135deg,#6366f1,#4f46e5)'
+        : 'linear-gradient(135deg,#0ea5e9,#0369a1)';
+      var roleLabel   = isAdminRole ? '👑 Admin' : '💼 Caissier';
+      var roleBg      = isAdminRole ? 'rgba(99,102,241,0.12)'  : 'rgba(14,165,233,0.12)';
+      var roleColor   = isAdminRole ? '#6366f1' : '#0369a1';
+
+      var avatarHtml  = u.avatar
+        ? '<img src="' + u.avatar + '" alt="">'
+        : (isAdminRole ? '👑' : '💼');
+
+      var usrId = u.id ? u.id : ('USR-' + String(usrs.indexOf(u) + 1).padStart(4, '0'));
+
+      /* Nom affiché : username (may contain full name) */
+      var displayName = u.username || '—';
+
+      var deleteBtn = usrs.length > 1
+        ? '<button class="usr-btn usr-btn-del" onclick="deleteUser(\'' + u.username + '\')" title="Supprimer">🗑️</button>'
+        : '';
+
+      return [
+        '<div class="usr-card" style="--_usr-accent:' + accentColor + '">',
+          /* avatar */
+          '<div class="usr-avatar" style="background:' + avatarBg + '">',
+            avatarHtml,
+          '</div>',
+
+          /* info */
+          '<div class="usr-info">',
+            '<div class="usr-name">',
+              displayName,
+              '<span class="usr-id-badge">#' + usrId + '</span>',
+            '</div>',
+            '<div class="usr-meta">',
+              '<span class="usr-role-badge" style="background:' + roleBg + ';color:' + roleColor + '">' + roleLabel + '</span>',
+              (u.email ? '<span style="font-size:0.68rem;color:var(--text-muted,#94a3b8);">✉️ ' + u.email + '</span>' : ''),
+            '</div>',
+          '</div>',
+
+          /* actions */
+          '<div class="usr-actions">',
+            '<button class="usr-btn usr-btn-preview" ',
+              'onclick="_openUserBarcodePreview(\'' + usrId + '\')" ',
+              'title="Aperçu code-barres">',
+              '🔲 Aperçu',
+            '</button>',
+            '<button class="usr-btn usr-btn-edit" onclick="editUser(\'' + u.username + '\')" title="Modifier">✏️</button>',
+            deleteBtn,
+          '</div>',
+        '</div>',
+      ].join('');
+    }).join('');
+  };
+
+  /* pre-build modal DOM silently */
+  _buildBcModal();
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     ASSOCIATION ADMIN ↔ CAISSIER
+     ══════════════════════════════════════════════════ -->
+<style>
+/* ── ROWS GESTIONNAIRE ────────────────────────────── */
+._assoc-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 14px; margin-bottom: 8px;
+  background: var(--bg-card, #fff);
+  border-radius: 10px;
+  border: 1.5px solid var(--border-color, #e8ecf0);
+  transition: border-color 0.2s, box-shadow 0.18s;
+}
+._assoc-row:hover { box-shadow: 0 3px 12px rgba(0,0,0,0.07); }
+._assoc-row.bound { border-color: rgba(99,102,241,0.35); }
+
+._assoc-avatar {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; font-size: 1rem;
+  background: linear-gradient(135deg,#0ea5e9,#0369a1);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+._assoc-avatar img { width:100%; height:100%; object-fit:cover; }
+
+._assoc-info { flex: 1; min-width: 0; }
+._assoc-name {
+  font-weight: 700; font-size: 0.84rem;
+  color: var(--text-main, #1e293b);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+._assoc-meta { display: flex; align-items: center; gap: 5px; margin-top: 3px; flex-wrap: wrap; }
+._assoc-id-badge {
+  font-family: monospace; font-size: 0.65rem; color: #6366f1;
+  background: rgba(99,102,241,0.08); padding: 1px 6px; border-radius: 10px;
+}
+._assoc-owner-badge {
+  font-size: 0.62rem; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+}
+._assoc-owner-badge.bound {
+  background: rgba(99,102,241,0.1); color: #6366f1;
+  border: 1px solid rgba(99,102,241,0.2);
+}
+._assoc-owner-badge.free {
+  background: rgba(148,163,184,0.1); color: #94a3b8;
+  border: 1px solid rgba(148,163,184,0.2);
+}
+
+._assoc-select {
+  padding: 6px 10px;
+  border: 1.5px solid var(--border-color, #e0e0e0);
+  border-radius: 8px; font-size: 0.76rem;
+  background: var(--input-bg, #fff); color: var(--text-main);
+  cursor: pointer;
+  transition: border-color 0.18s, box-shadow 0.18s;
+  flex-shrink: 0; max-width: 180px;
+}
+._assoc-select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+}
+
+/* dark mode */
+body.dark-mode ._assoc-row { background: #1e293b; border-color: rgba(255,255,255,0.08); }
+body.dark-mode ._assoc-row.bound { border-color: rgba(99,102,241,0.3); }
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   ASSOCIATION ADMIN ↔ CAISSIER — Core
+   ══════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var ASSOC_KEY = 'covo_admin_cashier_links'; // { cashierId: adminId | '' }
+
+  /* ─── STORAGE HELPERS ──────────────────────────────── */
+  window._assocGetLinks = function () {
+    try { return JSON.parse(localStorage.getItem(ASSOC_KEY) || '{}'); } catch (e) { return {}; }
+  };
+  window._assocSaveLinks = function (links) {
+    localStorage.setItem(ASSOC_KEY, JSON.stringify(links));
+  };
+
+  /* ─── VISIBILITY CHECK ─────────────────────────────── */
+  window._assocCanSee = function (cashierId) {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu) return true;
+    if (cu.isMaster) return true;                        // master voit tout
+    if (cu.role !== 'admin') return false;               // caissier ne gère pas
+    var links = window._assocGetLinks();
+    var ownerId = links[cashierId];
+    if (!ownerId) return true;                           // pas de restriction
+    return ownerId === (cu.id || cu.username || '');     // propriétaire uniquement
+  };
+
+  /* ─── SET / REMOVE ASSOCIATION ─────────────────────── */
+  window._assocSetOwner = function (cashierId, adminId) {
+    var links = window._assocGetLinks();
+    if (adminId) { links[cashierId] = adminId; }
+    else          { delete links[cashierId]; }
+    window._assocSaveLinks(links);
+    window._assocRenderManager();
+    if (typeof window.renderUserList    === 'function') window.renderUserList();
+    if (typeof window.renderPermUserList === 'function') window.renderPermUserList();
+    if (typeof showScanToast === 'function') {
+      showScanToast(adminId ? '🔗 Association enregistrée' : '🌐 Caissier rendu public');
+    }
+  };
+
+  /* ─── RENDER MANAGER UI ────────────────────────────── */
+  window._assocRenderManager = function () {
+    var container = document.getElementById('_assoc-content');
+    if (!container) return;
+
+    var usrs     = (typeof users !== 'undefined') ? users : [];
+    var admins   = usrs.filter(function (u) { return u.role === 'admin' && !u.isMaster; });
+    var cashiers = usrs.filter(function (u) { return u.role === 'caissier'; });
+    var links    = window._assocGetLinks();
+
+    if (!cashiers.length) {
+      container.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:12px;font-size:0.8rem;">Aucun caissier enregistré.</p>';
+      return;
+    }
+    if (!admins.length) {
+      container.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:12px;font-size:0.8rem;">Aucun administrateur disponible pour créer une association.</p>';
+      return;
+    }
+
+    container.innerHTML = cashiers.map(function (c) {
+      var cid     = c.id || c.username || '';
+      var ownerId = links[cid] || '';
+      var owner   = admins.find(function (a) { return (a.id || a.username || '') === ownerId; });
+      var isBound = !!owner;
+
+      var avatarHtml = c.avatar
+        ? '<img src="' + c.avatar + '" alt="">'
+        : '💼';
+
+      var opts  = '<option value="">👥 Tous les admins (public)</option>';
+      opts += admins.map(function (a) {
+        var aid = a.id || a.username || '';
+        return '<option value="' + _esc(aid) + '"' + (ownerId === aid ? ' selected' : '') + '>👑 ' + _esc(a.username) + '</option>';
+      }).join('');
+
+      var badgeTxt   = isBound ? ('🔗 ' + owner.username) : '🌐 Public';
+      var badgeCls   = isBound ? 'bound' : 'free';
+
+      return [
+        '<div class="_assoc-row' + (isBound ? ' bound' : '') + '">',
+          '<div class="_assoc-avatar">' + avatarHtml + '</div>',
+          '<div class="_assoc-info">',
+            '<div class="_assoc-name">' + _esc(c.username) + '</div>',
+            '<div class="_assoc-meta">',
+              '<span class="_assoc-id-badge">#' + _esc(cid) + '</span>',
+              '<span class="_assoc-owner-badge ' + badgeCls + '">' + badgeTxt + '</span>',
+            '</div>',
+          '</div>',
+          '<select class="_assoc-select"',
+            ' onchange="_assocSetOwner(\'' + _esc(cid) + '\', this.value)"',
+            ' title="Associer à un administrateur">',
+            opts,
+          '</select>',
+        '</div>',
+      ].join('');
+    }).join('');
+  };
+
+  function _esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  /* ─── INJECT CONTAINER INTO admin-sec-dev-body ──────── */
+  function _assocInjectContainer() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || !cu.isMaster) return;                     // isMaster uniquement
+
+    var devBody = document.getElementById('admin-sec-dev-body');
+    if (!devBody || document.getElementById('_assoc-wrapper')) return;
+
+    var wrapper = document.createElement('div');
+    wrapper.id  = '_assoc-wrapper';
+    wrapper.innerHTML = [
+      '<div style="background:var(--bg-body,#f8fafc);',
+        'border:1.5px solid rgba(99,102,241,0.35);border-radius:12px;',
+        'padding:18px 20px;margin-bottom:16px;">',
+
+        /* Header */
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">',
+          '<div style="width:30px;height:30px;border-radius:8px;flex-shrink:0;',
+            'background:linear-gradient(135deg,#6366f1,#4f46e5);',
+            'display:flex;align-items:center;justify-content:center;font-size:0.9rem;">🔗</div>',
+          '<div>',
+            '<div style="font-size:0.72rem;font-weight:800;color:#6366f1;',
+              'text-transform:uppercase;letter-spacing:0.8px;">Associations Admin ↔ Caissier</div>',
+            '<div style="font-size:0.65rem;color:var(--text-muted,#888);margin-top:1px;">',
+              'Restreindre la visibilité d\'un caissier à un seul administrateur',
+            '</div>',
+          '</div>',
+        '</div>',
+
+        /* Info banner */
+        '<div style="background:rgba(99,102,241,0.06);border-left:3px solid #6366f1;',
+          'border-radius:6px;padding:9px 12px;margin-bottom:12px;font-size:0.75rem;color:var(--text-main);">',
+          '👥 <strong>Public</strong> = visible par tous les admins.<br>',
+          '🔗 <strong>Associé</strong> = visible et gérable uniquement par l\'admin sélectionné.',
+        '</div>',
+
+        /* Content area */
+        '<div id="_assoc-content"></div>',
+      '</div>',
+    ].join('');
+
+    devBody.insertBefore(wrapper, devBody.firstChild);
+    window._assocRenderManager();
+  }
+
+  /* ─── NEW renderUserList (design v12 + filtre association) ── */
+  window.renderUserList = function () {
+    var userSection = document.getElementById('admin-users-section');
+    var isAdm = (typeof isAdmin !== 'undefined') ? isAdmin : true;
+    if (userSection) userSection.style.display = isAdm ? 'block' : 'none';
+    if (!isAdm) return;
+
+    var list = document.getElementById('user-list');
+    if (!list) return;
+
+    var usrs  = (typeof users !== 'undefined') ? users : [];
+    var links = window._assocGetLinks();
+    var cu    = (typeof currentUser !== 'undefined') ? currentUser : null;
+
+    /* Filter: non-master admins only see their own cashiers */
+    var visible = usrs.filter(function (u) {
+      if (u.role !== 'caissier') return true;
+      return window._assocCanSee(u.id || u.username || '');
+    });
+
+    if (!visible.length) {
+      list.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:18px;">Aucun utilisateur visible</p>';
+      return;
+    }
+
+    list.innerHTML = visible.map(function (u) {
+      var isAdminRole = u.role === 'admin';
+      var accent  = isAdminRole ? '#6366f1' : '#0ea5e9';
+      var avBg    = isAdminRole ? 'linear-gradient(135deg,#6366f1,#4f46e5)' : 'linear-gradient(135deg,#0ea5e9,#0369a1)';
+      var roleLbl = isAdminRole ? '👑 Admin' : '💼 Caissier';
+      var roleBg  = isAdminRole ? 'rgba(99,102,241,0.12)' : 'rgba(14,165,233,0.12)';
+      var roleClr = isAdminRole ? '#6366f1' : '#0369a1';
+      var avHtml  = u.avatar ? '<img src="' + u.avatar + '" alt="">' : (isAdminRole ? '👑' : '💼');
+      var uid     = u.id || ('USR-' + String(usrs.indexOf(u) + 1).padStart(4, '0'));
+
+      /* Association badge (visible only to master) */
+      var assocBadge = '';
+      if (!isAdminRole && cu && cu.isMaster) {
+        var ownerId = links[uid];
+        if (ownerId) {
+          var ownerU = usrs.find(function (x) { return (x.id || x.username || '') === ownerId; });
+          assocBadge = '<span style="font-size:0.6rem;font-weight:700;color:#6366f1;' +
+            'background:rgba(99,102,241,0.1);padding:1px 6px;border-radius:8px;' +
+            'border:1px solid rgba(99,102,241,0.2);margin-left:5px;">' +
+            '🔗 ' + (ownerU ? ownerU.username : ownerId) + '</span>';
+        }
+      }
+
+      var deleteBtn = (visible.length > 1)
+        ? '<button class="usr-btn usr-btn-del" onclick="deleteUser(\'' + u.username + '\')" title="Supprimer">🗑️</button>'
+        : '';
+
+      return [
+        '<div class="usr-card" style="--_usr-accent:' + accent + '">',
+          '<div class="usr-avatar" style="background:' + avBg + '">' + avHtml + '</div>',
+          '<div class="usr-info">',
+            '<div class="usr-name">' + u.username +
+              '<span class="usr-id-badge">#' + uid + '</span>' + assocBadge +
+            '</div>',
+            '<div class="usr-meta">',
+              '<span class="usr-role-badge" style="background:' + roleBg + ';color:' + roleClr + '">' + roleLbl + '</span>',
+              (u.email ? '<span style="font-size:0.68rem;color:var(--text-muted,#94a3b8);">✉️ ' + u.email + '</span>' : ''),
+            '</div>',
+          '</div>',
+          '<div class="usr-actions">',
+            '<button class="usr-btn usr-btn-preview" onclick="_openUserBarcodePreview(\'' + uid + '\')" title="Aperçu code-barres">🔲 Aperçu</button>',
+            '<button class="usr-btn usr-btn-edit" onclick="editUser(\'' + u.username + '\')" title="Modifier">✏️</button>',
+            deleteBtn,
+          '</div>',
+        '</div>',
+      ].join('');
+    }).join('');
+  };
+
+  /* ─── FILTER perm-user-list via MutationObserver ─────── */
+  function _filterPermList() {
+    var el = document.getElementById('perm-user-list');
+    if (!el) return;
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || cu.isMaster) return;                      // master non filtré
+
+    el.querySelectorAll('[onclick*="selectPermUser"]').forEach(function (card) {
+      var m = (card.getAttribute('onclick') || '').match(/selectPermUser\(['"]([^'"]+)['"]\)/);
+      if (!m) return;
+      card.style.display = window._assocCanSee(m[1]) ? '' : 'none';
+    });
+  }
+
+  function _attachPermObserver() {
+    var el = document.getElementById('perm-user-list');
+    if (!el || el._assocObserved) return;
+    new MutationObserver(_filterPermList).observe(el, { childList: true });
+    el._assocObserved = true;
+  }
+
+  /* ─── GATE deleteUser ──────────────────────────────────── */
+  var _origDel = window.deleteUser;
+  window.deleteUser = function (username) {
+    var u = ((typeof users !== 'undefined') ? users : []).find(function (x) { return x.username === username; });
+    if (u && u.role === 'caissier' && !window._assocCanSee(u.id || u.username || '')) {
+      if (typeof showScanToast === 'function') showScanToast('⛔ Accès refusé — caissier réservé à un autre admin');
+      return;
+    }
+    if (typeof _origDel === 'function') _origDel(username);
+  };
+
+  /* ─── GATE editUser ────────────────────────────────────── */
+  var _origEdit = window.editUser;
+  window.editUser = function (username) {
+    var u = ((typeof users !== 'undefined') ? users : []).find(function (x) { return x.username === username; });
+    if (u && u.role === 'caissier' && !window._assocCanSee(u.id || u.username || '')) {
+      if (typeof showScanToast === 'function') showScanToast('⛔ Accès refusé — caissier réservé à un autre admin');
+      return;
+    }
+    if (typeof _origEdit === 'function') _origEdit(username);
+  };
+
+  /* ─── GATE selectPermUser ──────────────────────────────── */
+  var _origSPU = window.selectPermUser;
+  if (typeof _origSPU === 'function') {
+    window.selectPermUser = function (userId) {
+      if (!window._assocCanSee(userId)) {
+        if (typeof showScanToast === 'function') showScanToast('⛔ Accès refusé à ce caissier');
+        return;
+      }
+      _origSPU(userId);
+    };
+  }
+
+  /* ─── HOOKS ─────────────────────────────────────────────── */
+  /* Hook toggleAdminSection pour injecter au déploiement dev */
+  var _origTAS = window.toggleAdminSection;
+  window.toggleAdminSection = (function (_inner) {
+    return function (sid) {
+      _inner(sid);
+      if (sid === 'admin-sec-dev-body') {
+        setTimeout(_assocInjectContainer, 120);
+        setTimeout(window._assocRenderManager, 160);
+      }
+    };
+  }(_origTAS));
+
+  /* Hook toggleAdminModal pour observer perm-user-list */
+  var _origTAM = window.toggleAdminModal;
+  if (typeof _origTAM === 'function') {
+    window.toggleAdminModal = (function (_inner) {
+      return function () {
+        _inner.apply(this, arguments);
+        setTimeout(function () {
+          _assocInjectContainer();
+          _attachPermObserver();
+        }, 180);
+      };
+    }(_origTAM));
+  }
+
+  /* Init au chargement */
+  setTimeout(function () {
+    _assocInjectContainer();
+    _attachPermObserver();
+  }, 600);
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     ASSOCIATIONS — SECTION DÉDIÉE + FIX ACCESSIBILITÉ
+     ══════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+
+  /* ─── INJECTE UNE SECTION DÉDIÉE dans le panneau admin ─────── */
+  function _assocInjectSection() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || !cu.isMaster) return;
+
+    /* Le panneau admin est le div direct dans admin-sections-container */
+    var adminPanel = document.getElementById('admin-panel');
+    if (!adminPanel) return;
+    if (document.getElementById('_assoc-main-section')) {
+      /* Déjà injecté : juste rafraîchir le contenu */
+      window._assocRenderManager2 && window._assocRenderManager2();
+      return;
+    }
+
+    /* ── Trouver le conteneur des sections (div padding) ── */
+    /* C'est le dernier div enfant du panneau admin (celui avec padding:16px) */
+    var sectionsWrap = adminPanel.querySelector('div[style*="padding:16px"]') ||
+                       adminPanel.lastElementChild;
+    if (!sectionsWrap) return;
+
+    /* ── Créer la section card ── */
+    var sec = document.createElement('div');
+    sec.id        = '_assoc-main-section';
+    sec.className = 'admin-section';
+    sec.style.cssText = 'border:2px solid rgba(99,102,241,0.35);' +
+      'background:linear-gradient(135deg,rgba(99,102,241,0.03),rgba(139,92,246,0.03));';
+
+    sec.innerHTML = [
+      /* Header cliquable */
+      '<div class="admin-section-header" onclick="toggleAdminSection(\'_assoc-body\')"',
+      '  style="border-left:4px solid #6366f1;">',
+      '  <div style="display:flex;align-items:center;gap:10px;flex:1;">',
+      '    <div style="width:32px;height:32px;border-radius:9px;flex-shrink:0;',
+      '         background:linear-gradient(135deg,#6366f1,#4f46e5);',
+      '         display:flex;align-items:center;justify-content:center;font-size:0.95rem;">🔗</div>',
+      '    <div>',
+      '      <div style="font-weight:800;font-size:0.9rem;color:var(--text-main);">Associations Admin ↔ Caissier</div>',
+      '      <div style="font-size:0.68rem;color:var(--text-muted,#888);">Restreindre la visibilité d\'un caissier à un seul admin</div>',
+      '    </div>',
+      '  </div>',
+      '  <button class="deploy-toggle-btn deployed" id="btn-_assoc-body"',
+      '    onclick="event.stopPropagation();toggleAdminSection(\'_assoc-body\')">',
+      '    <span class="arrow" style="transform:rotate(180deg)">&#9660;</span>',
+      '    <span class="btn-label">Replier</span>',
+      '  </button>',
+      '</div>',
+
+      /* Corps — pré-ouvert */
+      '<div class="admin-section-body open" id="_assoc-body"',
+      '  style="max-height:9999px;opacity:1;padding:18px 20px 20px;">',
+
+      '  <div style="background:rgba(99,102,241,0.06);border-left:3px solid #6366f1;',
+      '    border-radius:6px;padding:9px 12px;margin-bottom:14px;font-size:0.76rem;',
+      '    color:var(--text-main);">',
+      '    👥 <strong>Public</strong> = visible par tous les admins.&nbsp;&nbsp;',
+      '    🔗 <strong>Associé</strong> = visible uniquement par l\'admin désigné.',
+      '  </div>',
+
+      '  <div id="_assoc-content2"></div>',
+      '</div>',
+    ].join('');
+
+    /* Insérer avant le dernier élément (bouton fermer éventuel) */
+    sectionsWrap.appendChild(sec);
+
+    /* Remplir le contenu */
+    window._assocRenderManager2();
+  }
+
+  /* ─── RENDER dans la section dédiée ──────────────────────── */
+  window._assocRenderManager2 = function () {
+    var container = document.getElementById('_assoc-content2');
+    if (!container) return;
+
+    var usrs     = (typeof users !== 'undefined') ? users : [];
+    var admins   = usrs.filter(function (u) { return u.role === 'admin' && !u.isMaster; });
+    var cashiers = usrs.filter(function (u) { return u.role === 'caissier'; });
+    var links    = window._assocGetLinks ? window._assocGetLinks() : {};
+
+    if (!cashiers.length) {
+      container.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:14px;font-size:0.8rem;">Aucun caissier enregistré.</p>';
+      return;
+    }
+    if (!admins.length) {
+      container.innerHTML = '<p style="color:var(--text-muted,#94a3b8);text-align:center;padding:14px;font-size:0.8rem;">Aucun administrateur disponible (hors compte Dev).</p>';
+      return;
+    }
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    container.innerHTML = cashiers.map(function (c) {
+      var cid     = c.id || c.username || '';
+      var ownerId = links[cid] || '';
+      var owner   = admins.find(function (a) { return (a.id || a.username || '') === ownerId; });
+      var isBound = !!owner;
+
+      var avHtml = c.avatar
+        ? '<img src="' + c.avatar + '" style="width:100%;height:100%;object-fit:cover;" alt="">'
+        : '💼';
+
+      var badgeHtml = isBound
+        ? '<span style="font-size:0.63rem;font-weight:700;color:#6366f1;background:rgba(99,102,241,0.1);' +
+          'padding:2px 7px;border-radius:10px;border:1px solid rgba(99,102,241,0.2);">🔗 ' + esc(owner.username) + '</span>'
+        : '<span style="font-size:0.63rem;font-weight:700;color:#94a3b8;background:rgba(148,163,184,0.1);' +
+          'padding:2px 7px;border-radius:10px;border:1px solid rgba(148,163,184,0.2);">🌐 Public</span>';
+
+      var opts = '<option value="">👥 Tous les admins (public)</option>';
+      opts += admins.map(function (a) {
+        var aid = a.id || a.username || '';
+        return '<option value="' + esc(aid) + '"' + (ownerId === aid ? ' selected' : '') + '>👑 ' + esc(a.username) + '</option>';
+      }).join('');
+
+      var borderColor = isBound ? 'rgba(99,102,241,0.35)' : 'var(--border-color,#e8ecf0)';
+
+      return [
+        '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:9px;',
+          'background:var(--bg-card,#fff);border-radius:12px;',
+          'border:1.5px solid ' + borderColor + ';',
+          'box-shadow:' + (isBound ? '0 2px 10px rgba(99,102,241,0.1)' : 'none') + ';',
+          'transition:border-color 0.2s,box-shadow 0.2s;">',
+
+          /* Avatar */
+          '<div style="width:40px;height:40px;border-radius:50%;flex-shrink:0;overflow:hidden;',
+            'background:linear-gradient(135deg,#0ea5e9,#0369a1);',
+            'display:flex;align-items:center;justify-content:center;font-size:1.1rem;',
+            'box-shadow:0 2px 8px rgba(0,0,0,0.12);">',
+            avHtml,
+          '</div>',
+
+          /* Infos */
+          '<div style="flex:1;min-width:0;">',
+            '<div style="font-weight:800;font-size:0.88rem;color:var(--text-main,#1e293b);',
+              'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">', esc(c.username), '</div>',
+            '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap;">',
+              '<span style="font-family:monospace;font-size:0.65rem;color:#6366f1;',
+                'background:rgba(99,102,241,0.08);padding:1px 7px;border-radius:10px;">#', esc(cid), '</span>',
+              badgeHtml,
+            '</div>',
+          '</div>',
+
+          /* Select admin */
+          '<select style="padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);',
+            'border-radius:9px;font-size:0.76rem;background:var(--input-bg,#fff);',
+            'color:var(--text-main);cursor:pointer;min-width:150px;',
+            'transition:border-color 0.18s,box-shadow 0.18s;"',
+            ' onfocus="this.style.borderColor=\'#6366f1\';this.style.boxShadow=\'0 0 0 3px rgba(99,102,241,0.12)\'"',
+            ' onblur="this.style.borderColor=\'var(--border-color,#e0e0e0)\';this.style.boxShadow=\'\'"',
+            ' onchange="_assocSetOwner2(\'' + esc(cid) + '\', this.value)"',
+            ' title="Associer ce caissier à un administrateur">',
+            opts,
+          '</select>',
+        '</div>',
+      ].join('');
+    }).join('');
+  };
+
+  /* ─── SET OWNER (version 2 pour la section dédiée) ──────── */
+  window._assocSetOwner2 = function (cashierId, adminId) {
+    /* Réutilise le storage de _assocSetOwner */
+    if (typeof window._assocGetLinks === 'function' &&
+        typeof window._assocSaveLinks === 'function') {
+      var links = window._assocGetLinks();
+      if (adminId) { links[cashierId] = adminId; }
+      else          { delete links[cashierId]; }
+      window._assocSaveLinks(links);
+    } else {
+      /* Fallback direct */
+      try {
+        var l = JSON.parse(localStorage.getItem('covo_admin_cashier_links') || '{}');
+        if (adminId) { l[cashierId] = adminId; } else { delete l[cashierId]; }
+        localStorage.setItem('covo_admin_cashier_links', JSON.stringify(l));
+      } catch (e) {}
+    }
+    window._assocRenderManager2();
+    /* Sync avec la section dev si elle existe */
+    if (typeof window._assocRenderManager === 'function') window._assocRenderManager();
+    if (typeof window.renderUserList === 'function') window.renderUserList();
+    if (typeof showScanToast === 'function') {
+      showScanToast(adminId ? '🔗 Association enregistrée' : '🌐 Caissier rendu public');
+    }
+  };
+
+  /* ─── AJOUTER LE BOUTON DANS LA GRILLE DE NAVIGATION ─────── */
+  function _assocAddNavBtn() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || !cu.isMaster) return;
+
+    var adminPanel = document.getElementById('admin-panel');
+    if (!adminPanel || document.getElementById('_assoc-nav-btn')) return;
+
+    /* Trouver la grille de navigation rapide (grid avec les boutons 🎨 ➕ etc.) */
+    var navGrid = adminPanel.querySelector('div[style*="grid-template-columns"]');
+    if (!navGrid) return;
+
+    var btn = document.createElement('button');
+    btn.id = '_assoc-nav-btn';
+    btn.style.cssText = [
+      'display:flex;flex-direction:column;align-items:center;gap:5px',
+      'padding:9px 6px',
+      'background:rgba(99,102,241,0.18)',
+      'border:1px solid rgba(99,102,241,0.4)',
+      'border-radius:11px;cursor:pointer;transition:all 0.18s',
+    ].join(';');
+    btn.innerHTML = '<span style="font-size:1.1rem;">🔗</span>' +
+                    '<span style="font-size:0.66rem;font-weight:700;color:rgba(196,181,253,0.95);">Assoc.</span>';
+    btn.title = 'Associations Admin ↔ Caissier';
+    btn.onmouseover = function () { this.style.background = 'rgba(99,102,241,0.4)'; };
+    btn.onmouseout  = function () { this.style.background = 'rgba(99,102,241,0.18)'; };
+    btn.onclick = function () {
+      var sec = document.getElementById('_assoc-main-section');
+      if (!sec) { _assocInjectSection(); sec = document.getElementById('_assoc-main-section'); }
+      if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      var body = document.getElementById('_assoc-body');
+      if (body && !body.classList.contains('open')) {
+        if (typeof toggleAdminSection === 'function') toggleAdminSection('_assoc-body');
+      }
+    };
+    navGrid.appendChild(btn);
+  }
+
+  /* ─── HOOK GLOBAL ────────────────────────────────────────── */
+  function _assocFullInit() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || !cu.isMaster) return;
+    _assocInjectSection();
+    _assocAddNavBtn();
+    /* Met à jour aussi la section dans admin-sec-dev si elle existe */
+    if (typeof window._assocRenderManager === 'function') window._assocRenderManager();
+  }
+
+  /* Wrap toggleAdminModal pour déclencher l'init au moment de l'ouverture */
+  var _prev = window.toggleAdminModal;
+  if (typeof _prev === 'function') {
+    window.toggleAdminModal = (function (_inner) {
+      return function () {
+        _inner.apply(this, arguments);
+        var m = document.getElementById('admin-modal');
+        if (m && m.classList.contains('active')) {
+          setTimeout(_assocFullInit, 200);
+        }
+      };
+    }(_prev));
+  }
+
+  /* Fallback : retry au cas où le panel est déjà ouvert */
+  setTimeout(_assocFullInit, 800);
+
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════
+     BASCULEMENT INTELLIGENT ADMIN → CAISSIER
+     ══════════════════════════════════════════════════ -->
+<style>
+/* ── OVERLAY BASE ─────────────────────────────────── */
+#_smart-switch-overlay {
+  position: fixed; inset: 0; z-index: 9800;
+  background: rgba(8,12,24,0.88);
+  backdrop-filter: blur(14px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+@keyframes _ssSlideIn {
+  from { opacity:0; transform: scale(0.94) translateY(-18px); }
+  to   { opacity:1; transform: scale(1) translateY(0); }
+}
+#_smart-switch-overlay ._ss-box {
+  animation: _ssSlideIn 0.34s cubic-bezier(0.34,1.18,0.64,1) forwards;
+  width: 100%; max-width: 440px;
+  border-radius: 22px; overflow: hidden;
+  box-shadow: 0 28px 72px rgba(0,0,0,0.55),
+              0 0 0 1px rgba(255,255,255,0.06);
+}
+
+/* ── HEADER ───────────────────────────────────────── */
+._ss-header {
+  padding: 20px 22px 18px;
+  display: flex; align-items: center; gap: 14px;
+  position: relative; overflow: hidden;
+}
+._ss-header::after {
+  content:''; position:absolute; top:0; left:-120%; width:55%; height:100%;
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,0.05),transparent);
+  animation: _ssShimmer 3.5s ease-in-out infinite; pointer-events:none;
+}
+@keyframes _ssShimmer { 0%{left:-120%} 55%{left:160%} 100%{left:160%} }
+
+._ss-header-icon {
+  width: 46px; height: 46px; border-radius: 14px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+._ss-header-title { flex: 1; }
+._ss-header-title h3 {
+  margin:0; font-size:1rem; font-weight:900; color:#f1f5f9; letter-spacing:-0.2px;
+}
+._ss-header-title p {
+  margin:4px 0 0; font-size:0.7rem; color:rgba(148,163,184,0.8);
+}
+._ss-close {
+  width:32px; height:32px; flex-shrink:0; border-radius:9px;
+  background:rgba(255,255,255,0.09); border:1px solid rgba(255,255,255,0.14);
+  color:#cbd5e1; font-size:0.95rem; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  transition: background 0.2s, transform 0.22s cubic-bezier(0.34,1.56,0.64,1);
+}
+._ss-close:hover { background:rgba(239,68,68,0.75); color:white; transform:rotate(90deg) scale(1.1); }
+
+/* ── BODY ─────────────────────────────────────────── */
+._ss-body {
+  background: var(--bg-card,#fff);
+  padding: 20px 22px 22px;
+  display: flex; flex-direction: column; gap: 14px;
+  max-height: 72vh; overflow-y: auto;
+}
+._ss-body::-webkit-scrollbar { width:4px; }
+._ss-body::-webkit-scrollbar-thumb { background:rgba(99,102,241,0.3); border-radius:2px; }
+
+/* ── ASSOCIATED CASHIER CARD ─────────────────────── */
+._ss-assoc-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 18px; border-radius: 16px;
+  background: linear-gradient(135deg,rgba(99,102,241,0.07),rgba(139,92,246,0.05));
+  border: 2px solid rgba(99,102,241,0.3);
+  position: relative; overflow: hidden;
+}
+._ss-assoc-card::before {
+  content:''; position:absolute; inset:0;
+  background: linear-gradient(90deg,transparent,rgba(99,102,241,0.04),transparent);
+  animation: _ssShimmer 4s ease-in-out infinite; pointer-events:none;
+}
+._ss-assoc-avatar {
+  width: 52px; height: 52px; border-radius: 50%; flex-shrink:0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; font-size: 1.4rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+  border: 2.5px solid rgba(99,102,241,0.35);
+}
+._ss-assoc-avatar img { width:100%; height:100%; object-fit:cover; }
+._ss-assoc-info { flex: 1; min-width:0; }
+._ss-assoc-name {
+  font-size: 1rem; font-weight: 800; color: var(--text-main,#1e293b);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+._ss-assoc-meta {
+  display: flex; align-items:center; gap:6px; margin-top:5px; flex-wrap:wrap;
+}
+._ss-id-pill {
+  font-family:monospace; font-size:0.65rem; font-weight:700;
+  color:#6366f1; background:rgba(99,102,241,0.1);
+  padding:2px 7px; border-radius:10px; border:1px solid rgba(99,102,241,0.2);
+}
+._ss-linked-pill {
+  font-size:0.62rem; font-weight:700; color:#22c55e;
+  background:rgba(34,197,94,0.1); padding:2px 7px; border-radius:10px;
+  border:1px solid rgba(34,197,94,0.25);
+}
+
+/* ── DIRECT SWITCH BUTTON ────────────────────────── */
+._ss-direct-btn {
+  width: 100%; padding: 13px;
+  background: linear-gradient(135deg,#6366f1,#4f46e5);
+  color: white; border: none; border-radius: 12px;
+  font-size: 0.95rem; font-weight: 800; cursor: pointer;
+  box-shadow: 0 6px 20px rgba(99,102,241,0.4);
+  transition: transform 0.2s cubic-bezier(0.34,1.4,0.64,1),
+              box-shadow 0.2s ease, filter 0.15s;
+  display: flex; align-items:center; justify-content:center; gap:8px;
+}
+._ss-direct-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 28px rgba(99,102,241,0.5);
+  filter: brightness(1.08);
+}
+._ss-direct-btn:active { transform: translateY(0) scale(0.97); }
+
+/* ── PUBLIC LIST ─────────────────────────────────── */
+._ss-section-label {
+  font-size: 0.68rem; font-weight:800; text-transform:uppercase;
+  letter-spacing:0.06em; color:var(--text-muted,#94a3b8);
+  display:flex; align-items:center; gap:8px;
+}
+._ss-section-label::before, ._ss-section-label::after {
+  content:''; flex:1; height:1px; background:var(--border-color,#e8ecf0);
+}
+
+._ss-cashier-btn {
+  display: flex; align-items:center; gap:12px;
+  padding: 12px 14px; width: 100%;
+  background: var(--bg-card-2,#f8fafc);
+  border: 1.5px solid var(--border-color,#e8ecf0);
+  border-radius: 12px; cursor: pointer;
+  transition: transform 0.18s cubic-bezier(0.34,1.4,0.64,1),
+              border-color 0.18s, box-shadow 0.18s, background 0.15s;
+  text-align: left;
+}
+._ss-cashier-btn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(39,174,96,0.4);
+  box-shadow: 0 5px 16px rgba(0,0,0,0.09);
+  background: rgba(39,174,96,0.05);
+}
+._ss-cashier-btn:active { transform: translateY(0) scale(0.97); }
+._ss-cashier-av {
+  width:40px; height:40px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:1.1rem; overflow:hidden;
+  background:linear-gradient(135deg,#0ea5e9,#0369a1);
+  box-shadow:0 2px 8px rgba(0,0,0,0.12);
+}
+._ss-cashier-av img { width:100%;height:100%;object-fit:cover; }
+._ss-cashier-name { font-weight:700; font-size:0.9rem; color:var(--text-main,#1e293b); }
+._ss-cashier-id { font-size:0.67rem; color:var(--text-muted,#94a3b8); margin-top:2px; }
+
+/* ── SEPARATOR ───────────────────────────────────── */
+._ss-sep {
+  display:flex; gap:10px; align-items:center;
+}
+._ss-sep::before, ._ss-sep::after {
+  content:''; flex:1; height:1px; background:var(--border-color,#e8ecf0);
+}
+._ss-sep span { font-size:0.72rem; color:var(--text-muted,#94a3b8); white-space:nowrap; }
+
+/* ── PIN INPUT ───────────────────────────────────── */
+._ss-pin-row {
+  display:flex; gap:8px; align-items:center;
+}
+._ss-pin-input {
+  flex:1; padding:10px 14px;
+  border:1.5px solid var(--border-color,#e0e0e0); border-radius:10px;
+  font-size:0.95rem; background:var(--input-bg,#fff); color:var(--text-main);
+  transition:border-color 0.18s, box-shadow 0.18s;
+}
+._ss-pin-input:focus {
+  outline:none; border-color:#6366f1;
+  box-shadow:0 0 0 3px rgba(99,102,241,0.12);
+}
+._ss-pin-btn {
+  padding:10px 16px; border-radius:10px; border:none; cursor:pointer;
+  background:linear-gradient(135deg,#27ae60,#229954); color:white;
+  font-weight:800; font-size:0.82rem;
+  transition:transform 0.18s cubic-bezier(0.34,1.4,0.64,1), box-shadow 0.18s;
+}
+._ss-pin-btn:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(39,174,96,0.35); }
+._ss-cancel-btn {
+  width:100%; padding:10px; border-radius:10px;
+  background:transparent; border:1.5px solid var(--border-color,#e0e0e0);
+  color:var(--text-muted,#94a3b8); font-size:0.82rem; cursor:pointer;
+  transition:background 0.15s, border-color 0.15s;
+}
+._ss-cancel-btn:hover { background:var(--bg-card-2,#f4f7f8); border-color:#94a3b8; }
+
+/* ── EMPTY STATE ────────────────────────────────── */
+._ss-empty {
+  text-align:center; padding:20px 10px;
+  color:var(--text-muted,#94a3b8); font-size:0.84rem;
+}
+
+/* ── HEADER BUTTON UPDATE ─────────────────────────── */
+#switch-cashier-btn._has-assoc {
+  background: linear-gradient(135deg,#6366f1,#4f46e5) !important;
+  animation: _ssBtnPulse 2.5s ease-in-out infinite;
+}
+@keyframes _ssBtnPulse {
+  0%,100% { box-shadow:0 0 0 0 rgba(99,102,241,0.4); }
+  50%     { box-shadow:0 0 0 7px rgba(99,102,241,0); }
+}
+
+/* dark mode */
+body.dark-mode ._ss-body { background:#1e293b; }
+body.dark-mode ._ss-cashier-btn { background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.08); }
+body.dark-mode ._ss-cashier-btn:hover { background:rgba(39,174,96,0.1); }
+body.dark-mode ._ss-pin-input { background:#0f172a; color:#f1f5f9; border-color:rgba(255,255,255,0.12); }
+</style>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   BASCULEMENT INTELLIGENT ADMIN → CAISSIER
+   ══════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ─── HELPERS INTERNES ─────────────────────────────── */
+  function _ssGetLinks() {
+    if (typeof window._assocGetLinks === 'function') return window._assocGetLinks();
+    try { return JSON.parse(localStorage.getItem('covo_admin_cashier_links') || '{}'); } catch(e) { return {}; }
+  }
+
+  function _ssClose() {
+    var el = document.getElementById('_smart-switch-overlay');
+    if (el) {
+      el.style.opacity = '0';
+      el.style.transition = 'opacity 0.18s ease';
+      setTimeout(function () { el.remove(); }, 200);
+    }
+  }
+
+  function _ssDoSwitch(userId) {
+    _ssClose();
+    /* Réutiliser loginAsCashier si disponible */
+    if (typeof loginAsCashier === 'function') {
+      loginAsCashier(userId);
+    } else {
+      var u = ((typeof users !== 'undefined') ? users : []).find(function (x) {
+        return x.id === userId && x.role === 'caissier';
+      });
+      if (!u) return;
+      currentUser = u;
+      isAdmin = false;
+      localStorage.setItem('covo_current_user', JSON.stringify(u));
+      if (typeof renderAll === 'function') renderAll();
+      if (typeof showScanToast === 'function') showScanToast('💼 Mode caissier — ' + u.username);
+    }
+  }
+
+  function _ssLoginByPin(inputId) {
+    var el = document.getElementById(inputId);
+    if (!el) return;
+    var pin = el.value;
+    var u = ((typeof users !== 'undefined') ? users : []).find(function (x) {
+      return x.pin === pin && x.role === 'caissier';
+    });
+    if (!u) {
+      el.style.borderColor = '#ef4444';
+      el.style.boxShadow   = '0 0 0 3px rgba(239,68,68,0.15)';
+      setTimeout(function () { el.style.borderColor=''; el.style.boxShadow=''; el.value=''; }, 1600);
+      if (typeof showScanToast === 'function') showScanToast('❌ PIN incorrect', 'error');
+      return;
+    }
+    _ssDoSwitch(u.id);
+  }
+
+  /* ─── OVERRIDE switchToCashierMode ────────────────── */
+  window.switchToCashierMode = function () {
+    /* Fermer la modale admin-welcome si ouverte */
+    if (typeof closeAdminWelcomeModal === 'function') closeAdminWelcomeModal();
+
+    var cu       = (typeof currentUser !== 'undefined') ? currentUser : null;
+    if (!cu || cu.role !== 'admin') return;
+
+    var allUsers = (typeof users !== 'undefined') ? users : [];
+    var links    = _ssGetLinks();
+    var myId     = cu.id || cu.username || '';
+
+    /* Caissiers associés à cet admin */
+    var myAssoc = allUsers.filter(function (u) {
+      if (u.role !== 'caissier') return false;
+      var cid = u.id || u.username || '';
+      return links[cid] === myId;
+    });
+
+    /* Caissiers publics (non liés à un admin quelconque) */
+    var publicC = allUsers.filter(function (u) {
+      if (u.role !== 'caissier') return false;
+      var cid = u.id || u.username || '';
+      return !links[cid];
+    });
+
+    /* Supprimer overlay existant */
+    var old = document.getElementById('_smart-switch-overlay');
+    if (old) old.remove();
+
+    /* ── Choisir le mode d'affichage ── */
+    if (myAssoc.length > 0) {
+      _ssShowAssocMode(myAssoc, cu);
+    } else {
+      _ssShowPublicMode(publicC);
+    }
+  };
+
+  /* ── MODE ASSOCIÉ : basculement direct ─────────────── */
+  function _ssShowAssocMode(assocList, admin) {
+    var el = document.createElement('div');
+    el.id = '_smart-switch-overlay';
+
+    /* Carte pour chaque caissier associé */
+    var assocCards = assocList.map(function (c, idx) {
+      var cid = c.id || c.username || '';
+      var av  = c.avatar
+        ? '<img src="' + c.avatar + '" alt="">'
+        : '<span style="font-size:1.4rem;">💼</span>';
+      return [
+        '<div class="_ss-assoc-card">',
+          '<div class="_ss-assoc-avatar">' + av + '</div>',
+          '<div class="_ss-assoc-info">',
+            '<div class="_ss-assoc-name">' + _esc(c.username) + '</div>',
+            '<div class="_ss-assoc-meta">',
+              '<span class="_ss-id-pill">#' + _esc(cid) + '</span>',
+              '<span class="_ss-linked-pill">🔗 Associé</span>',
+            '</div>',
+          '</div>',
+        '</div>',
+        '<button class="_ss-direct-btn" id="_ss-direct-' + idx + '">',
+          '⚡ Basculer vers ' + _esc(c.username),
+        '</button>',
+      ].join('');
+    }).join('<div style="height:6px;"></div>');
+
+    el.innerHTML = [
+      '<div class="_ss-box">',
+        /* Header indigo */
+        '<div class="_ss-header" style="background:linear-gradient(135deg,#1e1b4b,#312e81,#1e3a8a);">',
+          '<div class="_ss-header-icon" style="background:linear-gradient(135deg,#6366f1,#4f46e5);">⚡</div>',
+          '<div class="_ss-header-title">',
+            '<h3>Basculement rapide</h3>',
+            '<p>Caissier associé à votre compte détecté</p>',
+          '</div>',
+          '<button class="_ss-close" id="_ss-close-btn">✕</button>',
+        '</div>',
+
+        '<div class="_ss-body">',
+          assocCards,
+
+          /* Séparateur si caissiers publics aussi disponibles */
+          '<div class="_ss-sep"><span>ou saisie PIN</span></div>',
+
+          /* PIN direct */
+          '<div class="_ss-pin-row">',
+            '<input class="_ss-pin-input" type="password" id="_ss-pin-assoc"',
+              ' placeholder="Code PIN d\'un caissier…">',
+            '<button class="_ss-pin-btn" id="_ss-pin-assoc-btn">✅</button>',
+          '</div>',
+
+          '<button class="_ss-cancel-btn" id="_ss-cancel-btn">Annuler</button>',
+        '</div>',
+      '</div>',
+    ].join('');
+
+    document.body.appendChild(el);
+
+    /* Bind direct buttons */
+    assocList.forEach(function (c, idx) {
+      var btn = document.getElementById('_ss-direct-' + idx);
+      if (btn) btn.onclick = function () { _ssDoSwitch(c.id || c.username); };
+    });
+
+    document.getElementById('_ss-close-btn').onclick  = _ssClose;
+    document.getElementById('_ss-cancel-btn').onclick = _ssClose;
+    document.getElementById('_ss-pin-assoc-btn').onclick = function () { _ssLoginByPin('_ss-pin-assoc'); };
+    document.getElementById('_ss-pin-assoc').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') _ssLoginByPin('_ss-pin-assoc');
+    });
+    el.addEventListener('click', function (e) { if (e.target === el) _ssClose(); });
+    document.addEventListener('keydown', function _escHandler(e) {
+      if (e.key === 'Escape') { _ssClose(); document.removeEventListener('keydown', _escHandler); }
+    });
+  }
+
+  /* ── MODE PUBLIC : liste filtrée ───────────────────── */
+  function _ssShowPublicMode(publicList) {
+    var el = document.createElement('div');
+    el.id = '_smart-switch-overlay';
+
+    var listHTML;
+    if (!publicList.length) {
+      listHTML = '<div class="_ss-empty">🔒 Aucun caissier public disponible.<br><span style="font-size:0.75rem;">Tous les caissiers sont associés à d\'autres administrateurs.</span></div>';
+    } else {
+      listHTML = publicList.map(function (c) {
+        var cid = c.id || c.username || '';
+        var av = c.avatar
+          ? '<img src="' + c.avatar + '" alt="">'
+          : '<span style="font-size:1.1rem;">💼</span>';
+        return [
+          '<button class="_ss-cashier-btn" id="_ss-pub-' + _esc(cid) + '">',
+            '<div class="_ss-cashier-av">' + av + '</div>',
+            '<div>',
+              '<div class="_ss-cashier-name">' + _esc(c.username) + '</div>',
+              '<div class="_ss-cashier-id">ID · ' + _esc(cid) + ' · 💼 Caissier public</div>',
+            '</div>',
+            '<span style="margin-left:auto;color:rgba(39,174,96,0.7);font-size:0.9rem;">→</span>',
+          '</button>',
+        ].join('');
+      }).join('');
+    }
+
+    el.innerHTML = [
+      '<div class="_ss-box">',
+        /* Header vert */
+        '<div class="_ss-header" style="background:linear-gradient(135deg,#064e3b,#065f46,#0369a1);">',
+          '<div class="_ss-header-icon" style="background:linear-gradient(135deg,#10b981,#059669);">💼</div>',
+          '<div class="_ss-header-title">',
+            '<h3>Mode Caissier</h3>',
+            '<p>Sélectionnez un caissier public disponible</p>',
+          '</div>',
+          '<button class="_ss-close" id="_ss-close-btn">✕</button>',
+        '</div>',
+
+        '<div class="_ss-body">',
+          '<div class="_ss-section-label">Caissiers disponibles</div>',
+          listHTML,
+
+          '<div class="_ss-sep"><span>ou PIN direct</span></div>',
+
+          '<div class="_ss-pin-row">',
+            '<input class="_ss-pin-input" type="password" id="_ss-pin-pub"',
+              ' placeholder="Code PIN du caissier…">',
+            '<button class="_ss-pin-btn" id="_ss-pin-pub-btn">✅</button>',
+          '</div>',
+
+          '<button class="_ss-cancel-btn" id="_ss-cancel-btn">Annuler</button>',
+        '</div>',
+      '</div>',
+    ].join('');
+
+    document.body.appendChild(el);
+
+    /* Bind list buttons */
+    publicList.forEach(function (c) {
+      var cid = c.id || c.username || '';
+      var btn = document.getElementById('_ss-pub-' + cid);
+      if (btn) btn.onclick = function () { _ssDoSwitch(c.id); };
+    });
+
+    document.getElementById('_ss-close-btn').onclick  = _ssClose;
+    document.getElementById('_ss-cancel-btn').onclick = _ssClose;
+    document.getElementById('_ss-pin-pub-btn').onclick = function () { _ssLoginByPin('_ss-pin-pub'); };
+    document.getElementById('_ss-pin-pub').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') _ssLoginByPin('_ss-pin-pub');
+    });
+    el.addEventListener('click', function (e) { if (e.target === el) _ssClose(); });
+    document.addEventListener('keydown', function _escHandler(e) {
+      if (e.key === 'Escape') { _ssClose(); document.removeEventListener('keydown', _escHandler); }
+    });
+  }
+
+  /* ─── MISE À JOUR DU BOUTON HEADER ────────────────── */
+  function _ssUpdateHeaderBtn() {
+    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
+    var btn = document.getElementById('switch-cashier-btn');
+    if (!btn || !cu || cu.role !== 'admin') return;
+
+    var links  = _ssGetLinks();
+    var myId   = cu.id || cu.username || '';
+    var allU   = (typeof users !== 'undefined') ? users : [];
+    var hasAssoc = allU.some(function (u) {
+      if (u.role !== 'caissier') return false;
+      return links[u.id || u.username || ''] === myId;
+    });
+
+    if (hasAssoc) {
+      btn.classList.add('_has-assoc');
+      btn.title   = '⚡ Basculer vers votre caissier associé';
+      btn.innerHTML = '⚡ Caissier associé';
+    } else {
+      btn.classList.remove('_has-assoc');
+      btn.title   = 'Basculer en mode caissier';
+      btn.innerHTML = '💼 Mode caissier';
+    }
+  }
+
+  /* ─── HOOK login / renderAll ───────────────────────── */
+  var _prevRenderAll = window.renderAll;
+  if (typeof _prevRenderAll === 'function') {
+    window.renderAll = function () {
+      _prevRenderAll.apply(this, arguments);
+      setTimeout(_ssUpdateHeaderBtn, 80);
+    };
+  }
+
+  /* Aussi après login */
+  var _prevLogin = window.attemptLogin;
+  if (typeof _prevLogin === 'function') {
+    window.attemptLogin = function () {
+      _prevLogin.apply(this, arguments);
+      setTimeout(_ssUpdateHeaderBtn, 300);
+    };
+  }
+
+  setTimeout(_ssUpdateHeaderBtn, 800);
+
+  /* ─── HELPER ESCAPE ───────────────────────────────── */
+  function _esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+})();
 </script>
 </body>
