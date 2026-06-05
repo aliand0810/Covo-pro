@@ -7963,7 +7963,16 @@ button, .btn, .retours-btn {
                         <option value="cb">💳 Carte Bancaire uniquement</option>
                         <option value="cash">💶 Espèces uniquement</option>
                         <option value="mixed">💳💶 Mixte (CB + Espèces)</option>
+                        <option value="credit">📒 Crédit (compte client)</option>
                     </select>
+
+                    <!-- Achat à crédit (compte client) -->
+                    <div id="credit-input-group" style="display:none;">
+                        <div id="credit-info-box" style="background:rgba(217,119,6,.08);border:1.5px solid rgba(217,119,6,.35);border-radius:10px;padding:11px 13px;font-size:.82rem;color:#92400e;">
+                            <div style="font-weight:800;display:flex;align-items:center;gap:6px;margin-bottom:4px;">📒 Vente à crédit</div>
+                            <div id="credit-info-text" style="font-size:.76rem;line-height:1.4;">Sélectionnez d'abord un client fidélité dans le panier. Le montant sera ajouté à son compte (à régler plus tard).</div>
+                        </div>
+                    </div>
                     
                     <!-- Espèces uniquement -->
                     <div id="cash-input-group" style="display:none;">
@@ -20192,6 +20201,9 @@ function toggleInfoSection(headerElement) {
         const method = document.getElementById('payment-method').value;
         document.getElementById('cash-input-group').style.display = method === 'cash' ? 'block' : 'none';
         document.getElementById('mixed-input-group').style.display = method === 'mixed' ? 'block' : 'none';
+        var _cig = document.getElementById('credit-input-group');
+        if (_cig) _cig.style.display = method === 'credit' ? 'block' : 'none';
+        if (method === 'credit' && typeof window._creditUpdateInfo === 'function') window._creditUpdateInfo();
         if (method === 'cash') {
             document.getElementById('amount-received').focus();
             calculateChange();
@@ -20677,6 +20689,9 @@ logout = function(skipConfirmation = false) {
             received = receivedCB + receivedCash;
             if (received < total - 0.001) { showScanToast('❌ Montant total insuffisant'); return; }
             change = received - total;
+        } else if (method === 'credit') {
+            // Achat à crédit (compte client) : aucun encaissement immédiat
+            received = 0; receivedCash = 0; receivedCB = 0; change = 0;
         } else {
             // CB only
             receivedCB = total;
@@ -20767,6 +20782,7 @@ logout = function(skipConfirmation = false) {
         let methodLabel;
         if (sale.method === 'cb') methodLabel = 'Carte Bancaire';
         else if (sale.method === 'cash') methodLabel = 'Espèces';
+        else if (sale.method === 'credit') methodLabel = '📒 Crédit (compte client)';
         else methodLabel = 'Mixte (CB + Espèces)';
 
         let paymentDetails = '';
@@ -21753,6 +21769,7 @@ logout = function(skipConfirmation = false) {
         let methodLabel;
         if (sale.method === 'cb') methodLabel = 'Carte Bancaire';
         else if (sale.method === 'cash') methodLabel = 'Espèces';
+        else if (sale.method === 'credit') methodLabel = '📒 Crédit (compte client)';
         else methodLabel = 'Mixte (CB + Espèces)';
 
         const hasRetours = sale.items && sale.items.some(i => i.retourne);
@@ -28251,6 +28268,70 @@ logout = function(skipConfirmation = false) {
     // ssmLiveSearch → aperçu produit uniquement, PAS d'ajout au panier
     // (évite le double ajout quand le scanner envoie les chiffres + Enter)
     function ssmLiveSearch(val) {
+        // ── Détection barcode carte fidélité LCLT (ex: LCLT0001) ──
+        var _v = val ? val.trim() : '';
+        if (_v.toUpperCase().startsWith('LCLT') && _v.length >= 8) {
+            try {
+                var _d = JSON.parse(localStorage.getItem('covo_loyalty') || '{}');
+                var _bc = _v.toUpperCase();
+                var _cu = (_d.customers || []).find(function(x){
+                    return ('LCLT' + x.id.replace('CLT-','')) === _bc;
+                });
+                if (_cu) {
+                    // Sélectionner le client
+                    window._ltyCu = _cu;
+                    window._loyaltyCurrentCustomer = _cu;
+                    window._ltyRed = null;
+                    // Vider le champ scan
+                    var _si = document.getElementById('single-scan-input');
+                    if (_si) _si.value = '';
+                    // Ouvrir le panier
+                    var _cm = document.getElementById('cart-modal');
+                    var _open = _cm && _cm.classList.contains('active');
+                    if (!_open) toggleCart();
+                    // Injecter + afficher le client dans le widget après délai
+                    setTimeout(function(){
+                        // S'assurer que le widget existe
+                        if (!document.getElementById('loyalty-cart-widget')) {
+                            var _btn = document.querySelector('#cart-modal [onclick*="validateSale"]');
+                            if (_btn) {
+                                var _w = document.createElement('div');
+                                _w.id = 'loyalty-cart-widget';
+                                _w.style.cssText = 'background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(99,102,241,.04));border:1.5px solid rgba(139,92,246,.28);border-radius:12px;padding:12px 14px;margin-bottom:12px;';
+                                _w.innerHTML = '<div style="font-size:.67rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;">🎁 Fidélité client</div>'
+                                    +'<div id="lty-customer-display" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:8px 10px;background:rgba(139,92,246,.1);border-radius:9px;margin-bottom:6px;">'
+                                    +'<span style="font-size:1.1rem;">👤</span>'
+                                    +'<div style="flex:1;"><div style="font-weight:900;font-size:.86rem;color:#5b21b6;" id="lty-cd-nm"></div>'
+                                    +'<div style="font-size:.73rem;color:#7c3aed;font-weight:700;" id="lty-cd-pt"></div></div>'
+                                    +'<button onclick="window._ltyClear()" style="background:rgba(239,68,68,.12);color:#dc2626;border:none;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:.72rem;font-weight:700;">✕</button>'
+                                    +'</div>'
+                                    +'<div id="lty-scan-row" style="display:none;gap:6px;">'
+                                    +'<input id="lty-inp" placeholder="🔍 Nom ou scanner…" autocomplete="off" oninput="window._ltySearch(this.value)" style="flex:1;padding:8px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);">'
+                                    +'<button onclick="window._ltyConfirm()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">✔</button>'
+                                    +'</div>';
+                                _btn.parentNode.insertBefore(_w, _btn);
+                            }
+                        }
+                        // Mettre à jour l'affichage
+                        var _nm = document.getElementById('lty-cd-nm');
+                        var _pt = document.getElementById('lty-cd-pt');
+                        var _disp = document.getElementById('lty-customer-display');
+                        var _scan = document.getElementById('lty-scan-row');
+                        if (_nm) _nm.textContent = _cu.name;
+                        if (_pt) _pt.textContent = (_cu.points || 0) + ' pts';
+                        if (_disp) _disp.style.display = 'flex';
+                        if (_scan) _scan.style.display = 'none';
+                        if (typeof window._ltyRenderWidget === 'function') window._ltyRenderWidget();
+                    }, _open ? 30 : 220);
+                    if (typeof showScanToast === 'function')
+                        showScanToast('👤 ' + _cu.name + ' · ⭐ ' + (_cu.points||0) + ' pts');
+                } else {
+                    if (typeof showScanToast === 'function')
+                        showScanToast('⚠️ Carte fidélité non reconnue : ' + _bc);
+                }
+            } catch(_e) {}
+            return; // Ne pas chercher dans les produits
+        }
         if (!val || val.length < 4) return;
         const product = products.find(p => p.barcode && p.barcode.toLowerCase() === val.trim().toLowerCase());
         if (product) {
@@ -28266,6 +28347,13 @@ logout = function(skipConfirmation = false) {
     function confirmSingleScan() {
         const input = document.getElementById('single-scan-input');
         const barcode = input.value.trim();
+
+        // ── Détection barcode carte fidélité LCLT ──
+        if (barcode.toUpperCase().startsWith('LCLT') && barcode.length >= 8) {
+            ssmLiveSearch(barcode); // réutilise la logique LCLT de ssmLiveSearch
+            input.value = '';
+            return;
+        }
 
         // Cas 1 : ssmLiveSearch a déjà identifié le produit (scanner rapide)
         //         → un seul addToCart ici, pas de double ajout
@@ -49564,7 +49652,6 @@ window._previewNewPwdBarcode = function(){
 })();
 </script>
 </body>
-
 <script>
 /* ── Protection admin v27 : blocage edit / delete des comptes admin par non-master ── */
 (function () {
@@ -49863,65 +49950,1787 @@ window._previewNewPwdBarcode = function(){
 })();
 </script>
 
+
+<!-- ╔══════════════════════════════════════════════════════════
+     MODULE FIDÉLITÉ COVO Pro — Script unique et autoritaire
+     ══════════════════════════════════════════════════════════ -->
+
+<!-- ── Styles ── -->
+<style>
+/* Cart widget */
+#loyalty-cart-widget{background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(99,102,241,.04));border:1.5px solid rgba(139,92,246,.28);border-radius:12px;padding:12px 14px;margin-bottom:12px;}
+#loyalty-cart-widget .lw-lbl{font-size:.67rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;}
+#lty-customer-display{display:none;flex-direction:row;align-items:center;gap:10px;padding:8px 10px;background:rgba(139,92,246,.1);border-radius:9px;margin-bottom:6px;}
+#lty-customer-display .lty-cd-name{font-weight:900;font-size:.86rem;color:#5b21b6;flex:1;}
+#lty-customer-display .lty-cd-pts{font-size:.73rem;color:#7c3aed;font-weight:700;}
+#lty-scan-row{display:flex;gap:6px;}
+#lty-scan-row input{flex:1;padding:8px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);}
+#lty-scan-row input:focus{outline:none;border-color:#8b5cf6;}
+#lty-autocomplete{position:relative;z-index:9999;}
+#lty-autocomplete .lty-ac-box{background:var(--bg-card,#fff);border:1.5px solid rgba(139,92,246,.3);border-radius:9px;overflow:hidden;margin-top:4px;box-shadow:0 4px 16px rgba(0,0,0,.12);}
+.lty-ac-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border-color,#eee);display:flex;align-items:center;gap:8px;}
+.lty-ac-item:hover{background:rgba(139,92,246,.08);}
+.lty-ac-av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:900;color:white;flex-shrink:0;}
+/* Remise points dans panier */
+#lty-redeem-zone{margin-top:8px;padding:10px 12px;background:rgba(139,92,246,.06);border-radius:10px;border:1.5px dashed rgba(139,92,246,.3);display:none;}
+#lty-redeem-zone .lrz-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;font-size:.72rem;font-weight:800;color:#7c3aed;}
+#lty-redeem-zone input{width:100%;box-sizing:border-box;padding:7px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.85rem;background:var(--input-bg,#fff);color:var(--text-main);}
+#lty-discount-applied{display:none;margin-top:6px;padding:6px 10px;background:rgba(5,150,105,.08);border-radius:8px;border-left:3px solid #059669;display:flex;align-items:center;justify-content:space-between;}
+#cart-lty-line{display:none;padding:6px 0;border-top:1px dashed rgba(5,150,105,.4);}
+/* Onglet fidélité */
+#tab-fidelite{padding:0;background:var(--bg-body,#f4f7f6);}
+#lty-tab-wrap{display:flex;height:calc(100vh - 160px);overflow:hidden;}
+#lty-list-pane{width:300px;flex-shrink:0;border-right:1px solid var(--border-color,#e8ecf0);display:flex;flex-direction:column;background:var(--bg-card,#fff);}
+#lty-detail-pane{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg-body,#f8fafc);}
+#lty-list-inner{flex:1;overflow-y:auto;padding:8px;}
+.lty-row{display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:10px;cursor:pointer;margin-bottom:4px;border:1.5px solid transparent;transition:all .13s;}
+.lty-row:hover{background:rgba(139,92,246,.07);border-color:rgba(139,92,246,.2);}
+.lty-row.active{background:rgba(139,92,246,.13);border-color:rgba(139,92,246,.38);}
+.lty-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:900;color:white;flex-shrink:0;}
+#lty-detail-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-muted,#94a3b8);gap:8px;}
+#lty-detail-view{display:none;flex-direction:column;flex:1;overflow:hidden;}
+#lty-detail-top{padding:16px 20px;background:var(--bg-card,#fff);border-bottom:1px solid var(--border-color,#e8ecf0);flex-shrink:0;}
+#lty-detail-scroll{flex:1;overflow-y:auto;padding:16px 20px;}
+/* Tickets historique */
+.lty-tkt{background:var(--bg-card,#fff);border-radius:10px;margin-bottom:10px;border:1.5px solid var(--border-color,#e8ecf0);}
+.lty-tkt-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;}
+.lty-tkt-head:hover{background:rgba(139,92,246,.04);}
+.lty-tkt-body{display:none;padding:0 14px 12px;}
+.lty-tkt-num{background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;font-size:.66rem;font-weight:900;padding:2px 9px;border-radius:12px;font-family:monospace;}
+.lty-pts-green{background:linear-gradient(135deg,#059669,#047857);color:white;font-size:.67rem;font-weight:900;padding:2px 9px;border-radius:12px;}
+.lty-pts-red{background:rgba(220,38,38,.12);color:#dc2626;font-size:.67rem;font-weight:900;padding:2px 9px;border-radius:12px;}
+.lty-tkt-btn{background:rgba(139,92,246,.1);color:#7c3aed;border:1px solid rgba(139,92,246,.22);border-radius:7px;padding:3px 9px;font-size:.69rem;font-weight:800;cursor:pointer;}
+/* Modale reçu */
+#lty-rcpt-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);z-index:25000;justify-content:center;align-items:center;padding:16px;}
+#lty-rcpt-modal.active{display:flex;}
+#lty-rcpt-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:400px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+#lty-rcpt-content{padding:18px 20px;font-family:'Courier New',monospace;font-size:.82rem;color:var(--text-main);line-height:1.7;}
+.rcpt-sep{border-top:1px dashed var(--border-color,#ccc);margin:8px 0;}
+.rcpt-row{display:flex;justify-content:space-between;}
+.rcpt-row.bold{font-weight:900;font-size:1rem;}
+.rcpt-pts{text-align:center;background:rgba(139,92,246,.08);border-radius:8px;padding:6px;margin-top:8px;color:#7c3aed;font-weight:800;}
+body.dark-mode #lty-rcpt-box{background:var(--bg-card,#1e293b);}
+body.dark-mode #lty-list-pane{background:var(--bg-card,#1e293b);}
+body.dark-mode #lty-detail-top{background:var(--bg-card,#1e293b);}
+body.dark-mode .lty-tkt{background:rgba(255,255,255,.04);}
+</style>
+
+<!-- ── Modale reçu ── -->
+<div id="lty-rcpt-modal">
+  <div id="lty-rcpt-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border-color,#e8ecf0);">
+      <div style="font-weight:900;font-size:.95rem;color:var(--text-main);">🧾 Ticket de caisse</div>
+      <button onclick="document.getElementById('lty-rcpt-modal').classList.remove('active')" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-muted);">✕</button>
+    </div>
+    <div id="lty-rcpt-content"></div>
+    <div style="padding:0 18px 16px;display:flex;gap:8px;">
+      <button onclick="window._ltyPrintRcpt()" style="flex:1;padding:9px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:10px;font-weight:800;font-size:.84rem;cursor:pointer;">🖨️ Imprimer</button>
+      <button onclick="document.getElementById('lty-rcpt-modal').classList.remove('active')" style="padding:9px 16px;background:var(--bg-body,#f8fafc);border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;font-weight:700;font-size:.82rem;cursor:pointer;color:var(--text-main);">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Script unique fidélité ── -->
 <script>
-/* ── Fix _canSeeCostPrice : compatibilité format global + format par-admin ── */
+/* ════════════════════════════════════════════════════════════
+   LOYALTY ENGINE — COVO Pro (script unique, remplace tout)
+   ════════════════════════════════════════════════════════════ */
+(function(){
+'use strict';
+
+/* ────────── STORAGE ────────── */
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{pointsPerEuro:1,rewardThreshold:100,rewardValue:5}};}catch(e){return{customers:[],settings:{pointsPerEuro:1,rewardThreshold:100,rewardValue:5}};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function ini(n){return((n||'?').split(' ').map(function(w){return w[0]||'';}).join('').toUpperCase().slice(0,2))||'?';}
+function ptsToEuros(pts){var s=lg().settings;return parseFloat(((pts/(+s.rewardThreshold||100))*(+s.rewardValue||5)).toFixed(2));}
+function eurosToPts(e){var s=lg().settings;return Math.ceil((e/(+s.rewardValue||5))*(+s.rewardThreshold||100));}
+
+/* ────────── STATE ────────── */
+window._ltyCu=null;      // client actif
+window._ltySnap=null;    // snapshot au moment de validateSale
+window._ltyRed=null;     // remise points {euros,points}
+window._ltyHist=[];      // tableau global pour les boutons onclick ticket
+
+/* ────────── WIDGET PANIER ────────── */
+function injectWidget(){
+  if(document.getElementById('loyalty-cart-widget'))return;
+  var btn=document.querySelector('#cart-modal [onclick*="validateSale"]');
+  if(!btn)return;
+  var w=document.createElement('div');
+  w.id='loyalty-cart-widget';
+  w.innerHTML='<div class="lw-lbl">🎁 Fidélité client</div>'
+    +'<div id="lty-customer-display">'
+    +  '<span style="font-size:1.1rem;">👤</span>'
+    +  '<div style="flex:1;"><div class="lty-cd-name" id="lty-cd-nm">—</div><div class="lty-cd-pts" id="lty-cd-pt">0 pts</div></div>'
+    +  '<button onclick="window._ltyClear()" style="background:rgba(239,68,68,.12);color:#dc2626;border:none;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:.72rem;font-weight:700;">✕</button>'
+    +'</div>'
+    +'<div id="lty-scan-row">'
+    +  '<input id="lty-inp" placeholder="🔍 Nom ou scanner la carte client…" autocomplete="off" oninput="window._ltySearch(this.value)" onkeydown="if(event.key===\'Enter\')window._ltyConfirm()">'
+    +  '<button onclick="window._ltyConfirm()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">✔</button>'
+    +'</div>'
+    +'<div id="lty-autocomplete"></div>'
+    +'<div id="lty-redeem-zone">'
+    +  '<div class="lrz-head"><span id="lrz-bal">0 pts = 0.00€</span><button onclick="window._ltyUseAll()" style="background:rgba(139,92,246,.15);color:#7c3aed;border:none;border-radius:6px;padding:3px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Tout utiliser</button></div>'
+    +  '<input type="number" id="lrz-inp" placeholder="Montant à déduire en € (ex: 2)" min="0.01" step="0.01" oninput="window._ltyCalcRed()">'
+    +  '<div id="lrz-info" style="font-size:.68rem;color:var(--text-muted);margin-top:4px;"></div>'
+    +  '<div id="lty-discount-applied" style="display:none;margin-top:7px;padding:6px 10px;background:rgba(5,150,105,.08);border-radius:8px;border-left:3px solid #059669;flex-direction:row;align-items:center;justify-content:space-between;">'
+    +    '<span style="font-size:.78rem;font-weight:800;color:#059669;" id="lty-disc-lbl">—</span>'
+    +    '<button onclick="window._ltyCancelRed()" style="background:rgba(239,68,68,.1);color:#dc2626;border:none;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700;cursor:pointer;">✕</button>'
+    +  '</div>'
+    +'</div>'
+    +'<div id="cart-lty-line" style="display:none;padding:6px 0;border-top:1px dashed rgba(5,150,105,.4);"></div>';
+  btn.parentNode.insertBefore(w,btn);
+}
+
+function renderWidget(){
+  var cu=window._ltyCu;
+  var disp=document.getElementById('lty-customer-display');
+  var scan=document.getElementById('lty-scan-row');
+  var red=document.getElementById('lty-redeem-zone');
+  var nm=document.getElementById('lty-cd-nm');
+  var pts=document.getElementById('lty-cd-pt');
+  var inp=document.getElementById('lty-inp');
+  var ac=document.getElementById('lty-autocomplete');
+  if(!disp)return;
+  if(cu){
+    disp.style.display='flex';
+    if(scan)scan.style.display='none';
+    if(nm)nm.textContent=cu.name;
+    if(pts)pts.textContent=(cu.points||0)+' pts';
+    if(ac)ac.innerHTML='';
+    /* Afficher zone remise si pts > 0 */
+    if(red){
+      if((cu.points||0)>0){
+        red.style.display='';
+        var bal=document.getElementById('lrz-bal');
+        if(bal)bal.textContent=(cu.points||0)+' pts = '+ptsToEuros(cu.points||0).toFixed(2)+'€';
+        /* Si remise déjà appliquée */
+        _renderRedState();
+      } else { red.style.display='none'; }
+    }
+  } else {
+    disp.style.display='none';
+    if(scan)scan.style.display='flex';
+    if(inp)inp.value='';
+    if(ac)ac.innerHTML='';
+    if(red)red.style.display='none';
+    _updateDiscountLine();
+  }
+}
+window._ltyRenderWidget=renderWidget;
+
+function _renderRedState(){
+  var r=window._ltyRed;
+  var inpEl=document.getElementById('lrz-inp');
+  var infoEl=document.getElementById('lrz-info');
+  var discDiv=document.getElementById('lty-discount-applied');
+  var lbl=document.getElementById('lty-disc-lbl');
+  var btn=document.querySelector('#lty-redeem-zone button:last-of-type');
+  if(r){
+    if(inpEl)inpEl.style.display='none';
+    if(infoEl)infoEl.style.display='none';
+    if(discDiv){discDiv.style.display='flex';}
+    if(lbl)lbl.textContent='🎁 −'+r.euros.toFixed(2)+'€ ('+r.points+' pts)';
+  } else {
+    if(inpEl){inpEl.style.display='';inpEl.value='';}
+    if(infoEl){infoEl.style.display='';infoEl.textContent='';}
+    if(discDiv)discDiv.style.display='none';
+  }
+  _updateDiscountLine();
+}
+
+function _updateDiscountLine(){
+  var line=document.getElementById('cart-lty-line');
+  if(!line)return;
+  var r=window._ltyRed;
+  if(!r||!r.euros){line.style.display='none';return;}
+  var tel=document.getElementById('cart-total');
+  var gross=parseFloat((tel?tel.innerText:'0'))||0;
+  var net=Math.max(0,gross-r.euros);
+  line.style.display='';
+  line.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.82rem;color:#059669;"><span>🎁 Points fidélité</span><span>−'+r.euros.toFixed(2)+'€</span></div>'
+    +'<div style="display:flex;justify-content:space-between;font-size:1rem;font-weight:900;margin-top:3px;padding-top:3px;border-top:2px solid var(--border-color,#e0e0e0);"><span>Net à payer</span><span style="color:#059669;">'+net.toFixed(2)+'€</span></div>';
+}
+
+/* ────────── RECHERCHE CLIENT ────────── */
+window._ltySearch=function(val){
+  val=(val||'').trim();
+  var ac=document.getElementById('lty-autocomplete');
+  if(!ac)return;
+  if(!val||val.length<2){ac.innerHTML='';return;}
+  /* Barcode LCLT */
+  if(val.toUpperCase().startsWith('LCLT')){
+    var bc=val.toUpperCase();
+    var c=lg().customers.find(function(x){return('LCLT'+x.id.replace('CLT-',''))===bc;});
+    if(c){_selectCu(c);return;}
+    ac.innerHTML='<div style="padding:8px 10px;font-size:.78rem;color:#dc2626;">Code non reconnu</div>';
+    return;
+  }
+  var q=val.toLowerCase();
+  var matches=lg().customers.filter(function(c){return c.name.toLowerCase().includes(q)||(c.phone&&c.phone.includes(q));}).slice(0,6);
+  if(!matches.length){ac.innerHTML='<div class="lty-ac-box"><div style="padding:8px 10px;font-size:.78rem;color:var(--text-muted);">Aucun résultat</div></div>';return;}
+  ac.innerHTML='<div class="lty-ac-box">'+matches.map(function(c){
+    return '<div class="lty-ac-item" onclick="window._ltyPick(\''+c.id+'\')">'
+      +'<div class="lty-ac-av">'+esc(ini(c.name))+'</div>'
+      +'<div><div style="font-weight:700;font-size:.83rem;color:var(--text-main);">'+esc(c.name)+'</div>'
+      +'<div style="font-size:.68rem;color:var(--text-muted);">'+(c.phone?esc(c.phone)+' · ':'')+' ⭐'+(c.points||0)+' pts</div></div>'
+      +'</div>';
+  }).join('')+'</div>';
+};
+window._ltyConfirm=function(){var i=document.getElementById('lty-inp');if(i)window._ltySearch(i.value);};
+window._ltyPick=function(id){var c=lg().customers.find(function(x){return x.id===id;});if(c)_selectCu(c);};
+window._ltySelectFromAuto=window._ltyPick; // alias
+
+function _selectCu(c){
+  window._ltyCu=c;
+  window._ltyRed=null;
+  renderWidget();
+}
+window._ltyClear=function(){window._ltyCu=null;window._ltyRed=null;renderWidget();};
+window._loyaltyClearCustomer=window._ltyClear;
+window._loyaltyCurrentCustomer=null; // legacy alias — synced below
+
+/* ────────── REMISE POINTS ────────── */
+window._ltyCalcRed=function(){
+  var cu=window._ltyCu;
+  if(!cu)return;
+  var inpEl=document.getElementById('lrz-inp');
+  var infoEl=document.getElementById('lrz-info');
+  var euros=parseFloat(inpEl?inpEl.value:0)||0;
+  var avail=ptsToEuros(cu.points||0);
+  if(!infoEl)return;
+  if(euros<=0){infoEl.textContent='';return;}
+  if(euros>avail){infoEl.style.color='#dc2626';infoEl.textContent='⚠️ Max disponible : '+avail.toFixed(2)+'€';return;}
+  var pts=eurosToPts(euros);
+  infoEl.style.color='';
+  infoEl.textContent='→ '+pts+' pts · Reste : '+ptsToEuros((cu.points||0)-pts).toFixed(2)+'€';
+};
+window._ltyUseAll=function(){
+  var cu=window._ltyCu;if(!cu)return;
+  var tel=document.getElementById('cart-total');
+  var gross=parseFloat((tel?tel.innerText:'0'))||0;
+  var avail=ptsToEuros(cu.points||0);
+  var amount=Math.min(avail,gross);
+  var inpEl=document.getElementById('lrz-inp');
+  if(inpEl)inpEl.value=amount.toFixed(2);
+  window._ltyCalcRed();
+  window._ltyApplyRed();
+};
+window._ltyApplyRed=function(){
+  var cu=window._ltyCu;if(!cu)return;
+  var inpEl=document.getElementById('lrz-inp');
+  var euros=parseFloat(inpEl?inpEl.value:0)||0;
+  if(euros<=0){if(typeof showScanToast==='function')showScanToast('⚠️ Saisissez un montant');return;}
+  var avail=ptsToEuros(cu.points||0);
+  if(euros>avail){if(typeof showScanToast==='function')showScanToast('⚠️ Solde insuffisant');return;}
+  window._ltyRed={euros:euros,points:eurosToPts(euros)};
+  _renderRedState();
+  if(typeof showScanToast==='function')showScanToast('✅ Remise de '+euros.toFixed(2)+'€ appliquée');
+};
+window._ltyCancelRed=function(){window._ltyRed=null;_renderRedState();};
+
+/* ────────── HOOK updateCartUI ────────── */
+var _prevUCUI=window.updateCartUI;
+if(typeof _prevUCUI==='function'){
+  window.updateCartUI=function(){
+    _prevUCUI.apply(this,arguments);
+    setTimeout(function(){injectWidget();_updateDiscountLine();},30);
+  };
+}
+
+/* ────────── HOOK toggleCart ────────── */
+var _prevTC=window.toggleCart;
+if(typeof _prevTC==='function'){
+  window.toggleCart=function(){
+    _prevTC.apply(this,arguments);
+    setTimeout(function(){injectWidget();renderWidget();},100);
+  };
+}
+
+/* ────────── SCAN PISTOL global ────────── */
+var _prevSSL=window.ssmLiveSearch;
+if(typeof _prevSSL==='function'){
+  window.ssmLiveSearch=function(val){
+    if(val&&val.toUpperCase().startsWith('LCLT')&&val.length>=8){
+      var bc=val.toUpperCase();
+      var c=lg().customers.find(function(x){return('LCLT'+x.id.replace('CLT-',''))===bc;});
+      if(c){
+        _selectCu(c);
+        var sinp=document.getElementById('single-scan-input');if(sinp)sinp.value='';
+        var cm=document.getElementById('cart-modal');
+        if(cm&&!cm.classList.contains('active')&&typeof toggleCart==='function')toggleCart();
+        if(typeof showScanToast==='function')showScanToast('👤 '+c.name+' · ⭐'+(c.points||0)+' pts','success');
+        return;
+      }
+    }
+    _prevSSL.apply(this,arguments);
+  };
+}
+
+/* ────────── HOOK validateSale ────────── */
+var _prevVS=window.validateSale;
+if(typeof _prevVS==='function'){
+  window.validateSale=function(){
+    window._ltySnap=window._ltyCu||null;
+    window._loyaltyCurrentCustomer=window._ltySnap; // sync legacy
+    _prevVS.apply(this,arguments);
+  };
+}
+
+/* ────────── HOOK showReceipt (crédite les points) ────────── */
+var _chainedSR=window.showReceipt;
+window.showReceipt=function(sale){
+  var cu=window._ltySnap||window._ltyCu||null;
+  var red=window._ltyRed||null;
+  window._ltySnap=null;
+
+  /* Appliquer la remise points au total de la vente */
+  if(red&&red.euros>0){
+    var disc=Math.min(red.euros,sale.total);
+    sale.total=Math.max(0,sale.total-disc);
+    sale._ltyDiscount=disc;
+    sale._ltyDiscPts=red.points;
+    /* Corriger localStorage */
+    try{
+      var h=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');
+      var si=h.findIndex(function(s){return s.id===sale.id;});
+      if(si!==-1){h[si].total=sale.total;h[si]._ltyDiscount=disc;}
+      localStorage.setItem('covo_sales_history',JSON.stringify(h));
+    }catch(e){}
+    /* Débiter les points */
+    if(cu){
+      var data=lg();var idx=data.customers.findIndex(function(x){return x.id===cu.id;});
+      if(idx!==-1){
+        data.customers[idx].points=Math.max(0,(data.customers[idx].points||0)-red.points);
+        if(!data.customers[idx].history)data.customers[idx].history=[];
+        data.customers[idx].history.unshift({date:sale.date||new Date().toISOString(),saleId:sale.id,ticketNum:sale.id,amount:disc,method:sale.method||'',points:-red.points,type:'debit',cashier:sale.cashier||'',note:'Rachat points'});
+        data.customers[idx].history=data.customers[idx].history.slice(0,300);
+        ls(data);
+        cu=data.customers[idx];
+      }
+    }
+    window._ltyRed=null;_renderRedState();
+  }
+
+  /* Créditer les points si client actif */
+  if(cu){
+    var data2=lg();var idx2=data2.customers.findIndex(function(x){return x.id===cu.id;});
+    if(idx2!==-1){
+      var ppe=parseFloat((data2.settings||{}).pointsPerEuro)||1;
+      var earned=Math.floor((sale.total||0)*ppe);
+      data2.customers[idx2].points=(data2.customers[idx2].points||0)+earned;
+      data2.customers[idx2].totalSpent=(data2.customers[idx2].totalSpent||0)+(sale.total||0);
+      if(!data2.customers[idx2].history)data2.customers[idx2].history=[];
+      data2.customers[idx2].history.unshift({
+        date:sale.date||new Date().toISOString(),
+        saleId:sale.id,
+        ticketNum:sale.id,  /* ← sale.id = Date.now() = ex. 1780614332095 */
+        amount:sale.total,
+        method:sale.method||'',
+        points:earned,
+        type:'credit',
+        cashier:sale.cashier||'',
+        _ltyDiscount:sale._ltyDiscount||0,
+        items:(sale.items||[]).map(function(it){return{name:it.name||'',quantity:it.quantity||1,unitType:it.unitType||'unit',price:it.price||0,total:+(((it.quantity||1)*(it.price||0)).toFixed(2))};})
+      });
+      data2.customers[idx2].history=data2.customers[idx2].history.slice(0,300);
+      ls(data2);
+      sale._ltyCuName=cu.name;sale._ltyEarned=earned;sale._ltyTotal=data2.customers[idx2].points;
+      /* Toast */
+      if(typeof showScanToast==='function')showScanToast('🎁 '+cu.name+' : +'+earned+' pts · Solde '+data2.customers[idx2].points+' pts','success');
+    }
+    window._ltyCu=null;
+    window._loyaltyCurrentCustomer=null;
+    renderWidget();
+  }
+
+  /* Afficher le reçu */
+  if(typeof _chainedSR==='function')_chainedSR.apply(this,arguments);
+
+  /* Ligne fidélité dans le reçu */
+  setTimeout(function(){
+    var content=document.getElementById('receipt-content');
+    if(content&&sale._ltyCuName&&!content.querySelector('.lty-rcpt-line')){
+      var div=document.createElement('div');div.className='lty-rcpt-line';
+      div.style.cssText='margin-top:10px;padding:10px 14px;background:rgba(139,92,246,.08);border-radius:10px;';
+      div.innerHTML='<div style="font-weight:900;color:#7c3aed;font-size:.83rem;">🎁 Fidélité — '+esc(sale._ltyCuName)+'</div>'
+        +'<div style="font-size:.76rem;margin-top:4px;color:#6d28d9;">Points gagnés : <strong>+'+sale._ltyEarned+' pts</strong> · Solde : <strong>'+sale._ltyTotal+' pts</strong></div>'
+        +(sale._ltyDiscount?'<div style="font-size:.73rem;color:#059669;">Remise appliquée : −'+sale._ltyDiscount.toFixed(2)+'€</div>':'');
+      content.appendChild(div);
+    }
+  },150);
+};
+
+/* ────────── TOAST FIDÉLITÉ ────────── */
+if(!document.getElementById('_ltycss')){
+  var st=document.createElement('style');st.id='_ltycss';
+  st.textContent='@keyframes _ltyIn{from{opacity:0;transform:translate(-50%,20px)}to{opacity:1;transform:translate(-50%,0)}}'
+    +'@keyframes _ltyOut{from{opacity:1}to{opacity:0;transform:translate(-50%,-10px)}}'
+    +'#_lty-toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;padding:13px 22px;border-radius:16px;min-width:220px;text-align:center;box-shadow:0 10px 36px rgba(139,92,246,.45);z-index:99999;pointer-events:none;animation:_ltyIn .4s cubic-bezier(.34,1.56,.64,1) forwards;}';
+  document.head.appendChild(st);
+}
+
+/* ────────── ONGLET FIDÉLITÉ ────────── */
+var _ltyTabId=null;
+
+function injectTab(){
+  if(!document.getElementById('tab-btn-fidelite')){
+    var payBtn=document.getElementById('tab-btn-paiements');
+    if(!payBtn)return;
+    var btn=document.createElement('button');
+    btn.id='tab-btn-fidelite';btn.className='tab';
+    btn.onclick=function(){if(typeof switchTab==='function')switchTab('fidelite');};
+    btn.innerHTML='🎁 Fidélité<span id="lty-badge" style="display:none;position:absolute;top:3px;right:4px;background:#8b5cf6;color:white;font-size:.55rem;padding:1px 5px;border-radius:8px;font-weight:900;line-height:1.4;"></span>';
+    btn.style.position='relative';
+    payBtn.parentNode.insertBefore(btn,payBtn.nextSibling);
+  }
+  if(!document.getElementById('tab-fidelite')){
+    var payTab=document.getElementById('tab-paiements');
+    if(!payTab)return;
+    var div=document.createElement('div');
+    div.className='tab-content';div.id='tab-fidelite';
+    div.innerHTML=[
+      '<div style="background:linear-gradient(135deg,#6d28d9,#8b5cf6,#7c3aed);padding:18px 20px 14px;border-radius:0 0 16px 16px;position:relative;overflow:hidden;">',
+        '<div style="position:absolute;top:-30px;right:-20px;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,.07);"></div>',
+        '<div style="position:relative;z-index:1;">',
+          '<div style="font-size:1.2rem;font-weight:900;color:#fff;">🎁 Fidélité & Gestion Clientèle</div>',
+          '<div style="font-size:.75rem;color:rgba(255,255,255,.72);margin-top:4px;">Base clients · Points · Historique tickets</div>',
+        '</div>',
+        '<div style="display:flex;gap:10px;margin-top:12px;position:relative;z-index:1;flex-wrap:wrap;align-items:center;">',
+          '<div style="background:rgba(255,255,255,.15);border-radius:10px;padding:8px 14px;text-align:center;"><div style="font-size:1.3rem;font-weight:900;color:#fff;" id="lty-s-cli">0</div><div style="font-size:.62rem;color:rgba(255,255,255,.7);text-transform:uppercase;">Clients</div></div>',
+          '<div style="background:rgba(255,255,255,.15);border-radius:10px;padding:8px 14px;text-align:center;"><div style="font-size:1.3rem;font-weight:900;color:#fff;" id="lty-s-pts">0</div><div style="font-size:.62rem;color:rgba(255,255,255,.7);text-transform:uppercase;">Points</div></div>',
+          '<div style="background:rgba(255,255,255,.15);border-radius:10px;padding:8px 14px;text-align:center;"><div style="font-size:1.3rem;font-weight:900;color:#fff;" id="lty-s-ca">0€</div><div style="font-size:.62rem;color:rgba(255,255,255,.7);text-transform:uppercase;">CA fidélisé</div></div>',
+          '<div style="margin-left:auto;"><button onclick="window._ltyNewClient()" style="background:rgba(255,255,255,.2);border:1.5px solid rgba(255,255,255,.4);color:white;border-radius:10px;padding:8px 14px;font-weight:800;font-size:.82rem;cursor:pointer;">➕ Nouveau client</button></div>',
+        '</div>',
+      '</div>',
+      '<div id="lty-tab-wrap">',
+        '<div id="lty-list-pane">',
+          '<div style="padding:10px 12px;border-bottom:1px solid var(--border-color,#e8ecf0);"><input id="lty-srch" style="width:100%;box-sizing:border-box;padding:8px 12px;border:1.5px solid rgba(139,92,246,.25);border-radius:9px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);" placeholder="🔍 Rechercher…" oninput="window._ltyFilterList(this.value)" autocomplete="off"></div>',
+          '<div id="lty-list-inner"></div>',
+        '</div>',
+        '<div id="lty-detail-pane">',
+          '<div id="lty-detail-empty"><div style="font-size:2.5rem;">👤</div><div style="font-weight:700;font-size:.9rem;">Sélectionnez un client</div></div>',
+          '<div id="lty-detail-view">',
+            '<div id="lty-detail-top"></div>',
+            '<div id="lty-detail-scroll"><div style="font-size:.68rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;">🧾 Historique des tickets</div><div id="lty-tickets-list"></div></div>',
+          '</div>',
+        '</div>',
+      '</div>',
+    ].join('');
+    payTab.parentNode.insertBefore(div,payTab.nextSibling);
+  }
+}
+
+function refreshStats(){
+  var d=lg();
+  var s1=document.getElementById('lty-s-cli');var s2=document.getElementById('lty-s-pts');var s3=document.getElementById('lty-s-ca');
+  var totalPts=d.customers.reduce(function(a,c){return a+(c.points||0);},0);
+  var totalCA=d.customers.reduce(function(a,c){return a+(c.totalSpent||0);},0);
+  if(s1)s1.textContent=d.customers.length;
+  if(s2)s2.textContent=totalPts;
+  if(s3)s3.textContent=totalCA.toFixed(0)+'€';
+  var badge=document.getElementById('lty-badge');
+  if(badge){badge.textContent=d.customers.length;badge.style.display=d.customers.length?'':'none';}
+}
+
+window._ltyFilterList=function(q){renderList(q||'');};
+
+function renderList(q){
+  var el=document.getElementById('lty-list-inner');if(!el)return;
+  var d=lg();q=(q||'').toLowerCase().trim();
+  var list=q?d.customers.filter(function(c){return c.name.toLowerCase().includes(q)||(c.phone&&c.phone.includes(q));}):d.customers.slice();
+  list.sort(function(a,b){return(b.points||0)-(a.points||0);});
+  if(!list.length){el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-muted);font-size:.8rem;">'+(q?'Aucun résultat':'Aucun client')+'</div>';return;}
+  el.innerHTML=list.map(function(c){
+    var nb=(c.history||[]).filter(function(h){return h.type==='credit'&&h.saleId;}).length;
+    var last=c.history&&c.history.length?new Date(c.history[0].date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}):'—';
+    return '<div class="lty-row'+(c.id===_ltyTabId?' active':'')+'" onclick="window._ltyShowDetail(\''+c.id+'\')">'
+      +'<div class="lty-av">'+esc(ini(c.name))+'</div>'
+      +'<div style="flex:1;min-width:0;"><div style="font-weight:800;font-size:.83rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(c.name)+'</div>'
+      +'<div style="font-size:.67rem;color:var(--text-muted);">'+nb+' ticket(s) · '+last+'</div></div>'
+      +'<span style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;font-weight:800;font-size:.66rem;padding:2px 7px;border-radius:12px;white-space:nowrap;">⭐ '+(c.points||0)+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+window._ltyShowDetail=function(id){
+  _ltyTabId=id;
+  window._ltyHist=[];
+  document.querySelectorAll('.lty-row').forEach(function(r){r.classList.toggle('active',r.getAttribute('onclick')&&r.getAttribute('onclick').includes("'"+id+"'"));});
+  var d=lg();var c=d.customers.find(function(x){return x.id===id;});if(!c)return;
+  document.getElementById('lty-detail-empty').style.display='none';
+  var view=document.getElementById('lty-detail-view');view.style.display='flex';
+  var nb=(c.history||[]).filter(function(h){return h.type==='credit'&&h.saleId;}).length;
+  document.getElementById('lty-detail-top').innerHTML=[
+    '<div style="display:flex;align-items:flex-start;gap:14px;">',
+      '<div style="width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:900;color:white;flex-shrink:0;">'+esc(ini(c.name))+'</div>',
+      '<div style="flex:1;">',
+        '<div style="font-weight:900;font-size:1.05rem;color:var(--text-main);">'+esc(c.name)+'</div>',
+        '<div style="font-size:.72rem;color:var(--text-muted);margin-top:2px;">'+(c.phone?'📞 '+esc(c.phone)+' ':'')+(c.email?'✉️ '+esc(c.email):'')+'</div>',
+        '<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap;">',
+          '<span style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;padding:4px 13px;border-radius:20px;font-weight:900;font-size:.88rem;">'+(c.points||0)+' pts</span>',
+          '<span style="background:rgba(5,150,105,.1);color:#059669;padding:4px 13px;border-radius:20px;font-weight:700;font-size:.78rem;">'+(c.totalSpent||0).toFixed(2)+'€ dépensés</span>',
+          '<span style="background:rgba(139,92,246,.1);color:#7c3aed;padding:4px 13px;border-radius:20px;font-weight:700;font-size:.78rem;">'+nb+' ticket(s)</span>',
+        '</div>',
+      '</div>',
+      '<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">',
+        '<button onclick="if(typeof _loyaltyOpenModal===\'function\')_loyaltyOpenModal(\''+id+'\')" style="background:rgba(245,158,11,.12);color:#d97706;border:none;border-radius:8px;padding:6px 11px;font-size:.76rem;font-weight:800;cursor:pointer;">✏️ Modifier</button>',
+        '<button onclick="window._ltyPrintCard(\''+id+'\')" style="background:rgba(139,92,246,.12);color:#7c3aed;border:none;border-radius:8px;padding:6px 11px;font-size:.76rem;font-weight:800;cursor:pointer;">🖨️ Carte</button>',
+      '</div>',
+    '</div>',
+  ].join('');
+  renderTickets(c);
+};
+
+function renderTickets(c){
+  var el=document.getElementById('lty-tickets-list');if(!el)return;
+  var hist=c.history||[];
+  window._ltyHist=hist; /* tableau global pour onclick */
+  if(!hist.length){
+    el.innerHTML='<div style="text-align:center;padding:30px;color:var(--text-muted);"><div style="font-size:2rem;margin-bottom:8px;">🧾</div><div style="font-size:.85rem;font-weight:700;">Aucun ticket</div><div style="font-size:.75rem;margin-top:4px;">Les achats apparaîtront ici automatiquement</div></div>';
+    return;
+  }
+  var mi={cb:'💳',cash:'💶',mixed:'💳💶',points:'💜','points+cb':'💜+💳','points+cash':'💜+💶'};
+  el.innerHTML=hist.map(function(h,i){
+    var isTicket=!!(h.saleId&&h.type==='credit');
+    var ico=isTicket?(mi[h.method]||'🧾'):'📝';
+    var dt=new Date(h.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
+    var hr=new Date(h.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+    var ca=h.cashier?' · '+esc(h.cashier):'';
+    /* Numéro de ticket = saleId (ex: 1780614332095) */
+    var tn=h.ticketNum||h.saleId||null;
+    var tnBadge=tn?'<span class="lty-tkt-num">🧾 Ticket #'+tn+'</span>':'';
+    var viewBtn=isTicket?'<button class="lty-tkt-btn" onclick="event.stopPropagation();window._ltyOpenRcpt('+i+')">📄 Ticket</button>':'';
+    var ptsBadge=h.points>=0?'<span class="lty-pts-green">+'+h.points+' pts</span>':'<span class="lty-pts-red">'+h.points+' pts</span>';
+    var hasItems=isTicket&&h.items&&h.items.length;
+    var itemsHtml='';
+    if(hasItems){
+      itemsHtml='<div class="lty-tkt-body" id="lti-'+i+'">'
+        +'<div style="border-top:1px dashed var(--border-color,#e0e0e0);padding-top:8px;margin-bottom:6px;"></div>'
+        +h.items.map(function(it){
+          var qty=it.unitType==='kg'?(it.quantity>=1?it.quantity.toFixed(3)+' kg':(it.quantity*1000).toFixed(0)+'g'):'×'+it.quantity;
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid var(--border-color,#f0f0f0);font-size:.75rem;">'
+            +'<span style="flex:1;color:var(--text-main);">'+esc((it.name||'').replace(' 🏷️',''))+'</span>'
+            +'<span style="color:var(--text-muted);margin:0 8px;">'+qty+'</span>'
+            +'<span style="font-weight:700;">'+(it.total||0).toFixed(2)+'€</span>'
+            +'</div>';
+        }).join('')
+        +'<div style="display:flex;justify-content:space-between;padding:5px 0 0;font-weight:900;font-size:.8rem;border-top:1px solid var(--border-color,#e0e0e0);margin-top:4px;">'
+        +'<span>Total</span><span style="color:#059669;">'+(h.amount||0).toFixed(2)+'€</span></div>'
+        +'</div>';
+    }
+    return '<div class="lty-tkt">'
+      +'<div class="lty-tkt-head"'+(hasItems?' onclick="var b=document.getElementById(\'lti-'+i+'\');if(b){var o=b.style.display!==\'block\';b.style.display=o?\'block\':\'none\';this.querySelector(\'.lx\').textContent=o?\'▲\':\'▼\';}"':'')+'>'
+      +'<div style="flex:1;min-width:0;">'
+      +'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-bottom:3px;">'+tnBadge+'</div>'
+      +'<div style="font-size:.73rem;color:var(--text-muted);">'+ico+' '+dt+' '+hr+ca+'</div>'
+      +'<div style="font-size:.8rem;font-weight:700;margin-top:2px;">'+(isTicket?'<span style="color:#059669;">'+(h.amount||0).toFixed(2)+'€</span>'+(h._ltyDiscount?'<span style="font-size:.68rem;color:#7c3aed;margin-left:5px;">(−'+h._ltyDiscount.toFixed(2)+'€ pts)</span>':''):'<span style="color:var(--text-muted);">'+(h.note||'Ajustement')+'</span>')+'</div>'
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">'+viewBtn+ptsBadge+(hasItems?'<span class="lx" style="margin-left:4px;color:var(--text-muted);font-size:.75rem;">▼</span>':'')+'</div>'
+      +'</div>'
+      +itemsHtml
+      +'</div>';
+  }).join('');
+}
+
+/* ────────── MODALE REÇU ────────── */
+window._ltyOpenRcpt=function(i){
+  var h=(window._ltyHist||[])[i];if(!h)return;
+  var modal=document.getElementById('lty-rcpt-modal');
+  var content=document.getElementById('lty-rcpt-content');
+  if(!modal||!content)return;
+  var ml={cb:'💳 Carte Bancaire',cash:'💶 Espèces',mixed:'💳💶 Mixte',points:'💜 Points','points+cb':'💜 Points + 💳 CB','points+cash':'💜 Points + 💶 Espèces'};
+  var tn=h.ticketNum||h.saleId||null;
+  var dt=new Date(h.date).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  var hr=new Date(h.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  var rows='';var sub=0;
+  if(h.items&&h.items.length){
+    rows=h.items.map(function(it){
+      var qty=it.unitType==='kg'?(it.quantity>=1?it.quantity.toFixed(3)+' kg':(it.quantity*1000).toFixed(0)+'g'):'x'+it.quantity;
+      var tot=it.total||(it.price*it.quantity)||0;sub+=tot;
+      return '<div class="rcpt-row"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:58%;">'+esc((it.name||'').replace(' 🏷️',''))+'</span><span style="margin:0 6px;color:#888;">'+qty+'</span><span style="font-weight:700;">'+tot.toFixed(2)+'€</span></div>';
+    }).join('');
+  }
+  var discHtml=(h._ltyDiscount>0)?'<div class="rcpt-sep"></div><div class="rcpt-row"><span>Sous-total</span><span>'+sub.toFixed(2)+'€</span></div><div class="rcpt-row" style="color:#059669;"><span>💜 Points déduits</span><span>−'+h._ltyDiscount.toFixed(2)+'€</span></div>':'';
+  var ptsHtml=h.points>0?'<div class="rcpt-pts">🎁 Points gagnés : <strong>+'+h.points+' pts</strong></div>':h.points<0?'<div class="rcpt-pts" style="color:#dc2626;">💜 Points débités : <strong>'+h.points+' pts</strong></div>':'';
+  content.innerHTML=[
+    '<div style="text-align:center;font-weight:900;margin-bottom:10px;">★ COVO Pro ★<br><span style="font-size:.72rem;font-weight:400;color:#888;">Ticket de caisse</span></div>',
+    '<div class="rcpt-sep"></div>',
+    '<div class="rcpt-row"><span>📅 Date</span><span style="text-align:right;max-width:55%;">'+dt+'</span></div>',
+    '<div class="rcpt-row"><span>⏰ Heure</span><span>'+hr+'</span></div>',
+    tn?'<div class="rcpt-row"><span>🧾 N° Ticket</span><span style="font-weight:900;color:#7c3aed;font-family:monospace;">#'+tn+'</span></div>':'',
+    h.cashier?'<div class="rcpt-row"><span>👤 Caissier</span><span>'+esc(h.cashier)+'</span></div>':'',
+    '<div class="rcpt-sep"></div>',
+    rows||'<div style="color:#94a3b8;text-align:center;padding:6px 0;">Détail non disponible</div>',
+    discHtml,
+    '<div class="rcpt-sep"></div>',
+    '<div class="rcpt-row bold"><span>TOTAL</span><span style="color:#059669;">'+(h.amount||0).toFixed(2)+'€</span></div>',
+    '<div class="rcpt-row" style="margin-top:4px;"><span>Règlement</span><span>'+(ml[h.method]||(h.method||'—'))+'</span></div>',
+    ptsHtml,
+    '<div class="rcpt-sep"></div>',
+    '<div style="text-align:center;font-size:.72rem;color:#94a3b8;">Merci de votre visite !</div>',
+  ].join('');
+  window._ltyRcptHtml=content.innerHTML;
+  modal.classList.add('active');
+};
+
+window._ltyPrintRcpt=function(){
+  var win=window.open('','_blank','width=380,height=600');if(!win)return;
+  win.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ticket</title>'
+    +'<style>body{font-family:"Courier New",monospace;font-size:12px;padding:16px;max-width:300px;margin:0 auto;}'
+    +'.rcpt-sep{border-top:1px dashed #ccc;margin:6px 0;}.rcpt-row{display:flex;justify-content:space-between;margin:2px 0;}'
+    +'.rcpt-row.bold{font-weight:900;font-size:14px;}.rcpt-pts{text-align:center;border:1px dashed #8b5cf6;border-radius:6px;padding:5px;margin-top:6px;color:#7c3aed;font-weight:800;}'
+    +'</style></head><body>'+(window._ltyRcptHtml||'')
+    +'<script>window.onload=function(){window.print();}<\/script></body></html>');
+  win.document.close();
+};
+
+/* ────────── ACTIONS CLIENTS ────────── */
+window._ltyNewClient=function(){if(typeof _loyaltyOpenModal==='function')_loyaltyOpenModal(null);};
+window._ltyPrintCard=function(id){if(typeof _loyaltyOpenModal==='function'){_loyaltyOpenModal(id);setTimeout(function(){if(typeof _loyaltyPrintBarcode==='function')_loyaltyPrintBarcode();},400);}};
+
+function fullRefresh(){
+  refreshStats();
+  var q=document.getElementById('lty-srch');
+  renderList(q?q.value:'');
+  if(_ltyTabId){var d=lg();var c=d.customers.find(function(x){return x.id===_ltyTabId;});if(c)window._ltyShowDetail(_ltyTabId);}
+}
+window._ltyRefresh=fullRefresh;
+
+/* ────────── HOOKS GLOBAUX ────────── */
+var _prevTAM=window.toggleAdminModal;
+if(typeof _prevTAM==='function'){window.toggleAdminModal=function(){_prevTAM.apply(this,arguments);setTimeout(function(){injectTab();refreshStats();},300);};}
+
+var _prevSwitchTab=window.switchTab;
+if(typeof _prevSwitchTab==='function'){window.switchTab=function(name){_prevSwitchTab.apply(this,arguments);if(name==='fidelite'){injectTab();setTimeout(fullRefresh,60);}};};
+
+var _prevATV=window.applyTabsVisibility;
+if(typeof _prevATV==='function'){window.applyTabsVisibility=function(){_prevATV.apply(this,arguments);var b=document.getElementById('tab-btn-fidelite');if(b)b.style.display='';};}
+
+/* ────────── ADMIN SECTION FIDÉLITÉ (existante dans le HTML) ────────── */
+/* Conserver la section existante pour les paramètres */
+window._loyaltyRenderAdmin=fullRefresh;
+
+/* ────────── INIT ────────── */
+setTimeout(function(){injectWidget();injectTab();refreshStats();},1200);
+
+})(); // fin du module
+</script>
+
+<script>
+/* ── Patch final : modal display + numéro ticket ── */
+(function(){
+
+  /* 1. Remplacer _ltyOpenRcpt avec display inline (plus fiable que classList) */
+  window._ltyOpenRcpt = function(i){
+    var h = (window._ltyHist || [])[i];
+    if(!h){ console.warn('[FIDELITE] _ltyHist['+i+'] introuvable'); return; }
+
+    var modal   = document.getElementById('lty-rcpt-modal');
+    var content = document.getElementById('lty-rcpt-content');
+    if(!modal){ console.warn('[FIDELITE] modale introuvable'); return; }
+    if(!content){ return; }
+
+    function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    /* Numéro de ticket : priorité au saleId (timestamp = ex 1780614332095) */
+    var tn = (h.saleId && String(h.saleId).length > 8) ? h.saleId
+           : (h.ticketNum && String(h.ticketNum).length > 8) ? h.ticketNum
+           : (h.saleId || h.ticketNum || null);
+
+    var mi = {cb:'💳 CB',cash:'💶 Espèces',mixed:'💳💶 Mixte',points:'💜 Points','points+cb':'💜+💳','points+cash':'💜+💶'};
+    var dt = new Date(h.date).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+    var hr = new Date(h.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+    var rows = '', sub = 0;
+    (h.items || []).forEach(function(it){
+      var qty = it.unitType==='kg'
+        ? (it.quantity>=1 ? it.quantity.toFixed(3)+' kg' : (it.quantity*1000).toFixed(0)+'g')
+        : 'x'+it.quantity;
+      var tot = it.total || (it.price * it.quantity) || 0;
+      sub += tot;
+      rows += '<div style="display:flex;justify-content:space-between;margin:2px 0;">'
+        + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;">'+esc((it.name||'').replace(' 🏷️',''))+'</span>'
+        + '<span style="margin:0 6px;color:#888;">'+qty+'</span>'
+        + '<span style="font-weight:700;">'+tot.toFixed(2)+'€</span>'
+        + '</div>';
+    });
+
+    var discHtml = (h._ltyDiscount > 0)
+      ? '<div style="border-top:1px dashed #ccc;margin:8px 0;"></div>'
+        + '<div style="display:flex;justify-content:space-between;"><span>Sous-total</span><span>'+sub.toFixed(2)+'€</span></div>'
+        + '<div style="display:flex;justify-content:space-between;color:#059669;"><span>💜 Points déduits</span><span>−'+h._ltyDiscount.toFixed(2)+'€</span></div>'
+      : '';
+
+    var ptsHtml = h.points > 0
+      ? '<div style="text-align:center;background:rgba(139,92,246,.08);border-radius:8px;padding:6px;margin-top:8px;color:#7c3aed;font-weight:800;">🎁 Points gagnés : +'+h.points+' pts</div>'
+      : h.points < 0
+        ? '<div style="text-align:center;background:rgba(220,38,38,.08);border-radius:8px;padding:6px;margin-top:8px;color:#dc2626;font-weight:800;">💜 Points débités : '+h.points+' pts</div>'
+        : '';
+
+    content.innerHTML =
+      '<div style="text-align:center;font-family:monospace;font-weight:900;margin-bottom:10px;font-size:.9rem;">★ COVO Pro ★<br><span style="font-size:.72rem;font-weight:400;color:#888;">Ticket de caisse</span></div>'
+      + '<div style="border-top:1px dashed #ccc;margin:8px 0;"></div>'
+      + '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:.82rem;margin:2px 0;"><span>📅 Date</span><span style="text-align:right;max-width:60%;">'+dt+'</span></div>'
+      + '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:.82rem;margin:2px 0;"><span>⏰ Heure</span><span>'+hr+'</span></div>'
+      + (tn ? '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:.82rem;margin:2px 0;"><span>🧾 Ticket</span><span style="font-weight:900;color:#7c3aed;">#'+tn+'</span></div>' : '')
+      + (h.cashier ? '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:.82rem;margin:2px 0;"><span>👤 Caissier</span><span>'+esc(h.cashier)+'</span></div>' : '')
+      + '<div style="border-top:1px dashed #ccc;margin:8px 0;"></div>'
+      + (rows || '<div style="color:#94a3b8;text-align:center;padding:6px 0;font-size:.8rem;">Détail non disponible</div>')
+      + discHtml
+      + '<div style="border-top:1px dashed #ccc;margin:8px 0;"></div>'
+      + '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:1rem;font-weight:900;"><span>TOTAL</span><span style="color:#059669;">'+(h.amount||0).toFixed(2)+'€</span></div>'
+      + '<div style="display:flex;justify-content:space-between;font-family:monospace;font-size:.82rem;margin:4px 0;"><span>Règlement</span><span>'+(mi[h.method]||(h.method||'—'))+'</span></div>'
+      + ptsHtml
+      + '<div style="border-top:1px dashed #ccc;margin:8px 0;"></div>'
+      + '<div style="text-align:center;font-size:.72rem;color:#94a3b8;font-family:monospace;">Merci de votre visite !</div>';
+
+    window._ltyRcptHtml = content.innerHTML;
+
+    /* Forcer display:flex en inline style (plus fiable que classList) */
+    modal.style.display = 'flex';
+  };
+
+  /* 2. Fermer la modale via inline style */
+  document.querySelectorAll('[onclick*="lty-rcpt-modal"]').forEach(function(btn){
+    btn.onclick = function(){ document.getElementById('lty-rcpt-modal').style.display='none'; };
+  });
+
+  /* 3. Fermer avec Echap */
+  document.addEventListener('keydown', function(e){
+    if(e.key==='Escape'){
+      var m = document.getElementById('lty-rcpt-modal');
+      if(m && m.style.display==='flex') m.style.display='none';
+    }
+  });
+
+  /* 4. Aussi corriger renderTickets : numéro = saleId si long, sinon ticketNum */
+  var _prevRenderTkts = window._ltyShowDetail;
+  window._ltyShowDetail = function(id){
+    if(typeof _prevRenderTkts === 'function') _prevRenderTkts.apply(this, arguments);
+    /* Patch numéros après rendu */
+    setTimeout(function(){
+      document.querySelectorAll('.lty-tkt-num').forEach(function(el){
+        var txt = el.textContent || '';
+        /* Si N°1 ou N°2 etc. (petit nombre), chercher dans _ltyHist le bon saleId */
+        var match = txt.match(/#(\d+)$/);
+        if(match && match[1].length < 9){
+          var idx = parseInt(el.closest('.lty-tkt')?el.closest('.lty-tkt').getAttribute('data-idx'):'', 10);
+          /* Essayer de trouver dans _ltyHist */
+          (window._ltyHist || []).forEach(function(h, i){
+            if(h.saleId && String(h.saleId).length >= 10){
+              /* Remplacer si c'est le même index */
+              var tkt = el.closest('.lty-tkt');
+              if(tkt && tkt.id === 'lti-parent-'+i){
+                el.textContent = '🧾 Ticket #' + h.saleId;
+              }
+            }
+          });
+        }
+      });
+    }, 80);
+  };
+
+})();
+</script>
+
+<!-- ── Modale client fidélité ── -->
+<style>
+#lty-client-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:22000;justify-content:center;align-items:center;padding:16px;}
+#lty-client-modal.open{display:flex;}
+#lty-client-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+#lty-client-box::-webkit-scrollbar{width:4px;}
+#lty-client-box::-webkit-scrollbar-thumb{background:rgba(139,92,246,.4);border-radius:4px;}
+.lcf-label{font-size:.68rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px;display:block;}
+.lcf-input{width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:.88rem;background:var(--input-bg,#fff);color:var(--text-main);}
+.lcf-input:focus{outline:none;border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.1);}
+body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
+</style>
+
+<div id="lty-client-modal">
+  <div id="lty-client-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border-color,#e8ecf0);">
+      <h3 id="lcm-title" style="margin:0;font-size:1.05rem;font-weight:900;color:var(--text-main);">👤 Nouveau client</h3>
+      <button onclick="window._loyaltyCloseModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--text-muted);">✕</button>
+    </div>
+    <div style="padding:20px;">
+      <div style="margin-bottom:14px;">
+        <label class="lcf-label">Nom complet *</label>
+        <input class="lcf-input" id="lcm-name" placeholder="Jean Dupont" type="text">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+        <div>
+          <label class="lcf-label">Téléphone</label>
+          <input class="lcf-input" id="lcm-phone" placeholder="06 00 00 00 00" type="tel">
+        </div>
+        <div>
+          <label class="lcf-label">Email</label>
+          <input class="lcf-input" id="lcm-email" placeholder="jean@email.com" type="email">
+        </div>
+      </div>
+      <!-- Barcode (mode édition) -->
+      <div id="lcm-barcode-section" style="display:none;margin-bottom:16px;">
+        <label class="lcf-label">Code-barres client</label>
+        <div style="background:white;border-radius:10px;padding:14px;text-align:center;border:1.5px solid rgba(139,92,246,.2);">
+          <svg id="lcm-barcode-svg"></svg>
+          <div id="lcm-barcode-id" style="font-family:monospace;font-size:.72rem;color:#7c3aed;margin-top:6px;font-weight:700;"></div>
+          <div id="lcm-barcode-name" style="font-size:1rem;font-weight:800;color:#5b21b6;margin-bottom:4px;"></div>
+        </div>
+        <button onclick="window._loyaltyPrintBarcode()" style="width:100%;margin-top:8px;padding:9px;background:rgba(139,92,246,.12);color:#7c3aed;border:1px solid rgba(139,92,246,.25);border-radius:9px;font-weight:800;font-size:.84rem;cursor:pointer;">🖨️ Imprimer la carte client</button>
+      </div>
+      <!-- Points (mode édition) -->
+      <div id="lcm-points-section" style="display:none;margin-bottom:16px;">
+        <label class="lcf-label">Solde de points</label>
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:rgba(139,92,246,.06);border-radius:9px;">
+          <div style="font-size:1.8rem;font-weight:900;color:#7c3aed;" id="lcm-points-display">0</div>
+          <div style="font-size:.75rem;color:var(--text-muted);">pts · Dépensé : <span id="lcm-spent-display">0.00€</span></div>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+            <input type="number" id="lcm-manual-pts" placeholder="±pts" style="width:70px;padding:4px 8px;border:1.5px solid var(--border-color);border-radius:6px;font-size:.82rem;background:var(--input-bg,#fff);color:var(--text-main);">
+            <button onclick="window._loyaltyManualAdjust()" style="background:rgba(139,92,246,.15);color:#7c3aed;border:none;border-radius:6px;padding:5px 10px;font-size:.75rem;font-weight:700;cursor:pointer;">+/−</button>
+          </div>
+        </div>
+      </div>
+      <!-- Actions -->
+      <div style="display:flex;gap:8px;">
+        <button onclick="window._loyaltySaveModal()" style="flex:2;padding:11px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:10px;font-weight:900;font-size:.88rem;cursor:pointer;">💾 Enregistrer</button>
+        <button id="lcm-delete-btn" onclick="window._loyaltyDeleteFromModal()" style="display:none;padding:11px 16px;background:rgba(239,68,68,.1);color:#dc2626;border:1px solid rgba(239,68,68,.2);border-radius:10px;font-weight:800;font-size:.84rem;cursor:pointer;">🗑️</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── Module client fidélité (modal add/edit + carte) ── */
+(function(){
+  'use strict';
+  var LK='covo_loyalty';
+  var _editId=null;
+  function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{pointsPerEuro:1,rewardThreshold:100,rewardValue:5}};}catch(e){return{customers:[],settings:{}};}}
+  function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+  function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function genId(custs){var max=custs.reduce(function(m,c){var n=parseInt((c.id||'').replace('CLT-',''),10);return isNaN(n)?m:Math.max(m,n);},0);return'CLT-'+String(max+1).padStart(4,'0');}
+  function genBC(id){return'LCLT'+id.replace('CLT-','');}
+
+  function drawBarcode(svgId,val){
+    var el=document.getElementById(svgId);
+    if(!el||typeof JsBarcode==='undefined')return;
+    try{JsBarcode(el,val,{format:'CODE128',width:2,height:55,displayValue:true,fontSize:13,margin:6,background:'#ffffff',lineColor:'#1e293b'});}catch(e){}
+  }
+
+  /* ── Ouvrir la modale ── */
+  window._loyaltyOpenModal=function(id){
+    _editId=id||null;
+    var d=lg();
+    var c=id?d.customers.find(function(x){return x.id===id;}):null;
+    document.getElementById('lcm-title').textContent=c?'✏️ Modifier — '+c.name:'👤 Nouveau client';
+    document.getElementById('lcm-name').value=c?c.name:'';
+    document.getElementById('lcm-phone').value=c?(c.phone||''):'';
+    document.getElementById('lcm-email').value=c?(c.email||''):'';
+    var delBtn=document.getElementById('lcm-delete-btn');
+    if(delBtn)delBtn.style.display=c?'':'none';
+    var bcSec=document.getElementById('lcm-barcode-section');
+    var ptsSec=document.getElementById('lcm-points-section');
+    if(c){
+      if(bcSec)bcSec.style.display='';
+      var bcId=document.getElementById('lcm-barcode-id');
+      var bcName=document.getElementById('lcm-barcode-name');
+      if(bcId)bcId.textContent=genBC(c.id);
+      if(bcName)bcName.textContent=c.name;
+      setTimeout(function(){drawBarcode('lcm-barcode-svg',genBC(c.id));},100);
+      if(ptsSec)ptsSec.style.display='';
+      var ptsEl=document.getElementById('lcm-points-display');
+      var spEl=document.getElementById('lcm-spent-display');
+      if(ptsEl)ptsEl.textContent=c.points||0;
+      if(spEl)spEl.textContent=(c.totalSpent||0).toFixed(2)+'€';
+    } else {
+      if(bcSec)bcSec.style.display='none';
+      if(ptsSec)ptsSec.style.display='none';
+    }
+    document.getElementById('lty-client-modal').classList.add('open');
+  };
+
+  /* ── Fermer ── */
+  window._loyaltyCloseModal=function(){
+    document.getElementById('lty-client-modal').classList.remove('open');
+    _editId=null;
+  };
+
+  /* ── Sauvegarder ── */
+  window._loyaltySaveModal=function(){
+    var name=(document.getElementById('lcm-name').value||'').trim();
+    var phone=(document.getElementById('lcm-phone').value||'').trim();
+    var email=(document.getElementById('lcm-email').value||'').trim();
+    if(!name){if(typeof showScanToast==='function')showScanToast('❌ Nom requis');return;}
+    var d=lg();
+    if(_editId){
+      var idx=d.customers.findIndex(function(x){return x.id===_editId;});
+      if(idx!==-1){d.customers[idx].name=name;d.customers[idx].phone=phone;d.customers[idx].email=email;}
+    } else {
+      var newId=genId(d.customers);
+      d.customers.push({id:newId,name:name,phone:phone,email:email,barcode:genBC(newId),points:0,totalSpent:0,createdAt:new Date().toISOString(),history:[]});
+    }
+    ls(d);
+    window._loyaltyCloseModal();
+    if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+    if(typeof showScanToast==='function')showScanToast('✅ Client enregistré');
+  };
+
+  /* ── Supprimer ── */
+  window._loyaltyDeleteFromModal=function(){
+    if(!_editId)return;
+    if(!confirm('Supprimer ce client et son historique ?'))return;
+    var d=lg();
+    d.customers=d.customers.filter(function(x){return x.id!==_editId;});
+    ls(d);
+    window._loyaltyCloseModal();
+    if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+    if(typeof showScanToast==='function')showScanToast('🗑️ Client supprimé');
+  };
+
+  /* ── Ajustement manuel de points ── */
+  window._loyaltyManualAdjust=function(){
+    var pts=parseInt(document.getElementById('lcm-manual-pts').value||'0',10);
+    if(!pts||!_editId)return;
+    var d=lg();var idx=d.customers.findIndex(function(x){return x.id===_editId;});
+    if(idx===-1)return;
+    d.customers[idx].points=Math.max(0,(d.customers[idx].points||0)+pts);
+    if(!d.customers[idx].history)d.customers[idx].history=[];
+    d.customers[idx].history.unshift({date:new Date().toISOString(),saleId:null,amount:0,points:pts,type:pts>0?'credit':'debit',cashier:'admin',note:'Ajustement manuel'});
+    ls(d);
+    document.getElementById('lcm-points-display').textContent=d.customers[idx].points;
+    document.getElementById('lcm-manual-pts').value='';
+    if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+    if(typeof showScanToast==='function')showScanToast('✅ Points ajustés : '+(pts>0?'+':'')+pts);
+  };
+
+  /* ── Imprimer la carte client ── */
+  window._loyaltyPrintBarcode=function(){
+    var svg=document.getElementById('lcm-barcode-svg');
+    var nameInp=document.getElementById('lcm-name');
+    var bcId=document.getElementById('lcm-barcode-id');
+    if(!svg)return;
+    var customerName=nameInp?(nameInp.value||'').trim():'';
+    var barcodeId=bcId?(bcId.textContent||'').trim():'';
+    var win=window.open('','_blank','width=420,height=340');
+    if(!win)return;
+    win.document.write([
+      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Carte Fidélité — '+customerName+'</title>',
+      '<style>body{margin:0;font-family:Arial,sans-serif;background:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;}',
+      '.card{width:340px;border:2px solid #8b5cf6;border-radius:16px;padding:20px 22px;text-align:center;box-shadow:0 4px 20px rgba(139,92,246,.15);}',
+      '.hdr{background:linear-gradient(135deg,#8b5cf6,#6d28d9);border-radius:10px;padding:10px 14px;margin-bottom:14px;color:white;}',
+      '.hdr-t{font-size:.75rem;font-weight:800;letter-spacing:1px;text-transform:uppercase;opacity:.85;margin-bottom:4px;}',
+      '.hdr-n{font-size:1.2rem;font-weight:900;}',
+      'svg{max-width:100%;}',
+      '.bc-id{font-family:monospace;font-size:.65rem;color:#7c3aed;margin-top:6px;font-weight:700;}',
+      '.footer{font-size:.62rem;color:#94a3b8;margin-top:10px;}',
+      '@media print{body{min-height:auto;}}',
+      '</style></head><body>',
+      '<div class="card">',
+        '<div class="hdr"><div class="hdr-t">🎁 Carte Fidélité</div><div class="hdr-n">'+customerName+'</div></div>',
+        svg.outerHTML,
+        '<div class="bc-id">'+barcodeId+'</div>',
+        '<div class="footer">Présentez cette carte à chaque achat pour cumuler vos points</div>',
+      '</div>',
+      '<script>window.onload=function(){window.print();}<\/script>',
+      '</body></html>',
+    ].join(''));
+    win.document.close();
+  };
+
+  /* Fermer en cliquant sur le fond */
+  document.getElementById('lty-client-modal').addEventListener('click',function(e){
+    if(e.target===this)window._loyaltyCloseModal();
+  });
+
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   Patch : 1) Adresse client  2) Scan barcode fidélité
+   ══════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
-  var COST_KEY = 'covo_perm_admin_costprice';
+  var LK = 'covo_loyalty';
+  function lg() { try { return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{}}; } catch(e){ return {customers:[],settings:{}}; } }
+  function ls(d) { localStorage.setItem(LK, JSON.stringify(d)); }
+  function genBC(id) { return 'LCLT' + id.replace('CLT-', ''); }
 
-  window._canSeeCostPrice = function () {
-    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
-    if (!cu) return false;
-    if (cu.isMaster) return true;
-    if (cu.role !== 'admin') return false;
+  /* ════════════════════════════════════════════════════
+     1. ADRESSE — injecter le champ dans la modale client
+     ════════════════════════════════════════════════════ */
+  function _injectAddressField() {
+    if (document.getElementById('lcm-address')) return;
+    var emailRow = document.getElementById('lcm-email');
+    if (!emailRow) return;
+    /* Chercher le parent grid (téléphone / email) */
+    var grid = emailRow.closest('div[style*="grid"]') || emailRow.parentNode.parentNode;
+    if (!grid) return;
+    /* Créer le bloc adresse */
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:14px;';
+    wrap.innerHTML = '<label class="lcf-label" style="font-size:.68rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px;display:block;">Adresse domicile</label>'
+      + '<input class="lcf-input" id="lcm-address" placeholder="12 rue de la Paix, 75001 Paris" type="text" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:.88rem;background:var(--input-bg,#fff);color:var(--text-main);">';
+    /* Insérer après le grid téléphone/email */
+    grid.parentNode.insertBefore(wrap, grid.nextSibling);
+  }
 
-    try {
-      var perms = JSON.parse(localStorage.getItem(COST_KEY) || 'null');
-      if (!perms) return false;
-
-      /* ── Format global (ancien) : { granted: true, expiresAt: ... }
-             → accordé à tous les admins via le bouton "Accorder l'accès" ── */
-      if (perms.granted) {
-        if (perms.expiresAt && new Date(perms.expiresAt) < new Date()) return false;
-        return true;
+  /* ── Patcher _loyaltyOpenModal pour charger/vider l'adresse ── */
+  var _prevOpen = window._loyaltyOpenModal;
+  window._loyaltyOpenModal = function (id) {
+    if (typeof _prevOpen === 'function') _prevOpen.apply(this, arguments);
+    /* Injecter le champ si absent */
+    setTimeout(function () {
+      _injectAddressField();
+      var addrEl = document.getElementById('lcm-address');
+      if (!addrEl) return;
+      if (id) {
+        var c = lg().customers.find(function (x) { return x.id === id; });
+        addrEl.value = c ? (c.address || '') : '';
+      } else {
+        addrEl.value = '';
       }
-
-      /* ── Format par-admin (nouveau) : { admins: { uid: { granted, expiresAt } } } ── */
-      if (!perms.admins) return false;
-      var uid   = cu.id || cu.username || '';
-      var entry = perms.admins[uid];
-      if (!entry || !entry.granted) return false;
-      if (entry.expiresAt && new Date(entry.expiresAt) < new Date()) {
-        delete perms.admins[uid];
-        localStorage.setItem(COST_KEY, JSON.stringify(perms));
-        return false;
-      }
-      return true;
-    } catch (e) { return false; }
+    }, 60);
   };
 
-  /* ── Fix _getCostPriceDiscount : même compatibilité ── */
-  window._getCostPriceDiscount = function () {
-    var cu = (typeof currentUser !== 'undefined') ? currentUser : null;
-    if (!cu || cu.isMaster) return 100;
-    try {
-      var perms = JSON.parse(localStorage.getItem(COST_KEY) || 'null');
-      if (!perms) return 100;
-
-      /* Format global → position 0 (= prix d'achat exact) sauf si discount défini */
-      if (perms.granted) {
-        return (perms.discount != null) ? Math.max(0, Math.min(100, parseFloat(perms.discount))) : 0;
-      }
-
-      /* Format par-admin */
-      if (!perms.admins) return 100;
-      var uid   = cu.id || cu.username || '';
-      var entry = perms.admins[uid];
-      if (!entry || !entry.granted) return 100;
-      return (entry.discount != null) ? Math.max(0, Math.min(100, parseFloat(entry.discount))) : 0;
-    } catch (e) { return 100; }
+  /* ── Patcher _loyaltySaveModal pour sauvegarder l'adresse ── */
+  var _prevSave = window._loyaltySaveModal;
+  window._loyaltySaveModal = function () {
+    /* Ajouter l'adresse avant d'appeler l'original */
+    var addrEl = document.getElementById('lcm-address');
+    var addr = addrEl ? (addrEl.value || '').trim() : '';
+    /* Sauvegarder temporairement l'adresse dans un flag global */
+    window._lcmPendingAddress = addr;
+    if (typeof _prevSave === 'function') _prevSave.apply(this, arguments);
+    window._lcmPendingAddress = null;
   };
+
+  /* Intercepter la sauvegarde pour y inclure l'adresse */
+  var _origLs = null;
+  (function patchStorage() {
+    /* On surcharge ls() via une approche différente :
+       on patch directement après la sauvegarde du client */
+    var _prevSave2 = window._loyaltySaveModal;
+    window._loyaltySaveModal = function () {
+      var addrEl = document.getElementById('lcm-address');
+      var addr = addrEl ? (addrEl.value || '').trim() : '';
+      var nameEl = document.getElementById('lcm-name');
+      var name = nameEl ? (nameEl.value || '').trim() : '';
+      /* Appeler l'original (qui sauvegarde sans adresse) */
+      if (typeof _prevSave === 'function') _prevSave.apply(this, arguments);
+      /* Corriger dans localStorage en ajoutant l'adresse */
+      if (!addr) return;
+      var d = lg();
+      var c = d.customers.find(function (x) { return x.name === name; });
+      if (c) { c.address = addr; ls(d); }
+    };
+  })();
+
+  /* ── Afficher l'adresse dans la fiche client ── */
+  var _prevShowDetail = window._ltyShowDetail;
+  window._ltyShowDetail = function (id) {
+    if (typeof _prevShowDetail === 'function') _prevShowDetail.apply(this, arguments);
+    /* Ajouter l'adresse sous les coordonnées */
+    setTimeout(function () {
+      var c = lg().customers.find(function (x) { return x.id === id; });
+      if (!c || !c.address) return;
+      var top = document.getElementById('lty-detail-top');
+      if (!top || top.querySelector('.lty-addr')) return;
+      var contactEl = top.querySelector('[style*="text-muted"]');
+      if (!contactEl) return;
+      var addrDiv = document.createElement('div');
+      addrDiv.className = 'lty-addr';
+      addrDiv.style.cssText = 'font-size:.72rem;color:var(--text-muted);margin-top:2px;';
+      addrDiv.textContent = '📍 ' + c.address;
+      contactEl.parentNode.insertBefore(addrDiv, contactEl.nextSibling);
+    }, 120);
+  };
+
+  /* ════════════════════════════════════════════════════
+     2. SCAN BARCODE FIDÉLITÉ — détection sur tous les inputs
+     ════════════════════════════════════════════════════ */
+
+  /* Fonction centrale de détection */
+  function _detectLoyaltyBarcode(val) {
+    val = (val || '').trim().toUpperCase();
+    if (!val.startsWith('LCLT') || val.length < 8) return false;
+    var d = lg();
+    var c = d.customers.find(function (x) { return genBC(x.id) === val; });
+    if (!c) {
+      if (typeof showScanToast === 'function')
+        showScanToast('⚠️ Carte fidélité non reconnue : ' + val);
+      return true; /* barcode fidélité mais client inconnu */
+    }
+    /* Sélectionner le client */
+    window._ltyCu = c;
+    window._ltyRed = null;
+    if (typeof window._ltyRenderWidget === 'function') window._ltyRenderWidget();
+    /* Ouvrir le panier si fermé */
+    var cm = document.getElementById('cart-modal');
+    if (cm && !cm.classList.contains('active') && typeof toggleCart === 'function') toggleCart();
+    /* Vider l'input source */
+    ['single-scan-input', 'search-bar', 'loyalty-cart-input'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    if (typeof showScanToast === 'function')
+      showScanToast('👤 ' + c.name + ' · ⭐ ' + (c.points || 0) + ' pts', 'success');
+    return true;
+  }
+  window._detectLoyaltyBarcode = _detectLoyaltyBarcode;
+
+  /* ── Hook ssmLiveSearch (input single-scan-modal) ── */
+  var _prevSSL = window.ssmLiveSearch;
+  window.ssmLiveSearch = function (val) {
+    if (_detectLoyaltyBarcode(val)) return;
+    if (typeof _prevSSL === 'function') _prevSSL.apply(this, arguments);
+  };
+
+  /* ── Hook confirmSingleScan (touche Entrée sur le scan) ── */
+  var _prevCSS = window.confirmSingleScan;
+  if (typeof _prevCSS === 'function') {
+    window.confirmSingleScan = function () {
+      var inp = document.getElementById('single-scan-input');
+      var val = inp ? inp.value.trim() : '';
+      if (_detectLoyaltyBarcode(val)) {
+        if (inp) inp.value = '';
+        return;
+      }
+      _prevCSS.apply(this, arguments);
+    };
+  }
+
+  /* ── Hook handleSearch (barre de recherche principale) ── */
+  var _prevHS = window.handleSearch;
+  if (typeof _prevHS === 'function') {
+    window.handleSearch = function () {
+      var inp = document.getElementById('search-bar');
+      var val = inp ? inp.value.trim() : '';
+      if (val.toUpperCase().startsWith('LCLT') && val.length >= 8) {
+        if (_detectLoyaltyBarcode(val)) {
+          if (inp) inp.value = '';
+          return;
+        }
+      }
+      _prevHS.apply(this, arguments);
+    };
+  }
+
+  /* ── Init ── */
+  setTimeout(function () { _injectAddressField(); }, 1500);
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   Fix définitif — Scan barcode fidélité LCLT
+   Écoute directement les événements DOM (pas de hook chaîné)
+   ══════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var LK = 'covo_loyalty';
+  function lg() {
+    try { return JSON.parse(localStorage.getItem(LK)||'null') || {customers:[]}; }
+    catch(e) { return {customers:[]}; }
+  }
+  function genBC(id) { return 'LCLT' + id.replace('CLT-', ''); }
+
+  /* ── Forcer injection + rendu du widget panier ────── */
+  function _forceInjectAndRender(cu) {
+    /* 1. Ouvrir le panier si fermé */
+    var cm = document.getElementById('cart-modal');
+    var isOpen = cm && cm.classList.contains('active');
+    if (!isOpen && typeof toggleCart === 'function') toggleCart();
+
+    /* 2. Injecter le widget si absent */
+    function _inject() {
+      if (document.getElementById('loyalty-cart-widget')) return;
+      var btn = document.querySelector('#cart-modal [onclick*="validateSale"]');
+      if (!btn) return;
+      var w = document.createElement('div');
+      w.id = 'loyalty-cart-widget';
+      w.style.cssText = 'background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(99,102,241,.04));border:1.5px solid rgba(139,92,246,.28);border-radius:12px;padding:12px 14px;margin-bottom:12px;';
+      w.innerHTML =
+        '<div style="font-size:.67rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;">🎁 Fidélité client</div>'
+        +'<div id="lty-customer-display" style="display:none;flex-direction:row;align-items:center;gap:10px;padding:8px 10px;background:rgba(139,92,246,.1);border-radius:9px;margin-bottom:6px;">'
+        +  '<span style="font-size:1.1rem;">👤</span>'
+        +  '<div style="flex:1;"><div style="font-weight:900;font-size:.86rem;color:#5b21b6;" id="lty-cd-nm">—</div><div style="font-size:.73rem;color:#7c3aed;font-weight:700;" id="lty-cd-pt">0 pts</div></div>'
+        +  '<button onclick="window._ltyClear()" style="background:rgba(239,68,68,.12);color:#dc2626;border:none;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:.72rem;font-weight:700;">✕</button>'
+        +'</div>'
+        +'<div id="lty-scan-row" style="display:flex;gap:6px;">'
+        +  '<input id="lty-inp" placeholder="🔍 Nom ou scanner la carte client…" autocomplete="off" oninput="window._ltySearch(this.value)" onkeydown="if(event.key===\'Enter\')window._ltyConfirm()" style="flex:1;padding:8px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);">'
+        +  '<button onclick="window._ltyConfirm()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">✔</button>'
+        +'</div>'
+        +'<div id="lty-autocomplete"></div>';
+      btn.parentNode.insertBefore(w, btn);
+    }
+
+    /* 3. Rendre l'état du client */
+    function _render() {
+      _inject();
+      var disp = document.getElementById('lty-customer-display');
+      var scan = document.getElementById('lty-scan-row');
+      var nm   = document.getElementById('lty-cd-nm');
+      var pts  = document.getElementById('lty-cd-pt');
+      if (!disp) return;
+      if (cu) {
+        disp.style.display = 'flex';
+        if (scan) scan.style.display = 'none';
+        if (nm)   nm.textContent  = cu.name;
+        if (pts)  pts.textContent = (cu.points || 0) + ' pts';
+      } else {
+        disp.style.display = 'none';
+        if (scan) scan.style.display = 'flex';
+      }
+    }
+
+    /* Délai pour laisser toggleCart ouvrir le panier */
+    setTimeout(_render, isOpen ? 20 : 150);
+  }
+
+  /* ── Détection et sélection du client ─────────────── */
+  function _handleLoyaltyScan(val) {
+    val = (val || '').trim().replace(/[\r\n]/g, '');
+    if (!val.toUpperCase().startsWith('LCLT')) return false;
+    if (val.length < 8) return false;
+
+    var bc = val.toUpperCase();
+    var d  = lg();
+    var c  = d.customers.find(function (x) { return genBC(x.id) === bc; });
+
+    if (!c) {
+      if (typeof showScanToast === 'function')
+        showScanToast('⚠️ Carte fidélité non reconnue');
+      return true; /* intercepté mais client inconnu */
+    }
+
+    /* Stocker le client actif */
+    window._ltyCu = c;
+    window._ltyRed = null;
+    window._loyaltyCurrentCustomer = c;
+
+    /* Vider tous les champs de scan */
+    ['single-scan-input', 'search-bar', 'lty-inp'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+
+    /* Fermer la modale de scan si ouverte */
+    var ssModal = document.getElementById('single-scan-modal');
+    if (ssModal && ssModal.style.display !== 'none') {
+      if (typeof closeSingleScan === 'function') closeSingleScan();
+    }
+
+    /* Forcer injection + rendu */
+    _forceInjectAndRender(c);
+
+    /* Toast */
+    if (typeof showScanToast === 'function')
+      showScanToast('👤 ' + c.name + ' · ⭐ ' + (c.points || 0) + ' pts', 'success');
+
+    return true;
+  }
+
+  /* ── Attacher les écouteurs dès que le DOM est prêt ── */
+  function _attachListeners() {
+
+    /* single-scan-input — capture avant l'oninput existant */
+    var scanInp = document.getElementById('single-scan-input');
+    if (scanInp && !scanInp._ltyBound) {
+      scanInp._ltyBound = true;
+      scanInp.addEventListener('input', function () {
+        var val = this.value.trim();
+        if (val.toUpperCase().startsWith('LCLT') && val.length >= 8) {
+          if (_handleLoyaltyScan(val)) {
+            this.value = '';
+          }
+        }
+      });
+      scanInp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          var val = this.value.trim();
+          if (val.toUpperCase().startsWith('LCLT')) {
+            if (_handleLoyaltyScan(val)) {
+              this.value = '';
+              e.preventDefault();
+              e.stopImmediatePropagation();
+            }
+          }
+        }
+      }, true); /* capture = true : priorité maximale */
+    }
+
+    /* search-bar */
+    var searchBar = document.getElementById('search-bar');
+    if (searchBar && !searchBar._ltyBound) {
+      searchBar._ltyBound = true;
+      searchBar.addEventListener('input', function () {
+        if (_handleLoyaltyScan(this.value)) {
+          this.value = '';
+        }
+      });
+    }
+  }
+
+  /* ── Surcharger aussi ssmLiveSearch (double protection) ── */
+  var _origSSL = window.ssmLiveSearch;
+  window.ssmLiveSearch = function (val) {
+    if (_handleLoyaltyScan(val)) return;
+    if (typeof _origSSL === 'function') _origSSL.apply(this, arguments);
+  };
+
+  var _origCSS = window.confirmSingleScan;
+  if (typeof _origCSS === 'function') {
+    window.confirmSingleScan = function () {
+      var inp = document.getElementById('single-scan-input');
+      if (inp && _handleLoyaltyScan(inp.value)) { inp.value = ''; return; }
+      _origCSS.apply(this, arguments);
+    };
+  }
+
+  /* ── Init ── */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _attachListeners);
+  } else {
+    _attachListeners();
+  }
+  setTimeout(_attachListeners, 800);
+  setTimeout(_attachListeners, 2000);
+
+})();
+</script>
+
+<script>
+/* ════════════════════════════════════════════════
+   _handleLoyaltyScan — fonction centrale et fiable
+   Appelée directement depuis ssmLiveSearch et
+   confirmSingleScan quand un code LCLT est détecté
+   ════════════════════════════════════════════════ */
+window._handleLoyaltyScan = function (val) {
+  var bc = (val || '').trim().toUpperCase();
+  if (!bc.startsWith('LCLT') || bc.length < 8) return false;
+
+  /* Chercher le client dans la base fidélité */
+  var LK = 'covo_loyalty';
+  var data;
+  try { data = JSON.parse(localStorage.getItem(LK) || 'null') || { customers: [] }; }
+  catch (e) { data = { customers: [] }; }
+
+  var c = data.customers.find(function (x) {
+    return ('LCLT' + x.id.replace('CLT-', '')) === bc;
+  });
+
+  if (!c) {
+    if (typeof showScanToast === 'function')
+      showScanToast('⚠️ Carte fidélité non reconnue : ' + bc);
+    return false;
+  }
+
+  /* ── Client trouvé ── */
+  window._ltyCu = c;
+  window._loyaltyCurrentCustomer = c;
+  window._ltyRed = null;
+
+  /* Vider les champs de scan */
+  ['single-scan-input', 'search-bar', 'lty-inp'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  /* Fermer la modale scan si ouverte */
+  if (typeof closeSingleScan === 'function') {
+    var ssm = document.getElementById('single-scan-modal');
+    if (ssm && ssm.style.display !== 'none') closeSingleScan();
+  }
+
+  /* Ouvrir le panier */
+  var cm = document.getElementById('cart-modal');
+  var cartOpen = cm && cm.classList.contains('active');
+  if (!cartOpen && typeof toggleCart === 'function') toggleCart();
+
+  /* Injecter + rendre le widget fidélité */
+  function _injectWidget() {
+    if (document.getElementById('loyalty-cart-widget')) return true;
+    var btn = document.querySelector('#cart-modal [onclick*="validateSale"]');
+    if (!btn) return false;
+    var w = document.createElement('div');
+    w.id = 'loyalty-cart-widget';
+    w.style.cssText = 'background:linear-gradient(135deg,rgba(139,92,246,.08),rgba(99,102,241,.04));border:1.5px solid rgba(139,92,246,.28);border-radius:12px;padding:12px 14px;margin-bottom:12px;';
+    w.innerHTML =
+      '<div style="font-size:.67rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px;">🎁 Fidélité client</div>'
+      + '<div id="lty-customer-display" style="display:flex;flex-direction:row;align-items:center;gap:10px;padding:8px 10px;background:rgba(139,92,246,.1);border-radius:9px;margin-bottom:6px;">'
+      +   '<span style="font-size:1.1rem;">👤</span>'
+      +   '<div style="flex:1;"><div style="font-weight:900;font-size:.86rem;color:#5b21b6;" id="lty-cd-nm">' + (c.name || '') + '</div>'
+      +   '<div style="font-size:.73rem;color:#7c3aed;font-weight:700;" id="lty-cd-pt">' + (c.points || 0) + ' pts</div></div>'
+      +   '<button onclick="window._ltyClear()" style="background:rgba(239,68,68,.12);color:#dc2626;border:none;border-radius:6px;padding:3px 9px;cursor:pointer;font-size:.72rem;font-weight:700;">✕</button>'
+      + '</div>'
+      + '<div id="lty-scan-row" style="display:none;gap:6px;">'
+      +   '<input id="lty-inp" placeholder="🔍 Nom ou scanner la carte client…" autocomplete="off" oninput="window._ltySearch(this.value)" onkeydown="if(event.key===\'Enter\')window._ltyConfirm()" style="flex:1;padding:8px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);">'
+      +   '<button onclick="window._ltyConfirm()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">✔</button>'
+      + '</div>'
+      + '<div id="lty-autocomplete"></div>';
+    btn.parentNode.insertBefore(w, btn);
+    return true;
+  }
+
+  function _render() {
+    /* Si le widget est déjà là, juste mettre à jour */
+    var disp = document.getElementById('lty-customer-display');
+    var scan = document.getElementById('lty-scan-row');
+    var nm   = document.getElementById('lty-cd-nm');
+    var pts  = document.getElementById('lty-cd-pt');
+    if (disp) {
+      disp.style.display = 'flex';
+      if (scan) scan.style.display = 'none';
+      if (nm)   nm.textContent  = c.name;
+      if (pts)  pts.textContent = (c.points || 0) + ' pts';
+    } else if (_injectWidget()) {
+      /* Widget vient d'être injecté avec les bonnes valeurs */
+    }
+    /* Aussi appeler renderWidget global si disponible */
+    if (typeof window._ltyRenderWidget === 'function') window._ltyRenderWidget();
+  }
+
+  setTimeout(_render, cartOpen ? 30 : 200);
+
+  /* Toast */
+  if (typeof showScanToast === 'function')
+    showScanToast('👤 ' + c.name + ' · ⭐ ' + (c.points || 0) + ' pts', 'success');
+
+  return true;
+};
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     MODULE CRÉDIT CLIENT (compte / ardoise) — COVO Pro v28
+     ════════════════════════════════════════════════════════════ -->
+<style>
+#credit-repay-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:23000;justify-content:center;align-items:center;padding:16px;}
+#credit-repay-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:430px;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden;}
+body.dark-mode #credit-repay-box{background:var(--bg-card,#1e293b);}
+.crf-label{font-size:.68rem;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px;display:block;}
+.crf-input{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:.95rem;background:var(--input-bg,#fff);color:var(--text-main);}
+.crf-input:focus{outline:none;border-color:#d97706;box-shadow:0 0 0 3px rgba(217,119,6,.12);}
+</style>
+
+<div id="credit-repay-modal">
+  <div id="credit-repay-box">
+    <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:16px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:1.05rem;font-weight:900;">💵 Régler le crédit</div>
+      <button onclick="window._creditCloseRepay()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:1.1rem;width:30px;height:30px;border-radius:8px;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(217,119,6,.08);border-radius:10px;padding:11px 14px;margin-bottom:16px;">
+        <div><div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Client</div><div id="credit-repay-name" style="font-weight:900;font-size:1rem;color:var(--text-main);">—</div></div>
+        <div style="text-align:right;"><div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Solde dû</div><div id="credit-repay-due" style="font-weight:900;font-size:1.2rem;color:#b45309;">0.00€</div></div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label class="crf-label">Montant à régler (€)</label>
+        <input class="crf-input" id="credit-repay-amount" type="number" min="0.01" step="0.01" oninput="window._creditRepayCalc()">
+      </div>
+      <div style="margin-bottom:14px;">
+        <label class="crf-label">Encaissé en</label>
+        <select class="crf-input" id="credit-repay-method" onchange="window._creditRepayCalc()">
+          <option value="cash">💶 Espèces</option>
+          <option value="cb">💳 Carte Bancaire</option>
+        </select>
+      </div>
+      <div id="credit-repay-info" style="font-size:.78rem;color:var(--text-muted);margin-bottom:16px;min-height:18px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="window._creditDoRepay()" style="flex:2;padding:12px;background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:10px;font-weight:900;font-size:.9rem;cursor:pointer;">✅ Valider le règlement</button>
+        <button onclick="window._creditCloseRepay()" style="flex:1;padding:12px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;">Annuler</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{pointsPerEuro:1}};}catch(e){return{customers:[],settings:{pointsPerEuro:1}};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function find(id){return lg().customers.find(function(x){return x.id===id;});}
+function toast(m,t){if(typeof showScanToast==='function')showScanToast(m,t);}
+function creditOf(c){return +((c&&c.credit)||0);}
+function limitOf(c){return +((c&&c.creditLimit)||0);}
+function ppe(){return parseFloat((lg().settings||{}).pointsPerEuro)||1;}
+function cartTotalNet(){var el=document.getElementById('cart-total');return el?(parseFloat(String(el.innerText||'').replace(',','.'))||0):0;}
+
+window._creditSnapId=null;
+
+/* ── Panneau info dans le panier ── */
+window._creditUpdateInfo=function(){
+  var box=document.getElementById('credit-info-text');
+  if(!box)return;
+  var cu=window._ltyCu;
+  if(!cu){box.innerHTML="⚠️ Aucun client sélectionné. Choisissez d'abord un client fidélité (encart 🎁 ci-dessus) pour activer la vente à crédit.";return;}
+  var c=find(cu.id)||cu;
+  var due=creditOf(c), lim=limitOf(c), tot=cartTotalNet(), futur=due+tot;
+  var html='Client : <strong>'+esc(c.name)+'</strong><br>Solde dû actuel : <strong>'+due.toFixed(2)+'€</strong>';
+  if(lim>0){
+    html+=' · Plafond : '+lim.toFixed(2)+'€<br>Après cette vente : <strong>'+futur.toFixed(2)+'€</strong>';
+    if(futur>lim+0.001) html+=' <span style="color:#dc2626;font-weight:800;">⛔ plafond dépassé</span>';
+  } else {
+    html+='<br>Après cette vente : <strong>'+futur.toFixed(2)+'€</strong> (plafond illimité)';
+  }
+  box.innerHTML=html;
+};
+
+/* ── Garde-fou validateSale ── */
+var _prevVS=window.validateSale;
+window.validateSale=function(){
+  var mEl=document.getElementById('payment-method');
+  var method=mEl?mEl.value:'';
+  if(method==='credit'){
+    var cu=window._ltyCu;
+    if(!cu){toast("❌ Sélectionnez un client fidélité pour vendre à crédit");return;}
+    var c=find(cu.id)||cu;
+    var tot=cartTotalNet();
+    if(tot<=0){toast("⚠️ Panier vide");return;}
+    var lim=limitOf(c);
+    if(lim>0 && creditOf(c)+tot > lim+0.001){toast("⛔ Plafond crédit dépassé ("+lim.toFixed(2)+"€) — solde dû "+creditOf(c).toFixed(2)+"€");return;}
+    window._creditSnapId=cu.id;
+    /* Points NON crédités à l'achat : on neutralise le moteur fidélité pour cette vente */
+    window._ltyCu=null; window._ltyRed=null;
+    if(typeof window._ltyRenderWidget==='function')window._ltyRenderWidget();
+  } else {
+    window._creditSnapId=null;
+  }
+  return (typeof _prevVS==='function')?_prevVS.apply(this,arguments):undefined;
+};
+
+/* ── Enregistrement de la dette : wrapper showReceipt (après fidélité) ── */
+var _prevSR=window.showReceipt;
+window.showReceipt=function(sale){
+  if(typeof _prevSR==='function')_prevSR.apply(this,arguments);
+  if(sale && sale.method==='credit' && window._creditSnapId){
+    var id=window._creditSnapId; window._creditSnapId=null;
+    var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;});
+    if(idx!==-1){
+      var c=d.customers[idx];
+      c.credit=+(creditOf(c)+(sale.total||0)).toFixed(2);
+      if(!c.history)c.history=[];
+      c.history.unshift({
+        date:sale.date||new Date().toISOString(), saleId:sale.id, ticketNum:sale.ticketNum||sale.id,
+        amount:sale.total||0, method:'credit', points:0, type:'credit_purchase',
+        cashier:sale.cashier||'', note:'Achat à crédit',
+        items:(sale.items||[]).map(function(it){return{name:it.name||'',quantity:it.quantity||1,unitType:it.unitType||'unit',price:it.price||0,total:+(((it.quantity||1)*(it.price||0)).toFixed(2))};})
+      });
+      c.history=c.history.slice(0,300);
+      ls(d);
+      sale._creditName=c.name; sale._creditDue=c.credit;
+      toast("📒 "+c.name+" : crédit "+(sale.total||0).toFixed(2)+"€ · Solde dû "+c.credit.toFixed(2)+"€");
+      if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+    }
+  }
+  if(sale && sale.method==='credit'){
+    setTimeout(function(){
+      var content=document.getElementById('receipt-content');
+      if(content && !content.querySelector('.credit-rcpt-line')){
+        var div=document.createElement('div');div.className='credit-rcpt-line';
+        div.style.cssText='margin-top:10px;padding:10px 14px;background:rgba(217,119,6,.08);border-radius:10px;border-left:3px solid #d97706;';
+        div.innerHTML='<div style="font-weight:900;color:#b45309;font-size:.83rem;">📒 Achat à crédit'+(sale._creditName?' — '+esc(sale._creditName):'')+'</div>'
+          +'<div style="font-size:.76rem;margin-top:4px;color:#92400e;">Montant porté au compte : <strong>'+(sale.total||0).toFixed(2)+'€</strong>'+(sale._creditDue!=null?' · Solde dû total : <strong>'+sale._creditDue.toFixed(2)+'€</strong>':'')+'</div>'
+          +'<div style="font-size:.7rem;margin-top:3px;color:#a16207;">À régler ultérieurement — aucun encaissement effectué.</div>';
+        content.appendChild(div);
+      }
+    },180);
+  }
+};
+
+/* ── Rafraîchir l'info quand le client du widget change ── */
+var _prevRW=window._ltyRenderWidget;
+if(typeof _prevRW==='function'){window._ltyRenderWidget=function(){_prevRW.apply(this,arguments);var m=document.getElementById('payment-method');if(m&&m.value==='credit')window._creditUpdateInfo();};}
+
+/* ════════════ UI ONGLET FIDÉLITÉ ════════════ */
+
+/* Stat « Crédit dû » dans l'entête */
+function injectCreditStat(){
+  var caBox=document.getElementById('lty-s-ca'); if(!caBox)return;
+  var box=caBox.parentNode, container=box.parentNode;
+  var d=lg();
+  var tot=d.customers.reduce(function(a,c){return a+creditOf(c);},0);
+  var nb=d.customers.filter(function(c){return creditOf(c)>0;}).length;
+  var el=document.getElementById('lty-s-credit-box');
+  if(!el){
+    el=document.createElement('div'); el.id='lty-s-credit-box';
+    el.style.cssText='background:rgba(255,255,255,.15);border-radius:10px;padding:8px 14px;text-align:center;';
+    el.innerHTML='<div style="font-size:1.3rem;font-weight:900;color:#fff;" id="lty-s-credit">0€</div><div style="font-size:.62rem;color:rgba(255,255,255,.7);text-transform:uppercase;">Crédit dû</div>';
+    if(box.nextSibling) container.insertBefore(el, box.nextSibling); else container.appendChild(el);
+  }
+  var v=document.getElementById('lty-s-credit'); if(v)v.textContent=tot.toFixed(0)+'€';
+  el.title=nb+' client(s) avec crédit en cours';
+  /* sous-titre */
+  var sub=container.parentNode?container.parentNode.querySelector('div[style*="rgba(255,255,255,.72)"]'):null;
+  if(sub && sub.textContent.indexOf('Crédit')<0) sub.textContent='Base clients · Points · Crédit · Historique tickets';
+}
+
+/* Badge crédit dans la liste */
+function decorateList(){
+  var rows=document.querySelectorAll('#lty-list-inner .lty-row');
+  rows.forEach(function(r){
+    var oc=r.getAttribute('onclick')||''; var m=oc.match(/'(CLT-\d+)'/); if(!m)return;
+    var c=find(m[1]); var due=c?creditOf(c):0;
+    var existing=r.querySelector('.credit-row-badge');
+    if(due>0){
+      if(!existing){
+        existing=document.createElement('span'); existing.className='credit-row-badge';
+        existing.style.cssText='background:rgba(217,119,6,.16);color:#b45309;font-weight:800;font-size:.6rem;padding:2px 6px;border-radius:10px;white-space:nowrap;margin-left:4px;';
+        r.appendChild(existing);
+      }
+      existing.textContent='📒 '+due.toFixed(2)+'€';
+    } else if(existing){ existing.remove(); }
+  });
+}
+
+/* Carte crédit dans la fiche client */
+function injectDetailCredit(id){
+  var scroll=document.getElementById('lty-detail-scroll'); if(!scroll)return;
+  var old=document.getElementById('credit-detail-card'); if(old)old.remove();
+  var c=find(id); if(!c)return;
+  var due=creditOf(c), lim=limitOf(c);
+  var card=document.createElement('div'); card.id='credit-detail-card';
+  card.style.cssText='margin-bottom:14px;border-radius:12px;padding:13px 15px;border:1.5px solid '+(due>0?'rgba(217,119,6,.4)':'rgba(16,185,129,.3)')+';background:'+(due>0?'rgba(217,119,6,.07)':'rgba(16,185,129,.06)')+';';
+  var ledger=(c.history||[]).filter(function(h){return h.type==='credit_purchase'||h.type==='credit_repay';});
+  var inner='<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
+    +'<div><div style="font-size:.64rem;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.6px;">📒 Compte crédit</div>'
+    +'<div style="font-size:1.4rem;font-weight:900;color:'+(due>0?'#b45309':'#059669')+';margin-top:2px;">'+due.toFixed(2)+'€ <span style="font-size:.7rem;font-weight:600;color:var(--text-muted);">'+(due>0?'dû':'à jour')+'</span></div>'
+    +(lim>0?'<div style="font-size:.68rem;color:var(--text-muted);">Plafond : '+lim.toFixed(2)+'€</div>':'<div style="font-size:.68rem;color:var(--text-muted);">Plafond illimité</div>')
+    +'</div>'
+    +(due>0?'<button onclick="window._creditOpenRepay(\''+id+'\')" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">💵 Régler le crédit</button>':'')
+    +'</div>';
+  if(ledger.length){
+    inner+='<div style="margin-top:10px;border-top:1px dashed rgba(217,119,6,.3);padding-top:8px;">'
+      +'<div style="font-size:.6rem;font-weight:800;color:#b45309;text-transform:uppercase;margin-bottom:5px;">Mouvements du compte</div>'
+      +ledger.slice(0,15).map(function(h){
+        var dt=new Date(h.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});
+        var isP=h.type==='credit_purchase';
+        var sign=isP?'+':'−';
+        var col=isP?'#b45309':'#059669';
+        var lbl=isP?'Achat à crédit':('Règlement'+(h.method?' ('+(h.method==='cb'?'CB':'espèces')+')':''));
+        var pts=(!isP&&h.points)?' · +'+h.points+' pts':'';
+        return '<div style="display:flex;justify-content:space-between;font-size:.74rem;padding:2px 0;"><span style="color:var(--text-main);">'+dt+' · '+lbl+pts+'</span><span style="font-weight:800;color:'+col+';">'+sign+(h.amount||0).toFixed(2)+'€</span></div>';
+      }).join('')
+      +'</div>';
+  }
+  card.innerHTML=inner;
+  scroll.insertBefore(card, scroll.firstChild);
+}
+
+/* Champ plafond + solde dans la modale client */
+function injectModalCreditField(id){
+  var box=document.getElementById('lty-client-box'); if(!box)return;
+  var saveBtn=box.querySelector('[onclick*="_loyaltySaveModal"]');
+  var actionsRow=saveBtn?saveBtn.parentNode:null;
+  if(!document.getElementById('lcm-credit-block') && actionsRow){
+    var block=document.createElement('div'); block.id='lcm-credit-block'; block.style.cssText='margin-bottom:16px;';
+    block.innerHTML=''
+      +'<label class="lcf-label" style="color:#b45309;">📒 Plafond de crédit (€)</label>'
+      +'<input class="lcf-input" id="lcm-credit-limit" type="number" min="0" step="0.01" placeholder="0 = illimité">'
+      +'<div id="lcm-credit-due-wrap" style="display:none;margin-top:8px;background:rgba(217,119,6,.08);border-radius:9px;padding:9px 12px;font-size:.8rem;color:#92400e;font-weight:700;">Solde dû actuel : <span id="lcm-credit-due">0.00€</span></div>';
+    actionsRow.parentNode.insertBefore(block, actionsRow);
+  }
+  var c=id?find(id):null;
+  var limInp=document.getElementById('lcm-credit-limit');
+  if(limInp)limInp.value=(c&&c.creditLimit)?c.creditLimit:'';
+  var wrap=document.getElementById('lcm-credit-due-wrap');
+  if(wrap){
+    if(c&&creditOf(c)>0){wrap.style.display='';var due=document.getElementById('lcm-credit-due');if(due)due.textContent=creditOf(c).toFixed(2)+'€';}
+    else wrap.style.display='none';
+  }
+}
+
+/* ── Wrappers des fonctions de rendu fidélité ── */
+var _wShowDetail=window._ltyShowDetail;
+if(typeof _wShowDetail==='function'){window._ltyShowDetail=function(id){_wShowDetail.apply(this,arguments);window._creditDetailId=id;setTimeout(function(){injectDetailCredit(id);},20);};}
+
+var _wRefresh=window._ltyRefresh;
+window._ltyRefresh=function(){if(typeof _wRefresh==='function')_wRefresh.apply(this,arguments);setTimeout(function(){injectCreditStat();decorateList();if(window._creditDetailId)injectDetailCredit(window._creditDetailId);},25);};
+
+var _wFilter=window._ltyFilterList;
+if(typeof _wFilter==='function'){window._ltyFilterList=function(q){_wFilter.apply(this,arguments);setTimeout(decorateList,15);};}
+
+var _wSwitch=window.switchTab;
+if(typeof _wSwitch==='function'){window.switchTab=function(name){_wSwitch.apply(this,arguments);if(name==='fidelite')setTimeout(function(){injectCreditStat();decorateList();},420);};}
+
+var _wAdmin=window.toggleAdminModal;
+if(typeof _wAdmin==='function'){window.toggleAdminModal=function(){_wAdmin.apply(this,arguments);setTimeout(function(){injectCreditStat();decorateList();},500);};}
+
+var _wOpenModal=window._loyaltyOpenModal;
+if(typeof _wOpenModal==='function'){window._loyaltyOpenModal=function(id){window._creditModalId=id||null;_wOpenModal.apply(this,arguments);setTimeout(function(){injectModalCreditField(id);},40);};}
+
+var _wSave=window._loyaltySaveModal;
+if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
+  var limEl=document.getElementById('lcm-credit-limit');
+  var lim=limEl?(parseFloat(limEl.value)||0):0;
+  var editId=window._creditModalId;
+  _wSave.apply(this,arguments);
+  var modal=document.getElementById('lty-client-modal');
+  if(modal && modal.classList.contains('open'))return; /* save échoué (nom requis) */
+  var d=lg(), idx=-1;
+  if(editId){idx=d.customers.findIndex(function(x){return x.id===editId;});}
+  else{var maxn=-1;d.customers.forEach(function(c,i){var n=parseInt(String(c.id||'').replace('CLT-',''),10);if(!isNaN(n)&&n>maxn){maxn=n;idx=i;}});}
+  if(idx!==-1){d.customers[idx].creditLimit=lim;ls(d);}
+  window._creditModalId=null;
+  setTimeout(function(){injectCreditStat();decorateList();if(window._creditDetailId)injectDetailCredit(window._creditDetailId);},30);
+};}
+
+/* ════════════ RÈGLEMENT (modale) ════════════ */
+window._creditRepayId=null;
+window._creditOpenRepay=function(id){
+  var c=find(id); if(!c)return;
+  window._creditRepayId=id;
+  var due=creditOf(c);
+  document.getElementById('credit-repay-name').textContent=c.name;
+  document.getElementById('credit-repay-due').textContent=due.toFixed(2)+'€';
+  var inp=document.getElementById('credit-repay-amount'); inp.value=due.toFixed(2); inp.setAttribute('max',due.toFixed(2));
+  document.getElementById('credit-repay-method').value='cash';
+  window._creditRepayCalc();
+  document.getElementById('credit-repay-modal').style.display='flex';
+};
+window._creditRepayCalc=function(){
+  var c=find(window._creditRepayId); if(!c)return;
+  var due=creditOf(c);
+  var amt=parseFloat(document.getElementById('credit-repay-amount').value)||0;
+  var info=document.getElementById('credit-repay-info');
+  if(!info)return;
+  if(amt<=0){info.textContent='';return;}
+  if(amt>due+0.001){info.style.color='#dc2626';info.textContent="⚠️ Maximum : "+due.toFixed(2)+"€";return;}
+  var earned=Math.floor(amt*ppe());
+  info.style.color='';
+  info.innerHTML='Reste après règlement : <strong>'+(due-amt).toFixed(2)+'€</strong> · Points gagnés : <strong>+'+earned+' pts</strong>';
+};
+window._creditDoRepay=function(){
+  var id=window._creditRepayId; if(!id)return;
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;}); if(idx===-1)return;
+  var c=d.customers[idx]; var due=creditOf(c);
+  var amt=parseFloat(document.getElementById('credit-repay-amount').value)||0;
+  if(amt<=0){toast("⚠️ Saisissez un montant");return;}
+  if(amt>due+0.001){toast("⚠️ Montant supérieur au solde dû");return;}
+  var method=document.getElementById('credit-repay-method').value;
+  var earned=Math.floor(amt*ppe());
+  c.credit=+(due-amt).toFixed(2);
+  c.totalSpent=+(((c.totalSpent||0)+amt)).toFixed(2);
+  c.points=(c.points||0)+earned;
+  if(!c.history)c.history=[];
+  c.history.unshift({date:new Date().toISOString(),saleId:null,amount:amt,method:method,points:earned,type:'credit_repay',cashier:(typeof currentUser!=='undefined'&&currentUser?currentUser.username:'')||'',note:'Règlement crédit'});
+  c.history=c.history.slice(0,300);
+  ls(d);
+  window._creditCloseRepay();
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+  toast("✅ Règlement "+amt.toFixed(2)+"€ · +"+earned+" pts · Reste "+c.credit.toFixed(2)+"€","success");
+};
+window._creditCloseRepay=function(){var m=document.getElementById('credit-repay-modal');if(m)m.style.display='none';window._creditRepayId=null;};
+(function(){var m=document.getElementById('credit-repay-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._creditCloseRepay();});})();
+
+/* ── Init ── */
+setTimeout(function(){injectCreditStat();decorateList();},1500);
 
 })();
 </script>
