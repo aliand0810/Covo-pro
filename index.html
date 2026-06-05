@@ -20587,6 +20587,64 @@ logout = function(skipConfirmation = false) {
         if (typeof updateCartUI === 'function') updateCartUI();
     };
 
+    // ════════ RÉSERVATION D'ARTICLE (fidélité) — accès au stock ════════
+    // Ajuste le stock d'un article (deltaQty négatif = réservation, positif = restitution)
+    window._ltyAdjustStockForReservation = function(productId, deltaQty, reason) {
+        const product = products.find(p => String(p.id) === String(productId));
+        if (!product) return { ok:false, msg:'Article introuvable' };
+        const before = product.stock || 0;
+        if (deltaQty < 0 && (before + deltaQty) < -0.0001) {
+            return { ok:false, msg:'Stock insuffisant (disponible : ' + before + ')' };
+        }
+        product.stock = (product.unitType === 'kg')
+            ? parseFloat((before + deltaQty).toFixed(3))
+            : (before + deltaQty);
+        if (typeof window._logStockChange === 'function') {
+            window._logStockChange(product, before, product.stock, 'reservation', reason || 'Réservation client', { qty: Math.abs(deltaQty) });
+        }
+        if (typeof saveAll === 'function') saveAll();
+        if (typeof renderProducts === 'function') renderProducts();
+        else if (typeof renderAll === 'function') renderAll();
+        if (typeof window._awRefreshStats === 'function') window._awRefreshStats();
+        return { ok:true, product:product, stock:product.stock };
+    };
+    // Infos de réservation d'un article (pour la mention « Client réservé »)
+    window._ltyProductReservedInfo = function(productId) {
+        try {
+            var d = JSON.parse(localStorage.getItem('covo_loyalty') || 'null') || { customers:[] };
+            var names = [], totalQty = 0;
+            (d.customers || []).forEach(function(c) {
+                (c.reservations || []).forEach(function(r) {
+                    if (String(r.productId) === String(productId)) {
+                        totalQty += (r.qty || 0);
+                        if (names.indexOf(c.name) < 0) names.push(c.name);
+                    }
+                });
+            });
+            return { count: names.length, qty: totalQty, names: names };
+        } catch(e) { return { count:0, qty:0, names:[] }; }
+    };
+    // Recherche d'articles (pour la modale de réservation)
+    window._ltyProductSearch = function(q) {
+        q = (q || '').toLowerCase().trim();
+        if (!q) return [];
+        return products.filter(function(p) {
+            return (p.active !== false) && (
+                (p.name && p.name.toLowerCase().indexOf(q) !== -1) ||
+                (p.barcode && String(p.barcode).toLowerCase().indexOf(q) !== -1)
+            );
+        }).slice(0, 8).map(function(p) {
+            return { id:p.id, name:p.name, stock:(p.stock||0), unitType:p.unitType||'unit',
+                     price:(p.unitType==='kg'?(p.pricePerKg||0):(p.price||0)), barcode:p.barcode||'' };
+        });
+    };
+    window._ltyGetProduct = function(id) {
+        var p = products.find(function(x){ return String(x.id) === String(id); });
+        if (!p) return null;
+        return { id:p.id, name:p.name, stock:(p.stock||0), unitType:p.unitType||'unit',
+                 price:(p.unitType==='kg'?(p.pricePerKg||0):(p.price||0)), barcode:p.barcode||'' };
+    };
+
     function updateCartQuantity(productId, change) {
         const item = cart.find(c => c.id === productId);
         const product = products.find(p => p.id === productId);
@@ -51772,6 +51830,8 @@ function injectModalCreditField(id){
       +'<label class="lcf-label" style="color:#b45309;">📒 Plafond de crédit (€)</label>'
       +'<input class="lcf-input" id="lcm-credit-limit" type="number" min="0" step="0.01" placeholder="0 = illimité">'
       +'<div id="lcm-credit-due-wrap" style="display:none;margin-top:8px;background:rgba(217,119,6,.08);border-radius:9px;padding:9px 12px;font-size:.8rem;color:#92400e;font-weight:700;">Solde dû actuel : <span id="lcm-credit-due">0.00€</span></div>'
+      +'<label class="lcf-label" style="color:#7c3aed;margin-top:14px;">📝 Commentaire / note</label>'
+      +'<textarea class="lcf-input" id="lcm-note" rows="2" placeholder="Note interne sur le client (préférences, infos…)" style="resize:vertical;font-family:inherit;"></textarea>'
       +'<label class="lcf-label" style="color:#25D366;margin-top:14px;">💬 Messages WhatsApp</label>'
       +'<label style="display:flex;align-items:center;gap:9px;cursor:pointer;background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.3);border-radius:9px;padding:9px 12px;font-size:.82rem;color:#128C7E;font-weight:600;"><input type="checkbox" id="lcm-wa-optout" style="width:17px;height:17px;accent-color:#dc2626;cursor:pointer;flex-shrink:0;"> 🚫 Ne pas autoriser l\'envoi de messages à ce client</label>'
       +'<div id="lcm-cost-client-wrap" style="display:none;margin-top:14px;">'
@@ -51793,6 +51853,8 @@ function injectModalCreditField(id){
     if(c&&creditOf(c)>0){wrap.style.display='';var due=document.getElementById('lcm-credit-due');if(due)due.textContent=creditOf(c).toFixed(2)+'€';}
     else wrap.style.display='none';
   }
+  var noteEl=document.getElementById('lcm-note');
+  if(noteEl)noteEl.value=(c&&c.note)?c.note:'';
   var waOpt=document.getElementById('lcm-wa-optout');
   if(waOpt)waOpt.checked=!!(c&&c.noWhatsapp);
   var costWrap=document.getElementById('lcm-cost-client-wrap');
@@ -51836,6 +51898,8 @@ if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
   var costPos=posEl?(parseInt(posEl.value)||0):0;
   var waOptEl=document.getElementById('lcm-wa-optout');
   var waOptOut=waOptEl?!!waOptEl.checked:false;
+  var noteEl2=document.getElementById('lcm-note');
+  var noteVal=noteEl2?(noteEl2.value||'').trim():'';
   var editId=window._creditModalId;
   _wSave.apply(this,arguments);
   var modal=document.getElementById('lty-client-modal');
@@ -51845,6 +51909,7 @@ if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
   else{var maxn=-1;d.customers.forEach(function(c,i){var n=parseInt(String(c.id||'').replace('CLT-',''),10);if(!isNaN(n)&&n>maxn){maxn=n;idx=i;}});}
   if(idx!==-1){
     d.customers[idx].creditLimit=lim;
+    if(noteVal)d.customers[idx].note=noteVal; else delete d.customers[idx].note;
     if(waOptOut)d.customers[idx].noWhatsapp=true; else delete d.customers[idx].noWhatsapp;
     /* Le tarif prix d'achat n'est modifiable que par l'Admin-développeur (master) */
     if(isMaster){
@@ -52239,3 +52304,297 @@ setTimeout(function(){var m=document.getElementById('wa-modal');if(m)m.addEventL
 })();
 </script>
 
+<!-- ════════════════════════════════════════════════════════════
+     MODULE RÉSERVATION D'ARTICLE + NOTES CLIENT — COVO Pro
+     ════════════════════════════════════════════════════════════ -->
+<style>
+#resv-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:23800;justify-content:center;align-items:center;padding:16px;}
+#resv-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:480px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+body.dark-mode #resv-box{background:var(--bg-card,#1e293b);}
+.resv-fld{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:.9rem;background:var(--input-bg,#fff);color:var(--text-main);}
+.resv-fld:focus{outline:none;border-color:#d97706;box-shadow:0 0 0 3px rgba(217,119,6,.12);}
+</style>
+<div id="resv-modal">
+  <div id="resv-box">
+    <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:16px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div style="font-size:1.02rem;font-weight:900;">📦 Réserver un article — <span id="resv-client-name">client</span></div>
+      <button onclick="window._resvClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:1.1rem;width:30px;height:30px;border-radius:8px;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:18px 20px;overflow-y:auto;">
+      <label style="font-size:.68rem;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.6px;display:block;margin-bottom:5px;">Article</label>
+      <input class="resv-fld" id="resv-search" autocomplete="off" oninput="window._resvSearch(this.value)" placeholder="🔍 Rechercher un article (nom ou code-barres)…">
+      <div id="resv-ac" style="border:1px solid var(--border-color,#e0e0e0);border-radius:9px;margin-top:6px;overflow:hidden;"></div>
+      <div id="resv-selected" style="display:none;margin-top:14px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.3);border-radius:10px;padding:12px 14px;">
+        <div id="resv-sel-name" style="font-weight:900;font-size:.95rem;color:var(--text-main);">—</div>
+        <div id="resv-sel-stock" style="font-size:.76rem;color:var(--text-muted);margin-top:2px;">—</div>
+        <label style="font-size:.68rem;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.6px;display:block;margin:12px 0 5px;">Quantité à réserver</label>
+        <input class="resv-fld" id="resv-qty" type="number" min="0" step="1" value="1" style="max-width:140px;">
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;flex-shrink:0;">
+      <button id="resv-confirm" onclick="window._resvConfirm()" disabled style="flex:2;padding:12px;background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:10px;font-weight:900;font-size:.9rem;cursor:pointer;">📦 Réserver (décrémente le stock)</button>
+      <button onclick="window._resvClose()" style="flex:1;padding:12px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;">Annuler</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function toast(m){if(typeof showScanToast==='function')showScanToast(m);}
+function find(id){return lg().customers.find(function(x){return x.id===id;});}
+
+var _resvClientId=null,_resvProduct=null;
+
+window._resvOpen=function(clientId){
+  var c=find(clientId); if(!c)return;
+  _resvClientId=clientId; _resvProduct=null;
+  document.getElementById('resv-client-name').textContent=c.name;
+  document.getElementById('resv-search').value='';
+  document.getElementById('resv-ac').innerHTML='';
+  document.getElementById('resv-selected').style.display='none';
+  document.getElementById('resv-confirm').disabled=true;
+  document.getElementById('resv-modal').style.display='flex';
+};
+window._resvClose=function(){var m=document.getElementById('resv-modal');if(m)m.style.display='none';_resvProduct=null;};
+
+window._resvSearch=function(val){
+  var ac=document.getElementById('resv-ac'); if(!ac)return;
+  if(!val||!val.trim()){ac.innerHTML='';return;}
+  var list=(typeof window._ltyProductSearch==='function')?window._ltyProductSearch(val):[];
+  if(!list.length){ac.innerHTML='<div style="padding:8px 10px;font-size:.78rem;color:var(--text-muted);">Aucun article</div>';return;}
+  ac.innerHTML=list.map(function(p){
+    var unit=p.unitType==='kg'?'kg':'u.';
+    return '<div onclick="window._resvPick(\''+esc(String(p.id))+'\')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border-color,#eee);display:flex;justify-content:space-between;gap:8px;align-items:center;">'
+      +'<span style="font-weight:700;font-size:.83rem;color:var(--text-main);">'+esc(p.name)+'</span>'
+      +'<span style="font-size:.72rem;color:'+(p.stock>0?'#059669':'#dc2626')+';white-space:nowrap;">stock '+p.stock+' '+unit+'</span>'
+      +'</div>';
+  }).join('');
+};
+window._resvPick=function(id){
+  var p=(typeof window._ltyGetProduct==='function')?window._ltyGetProduct(id):null; if(!p)return;
+  _resvProduct=p;
+  document.getElementById('resv-ac').innerHTML='';
+  document.getElementById('resv-search').value=p.name;
+  var sel=document.getElementById('resv-selected'); sel.style.display='';
+  document.getElementById('resv-sel-name').textContent=p.name;
+  document.getElementById('resv-sel-stock').textContent='Stock disponible : '+p.stock+(p.unitType==='kg'?' kg':' u.');
+  var qty=document.getElementById('resv-qty');
+  qty.step=p.unitType==='kg'?'0.1':'1';
+  qty.value=p.unitType==='kg'?'1':'1';
+  document.getElementById('resv-confirm').disabled=false;
+};
+window._resvConfirm=function(){
+  if(!_resvProduct||!_resvClientId)return;
+  var qty=parseFloat(document.getElementById('resv-qty').value)||0;
+  if(qty<=0){toast('⚠️ Quantité invalide');return;}
+  if(typeof window._ltyGetProduct!=='function'){toast('❌ Indisponible');return;}
+  var prod=window._ltyGetProduct(_resvProduct.id);
+  var available=prod?prod.stock:0;
+  var decremented=false, pending=false;
+  if(available>=qty){
+    /* Stock suffisant : on réserve en décrémentant le stock */
+    var res=window._ltyAdjustStockForReservation(_resvProduct.id,-qty,'Réservation client');
+    if(!res||!res.ok){toast('❌ '+((res&&res.msg)||'Erreur'));return;}
+    decremented=true;
+  } else {
+    /* Stock insuffisant (ex. 0) : réservation en attente de réapprovisionnement */
+    pending=true;
+  }
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===_resvClientId;});
+  if(idx===-1)return;
+  if(!d.customers[idx].reservations)d.customers[idx].reservations=[];
+  d.customers[idx].reservations.unshift({id:Date.now(),productId:_resvProduct.id,productName:_resvProduct.name,qty:qty,unitType:_resvProduct.unitType,price:_resvProduct.price,date:new Date().toISOString(),decremented:decremented,pending:pending,ready:false});
+  ls(d);
+  toast(decremented?('📦 Article réservé · stock restant '+(available-qty)):('⏳ Réservation enregistrée — en attente de stock (disponible : '+available+')'));
+  var cid=_resvClientId;
+  window._resvClose();
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+  if(typeof window._ltyShowDetail==='function')window._ltyShowDetail(cid);
+};
+window._resvCancel=function(clientId,resvId){
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===clientId;}); if(idx===-1)return;
+  var r=(d.customers[idx].reservations||[]).find(function(x){return String(x.id)===String(resvId);}); if(!r)return;
+  var wasDecr=(r.decremented!==false);
+  if(!confirm(wasDecr?('Annuler cette réservation et remettre '+r.qty+' en stock ?'):'Annuler cette réservation en attente de stock ?'))return;
+  if(wasDecr && typeof window._ltyAdjustStockForReservation==='function')window._ltyAdjustStockForReservation(r.productId,r.qty,'Annulation réservation');
+  d=lg(); idx=d.customers.findIndex(function(x){return x.id===clientId;});
+  d.customers[idx].reservations=(d.customers[idx].reservations||[]).filter(function(x){return String(x.id)!==String(resvId);});
+  ls(d);
+  toast(wasDecr?'↩️ Réservation annulée · stock restitué':'↩️ Réservation annulée');
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+  if(typeof window._ltyShowDetail==='function')window._ltyShowDetail(clientId);
+};
+window._resvComplete=function(clientId,resvId){
+  var d0=lg(); var i0=d0.customers.findIndex(function(x){return x.id===clientId;}); if(i0===-1)return;
+  var r0=(d0.customers[i0].reservations||[]).find(function(x){return String(x.id)===String(resvId);}); if(!r0)return;
+  var wasDecr=(r0.decremented!==false);
+  if(!confirm('Marquer comme récupéré ?'+(wasDecr?' (le stock reste décrémenté)':' (le stock sera décrémenté maintenant)')))return;
+  if(!wasDecr && typeof window._ltyAdjustStockForReservation==='function'){
+    var rr=window._ltyAdjustStockForReservation(r0.productId,-r0.qty,'Retrait réservation');
+    if(!rr||!rr.ok){ if(!confirm('⚠️ '+((rr&&rr.msg)||'Stock insuffisant')+'. Clôturer quand même ?'))return; }
+  }
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===clientId;});
+  d.customers[idx].reservations=(d.customers[idx].reservations||[]).filter(function(x){return String(x.id)!==String(resvId);});
+  ls(d);
+  toast('✔️ Réservation clôturée');
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+  if(typeof window._ltyShowDetail==='function')window._ltyShowDetail(clientId);
+};
+
+/* ── Carte Note + Réservations dans la fiche client ── */
+function injectResvNote(id){
+  var scroll=document.getElementById('lty-detail-scroll'); if(!scroll)return;
+  var old=document.getElementById('lty-resv-note-card'); if(old)old.remove();
+  var c=find(id); if(!c)return;
+  window._resvDetailId=id;
+  var card=document.createElement('div'); card.id='lty-resv-note-card'; card.style.cssText='margin-bottom:14px;';
+  var html='';
+  /* Note éditable en ligne (sans passer par « Modifier ») */
+  html+='<div style="background:rgba(124,58,237,.07);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:11px 14px;margin-bottom:10px;">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;">'
+    +'<div style="font-size:.62rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.6px;">📝 Note</div>'
+    +'<button id="lty-note-edit-btn" onclick="window._ltyNoteEdit()" style="background:rgba(124,58,237,.12);color:#7c3aed;border:none;border-radius:7px;padding:4px 9px;font-size:.72rem;font-weight:700;cursor:pointer;">'+(c.note?'✏️ Modifier':'➕ Ajouter')+'</button></div>'
+    +'<div id="lty-note-display" style="font-size:.82rem;color:'+(c.note?'var(--text-main)':'var(--text-muted)')+';white-space:pre-wrap;">'+(c.note?esc(c.note):'Aucune note.')+'</div>'
+    +'<div id="lty-note-editor" style="display:none;">'
+    +'<textarea id="lty-note-textarea" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid rgba(124,58,237,.3);border-radius:8px;font-size:.82rem;font-family:inherit;background:var(--input-bg,#fff);color:var(--text-main);resize:vertical;">'+esc(c.note||'')+'</textarea>'
+    +'<div style="display:flex;gap:6px;margin-top:6px;"><button onclick="window._ltyNoteSaveInline()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:800;cursor:pointer;">💾 Enregistrer</button>'
+    +'<button onclick="window._ltyNoteCancel()" style="background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:8px;padding:7px 12px;font-size:.78rem;font-weight:700;cursor:pointer;">Annuler</button></div>'
+    +'</div></div>';
+  var resv=c.reservations||[];
+  html+='<div style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:11px 14px;">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:'+(resv.length?'8px':'0')+';">'
+    +'<div style="font-size:.62rem;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.6px;">📦 Réservations'+(resv.length?(' ('+resv.length+')'):'')+'</div>'
+    +'<button onclick="window._resvOpen(\''+esc(id)+'\')" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:none;border-radius:8px;padding:6px 11px;font-size:.74rem;font-weight:800;cursor:pointer;white-space:nowrap;">📦 Réserver un article</button>'
+    +'</div>';
+  if(resv.length){
+    html+=resv.map(function(r){
+      var unit=r.unitType==='kg'?(r.qty+' kg'):('×'+r.qty);
+      var dt=new Date(r.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});
+      var liveP=(typeof window._ltyGetProduct==='function')?window._ltyGetProduct(r.productId):null;
+      var liveStock=liveP?liveP.stock:null;
+      var avail=(r.decremented!==false) || (liveStock!=null && liveStock>=(r.qty||0));
+      var statut=(r.pending && !avail)?'<span style="color:#b45309;font-weight:800;"> · ⏳ En attente de stock</span>'
+                 :((r.pending && avail)?'<span style="color:#059669;font-weight:800;"> · ✅ Stock disponible</span>':'');
+      var waBtn=(avail && !c.noWhatsapp)?'<button onclick="window._resvNotifyWhatsApp(\''+esc(id)+'\','+r.id+')" title="Prévenir le client via WhatsApp que l\'article est disponible" style="background:#25D366;color:#fff;border:none;border-radius:7px;padding:5px 9px;font-size:.74rem;font-weight:800;cursor:pointer;">💬</button>':'';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px dashed rgba(245,158,11,.3);">'
+        +'<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:.82rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(r.productName)+'</div>'
+        +'<div style="font-size:.68rem;color:var(--text-muted);">'+unit+' · '+dt+statut+'</div></div>'
+        +waBtn
+        +'<button onclick="window._resvComplete(\''+esc(id)+'\','+r.id+')" title="Récupéré (clôturer)" style="background:rgba(5,150,105,.12);color:#059669;border:none;border-radius:7px;padding:5px 9px;font-size:.74rem;font-weight:800;cursor:pointer;">✔️</button>'
+        +'<button onclick="window._resvCancel(\''+esc(id)+'\','+r.id+')" title="Annuler (restituer le stock)" style="background:rgba(239,68,68,.1);color:#dc2626;border:none;border-radius:7px;padding:5px 9px;font-size:.74rem;font-weight:800;cursor:pointer;">✕</button>'
+        +'</div>';
+    }).join('');
+  }
+  html+='</div>';
+  card.innerHTML=html;
+  scroll.insertBefore(card, scroll.firstChild);
+}
+var _wSD=window._ltyShowDetail;
+if(typeof _wSD==='function'){window._ltyShowDetail=function(id){_wSD.apply(this,arguments);setTimeout(function(){injectResvNote(id);},35);};}
+
+/* ── Mention « Client réservé » sur la fiche article ── */
+function injectReservedBadge(id){
+  var meta=document.getElementById('pem-header-meta'); if(!meta)return;
+  var old=document.getElementById('pem-reserved-badge'); if(old)old.remove();
+  var info=(typeof window._ltyProductReservedInfo==='function')?window._ltyProductReservedInfo(id):null;
+  if(info && info.count>0){
+    var b=document.createElement('div'); b.id='pem-reserved-badge';
+    b.style.cssText='margin-top:6px;display:inline-block;background:#d97706;color:#fff;font-size:.72rem;font-weight:800;padding:3px 10px;border-radius:8px;';
+    b.textContent='🔒 Client réservé'+(info.qty?(' · '+info.qty):'')+(info.names.length?(' — '+info.names.join(', ')):'');
+    meta.parentNode.insertBefore(b, meta.nextSibling);
+  }
+}
+var _wOPEM=window.openProductEditModal;
+if(typeof _wOPEM==='function'){window.openProductEditModal=function(id){_wOPEM.apply(this,arguments);setTimeout(function(){injectReservedBadge(id);},60);};}
+
+/* ── Prévenir le client via WhatsApp que sa réservation est disponible ── */
+window._resvNotifyWhatsApp=function(clientId,resvId){
+  var c=find(clientId); if(!c)return;
+  if(c.noWhatsapp){toast('🚫 Client non autorisé aux messages');return;}
+  if(!c.phone||!String(c.phone).replace(/\D/g,'')){toast('⚠️ Aucun numéro de téléphone — ajoutez-le via ✏️ Modifier');return;}
+  var r=(c.reservations||[]).find(function(x){return String(x.id)===String(resvId);}); if(!r)return;
+  var prenom=((c.name||'').split(' ')[0])||c.name||'';
+  var qte=r.unitType==='kg'?(r.qty+' kg'):(r.qty+' unité(s)');
+  var msg='Bonjour '+prenom+', bonne nouvelle ! Votre article réservé « '+r.productName+' » ('+qte+') est désormais disponible en magasin. Au plaisir de vous accueillir prochainement.';
+  var ph=(typeof window._waNormPhone==='function')?window._waNormPhone(c.phone,'33'):String(c.phone).replace(/\D/g,'');
+  if(!ph){toast('⚠️ Numéro invalide');return;}
+  window.open('https://wa.me/'+ph+'?text='+encodeURIComponent(msg),'_blank');
+};
+
+/* ── Note en ligne (édition directe dans la fiche, sans « Modifier ») ── */
+window._ltyNoteEdit=function(){
+  var disp=document.getElementById('lty-note-display'),ed=document.getElementById('lty-note-editor'),btn=document.getElementById('lty-note-edit-btn');
+  if(disp)disp.style.display='none'; if(btn)btn.style.display='none';
+  if(ed){ed.style.display='';var ta=document.getElementById('lty-note-textarea');if(ta)ta.focus();}
+};
+window._ltyNoteCancel=function(){
+  var disp=document.getElementById('lty-note-display'),ed=document.getElementById('lty-note-editor'),btn=document.getElementById('lty-note-edit-btn');
+  if(ed)ed.style.display='none'; if(disp)disp.style.display=''; if(btn)btn.style.display='';
+};
+window._ltyNoteSaveInline=function(){
+  var id=window._resvDetailId; if(!id)return;
+  var ta=document.getElementById('lty-note-textarea'); var val=ta?(ta.value||'').trim():'';
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;}); if(idx===-1)return;
+  if(val)d.customers[idx].note=val; else delete d.customers[idx].note;
+  ls(d);
+  toast('📝 Note enregistrée');
+  if(typeof window._ltyShowDetail==='function')window._ltyShowDetail(id);
+};
+
+/* ── Détection réapprovisionnement → notifier le(s) client(s) réservé(s) ── */
+function _resvCheckRestock(productId,currentStock){
+  try{
+    var d=lg(),changed=false,fulfilled=[],pend=[];
+    (d.customers||[]).forEach(function(c,ci){
+      (c.reservations||[]).forEach(function(r,ri){
+        if(String(r.productId)===String(productId) && r.pending && !r.ready){pend.push({ci:ci,ri:ri,date:new Date(r.date).getTime()});}
+      });
+    });
+    pend.sort(function(a,b){return a.date-b.date;});
+    var remaining=currentStock;
+    pend.forEach(function(p){
+      var r=d.customers[p.ci].reservations[p.ri];
+      if((r.qty||0)<=remaining){ r.ready=true; remaining-=(r.qty||0); changed=true; fulfilled.push({customer:d.customers[p.ci],r:r}); }
+    });
+    if(changed){
+      ls(d);
+      fulfilled.forEach(function(f){ _resvNotify(f.customer,f.r,currentStock); });
+      if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+    }
+  }catch(e){}
+}
+function _resvNotify(customer,r,currentStock){
+  toast('🔔 Stock dispo : '+r.qty+'× '+r.productName+' réservé par '+customer.name);
+  try{
+    if(typeof window._notifLoad==='function' && typeof window._notifSave==='function'){
+      var list=window._notifLoad()||[];
+      list.unshift({
+        id:'NOTIF-'+Date.now()+'-'+Math.floor(Math.random()*1000),
+        createdAt:new Date().toISOString(),
+        createdBy:'Réservations',
+        subject:'🔔 Stock disponible — réservation client',
+        message:'L\'article « '+r.productName+' » est de nouveau en stock (disponible : '+currentStock+'). '+r.qty+' réservé(s) pour '+customer.name+(customer.phone?(' — '+customer.phone):'')+'. Pensez à le prévenir.',
+        priority:'info', recipients:'all', driveFiles:[], active:true, acks:{}
+      });
+      window._notifSave(list);
+      if(typeof window._notifRenderAdmin==='function')window._notifRenderAdmin();
+      if(typeof window._notifCheckForCashier==='function')window._notifCheckForCashier();
+    }
+  }catch(e){}
+}
+/* Surveiller les hausses de stock (réapprovisionnement) */
+var _origLogStock=window._logStockChange;
+window._logStockChange=function(product,before,after,type,reason,meta){
+  if(typeof _origLogStock==='function')_origLogStock.apply(this,arguments);
+  try{ if(product && typeof after==='number' && typeof before==='number' && after>before){ _resvCheckRestock(product.id,after); } }catch(e){}
+};
+
+/* Fermer la modale au clic sur le fond */
+setTimeout(function(){var m=document.getElementById('resv-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._resvClose();});},1700);
+
+})();
+</script>
