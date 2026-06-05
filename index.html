@@ -7877,6 +7877,21 @@ button, .btn, .retours-btn {
                     </div>
                 </div>
 
+                <!-- ── Clients au tarif prix d'achat ───────────────────────── -->
+                <div style="background:var(--bg-body,#f8fafc);border:1.5px solid rgba(245,158,11,0.4);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                        <div style="width:30px;height:30px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">🏷️</div>
+                        <div>
+                            <div style="font-size:0.72rem;font-weight:800;color:#d97706;text-transform:uppercase;letter-spacing:0.8px;">Clients au tarif prix d'achat</div>
+                            <div style="font-size:0.65rem;color:var(--text-muted,#888);margin-top:1px;">Ces clients fidélité paient leurs articles au prix d'achat. Sélectionnez le client au panier pour appliquer le tarif.</div>
+                        </div>
+                    </div>
+                    <input id="cpc-search" oninput="window._cpcSearch(this.value)" autocomplete="off" placeholder="🔍 Rechercher un client fidélité à ajouter…"
+                        style="width:100%;box-sizing:border-box;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.84rem;background:var(--input-bg,#fff);color:var(--text-main);">
+                    <div id="cpc-autocomplete" style="margin-top:6px;"></div>
+                    <div id="cpc-list" style="margin-top:10px;"></div>
+                </div>
+
                 <!-- Mot de passe actuel -->
                 <div style="background:var(--bg-body,#f8fafc);border:1.5px solid var(--border-color,#e0e0e0);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
                     <div style="font-size:0.72rem;font-weight:800;color:#6366f1;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:10px;">🔑 Mot de passe actuel</div>
@@ -20421,10 +20436,14 @@ logout = function(skipConfirmation = false) {
         const existing = cart.find(c => c.id === productId);
 
         // ── Tarif d'achat admin autorisé ? ──────────────────────────────────
-        const _useCostPrice = (typeof window._canSeeCostPrice === 'function')
-            && window._canSeeCostPrice()
-            && (typeof currentUser !== 'undefined' && currentUser && !currentUser.isMaster)
-            && (typeof isAdmin !== 'undefined' && isAdmin);
+        // Client fidélité désigné « tarif prix d'achat » (depuis l'admin-développeur)
+        const _costClientActive = (typeof window._costPriceClientActive === 'function') ? window._costPriceClientActive() : null;
+        const _useCostPrice = (
+                (typeof window._canSeeCostPrice === 'function')
+                && window._canSeeCostPrice()
+                && (typeof currentUser !== 'undefined' && currentUser && !currentUser.isMaster)
+                && (typeof isAdmin !== 'undefined' && isAdmin)
+            ) || !!_costClientActive;
         
         // Night tariff multiplier
         const nightActive = isNightTariffCurrentlyActive();
@@ -20434,8 +20453,10 @@ logout = function(skipConfirmation = false) {
             : nightTariffSettings.defaultPercent;
         const nightMultiplier = applyNight ? (1 + nightPct / 100) : 1;
         // Position curseur : 0 = prix d'achat, 100 = prix de vente
-        const _costPosition  = _useCostPrice && typeof window._getCostPriceDiscount === 'function'
-            ? window._getCostPriceDiscount() : 100;
+        const _costPosition  = _costClientActive
+            ? ((typeof window._costPriceClientPosition === 'function') ? window._costPriceClientPosition() : 0)
+            : (_useCostPrice && typeof window._getCostPriceDiscount === 'function'
+                ? window._getCostPriceDiscount() : 100);
 
         if (product.unitType === 'kg') {
             const step = 0.1;
@@ -20516,6 +20537,55 @@ logout = function(skipConfirmation = false) {
             showScanToast(`✅ ${product.name} ajouté${applyNight ? ' 🌙 (tarif nuit)' : ''}`);
         }
     }
+
+    // ── Re-tarification du panier pour un client « tarif prix d'achat » ──
+    // Appelée quand on sélectionne / retire un tel client au panier.
+    window._repriceCartForCostClient = function() {
+        if (!Array.isArray(cart) || !cart.length) { if (typeof updateCartUI === 'function') updateCartUI(); return; }
+        const on = (typeof window._costPriceClientActive === 'function') && !!window._costPriceClientActive();
+        const nightActive = (typeof isNightTariffCurrentlyActive === 'function') ? isNightTariffCurrentlyActive() : false;
+        cart.forEach(function(item) {
+            const product = products.find(p => p.id === item.id);
+            if (!product) return;
+            const baseName = (item.name || '').replace(' 🏷️', '').replace(' 🌙', '');
+            const base = (product.unitType === 'kg') ? (product.pricePerKg || 0) : (product.price || 0);
+            if (on && product.costPrice != null) {
+                // Tarif prix d'achat interpolé : 0% = prix d'achat, 100% = prix de vente
+                const cp = parseFloat(product.costPrice) || 0;
+                const pos = (typeof window._costPriceClientPosition === 'function') ? window._costPriceClientPosition() : 0;
+                const effCP = cp + (base - cp) * (pos / 100);
+                item.price = effCP;
+                if (item.unitType !== 'kg') item.unitPrice = effCP;
+                item.originalPrice = base;
+                item.discount = 0;
+                item.nightTariff = false;
+                item.packSize = 0;
+                item.packPrice = 0;
+                item.costPriceApplied = true;
+                item.name = baseName + ' 🏷️';
+            } else {
+                // Retour au prix de vente normal (promo / nuit)
+                const disc = product.promo || 0;
+                const applyNight = !!(product.nightTariff && nightActive);
+                const nightPct = (product.nightTariffPercent !== undefined && product.nightTariffPercent !== null && product.nightTariffPercent !== '')
+                    ? parseFloat(product.nightTariffPercent)
+                    : ((typeof nightTariffSettings !== 'undefined') ? nightTariffSettings.defaultPercent : 0);
+                const nm = applyNight ? (1 + nightPct / 100) : 1;
+                const eff = base * (1 - disc / 100) * nm;
+                item.price = eff;
+                if (item.unitType !== 'kg') item.unitPrice = eff;
+                item.originalPrice = base;
+                item.discount = disc;
+                item.nightTariff = applyNight;
+                item.nightPercent = nightPct;
+                item.packSize = (product.packSize && product.packSize >= 2) ? product.packSize : 0;
+                item.packPrice = (product.packPrice && product.packPrice > 0) ? product.packPrice : 0;
+                item.costPriceApplied = false;
+                item.name = baseName + (applyNight ? ' 🌙' : '');
+            }
+        });
+        if (typeof updateCartUI === 'function') updateCartUI();
+    };
 
     function updateCartQuantity(productId, change) {
         const item = cart.find(c => c.id === productId);
@@ -23749,6 +23819,8 @@ logout = function(skipConfirmation = false) {
         if (stockLabel) stockLabel.textContent = isKg ? 'Stock (kg)' : 'Stock';
         const stockIn = document.getElementById('pem-stock');
         if (stockIn) { stockIn.step = isKg ? '0.001' : '1'; stockIn.value = p.stock || 0; }
+        const _pemUT = document.getElementById('pem-unit-type');
+        if (_pemUT) _pemUT.value = isKg ? 'kg' : 'unit';
         document.getElementById('pem-price').value = isKg ? (p.pricePerKg || '') : (p.price || '');
         document.getElementById('pem-cost').value = p.costPrice != null ? p.costPrice : '';
         // Masquer le champ prix d'achat si l'admin n'a pas la permission
@@ -23866,6 +23938,12 @@ logout = function(skipConfirmation = false) {
         if (stockLabel) stockLabel.textContent = 'Stock';
         const stockIn = document.getElementById('pem-stock');
         if (stockIn) { stockIn.step = '1'; stockIn.value = ''; }
+        const _pemUTn = document.getElementById('pem-unit-type');
+        if (_pemUTn) _pemUTn.value = 'unit';
+        const _pemPackSecN = document.getElementById('pem-pack-section');
+        if (_pemPackSecN) _pemPackSecN.style.display = '';
+        const _pemPriceLblN = document.getElementById('pem-price-label');
+        if (_pemPriceLblN) _pemPriceLblN.textContent = 'Prix de vente (€)';
         document.getElementById('pem-price').value = '';
         document.getElementById('pem-cost').value = '';
         const promoSel = document.getElementById('pem-promo');
@@ -23907,7 +23985,8 @@ logout = function(skipConfirmation = false) {
         if (_pemProductId == null) {
             const name = document.getElementById('pem-name').value.trim();
             if (!name) { showScanToast('❌ Nom requis pour créer le produit'); return; }
-            const isKg = false; // par défaut unité
+            const isKg = document.getElementById('pem-unit-type')?.value === 'kg';
+            const _pemPriceVal = parseFloat(document.getElementById('pem-price')?.value) || 0;
             const newId = Date.now();
             const newProduct = {
                 id:         newId,
@@ -23916,13 +23995,13 @@ logout = function(skipConfirmation = false) {
                 barcode:    document.getElementById('pem-barcode')?.value.trim() || '',
                 brand:      (document.getElementById('pem-brand')?.value || '').trim() || undefined,
                 description:(document.getElementById('pem-description')?.value || '').trim() || undefined,
-                price:      parseFloat(document.getElementById('pem-price')?.value) || 0,
+                price:      isKg ? null : _pemPriceVal,
                 costPrice:  parseFloat(document.getElementById('pem-cost')?.value) || null,
                 stock:      parseFloat(document.getElementById('pem-stock')?.value) || 0,
                 promo:      parseInt(document.getElementById('pem-promo')?.value) || 0,
                 expiryDate: document.getElementById('pem-expiry')?.value || '',
-                unitType:   'unit',
-                pricePerKg: null,
+                unitType:   isKg ? 'kg' : 'unit',
+                pricePerKg: isKg ? _pemPriceVal : null,
                 active:     true,
                 img:        document.getElementById('pem-img')?.value.trim() || '',
             };
@@ -23941,7 +24020,8 @@ logout = function(skipConfirmation = false) {
         if (_pemProductId == null) return;
         const p = products.find(x => x.id == _pemProductId);
         if (!p) return;
-        const isKg = p.unitType === 'kg';
+        const isKg = document.getElementById('pem-unit-type')?.value === 'kg';
+        p.unitType = isKg ? 'kg' : 'unit';
 
         const name = document.getElementById('pem-name').value.trim();
         if (!name) { showScanToast('❌ Nom requis'); return; }
@@ -23962,7 +24042,7 @@ logout = function(skipConfirmation = false) {
 
         const priceVal = parseFloat(document.getElementById('pem-price').value);
         if (!isNaN(priceVal) && priceVal >= 0) {
-            if (isKg) p.pricePerKg = priceVal; else p.price = priceVal;
+            if (isKg) { p.pricePerKg = priceVal; p.price = null; } else { p.price = priceVal; p.pricePerKg = null; }
         }
         const costVal = parseFloat(document.getElementById('pem-cost').value);
         if (!isNaN(costVal) && costVal >= 0) p.costPrice = costVal; else delete p.costPrice;
@@ -24016,6 +24096,22 @@ logout = function(skipConfirmation = false) {
         if (box) _renderBenefBox(price, cost, box);
     }
     window.pemBenefPreview = pemBenefPreview;
+
+    // ── Basculer entre unité et kg dans la fiche produit ──
+    window.pemUnitTypeChange = function() {
+        const ut = document.getElementById('pem-unit-type');
+        const isKg = !!(ut && ut.value === 'kg');
+        const priceLabel = document.getElementById('pem-price-label');
+        if (priceLabel) priceLabel.textContent = isKg ? 'Prix de vente (€/kg)' : 'Prix de vente (€)';
+        const stockLabel = document.getElementById('pem-stock-label');
+        if (stockLabel) stockLabel.textContent = isKg ? 'Stock (kg)' : 'Stock';
+        const stockIn = document.getElementById('pem-stock');
+        if (stockIn) stockIn.step = isKg ? '0.001' : '1';
+        const packSec = document.getElementById('pem-pack-section');
+        if (packSec) packSec.style.display = isKg ? 'none' : '';
+        if (typeof pemBenefPreview === 'function') pemBenefPreview();
+        if (typeof pemStockAlert === 'function') pemStockAlert();
+    };
 
     function pemStockAlert() {
         const box = document.getElementById('pem-stock-alert');
@@ -28275,7 +28371,7 @@ logout = function(skipConfirmation = false) {
                 var _d = JSON.parse(localStorage.getItem('covo_loyalty') || '{}');
                 var _bc = _v.toUpperCase();
                 var _cu = (_d.customers || []).find(function(x){
-                    return ('LCLT' + x.id.replace('CLT-','')) === _bc;
+                    return (x.barcode || ('LCLT' + x.id.replace('CLT-',''))) === _bc;
                 });
                 if (_cu) {
                     // Sélectionner le client
@@ -30452,6 +30548,14 @@ logout = function(skipConfirmation = false) {
       <!-- Prix & Stock -->
       <div style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
         <div style="font-size:0.68rem;font-weight:800;color:var(--gray,#7f8c8d);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">💰 Prix &amp; Stock</div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Type d'unité</label>
+          <select id="pem-unit-type" onchange="pemUnitTypeChange()"
+            style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+            <option value="unit">📦 À l'unité</option>
+            <option value="kg">⚖️ Au poids (kg)</option>
+          </select>
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <div>
             <label id="pem-price-label" style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Prix de vente (€)</label>
@@ -33149,6 +33253,11 @@ function _clotStatCard(icon, value, label, color) {
 // ===== GESTION DROITS TARIF D'ACHAT ==============================
 // ══════════════════════════════════════════════════════════════════
 var COST_PERM_KEY = 'covo_perm_admin_costprice';
+
+// Compte développeur (master) ? — accessible depuis les modules
+window._isMasterUser = function() {
+    return !!(typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster);
+};
 
 window._canSeeCostPrice = function() {
     if (typeof currentUser === 'undefined' || !currentUser) return false;
@@ -50163,7 +50272,7 @@ window._ltySearch=function(val){
   /* Barcode LCLT */
   if(val.toUpperCase().startsWith('LCLT')){
     var bc=val.toUpperCase();
-    var c=lg().customers.find(function(x){return('LCLT'+x.id.replace('CLT-',''))===bc;});
+    var c=lg().customers.find(function(x){return (x.barcode||('LCLT'+x.id.replace('CLT-','')))===bc;});
     if(c){_selectCu(c);return;}
     ac.innerHTML='<div style="padding:8px 10px;font-size:.78rem;color:#dc2626;">Code non reconnu</div>';
     return;
@@ -50255,7 +50364,7 @@ if(typeof _prevSSL==='function'){
   window.ssmLiveSearch=function(val){
     if(val&&val.toUpperCase().startsWith('LCLT')&&val.length>=8){
       var bc=val.toUpperCase();
-      var c=lg().customers.find(function(x){return('LCLT'+x.id.replace('CLT-',''))===bc;});
+      var c=lg().customers.find(function(x){return (x.barcode||('LCLT'+x.id.replace('CLT-','')))===bc;});
       if(c){
         _selectCu(c);
         var sinp=document.getElementById('single-scan-input');if(sinp)sinp.value='';
@@ -50813,6 +50922,31 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
   function genId(custs){var max=custs.reduce(function(m,c){var n=parseInt((c.id||'').replace('CLT-',''),10);return isNaN(n)?m:Math.max(m,n);},0);return'CLT-'+String(max+1).padStart(4,'0');}
   function genBC(id){return'LCLT'+id.replace('CLT-','');}
 
+  /* ── Numéro de carte unique basé sur NOM + TÉLÉPHONE (préfixe LCLT conservé) ── */
+  function _ltyNorm(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g,'');}
+  function _ltyDigits(s){return String(s||'').replace(/\D/g,'');}
+  window._ltyGenCardNumber=function(name,phone,customers,selfId){
+    var basis=_ltyNorm(name)+'|'+_ltyDigits(phone);
+    function hashWith(salt){
+      var str=basis+(salt?('#'+salt):'');
+      var h=2166136261>>>0;
+      for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
+      return h>>>0;
+    }
+    customers=customers||[];
+    var salt=0,code='';
+    while(salt<200){
+      var num=('0000000000'+String(hashWith(salt))).slice(-10);
+      code='LCLT'+num;
+      var clash=customers.some(function(c){return c&&c.barcode===code&&(selfId==null||c.id!==selfId);});
+      if(!clash)break;
+      salt++;
+    }
+    return code;
+  };
+  /* Numéro effectif d'un client : stocké si présent, sinon legacy basé sur l'ID */
+  window._ltyCardOf=function(c){return (c&&c.barcode)?c.barcode:(c&&c.id?genBC(c.id):'');};
+
   function drawBarcode(svgId,val){
     var el=document.getElementById(svgId);
     if(!el||typeof JsBarcode==='undefined')return;
@@ -50836,9 +50970,10 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
       if(bcSec)bcSec.style.display='';
       var bcId=document.getElementById('lcm-barcode-id');
       var bcName=document.getElementById('lcm-barcode-name');
-      if(bcId)bcId.textContent=genBC(c.id);
+      var _card=(typeof window._ltyCardOf==='function')?window._ltyCardOf(c):genBC(c.id);
+      if(bcId)bcId.textContent=_card;
       if(bcName)bcName.textContent=c.name;
-      setTimeout(function(){drawBarcode('lcm-barcode-svg',genBC(c.id));},100);
+      setTimeout(function(){drawBarcode('lcm-barcode-svg',_card);},100);
       if(ptsSec)ptsSec.style.display='';
       var ptsEl=document.getElementById('lcm-points-display');
       var spEl=document.getElementById('lcm-spent-display');
@@ -50866,10 +51001,13 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
     var d=lg();
     if(_editId){
       var idx=d.customers.findIndex(function(x){return x.id===_editId;});
-      if(idx!==-1){d.customers[idx].name=name;d.customers[idx].phone=phone;d.customers[idx].email=email;}
+      if(idx!==-1){
+        d.customers[idx].name=name;d.customers[idx].phone=phone;d.customers[idx].email=email;
+        d.customers[idx].barcode=window._ltyGenCardNumber(name,phone,d.customers,_editId);
+      }
     } else {
       var newId=genId(d.customers);
-      d.customers.push({id:newId,name:name,phone:phone,email:email,barcode:genBC(newId),points:0,totalSpent:0,createdAt:new Date().toISOString(),history:[]});
+      d.customers.push({id:newId,name:name,phone:phone,email:email,barcode:window._ltyGenCardNumber(name,phone,d.customers,null),points:0,totalSpent:0,createdAt:new Date().toISOString(),history:[]});
     }
     ls(d);
     window._loyaltyCloseModal();
@@ -51058,7 +51196,7 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
     val = (val || '').trim().toUpperCase();
     if (!val.startsWith('LCLT') || val.length < 8) return false;
     var d = lg();
-    var c = d.customers.find(function (x) { return genBC(x.id) === val; });
+    var c = d.customers.find(function (x) { return (x.barcode || genBC(x.id)) === val; });
     if (!c) {
       if (typeof showScanToast === 'function')
         showScanToast('⚠️ Carte fidélité non reconnue : ' + val);
@@ -51200,7 +51338,7 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
 
     var bc = val.toUpperCase();
     var d  = lg();
-    var c  = d.customers.find(function (x) { return genBC(x.id) === bc; });
+    var c  = d.customers.find(function (x) { return (x.barcode || genBC(x.id)) === bc; });
 
     if (!c) {
       if (typeof showScanToast === 'function')
@@ -51633,7 +51771,18 @@ function injectModalCreditField(id){
     block.innerHTML=''
       +'<label class="lcf-label" style="color:#b45309;">📒 Plafond de crédit (€)</label>'
       +'<input class="lcf-input" id="lcm-credit-limit" type="number" min="0" step="0.01" placeholder="0 = illimité">'
-      +'<div id="lcm-credit-due-wrap" style="display:none;margin-top:8px;background:rgba(217,119,6,.08);border-radius:9px;padding:9px 12px;font-size:.8rem;color:#92400e;font-weight:700;">Solde dû actuel : <span id="lcm-credit-due">0.00€</span></div>';
+      +'<div id="lcm-credit-due-wrap" style="display:none;margin-top:8px;background:rgba(217,119,6,.08);border-radius:9px;padding:9px 12px;font-size:.8rem;color:#92400e;font-weight:700;">Solde dû actuel : <span id="lcm-credit-due">0.00€</span></div>'
+      +'<label class="lcf-label" style="color:#25D366;margin-top:14px;">💬 Messages WhatsApp</label>'
+      +'<label style="display:flex;align-items:center;gap:9px;cursor:pointer;background:rgba(37,211,102,.08);border:1px solid rgba(37,211,102,.3);border-radius:9px;padding:9px 12px;font-size:.82rem;color:#128C7E;font-weight:600;"><input type="checkbox" id="lcm-wa-optout" style="width:17px;height:17px;accent-color:#dc2626;cursor:pointer;flex-shrink:0;"> 🚫 Ne pas autoriser l\'envoi de messages à ce client</label>'
+      +'<div id="lcm-cost-client-wrap" style="display:none;margin-top:14px;">'
+      +  '<label class="lcf-label" style="color:#d97706;">🏷️ Tarif prix d\'achat <span style="font-weight:600;text-transform:none;letter-spacing:0;color:#a16207;">· Admin-développeur</span></label>'
+      +  '<label style="display:flex;align-items:center;gap:9px;cursor:pointer;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:9px;padding:9px 12px;font-size:.82rem;color:#92400e;font-weight:600;"><input type="checkbox" id="lcm-cost-client" onchange="window._lcmCostToggle&&window._lcmCostToggle()" style="width:17px;height:17px;accent-color:#d97706;cursor:pointer;flex-shrink:0;"> Ce client paie ses articles au prix d\'achat</label>'
+      +  '<div id="lcm-cost-pos-wrap" style="display:none;margin-top:10px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:9px;padding:10px 12px;">'
+      +    '<label style="font-size:.72rem;font-weight:800;color:#b45309;display:flex;justify-content:space-between;align-items:center;">Position tarifaire <span id="lcm-cost-pos-val" style="font-weight:900;font-size:.82rem;">0 %</span></label>'
+      +    '<input type="range" id="lcm-cost-position" min="0" max="100" step="5" value="0" oninput="window._lcmCostPosInput&&window._lcmCostPosInput()" style="width:100%;accent-color:#d97706;margin-top:8px;">'
+      +    '<div style="display:flex;justify-content:space-between;font-size:.64rem;color:#a16207;font-weight:700;margin-top:2px;"><span>0 % · prix d\'achat</span><span>100 % · prix de vente</span></div>'
+      +  '</div>'
+      +'</div>';
     actionsRow.parentNode.insertBefore(block, actionsRow);
   }
   var c=id?find(id):null;
@@ -51644,6 +51793,17 @@ function injectModalCreditField(id){
     if(c&&creditOf(c)>0){wrap.style.display='';var due=document.getElementById('lcm-credit-due');if(due)due.textContent=creditOf(c).toFixed(2)+'€';}
     else wrap.style.display='none';
   }
+  var waOpt=document.getElementById('lcm-wa-optout');
+  if(waOpt)waOpt.checked=!!(c&&c.noWhatsapp);
+  var costWrap=document.getElementById('lcm-cost-client-wrap');
+  var isMaster=(typeof window._isMasterUser==='function')?window._isMasterUser():false;
+  if(costWrap)costWrap.style.display=isMaster?'':'none';
+  var ccEl=document.getElementById('lcm-cost-client');
+  if(ccEl)ccEl.checked=!!(c&&c.costPriceClient);
+  var posEl=document.getElementById('lcm-cost-position');
+  if(posEl){var pv=(c&&c.costPricePosition!=null)?parseFloat(c.costPricePosition):0;if(isNaN(pv))pv=0;posEl.value=pv;}
+  if(typeof window._lcmCostPosInput==='function')window._lcmCostPosInput();
+  if(typeof window._lcmCostToggle==='function')window._lcmCostToggle();
 }
 
 /* ── Wrappers des fonctions de rendu fidélité ── */
@@ -51669,6 +51829,13 @@ var _wSave=window._loyaltySaveModal;
 if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
   var limEl=document.getElementById('lcm-credit-limit');
   var lim=limEl?(parseFloat(limEl.value)||0):0;
+  var isMaster=(typeof window._isMasterUser==='function')?window._isMasterUser():false;
+  var ccEl=document.getElementById('lcm-cost-client');
+  var costClient=ccEl?!!ccEl.checked:false;
+  var posEl=document.getElementById('lcm-cost-position');
+  var costPos=posEl?(parseInt(posEl.value)||0):0;
+  var waOptEl=document.getElementById('lcm-wa-optout');
+  var waOptOut=waOptEl?!!waOptEl.checked:false;
   var editId=window._creditModalId;
   _wSave.apply(this,arguments);
   var modal=document.getElementById('lty-client-modal');
@@ -51676,7 +51843,18 @@ if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
   var d=lg(), idx=-1;
   if(editId){idx=d.customers.findIndex(function(x){return x.id===editId;});}
   else{var maxn=-1;d.customers.forEach(function(c,i){var n=parseInt(String(c.id||'').replace('CLT-',''),10);if(!isNaN(n)&&n>maxn){maxn=n;idx=i;}});}
-  if(idx!==-1){d.customers[idx].creditLimit=lim;ls(d);}
+  if(idx!==-1){
+    d.customers[idx].creditLimit=lim;
+    if(waOptOut)d.customers[idx].noWhatsapp=true; else delete d.customers[idx].noWhatsapp;
+    /* Le tarif prix d'achat n'est modifiable que par l'Admin-développeur (master) */
+    if(isMaster){
+      if(costClient){d.customers[idx].costPriceClient=true;d.customers[idx].costPricePosition=costPos;}
+      else {delete d.customers[idx].costPriceClient;delete d.customers[idx].costPricePosition;}
+    }
+    ls(d);
+    if(typeof window._cpcRenderList==='function')window._cpcRenderList();
+    if(window._ltyCu && window._ltyCu.id===d.customers[idx].id && typeof window._repriceCartForCostClient==='function')window._repriceCartForCostClient();
+  }
   window._creditModalId=null;
   setTimeout(function(){injectCreditStat();decorateList();if(window._creditDetailId)injectDetailCredit(window._creditDetailId);},30);
 };}
@@ -51734,3 +51912,330 @@ setTimeout(function(){injectCreditStat();decorateList();},1500);
 
 })();
 </script>
+
+<!-- ════════════════════════════════════════════════════════════
+     MODULE CLIENTS « TARIF PRIX D'ACHAT » — COVO Pro v28
+     Désignation persistante depuis l'admin-développeur +
+     application automatique du prix d'achat au panier.
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{}};}catch(e){return{customers:[],settings:{}};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function ini(n){return((n||'?').split(' ').map(function(w){return w[0]||'';}).join('').toUpperCase().slice(0,2))||'?';}
+function find(id){return lg().customers.find(function(x){return x.id===id;});}
+function toast(m,t){if(typeof showScanToast==='function')showScanToast(m,t);}
+
+/* ── Client actif au panier est-il « tarif prix d'achat » ? ── */
+window._costPriceClientActive=function(){
+  try{
+    var cu=window._ltyCu; if(!cu)return null;
+    var c=find(cu.id);
+    return (c && c.costPriceClient) ? c : null;
+  }catch(e){return null;}
+};
+
+/* ── Position tarifaire du client actif (0 = prix d'achat, 100 = prix de vente) ── */
+window._costPriceClientPosition=function(){
+  try{
+    var c=window._costPriceClientActive&&window._costPriceClientActive();
+    if(!c)return 0;
+    var p=parseFloat(c.costPricePosition);
+    if(isNaN(p))return 0;
+    return Math.max(0,Math.min(100,p));
+  }catch(e){return 0;}
+};
+
+/* ── Helpers UI de la case dans la fiche client ── */
+window._lcmCostToggle=function(){
+  var cb=document.getElementById('lcm-cost-client');
+  var pw=document.getElementById('lcm-cost-pos-wrap');
+  if(pw)pw.style.display=(cb&&cb.checked)?'':'none';
+};
+window._lcmCostPosInput=function(){
+  var r=document.getElementById('lcm-cost-position');
+  var v=document.getElementById('lcm-cost-pos-val');
+  if(r&&v)v.textContent=(parseInt(r.value)||0)+' %';
+};
+
+/* ════════ ADMIN-DÉVELOPPEUR : gestion de la liste ════════ */
+window._cpcSearch=function(val){
+  val=(val||'').trim();
+  var ac=document.getElementById('cpc-autocomplete'); if(!ac)return;
+  if(val.length<2){ac.innerHTML='';return;}
+  var q=val.toLowerCase();
+  var list=lg().customers.filter(function(c){
+    return !c.costPriceClient && (c.name.toLowerCase().includes(q)||(c.phone&&c.phone.includes(q)));
+  }).slice(0,6);
+  if(!list.length){ac.innerHTML='<div style="padding:8px 10px;font-size:0.78rem;color:var(--text-muted,#888);background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-radius:8px;">Aucun client trouvé</div>';return;}
+  ac.innerHTML='<div style="background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-radius:8px;overflow:hidden;">'+list.map(function(c){
+    return '<div onclick="window._cpcAdd(\''+c.id+'\')" style="display:flex;align-items:center;gap:9px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border-color,#f0f0f0);">'
+      +'<div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.72rem;flex-shrink:0;">'+esc(ini(c.name))+'</div>'
+      +'<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:0.83rem;color:var(--text-main);">'+esc(c.name)+'</div>'
+      +'<div style="font-size:0.67rem;color:var(--text-muted,#888);">'+(c.phone?esc(c.phone)+' · ':'')+'⭐ '+(c.points||0)+' pts</div></div>'
+      +'<div style="font-size:0.72rem;font-weight:800;color:#d97706;">+ Ajouter</div>'
+      +'</div>';
+  }).join('')+'</div>';
+};
+window._cpcAdd=function(id){
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;});
+  if(idx===-1)return;
+  d.customers[idx].costPriceClient=true; ls(d);
+  var s=document.getElementById('cpc-search'); if(s)s.value='';
+  var ac=document.getElementById('cpc-autocomplete'); if(ac)ac.innerHTML='';
+  _cpcRenderList();
+  toast('🏷️ '+d.customers[idx].name+' ajouté au tarif prix d\'achat');
+  if(window._ltyCu && window._ltyCu.id===id && typeof window._repriceCartForCostClient==='function'){_lastState=undefined;_sync();}
+};
+window._cpcRemove=function(id){
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;});
+  if(idx===-1)return;
+  delete d.customers[idx].costPriceClient; ls(d);
+  _cpcRenderList();
+  toast('Retiré du tarif prix d\'achat');
+  if(window._ltyCu && window._ltyCu.id===id){_lastState=undefined;_sync();}
+};
+function _cpcRenderList(){
+  var el=document.getElementById('cpc-list'); if(!el)return;
+  var list=lg().customers.filter(function(c){return c.costPriceClient;});
+  if(!list.length){el.innerHTML='<div style="font-size:0.76rem;color:var(--text-muted,#888);padding:8px 4px;">Aucun client au tarif prix d\'achat pour le moment.</div>';return;}
+  el.innerHTML='<div style="font-size:0.62rem;font-weight:800;color:#d97706;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">'+list.length+' client(s) au tarif prix d\'achat</div>'
+    +list.map(function(c){
+    return '<div style="display:flex;align-items:center;gap:9px;padding:8px 10px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.3);border-radius:9px;margin-bottom:6px;">'
+      +'<div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.72rem;flex-shrink:0;">'+esc(ini(c.name))+'</div>'
+      +'<div style="flex:1;min-width:0;"><div style="font-weight:800;font-size:0.83rem;color:var(--text-main);">'+esc(c.name)+'</div>'
+      +'<div style="font-size:0.67rem;color:var(--text-muted,#888);">'+(c.phone?esc(c.phone)+' · ':'')+'🏷️ Prix d\'achat</div></div>'
+      +'<button onclick="window._cpcRemove(\''+c.id+'\')" style="background:rgba(239,68,68,0.1);color:#dc2626;border:none;border-radius:7px;padding:5px 10px;font-size:0.74rem;font-weight:700;cursor:pointer;">✕ Retirer</button>'
+      +'</div>';
+  }).join('');
+}
+window._cpcRenderList=_cpcRenderList;
+
+/* ════════ APPLICATION AU PANIER ════════ */
+var _lastState=null;
+function _banner(active){
+  var w=document.getElementById('loyalty-cart-widget'); if(!w)return;
+  var b=document.getElementById('cost-price-client-banner');
+  if(active){
+    if(!b){
+      b=document.createElement('div'); b.id='cost-price-client-banner';
+      b.style.cssText='margin-top:8px;padding:8px 11px;background:rgba(245,158,11,0.12);border:1.5px solid rgba(245,158,11,0.45);border-radius:9px;font-size:0.76rem;font-weight:800;color:#b45309;display:flex;align-items:center;gap:6px;';
+      w.appendChild(b);
+    }
+    var pos=(typeof window._costPriceClientPosition==='function')?window._costPriceClientPosition():0;
+    b.innerHTML='🏷️ Tarif prix d\'achat — '+esc(active.name)+(pos>0?' · '+pos+'%':'');
+    b.style.display='flex';
+  } else if(b){ b.style.display='none'; }
+}
+function _sync(){
+  var active=window._costPriceClientActive?window._costPriceClientActive():null;
+  var id=active?active.id:null;
+  if(id!==_lastState){
+    _lastState=id;
+    if(typeof window._repriceCartForCostClient==='function')window._repriceCartForCostClient();
+    if(active)toast('🏷️ '+active.name+' — tarif prix d\'achat activé sur le panier');
+  }
+  _banner(active);
+}
+
+/* Hook du rendu du widget fidélité (sélection / retrait client) */
+var _prevRW=window._ltyRenderWidget;
+window._ltyRenderWidget=function(){
+  if(typeof _prevRW==='function')_prevRW.apply(this,arguments);
+  setTimeout(_sync,0);
+};
+
+/* Interception des points de sélection du client pour correction de prix immédiate */
+['_ltyPick','_ltyClear','_ltyConfirm','_ltySelectFromAuto'].forEach(function(fn){
+  var prev=window[fn];
+  if(typeof prev==='function'){
+    window[fn]=function(){var r=prev.apply(this,arguments);setTimeout(_sync,0);return r;};
+  }
+});
+
+/* Filet de sécurité : le scan d'une carte fidélité (LCLT) passe par des appels
+   internes qui ne déclenchent pas toujours les hooks ci-dessus → on surveille
+   le client actif et on re-tarifie dès qu'il change (correction immédiate). */
+setInterval(_sync,300);
+
+/* Rendu de la liste à l'ouverture de l'admin */
+var _prevTAM=window.toggleAdminModal;
+if(typeof _prevTAM==='function'){window.toggleAdminModal=function(){_prevTAM.apply(this,arguments);setTimeout(_cpcRenderList,350);};}
+
+/* Init */
+setTimeout(function(){_cpcRenderList();_sync();},1600);
+
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     MODULE MESSAGE WHATSAPP (diffusion clients fidélité) — COVO Pro
+     ════════════════════════════════════════════════════════════ -->
+<style>
+#wa-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:23500;justify-content:center;align-items:center;padding:16px;}
+#wa-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:560px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+body.dark-mode #wa-box{background:var(--bg-card,#1e293b);}
+.wa-fld{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:.9rem;background:var(--input-bg,#fff);color:var(--text-main);font-family:inherit;}
+.wa-fld:focus{outline:none;border-color:#25D366;box-shadow:0 0 0 3px rgba(37,211,102,.12);}
+.wa-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border-color,#eee);cursor:pointer;}
+</style>
+<div id="wa-modal">
+  <div id="wa-box">
+    <div style="background:linear-gradient(135deg,#25D366,#128C7E);padding:16px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+      <div style="font-size:1.05rem;font-weight:900;">💬 Message WhatsApp</div>
+      <button onclick="window._waClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:1.1rem;width:30px;height:30px;border-radius:8px;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:18px 20px;overflow-y:auto;">
+      <!-- Composition -->
+      <div id="wa-compose">
+        <div style="display:flex;gap:10px;margin-bottom:12px;">
+          <div style="width:120px;">
+            <label style="font-size:.68rem;font-weight:800;color:#128C7E;text-transform:uppercase;letter-spacing:.6px;display:block;margin-bottom:5px;">Indicatif pays</label>
+            <input class="wa-fld" id="wa-cc" type="text" value="33" placeholder="33">
+          </div>
+          <div style="flex:1;display:flex;align-items:flex-end;"><div style="font-size:.68rem;color:var(--text-muted);padding-bottom:10px;">Ex. France = 33. Les numéros « 06… » deviennent « 336… ».</div></div>
+        </div>
+        <label style="font-size:.68rem;font-weight:800;color:#128C7E;text-transform:uppercase;letter-spacing:.6px;display:block;margin-bottom:5px;">Message</label>
+        <textarea class="wa-fld" id="wa-msg" rows="4" placeholder="Bonjour {nom}, ..."></textarea>
+        <div style="font-size:.66rem;color:var(--text-muted);margin:5px 0 14px;">Astuce : utilisez <strong>{nom}</strong> ou <strong>{prenom}</strong> pour personnaliser.</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:800;color:var(--text-main);cursor:pointer;"><input type="checkbox" id="wa-all" onchange="window._waToggleAll(this)" style="width:17px;height:17px;accent-color:#25D366;"> Tout sélectionner</label>
+          <div style="font-size:.78rem;color:var(--text-muted);"><strong id="wa-count">0</strong> destinataire(s)</div>
+        </div>
+        <div id="wa-list" style="border:1px solid var(--border-color,#e0e0e0);border-radius:10px;max-height:260px;overflow-y:auto;"></div>
+      </div>
+      <!-- Mode envoi guidé -->
+      <div id="wa-send-mode" style="display:none;"><div id="wa-step"></div></div>
+    </div>
+    <div id="wa-footer" style="padding:14px 20px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;flex-shrink:0;">
+      <button id="wa-start-btn" onclick="window._waStartBroadcast()" disabled style="flex:2;padding:12px;background:linear-gradient(135deg,#25D366,#128C7E);color:white;border:none;border-radius:10px;font-weight:900;font-size:.9rem;cursor:pointer;">▶️ Démarrer l'envoi</button>
+      <button onclick="window._waClose()" style="flex:1;padding:12px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;">Fermer</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function digits(s){return String(s||'').replace(/\D/g,'');}
+function toast(m){if(typeof showScanToast==='function')showScanToast(m);}
+
+/* Normalisation du numéro pour wa.me (format international sans +) */
+window._waNormPhone=function(phone,cc){
+  var d=digits(phone); if(!d)return '';
+  cc=digits(cc)||'33';
+  if(d.indexOf('00')===0)d=d.slice(2);
+  if(d.charAt(0)==='0')d=cc+d.slice(1);
+  else if(d.indexOf(cc)!==0 && d.length<=9)d=cc+d;
+  return d;
+};
+function recipients(){return lg().customers.filter(function(c){return c.phone && digits(c.phone).length>=6;});}
+function ccVal(){var e=document.getElementById('wa-cc');return e?(e.value||'33'):'33';}
+function msgFor(c){var t=(document.getElementById('wa-msg')||{}).value||'';return t.replace(/\{nom\}/g,c.name||'').replace(/\{prenom\}/g,(c.name||'').split(' ')[0]||'');}
+
+window._waOpenBroadcast=function(){
+  var cmp=document.getElementById('wa-compose'),sm=document.getElementById('wa-send-mode'),ft=document.getElementById('wa-footer');
+  if(cmp)cmp.style.display='';
+  if(sm)sm.style.display='none';
+  if(ft)ft.style.display='flex';
+  _queue=null;_qi=0;
+  var all=document.getElementById('wa-all'); if(all)all.checked=false;
+  renderRecipients();
+  var m=document.getElementById('wa-modal'); if(m)m.style.display='flex';
+};
+window._waClose=function(){var m=document.getElementById('wa-modal'); if(m)m.style.display='none';};
+
+function renderRecipients(){
+  var el=document.getElementById('wa-list'); if(!el)return;
+  var list=recipients();
+  if(!list.length){el.innerHTML='<div style="padding:16px;text-align:center;font-size:.8rem;color:var(--text-muted);">Aucun client avec numéro de téléphone.</div>';window._waUpdateCount();return;}
+  el.innerHTML=list.map(function(c){
+    var blocked=!!c.noWhatsapp;
+    return '<label class="wa-row" style="'+(blocked?'opacity:.55;cursor:not-allowed;':'')+'">'
+      +'<input type="checkbox" class="wa-cb" data-id="'+esc(c.id)+'" '+(blocked?'disabled':'')+' onchange="window._waUpdateCount()" style="width:17px;height:17px;accent-color:#25D366;flex-shrink:0;">'
+      +'<div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:.85rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(c.name)+'</div>'
+      +'<div style="font-size:.7rem;color:var(--text-muted);">'+esc(c.phone)+(blocked?' · <span style="color:#dc2626;font-weight:800;">🚫 Pas autorisé</span>':'')+'</div></div>'
+      +(blocked?'':'<button onclick="event.preventDefault();window._waSendOne(\''+esc(c.id)+'\')" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:.74rem;font-weight:800;cursor:pointer;flex-shrink:0;">💬 Envoyer</button>')
+      +'</label>';
+  }).join('');
+  window._waUpdateCount();
+}
+window._waToggleAll=function(cb){
+  document.querySelectorAll('#wa-list .wa-cb:not(:disabled)').forEach(function(x){x.checked=cb.checked;});
+  window._waUpdateCount();
+};
+window._waUpdateCount=function(){
+  var n=document.querySelectorAll('#wa-list .wa-cb:checked').length;
+  var el=document.getElementById('wa-count'); if(el)el.textContent=n;
+  var b=document.getElementById('wa-start-btn'); if(b)b.disabled=(n===0);
+};
+window._waSendOne=function(id){
+  var c=lg().customers.find(function(x){return x.id===id;}); if(!c||c.noWhatsapp)return;
+  var ph=window._waNormPhone(c.phone,ccVal()); if(!ph){toast('⚠️ Numéro invalide');return;}
+  window.open('https://wa.me/'+ph+'?text='+encodeURIComponent(msgFor(c)),'_blank');
+};
+
+var _queue=null,_qi=0;
+window._waStartBroadcast=function(){
+  var ids=[]; document.querySelectorAll('#wa-list .wa-cb:checked').forEach(function(x){ids.push(x.getAttribute('data-id'));});
+  if(!ids.length){toast('⚠️ Sélectionnez au moins un client');return;}
+  if(!((document.getElementById('wa-msg')||{}).value||'').trim()){toast('⚠️ Saisissez un message');return;}
+  _queue=ids;_qi=0;
+  document.getElementById('wa-compose').style.display='none';
+  document.getElementById('wa-footer').style.display='none';
+  document.getElementById('wa-send-mode').style.display='';
+  renderStep();
+};
+function renderStep(){
+  var box=document.getElementById('wa-step'); if(!box)return;
+  if(!_queue || _qi>=_queue.length){
+    box.innerHTML='<div style="text-align:center;padding:24px 10px;"><div style="font-size:2.2rem;">✅</div>'
+      +'<div style="font-weight:900;margin-top:8px;font-size:1rem;color:var(--text-main);">Envoi terminé</div>'
+      +'<div style="font-size:.8rem;color:var(--text-muted);margin-top:3px;">'+(_queue?_queue.length:0)+' destinataire(s) traité(s)</div>'
+      +'<button onclick="window._waClose()" style="margin-top:16px;background:#25D366;color:#fff;border:none;border-radius:10px;padding:11px 20px;font-weight:800;cursor:pointer;">Fermer</button></div>';
+    return;
+  }
+  var c=lg().customers.find(function(x){return x.id===_queue[_qi];})||{};
+  box.innerHTML='<div style="text-align:center;padding:10px;">'
+    +'<div style="font-size:.68rem;color:var(--text-muted);text-transform:uppercase;font-weight:800;letter-spacing:.6px;">Destinataire '+(_qi+1)+' / '+_queue.length+'</div>'
+    +'<div style="font-size:1.15rem;font-weight:900;margin:6px 0 2px;color:var(--text-main);">'+esc(c.name||'')+'</div>'
+    +'<div style="font-size:.82rem;color:var(--text-muted);margin-bottom:16px;">'+esc(c.phone||'')+'</div>'
+    +'<button onclick="window._waStepSend()" style="width:100%;background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;border:none;border-radius:11px;padding:14px;font-weight:900;font-size:.92rem;cursor:pointer;">💬 Ouvrir WhatsApp pour ce client</button>'
+    +'<button onclick="window._waStepSkip()" style="width:100%;margin-top:8px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:11px;padding:10px;font-weight:700;font-size:.84rem;cursor:pointer;">⏭️ Passer</button>'
+    +'<div style="font-size:.66rem;color:var(--text-muted);margin-top:10px;">WhatsApp s\'ouvre avec le message pré-rempli ; il vous suffit d\'appuyer sur Envoyer.</div>'
+    +'</div>';
+}
+window._waStepSend=function(){
+  var c=lg().customers.find(function(x){return x.id===_queue[_qi];});
+  if(c){var ph=window._waNormPhone(c.phone,ccVal());if(ph)window.open('https://wa.me/'+ph+'?text='+encodeURIComponent(msgFor(c)),'_blank');}
+  _qi++; renderStep();
+};
+window._waStepSkip=function(){_qi++;renderStep();};
+
+/* Bouton 💬 WhatsApp dans l'entête de l'onglet Fidélité */
+function injectWaButton(){
+  var newBtn=document.querySelector('#tab-fidelite [onclick*="_ltyNewClient"]');
+  if(!newBtn || document.getElementById('wa-header-btn'))return;
+  var b=document.createElement('button');
+  b.id='wa-header-btn';
+  b.type='button';
+  b.onclick=function(){window._waOpenBroadcast();};
+  b.style.cssText='background:#25D366;border:1.5px solid rgba(255,255,255,.4);color:white;border-radius:10px;padding:8px 14px;font-weight:800;font-size:.82rem;cursor:pointer;margin-right:8px;';
+  b.innerHTML='💬 WhatsApp';
+  newBtn.parentNode.insertBefore(b,newBtn);
+}
+var _ws=window.switchTab;
+if(typeof _ws==='function'){window.switchTab=function(name){_ws.apply(this,arguments);if(name==='fidelite')setTimeout(injectWaButton,500);};}
+var _wt=window.toggleAdminModal;
+if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(injectWaButton,600);};}
+/* Fermer en cliquant sur le fond */
+setTimeout(function(){var m=document.getElementById('wa-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._waClose();});injectWaButton();},1700);
+
+})();
+</script>
+
