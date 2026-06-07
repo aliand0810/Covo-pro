@@ -51923,6 +51923,14 @@ function injectModalCreditField(id){
       +    '<input type="range" id="lcm-cost-position" min="0" max="100" step="5" value="0" oninput="window._lcmCostPosInput&&window._lcmCostPosInput()" style="width:100%;accent-color:#d97706;margin-top:8px;">'
       +    '<div style="display:flex;justify-content:space-between;font-size:.64rem;color:#a16207;font-weight:700;margin-top:2px;"><span>0 % · prix d\'achat</span><span>100 % · prix de vente</span></div>'
       +  '</div>'
+      +'</div>'
+      +'<div id="lcm-spendcap-wrap" style="display:none;margin-top:14px;">'
+      +  '<label class="lcf-label" style="color:#0369a1;">🚦 Plafond de dépenses <span style="font-weight:600;text-transform:none;letter-spacing:0;color:#64748b;">· Admin / développeur</span></label>'
+      +  '<div style="display:flex;gap:8px;">'
+      +    '<input class="lcf-input" id="lcm-spendcap" type="number" min="0" step="0.01" placeholder="0 = illimité" style="flex:2;">'
+      +    '<select class="lcf-input" id="lcm-spendcap-period" style="flex:1;"><option value="week">Hebdomadaire</option><option value="month">Mensuel</option></select>'
+      +  '</div>'
+      +  '<div id="lcm-spendcap-info" style="margin-top:7px;font-size:.72rem;color:#0369a1;font-weight:700;"></div>'
       +'</div>';
     actionsRow.parentNode.insertBefore(block, actionsRow);
   }
@@ -51947,6 +51955,21 @@ function injectModalCreditField(id){
   if(posEl){var pv=(c&&c.costPricePosition!=null)?parseFloat(c.costPricePosition):0;if(isNaN(pv))pv=0;posEl.value=pv;}
   if(typeof window._lcmCostPosInput==='function')window._lcmCostPosInput();
   if(typeof window._lcmCostToggle==='function')window._lcmCostToggle();
+  /* Plafond de dépenses — admin ou développeur (master) uniquement */
+  var _adminOrDev=((typeof isAdmin!=='undefined'&&isAdmin)||isMaster);
+  var scWrap=document.getElementById('lcm-spendcap-wrap');
+  if(scWrap)scWrap.style.display=_adminOrDev?'':'none';
+  var scEl=document.getElementById('lcm-spendcap');
+  if(scEl)scEl.value=(c&&c.spendCap)?c.spendCap:'';
+  var scPer=document.getElementById('lcm-spendcap-period');
+  if(scPer)scPer.value=(c&&c.spendCapPeriod==='month')?'month':'week';
+  var scInfo=document.getElementById('lcm-spendcap-info');
+  if(scInfo){
+    if(c&&parseFloat(c.spendCap)>0&&typeof window._ltySpentInPeriod==='function'){
+      var _sp=window._ltySpentInPeriod(c);
+      scInfo.textContent='Dépensé sur la période en cours : '+_sp.toFixed(2)+'€ / '+parseFloat(c.spendCap).toFixed(2)+'€';
+    } else scInfo.textContent='';
+  }
 }
 
 /* ── Wrappers des fonctions de rendu fidélité ── */
@@ -51981,6 +52004,11 @@ if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
   var waOptOut=waOptEl?!!waOptEl.checked:false;
   var noteEl2=document.getElementById('lcm-note');
   var noteVal=noteEl2?(noteEl2.value||'').trim():'';
+  var scEl2=document.getElementById('lcm-spendcap');
+  var spendCap=scEl2?(parseFloat(scEl2.value)||0):0;
+  var scPer2=document.getElementById('lcm-spendcap-period');
+  var spendPeriod=(scPer2&&scPer2.value==='month')?'month':'week';
+  var _adminOrDev=((typeof isAdmin!=='undefined'&&isAdmin)||isMaster);
   var editId=window._creditModalId;
   _wSave.apply(this,arguments);
   var modal=document.getElementById('lty-client-modal');
@@ -51996,6 +52024,11 @@ if(typeof _wSave==='function'){window._loyaltySaveModal=function(){
     if(isMaster){
       if(costClient){d.customers[idx].costPriceClient=true;d.customers[idx].costPricePosition=costPos;}
       else {delete d.customers[idx].costPriceClient;delete d.customers[idx].costPricePosition;}
+    }
+    /* Plafond de dépenses : modifiable uniquement par admin / développeur */
+    if(_adminOrDev){
+      if(spendCap>0){d.customers[idx].spendCap=spendCap;d.customers[idx].spendCapPeriod=spendPeriod;}
+      else {delete d.customers[idx].spendCap;delete d.customers[idx].spendCapPeriod;}
     }
     ls(d);
     if(typeof window._cpcRenderList==='function')window._cpcRenderList();
@@ -52807,5 +52840,72 @@ if(typeof _ws==='function'){window.switchTab=function(name){_ws.apply(this,argum
 var _wt=window.toggleAdminModal;
 if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(injectBtn,600);};}
 setTimeout(function(){var m=document.getElementById('lset-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._lsetClose();});injectBtn();},1800);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     PLAFOND DE DÉPENSES PAR CLIENT FIDÉLITÉ (hebdo / mensuel)
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function find(id){return lg().customers.find(function(x){return x.id===id;});}
+function toast(m){if(typeof showScanToast==='function')showScanToast(m);}
+function cartGross(){var el=document.getElementById('cart-total');return el?(parseFloat(String(el.innerText||'').replace(',','.'))||0):0;}
+
+/* Début de la période courante (lundi 00h pour la semaine, 1er du mois sinon) */
+window._ltySpendPeriodStart=function(period){
+  var now=new Date();
+  if(period==='month'){return new Date(now.getFullYear(),now.getMonth(),1).getTime();}
+  var d=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  var day=(d.getDay()+6)%7; /* lundi = 0 */
+  d.setDate(d.getDate()-day);
+  return d.getTime();
+};
+/* Dépenses (achats) du client sur la période courante */
+window._ltySpentInPeriod=function(c){
+  try{
+    if(!c)return 0;
+    var period=(c.spendCapPeriod==='month')?'month':'week';
+    var start=window._ltySpendPeriodStart(period);
+    var spent=0;
+    (c.history||[]).forEach(function(h){
+      if(h && h.saleId && (h.type==='credit'||h.type==='credit_purchase') && h.amount){
+        if(new Date(h.date).getTime()>=start) spent+=(+h.amount||0);
+      }
+    });
+    return spent;
+  }catch(e){return 0;}
+};
+/* Renvoie un objet si la vente en cours dépasserait le plafond du client actif, sinon null */
+function _spendBlocked(){
+  var cu=window._ltyCu; if(!cu)return null;
+  var c=find(cu.id); if(!c)return null;
+  var cap=parseFloat(c.spendCap)||0; if(cap<=0)return null;
+  var period=(c.spendCapPeriod==='month')?'month':'week';
+  var spent=window._ltySpentInPeriod(c);
+  var gross=cartGross();
+  var mEl=document.getElementById('payment-method');
+  var method=mEl?mEl.value:'';
+  var disc=(method!=='credit' && window._ltyRed && window._ltyRed.euros>0)?Math.min(window._ltyRed.euros,gross):0;
+  var net=Math.max(0,gross-disc);
+  if(spent+net>cap+0.001){
+    return {cap:cap,spent:spent,net:net,period:period,remaining:Math.max(0,cap-spent)};
+  }
+  return null;
+}
+window._ltySpendCheck=_spendBlocked;
+/* Wrapper validateSale (s'exécute avant la chaîne) */
+var _prevVS=window.validateSale;
+window.validateSale=function(){
+  var b=_spendBlocked();
+  if(b){
+    toast('⛔ Plafond de dépenses atteint ('+b.cap.toFixed(2)+'€/'+(b.period==='month'?'mois':'semaine')+') · déjà dépensé '+b.spent.toFixed(2)+'€ — reste '+b.remaining.toFixed(2)+'€ · retirez la carte pour vendre sans fidélité');
+    return;
+  }
+  return (typeof _prevVS==='function')?_prevVS.apply(this,arguments):undefined;
+};
 })();
 </script>
