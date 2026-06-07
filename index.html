@@ -4235,6 +4235,18 @@ button, .btn, .retours-btn {
                     <span class="stat-change" id="stat-lost-count" style="color:var(--text-muted,#888);">0 défaut(s)</span>
                     <div style="font-size:0.7rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-lost-detail"></div>
                 </div>
+                <!-- 10. Crédit cartes fidélité -->
+                <div class="stat-card" style="border-left:4px solid #d97706;">
+                    <h3>📒 Crédit cartes fidélité</h3>
+                    <div class="stat-value" id="stat-lty-credit" style="color:#d97706;">0€</div>
+                    <span class="stat-change" id="stat-lty-credit-sub" style="color:var(--text-muted,#888);">Total dû par les clients</span>
+                </div>
+                <!-- 11. Payé par points fidélité -->
+                <div class="stat-card" style="border-left:4px solid #8b5cf6;">
+                    <h3>💜 Payé par points fidélité</h3>
+                    <div class="stat-value" id="stat-lty-pointspaid" style="color:#8b5cf6;">0€</div>
+                    <span class="stat-change" id="stat-lty-pointspaid-sub" style="color:var(--text-muted,#888);">Remises points cumulées</span>
+                </div>
             </div>
             
             <div class="chart-container" style="border-top:3px solid #2980b9;padding:0;overflow:hidden;">
@@ -9436,7 +9448,7 @@ button, .btn, .retours-btn {
         const isKg = p.unitType === 'kg';
         const baseP = isKg ? (p.pricePerKg || 0) : (p.price || 0);
         const disc = p.promo || 0;
-        const promoP = baseP * (1 - disc / 100);
+        const promoP = window._promoPrice(baseP, disc, p.costPrice);
         const nightPct = nightActive && p.nightTariff ? (p.nightTariffPercent || settings.defaultPercent || 30) : 0;
         const finalP = nightPct ? promoP * (1 + nightPct / 100) : promoP;
         const unit = isKg ? ' €/kg' : ' €';
@@ -9671,7 +9683,7 @@ button, .btn, .retours-btn {
         const isKg = p.unitType === 'kg';
         const baseP = isKg ? (p.pricePerKg || 0) : (p.price || 0);
         const disc = p.promo || 0;
-        const promoP = baseP * (1 - disc / 100);
+        const promoP = window._promoPrice(baseP, disc, p.costPrice);
         const nightPct = nightActive && p.nightTariff ? (p.nightTariffPercent || nightSettings.defaultPercent || 30) : 0;
         const finalP = nightPct ? promoP * (1 + nightPct / 100) : promoP;
         const unit = isKg ? ' €/kg' : ' €';
@@ -14449,7 +14461,7 @@ function toggleInfoSection(headerElement) {
             ? `${parseFloat(a.price||0).toFixed(2)} €/kg`
             : `${parseFloat(a.price||0).toFixed(2)} €`;
         const promoPrice = a.promo
-            ? (parseFloat(a.price||0) * (1 - a.promo/100)).toFixed(2) + ' €'
+            ? window._promoPrice(parseFloat(a.price||0), a.promo, a.costPrice).toFixed(2) + ' €'
             : null;
         const artDiv = document.createElement('div');
         artDiv.style.cssText = 'background:var(--input-bg,#f0f4ff);border:1.5px solid var(--border-color,#dce3ec);border-radius:10px;padding:10px 12px;margin-top:8px;display:flex;align-items:center;gap:10px;';
@@ -20232,8 +20244,10 @@ function toggleInfoSection(headerElement) {
 
     function calculateChange() {
         const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
+        const _ltyDisc = (window._ltyRed && window._ltyRed.euros > 0) ? Math.min(window._ltyRed.euros, total) : 0;
+        const netDue = Math.max(0, total - _ltyDisc);
         const received = parseFloat(document.getElementById('amount-received').value) || 0;
-        const change = received - total;
+        const change = received - netDue;
         const display = document.getElementById('change-due');
         if (change >= 0) {
             display.innerText = `Rendu : ${change.toFixed(2)}€`;
@@ -20245,7 +20259,9 @@ function toggleInfoSection(headerElement) {
     }
 
     function onMixedInput(changedField) {
-        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
+        const _grossTotal = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
+        const _ltyDisc = (window._ltyRed && window._ltyRed.euros > 0) ? Math.min(window._ltyRed.euros, _grossTotal) : 0;
+        const total = Math.max(0, _grossTotal - _ltyDisc);
         const cbInput = document.getElementById('mixed-cb');
         const cashInput = document.getElementById('mixed-cash');
         const cbVal = parseFloat(cbInput.value) || 0;
@@ -20270,14 +20286,16 @@ function toggleInfoSection(headerElement) {
     }
 
     function updateMixedSummary() {
-        const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
+        const _grossTotal = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
+        const _ltyDisc = (window._ltyRed && window._ltyRed.euros > 0) ? Math.min(window._ltyRed.euros, _grossTotal) : 0;
+        const total = Math.max(0, _grossTotal - _ltyDisc);
         const cbVal = parseFloat(document.getElementById('mixed-cb').value) || 0;
         const cashVal = parseFloat(document.getElementById('mixed-cash').value) || 0;
         const paid = cbVal + cashVal;
         const remaining = total - paid;
         const change = paid - total;
 
-        document.getElementById('mixed-total-due').textContent = total.toFixed(2) + '€';
+        document.getElementById('mixed-total-due').textContent = total.toFixed(2) + '€' + (_ltyDisc > 0 ? ' (après −' + _ltyDisc.toFixed(2) + '€ points)' : '');
 
         const remainingEl = document.getElementById('mixed-remaining');
         if (remaining > 0.001) {
@@ -20429,6 +20447,21 @@ logout = function(skipConfirmation = false) {
     }
     // ===== FIN SYSTÈME TARIF PACK =====
 
+    // ── Prix promotionnel : interpolation entre prix de vente (0%) et prix d'achat (100%) ──
+    // La promotion ne fait jamais descendre le prix sous le prix d'achat.
+    window._promoPrice = function(base, promo, cost) {
+        base = parseFloat(base) || 0;
+        promo = Math.max(0, Math.min(100, parseFloat(promo) || 0));
+        if (!promo) return base;
+        cost = parseFloat(cost);
+        if (!isNaN(cost) && cost >= 0 && cost < base) {
+            // 0% = prix de vente, 100% = prix d'achat
+            return base - (promo / 100) * (base - cost);
+        }
+        // Pas de prix d'achat exploitable → remise classique sur le prix de vente
+        return base * (1 - promo / 100);
+    };
+
     function addToCart(productId) {
         const product = products.find(p => p.id === productId);
         if (!product || product.stock <= 0) return;
@@ -20468,7 +20501,7 @@ logout = function(skipConfirmation = false) {
                 // interpolation : 0%=achat, 100%=vente
                 effectivePrice = prixAchat + (product.pricePerKg - prixAchat) * (_costPosition / 100);
             } else {
-                effectivePrice = product.pricePerKg * (1 - disc / 100) * nightMultiplier;
+                effectivePrice = window._promoPrice(product.pricePerKg, disc, product.costPrice) * nightMultiplier;
             }
             if (existing) {
                 const newQty = parseFloat((existing.quantity + step).toFixed(3));
@@ -20506,7 +20539,7 @@ logout = function(skipConfirmation = false) {
                 // Prix : coût d'achat si autorisé, sinon prix de vente normal
                 const effectivePrice = _useCostPrice && product.costPrice != null
                     ? parseFloat(product.costPrice) + (product.price - parseFloat(product.costPrice)) * (_costPosition / 100)
-                    : product.price * (1 - disc / 100) * nightMultiplier;
+                    : window._promoPrice(product.price, disc, product.costPrice) * nightMultiplier;
                 cart.push({
                     id: product.id,
                     name: product.name + (_useCostPrice ? ' 🏷️' : applyNight ? ' 🌙' : ''),
@@ -20571,7 +20604,7 @@ logout = function(skipConfirmation = false) {
                     ? parseFloat(product.nightTariffPercent)
                     : ((typeof nightTariffSettings !== 'undefined') ? nightTariffSettings.defaultPercent : 0);
                 const nm = applyNight ? (1 + nightPct / 100) : 1;
-                const eff = base * (1 - disc / 100) * nm;
+                const eff = window._promoPrice(base, disc, product.costPrice) * nm;
                 item.price = eff;
                 if (item.unitType !== 'kg') item.unitPrice = eff;
                 item.originalPrice = base;
@@ -20801,28 +20834,31 @@ logout = function(skipConfirmation = false) {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
         const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const method = document.getElementById('payment-method').value;
-        let received = total;
+        // Remise points fidélité : la caisse encaisse le NET (montant après déduction des points)
+        const _ltyDisc = (window._ltyRed && window._ltyRed.euros > 0) ? Math.min(window._ltyRed.euros, total) : 0;
+        const netDue = Math.max(0, total - _ltyDisc);
+        let received = netDue;
         let receivedCash = 0;
         let receivedCB = 0;
         let change = 0;
 
         if (method === 'cash') {
             received = parseFloat(document.getElementById('amount-received').value);
-            if (!received || received < total) { showScanToast('❌ Montant reçu insuffisant'); return; }
+            if (!received || received < netDue) { showScanToast('❌ Montant reçu insuffisant'); return; }
             receivedCash = received;
-            change = received - total;
+            change = received - netDue;
         } else if (method === 'mixed') {
             receivedCB = parseFloat(document.getElementById('mixed-cb').value) || 0;
             receivedCash = parseFloat(document.getElementById('mixed-cash').value) || 0;
             received = receivedCB + receivedCash;
-            if (received < total - 0.001) { showScanToast('❌ Montant total insuffisant'); return; }
-            change = received - total;
+            if (received < netDue - 0.001) { showScanToast('❌ Montant total insuffisant'); return; }
+            change = received - netDue;
         } else if (method === 'credit') {
             // Achat à crédit (compte client) : aucun encaissement immédiat
             received = 0; receivedCash = 0; receivedCB = 0; change = 0;
         } else {
             // CB only
-            receivedCB = total;
+            receivedCB = netDue;
         }
 
         const sale = {
@@ -21579,7 +21615,7 @@ logout = function(skipConfirmation = false) {
 
         let displayPriceHTML = '<span class="lbl-price-main">' + price + unitSuffix + '</span>';
         if (p.promo && p.promo > 0) {
-            const promoP = (parseFloat(price) * (1 - p.promo / 100)).toFixed(2);
+            const promoP = window._promoPrice(parseFloat(price), p.promo, p.costPrice).toFixed(2);
             displayPriceHTML = '<span class="lbl-price-old">' + price + unitSuffix + '</span>'
                 + '<span class="lbl-price-main lbl-price-promo">' + promoP + unitSuffix + '</span>'
                 + '<span class="lbl-price-badge">-' + p.promo + '%</span>';
@@ -21772,7 +21808,7 @@ logout = function(skipConfirmation = false) {
             var unitSuffix = p.unitType === 'kg' ? ' €/kg' : ' €';
             var displayPriceHTML = '<span class="lbl-price-main">' + price + unitSuffix + '</span>';
             if (p.promo && p.promo > 0) {
-                var promoP = (parseFloat(price) * (1 - p.promo / 100)).toFixed(2);
+                var promoP = window._promoPrice(parseFloat(price), p.promo, p.costPrice).toFixed(2);
                 displayPriceHTML = '<span class="lbl-price-old">' + price + unitSuffix + '</span>'
                     + '<span class="lbl-price-main lbl-price-promo">' + promoP + unitSuffix + '</span>'
                     + '<span class="lbl-price-badge">-' + p.promo + '%</span>';
@@ -22564,7 +22600,7 @@ logout = function(skipConfirmation = false) {
             const disc = p.promo || 0;
             const isKg = p.unitType === 'kg';
             const basePrice = isKg ? p.pricePerKg : p.price;
-            const promoPrice = basePrice * (1 - disc / 100);
+            const promoPrice = window._promoPrice(basePrice, disc, p.costPrice);
             
             // Calcul tarif nuit
             const hasNight = p.nightTariff && nightActive;
@@ -23739,7 +23775,7 @@ logout = function(skipConfirmation = false) {
 
         // Prix
         const nightPct   = nightActive && p.nightTariff ? (p.nightTariffPercent||nightTariffSettings.defaultPercent||30) : 0;
-        const basePrice  = p.promo>0 ? p.price*(1-p.promo/100) : p.price;
+        const basePrice  = p.promo>0 ? window._promoPrice(p.price, p.promo, p.costPrice) : p.price;
         const nightPrice = nightPct ? basePrice*(1+nightPct/100) : 0;
         const isKg = p.unitType==='kg';
         const fmt  = v => v.toFixed(2)+' €'+(isKg?' / kg':'');
@@ -23875,19 +23911,17 @@ logout = function(skipConfirmation = false) {
         if (priceLabel) priceLabel.textContent = isKg ? 'Prix de vente (€/kg)' : 'Prix de vente (€)';
         const stockLabel = document.getElementById('pem-stock-label');
         if (stockLabel) stockLabel.textContent = isKg ? 'Stock (kg)' : 'Stock';
+        const costLabel = document.getElementById('pem-cost-label');
+        if (costLabel) costLabel.textContent = isKg ? "Prix d'achat (€/kg)" : "Prix d'achat (€)";
         const stockIn = document.getElementById('pem-stock');
         if (stockIn) { stockIn.step = isKg ? '0.001' : '1'; stockIn.value = p.stock || 0; }
         const _pemUT = document.getElementById('pem-unit-type');
         if (_pemUT) _pemUT.value = isKg ? 'kg' : 'unit';
         document.getElementById('pem-price').value = isKg ? (p.pricePerKg || '') : (p.price || '');
         document.getElementById('pem-cost').value = p.costPrice != null ? p.costPrice : '';
-        // Masquer le champ prix d'achat si l'admin n'a pas la permission
+        // Le prix d'achat est toujours saisissable dans la fiche produit (admin)
         var _pemCostWrap = document.getElementById('pem-cost')?.closest('div');
-        if (_pemCostWrap) {
-            var _canCost = (typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster)
-                || (typeof window._canSeeCostPrice === 'function' && window._canSeeCostPrice());
-            _pemCostWrap.style.display = _canCost ? '' : 'none';
-        }
+        if (_pemCostWrap) { _pemCostWrap.style.display = ''; }
         // Promo select
         const promoSel = document.getElementById('pem-promo');
         if (promoSel) {
@@ -24002,6 +24036,8 @@ logout = function(skipConfirmation = false) {
         if (_pemPackSecN) _pemPackSecN.style.display = '';
         const _pemPriceLblN = document.getElementById('pem-price-label');
         if (_pemPriceLblN) _pemPriceLblN.textContent = 'Prix de vente (€)';
+        const _pemCostLblN = document.getElementById('pem-cost-label');
+        if (_pemCostLblN) _pemCostLblN.textContent = "Prix d'achat (€)";
         document.getElementById('pem-price').value = '';
         document.getElementById('pem-cost').value = '';
         const promoSel = document.getElementById('pem-promo');
@@ -24163,6 +24199,8 @@ logout = function(skipConfirmation = false) {
         if (priceLabel) priceLabel.textContent = isKg ? 'Prix de vente (€/kg)' : 'Prix de vente (€)';
         const stockLabel = document.getElementById('pem-stock-label');
         if (stockLabel) stockLabel.textContent = isKg ? 'Stock (kg)' : 'Stock';
+        const costLabel = document.getElementById('pem-cost-label');
+        if (costLabel) costLabel.textContent = isKg ? "Prix d'achat (€/kg)" : "Prix d'achat (€)";
         const stockIn = document.getElementById('pem-stock');
         if (stockIn) stockIn.step = isKg ? '0.001' : '1';
         const packSec = document.getElementById('pem-pack-section');
@@ -27313,8 +27351,8 @@ logout = function(skipConfirmation = false) {
 
         const disc = product.promo || 0;
         const price = product.unitType === 'kg'
-            ? (product.pricePerKg * (1 - disc/100)).toFixed(2) + ' €/kg'
-            : (product.price * (1 - disc/100)).toFixed(2) + ' €';
+            ? window._promoPrice(product.pricePerKg, disc, product.costPrice).toFixed(2) + ' €/kg'
+            : window._promoPrice(product.price, disc, product.costPrice).toFixed(2) + ' €';
         document.getElementById('ssm-product-price').textContent = price;
 
         const origEl = document.getElementById('ssm-product-original');
@@ -27617,7 +27655,7 @@ logout = function(skipConfirmation = false) {
                 const isKg = p.unitType === 'kg';
                 const disc = p.promo || 0;
                 const basePrice = isKg ? p.pricePerKg : p.price;
-                const price = basePrice * (1 - disc / 100);
+                const price = window._promoPrice(basePrice, disc, p.costPrice);
                 const priceStr = isKg ? price.toFixed(2) + ' €/kg' : price.toFixed(2) + ' €';
                 const oldStr = disc > 0 ? (isKg ? basePrice.toFixed(2) + ' €/kg' : basePrice.toFixed(2) + ' €') : null;
                 const isOut = p.stock <= 0;
@@ -28628,7 +28666,7 @@ logout = function(skipConfirmation = false) {
         if (!product) return;
         const kg = getKgFromInput();
         const disc = product.promo || 0;
-        const pricePerKg = product.pricePerKg * (1 - disc / 100);
+        const pricePerKg = window._promoPrice(product.pricePerKg, disc, product.costPrice);
         const total = pricePerKg * kg;
         const grams = Math.round(kg * 1000);
 
@@ -28663,7 +28701,7 @@ logout = function(skipConfirmation = false) {
         }
 
         const disc = product.promo || 0;
-        const pricePerKg = product.pricePerKg * (1 - disc / 100);
+        const pricePerKg = window._promoPrice(product.pricePerKg, disc, product.costPrice);
         const existingIdx = cart.findIndex(c => c.id === kgModalProductId);
         const grams = Math.round(kg * 1000);
 
@@ -30621,7 +30659,7 @@ logout = function(skipConfirmation = false) {
               style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
           </div>
           <div>
-            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Prix d'achat (€)</label>
+            <label id="pem-cost-label" style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Prix d'achat (€)</label>
             <input type="number" id="pem-cost" min="0" step="0.01" placeholder="0.00" oninput="pemBenefPreview()"
               style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
           </div>
@@ -35976,8 +36014,8 @@ function renderCatalogueTab() {
         const basePrice = isKg ? p.pricePerKg : p.price;
         const disc = p.promo || 0;
         const priceDisplay = isKg
-            ? `${(basePrice*(1-disc/100)).toFixed(2)} €/kg`
-            : `${(basePrice*(1-disc/100)).toFixed(2)} €`;
+            ? `${window._promoPrice(basePrice, disc, p.costPrice).toFixed(2)} €/kg`
+            : `${window._promoPrice(basePrice, disc, p.costPrice).toFixed(2)} €`;
         const stockDisplay = isKg ? `${p.stock.toFixed(3)} kg` : `${p.stock}`;
         const isOut = p.stock <= 0;
         const isLow = !isOut && p.stock <= (isKg ? 0.5 : 5);
@@ -37056,7 +37094,7 @@ function _catBuildPrintHTML() {
             const isKg = p.unitType === 'kg';
             const basePrice = isKg ? p.pricePerKg : p.price;
             const disc = p.promo || 0;
-            const finalPrice = basePrice * (1 - disc / 100);
+            const finalPrice = window._promoPrice(basePrice, disc, p.costPrice);
             const stockDisplay = isKg ? p.stock.toFixed(3) + ' kg' : String(p.stock);
             const isOut = p.stock <= 0;
             const isLow = !isOut && p.stock <= (isKg ? 0.5 : 5);
@@ -50240,7 +50278,10 @@ function injectWidget(){
     +'<div id="lty-autocomplete"></div>'
     +'<div id="lty-redeem-zone">'
     +  '<div class="lrz-head"><span id="lrz-bal">0 pts = 0.00€</span><button onclick="window._ltyUseAll()" style="background:rgba(139,92,246,.15);color:#7c3aed;border:none;border-radius:6px;padding:3px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Tout utiliser</button></div>'
-    +  '<input type="number" id="lrz-inp" placeholder="Montant à déduire en € (ex: 2)" min="0.01" step="0.01" oninput="window._ltyCalcRed()">'
+    +  '<div id="lrz-input-row" style="display:flex;gap:6px;">'
+    +    '<input type="number" id="lrz-inp" placeholder="Montant à déduire en € (ex: 2)" min="0.01" step="0.01" style="flex:1;" oninput="window._ltyCalcRed()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ltyApplyRed();}">'
+    +    '<button onclick="window._ltyApplyRed()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:800;font-size:.78rem;white-space:nowrap;">Appliquer</button>'
+    +  '</div>'
     +  '<div id="lrz-info" style="font-size:.68rem;color:var(--text-muted);margin-top:4px;"></div>'
     +  '<div id="lty-discount-applied" style="display:none;margin-top:7px;padding:6px 10px;background:rgba(5,150,105,.08);border-radius:8px;border-left:3px solid #059669;flex-direction:row;align-items:center;justify-content:space-between;">'
     +    '<span style="font-size:.78rem;font-weight:800;color:#059669;" id="lty-disc-lbl">—</span>'
@@ -50291,17 +50332,18 @@ window._ltyRenderWidget=renderWidget;
 function _renderRedState(){
   var r=window._ltyRed;
   var inpEl=document.getElementById('lrz-inp');
+  var rowEl=document.getElementById('lrz-input-row');
   var infoEl=document.getElementById('lrz-info');
   var discDiv=document.getElementById('lty-discount-applied');
   var lbl=document.getElementById('lty-disc-lbl');
-  var btn=document.querySelector('#lty-redeem-zone button:last-of-type');
   if(r){
-    if(inpEl)inpEl.style.display='none';
+    if(rowEl)rowEl.style.display='none';
     if(infoEl)infoEl.style.display='none';
     if(discDiv){discDiv.style.display='flex';}
     if(lbl)lbl.textContent='🎁 −'+r.euros.toFixed(2)+'€ ('+r.points+' pts)';
   } else {
-    if(inpEl){inpEl.style.display='';inpEl.value='';}
+    if(rowEl)rowEl.style.display='flex';
+    if(inpEl)inpEl.value='';
     if(infoEl){infoEl.style.display='';infoEl.textContent='';}
     if(discDiv)discDiv.style.display='none';
   }
@@ -52598,3 +52640,35 @@ setTimeout(function(){var m=document.getElementById('resv-modal');if(m)m.addEven
 
 })();
 </script>
+
+<!-- ════════════════════════════════════════════════════════════
+     STATISTIQUES FIDÉLITÉ : crédit cartes + montant payé par points
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+function _ltyStatsRefresh(){
+  var d; try{d=JSON.parse(localStorage.getItem('covo_loyalty')||'null')||{customers:[]};}catch(e){d={customers:[]};}
+  var cred=0,nC=0,pts=0,nR=0;
+  (d.customers||[]).forEach(function(c){
+    var cr=+c.credit||0; if(cr>0){cred+=cr;nC++;}
+    (c.history||[]).forEach(function(h){
+      if(h && h.type==='debit' && h.note==='Rachat points'){ pts+=(+h.amount||0); nR++; }
+    });
+  });
+  var e1=document.getElementById('stat-lty-credit'); if(e1)e1.textContent=cred.toFixed(2)+'€';
+  var s1=document.getElementById('stat-lty-credit-sub'); if(s1)s1.textContent=nC+' client(s) à crédit';
+  var e2=document.getElementById('stat-lty-pointspaid'); if(e2)e2.textContent=pts.toFixed(2)+'€';
+  var s2=document.getElementById('stat-lty-pointspaid-sub'); if(s2)s2.textContent=nR+' rachat(s) de points';
+}
+window._ltyStatsRefresh=_ltyStatsRefresh;
+/* Recalcul à l'ouverture de l'onglet Statistiques */
+var _wsStats=window.switchTab;
+if(typeof _wsStats==='function'){window.switchTab=function(name){_wsStats.apply(this,arguments);if(name==='stats')setTimeout(_ltyStatsRefresh,200);};}
+/* Mise à jour aussi après un rafraîchissement global des stats */
+var _wAw=window._awRefreshStats;
+if(typeof _wAw==='function'){window._awRefreshStats=function(){_wAw.apply(this,arguments);setTimeout(_ltyStatsRefresh,50);};}
+setTimeout(_ltyStatsRefresh,1800);
+})();
+</script>
+
