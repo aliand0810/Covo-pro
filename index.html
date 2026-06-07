@@ -3796,7 +3796,7 @@ button, .btn, .retours-btn {
             <!-- Bouton de rafraîchissement -->
             <button id="refresh-btn"
                 onclick="location.reload()"
-                title="Rafraîchir la page (Ctrl+R)"
+                title="Rafraîchir la page (Ctrl+Maj+R)"
                 aria-label="Rafraîchir"
                 style="background:var(--bg-card-2,rgba(255,255,255,0.15));color:var(--text-main,#fff);
                        border:1.5px solid rgba(255,255,255,0.25);border-radius:8px;
@@ -52923,5 +52923,137 @@ window.validateSale=function(){
   }
   return (typeof _prevVS==='function')?_prevVS.apply(this,arguments):undefined;
 };
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     BADGE ONGLET PAIEMENTS : montant non payé du mois en cours
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+function _cfMensuelLocal(row){
+  var m=parseFloat(row.montant||0);
+  if(row.periode==='annuel')return +(m/12).toFixed(2);
+  if(row.periode==='trimestriel')return +(m/3).toFixed(2);
+  if(row.periode==='hebdo')return +(m*52/12).toFixed(2);
+  return m; /* mensuel */
+}
+function _mkNow(){
+  if(typeof window._cfCurrentMonth==='function')return window._cfCurrentMonth();
+  var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+}
+/* Non payé — dettes (suivi des paiements) */
+function _dettesUnpaid(){
+  var sum=0;
+  try{
+    var pay=JSON.parse(localStorage.getItem('covo_paiements')||'[]');
+    if(Array.isArray(pay))pay.forEach(function(p){ if(p && !p.paye) sum+=(+p.montant||0); });
+  }catch(e){}
+  return sum;
+}
+/* Non payé — charges fixes mensuelles (mois en cours + mois en retard) */
+function _chargesUnpaid(){
+  var sum=0;
+  try{
+    var cf=JSON.parse(localStorage.getItem('covo_charges_fixes')||'[]');
+    if(Array.isArray(cf)){
+      var mkNow=_mkNow();
+      cf.forEach(function(r){
+        if(!r)return;
+        var mens=_cfMensuelLocal(r);
+        var paidNow=r.payeParMois?!!r.payeParMois[mkNow]:!!r.paye;
+        if(!paidNow)sum+=mens;
+        if(r.payeParMois){
+          Object.keys(r.payeParMois).forEach(function(mk){
+            if(mk<mkNow && r.payeParMois[mk]===false) sum+=mens;
+          });
+        }
+      });
+    }
+  }catch(e){}
+  return sum;
+}
+/* Non payé — créances (approvisionnements à crédit, reste à devoir) */
+function _creancesUnpaid(){
+  var sum=0;
+  try{
+    var inv=JSON.parse(localStorage.getItem('covo_approvisionnements')||'[]');
+    if(Array.isArray(inv))inv.forEach(function(i){
+      if(i && i.paiement==='credit'){ var r=parseFloat(i.resteADoit||0); if(r>0) sum+=r; }
+    });
+  }catch(e){}
+  return sum;
+}
+function _badgeMode(){ try{return localStorage.getItem('covo_pay_badge_mode')||'all';}catch(e){return 'all';} }
+/* Montant affiché selon la source choisie */
+function _unpaidTotal(){
+  var m=_badgeMode();
+  if(m==='dettes')   return _dettesUnpaid();
+  if(m==='creances') return _creancesUnpaid();
+  if(m==='charges')  return _chargesUnpaid();
+  return _dettesUnpaid()+_creancesUnpaid()+_chargesUnpaid();
+}
+function _isAdminDev(){
+  return (typeof isAdmin!=='undefined'&&isAdmin)
+      || (typeof window._isMasterUser==='function'&&window._isMasterUser())
+      || (typeof currentUser!=='undefined'&&currentUser&&(currentUser.role==='admin'||currentUser.isMaster));
+}
+window._payBadgeSetMode=function(v){ try{localStorage.setItem('covo_pay_badge_mode',v);}catch(e){} if(typeof window._payMonthBadgeRefresh==='function')window._payMonthBadgeRefresh(); };
+/* Liste déroulante du choix dans l'entête — admin / développeur uniquement */
+function _injectModeSelector(){
+  /* retirer un éventuel ancien bouton radio */
+  var oldT=document.getElementById('pay-badge-toggle');
+  if(oldT&&oldT.parentNode)oldT.parentNode.removeChild(oldT);
+  var wrapEl=document.getElementById('pay-badge-mode-wrap');
+  if(!_isAdminDev()){ if(wrapEl&&wrapEl.parentNode)wrapEl.parentNode.removeChild(wrapEl); return; }
+  if(wrapEl){ var _s=document.getElementById('pay-badge-mode'); if(_s)_s.value=_badgeMode(); return; }
+  var sum=document.getElementById('pay-header-summary');
+  if(!sum||!sum.parentNode)return;
+  wrapEl=document.createElement('div');
+  wrapEl.id='pay-badge-mode-wrap';
+  wrapEl.style.cssText='display:flex;align-items:center;gap:6px;';
+  wrapEl.innerHTML='<span style="font-size:.6rem;color:rgba(255,255,255,.85);font-weight:800;text-transform:uppercase;letter-spacing:.4px;">🔔 Badge</span>'
+    +'<select id="pay-badge-mode" onchange="window._payBadgeSetMode(this.value)" style="background:rgba(255,255,255,.2);color:#fff;border:1px solid rgba(255,255,255,.45);border-radius:8px;padding:4px 8px;font-size:.72rem;font-weight:700;cursor:pointer;">'
+    +'<option value="all" style="color:#2c3e50;">Tout cumulé</option>'
+    +'<option value="dettes" style="color:#2c3e50;">Dettes</option>'
+    +'<option value="creances" style="color:#2c3e50;">Créances</option>'
+    +'<option value="charges" style="color:#2c3e50;">Charges fixes</option>'
+    +'</select>';
+  sum.parentNode.appendChild(wrapEl);
+  var sel=document.getElementById('pay-badge-mode'); if(sel)sel.value=_badgeMode();
+}
+function refresh(){
+  var btn=document.getElementById('tab-btn-paiements');
+  if(!btn)return;
+  if(getComputedStyle(btn).position==='static')btn.style.position='relative';
+  var badge=document.getElementById('pay-month-badge');
+  if(!badge){
+    badge=document.createElement('span');
+    badge.id='pay-month-badge';
+    badge.style.cssText='position:absolute;top:1px;right:1px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;font-size:.56rem;padding:1px 6px;border-radius:9px;font-weight:900;line-height:1.5;white-space:nowrap;box-shadow:0 1px 5px rgba(0,0,0,.35);pointer-events:none;z-index:2;';
+    btn.appendChild(badge);
+  }
+  _injectModeSelector();
+  var m=_badgeMode();
+  var _selEl=document.getElementById('pay-badge-mode'); if(_selEl&&_selEl.value!==m)_selEl.value=m;
+  var amt=_unpaidTotal();
+  var lbl=(m==='dettes')?'dettes':((m==='creances')?'créances':((m==='charges')?'charges fixes mensuelles':'dettes + créances + charges fixes'));
+  if(amt>0.005){
+    badge.textContent='−'+amt.toFixed(0)+'€';
+    badge.title='Non payé ('+lbl+') : '+amt.toFixed(2)+' €';
+    badge.style.display='';
+  } else {
+    badge.style.display='none';
+  }
+}
+window._payMonthBadgeRefresh=refresh;
+/* Mise à jour : changement d'onglet + ouverture admin + rythme régulier */
+var _ws=window.switchTab;
+if(typeof _ws==='function'){window.switchTab=function(){_ws.apply(this,arguments);setTimeout(refresh,150);};}
+var _wt=window.toggleAdminModal;
+if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(refresh,200);};}
+setInterval(refresh,4000);
+setTimeout(refresh,1500);
 })();
 </script>
