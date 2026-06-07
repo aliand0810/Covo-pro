@@ -32831,13 +32831,13 @@ function _saveCaisseHistorique(hist) {
     if (typeof window._gdForceClotureSave === 'function') window._gdForceClotureSave();
 }
 
-window._openFinPoste = function() {
-    // Calculer les ventes du jour
+window._openFinPoste = function(forDateStr) {
+    // Calculer les ventes du jour (ou d'un jour passé si forDateStr est fourni — ex. fin de poste de la veille)
     var allSales = [];
     try { allSales = JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch(e) {}
 
-    var today = new Date();
-    var todayStr = today.toISOString().split('T')[0];
+    var today = forDateStr ? new Date(forDateStr + 'T12:00:00') : new Date();
+    var todayStr = forDateStr || today.toISOString().split('T')[0];
 
     var todaySales = allSales.filter(function(s) {
         if (s.cancelled) return false;
@@ -53057,3 +53057,73 @@ setInterval(refresh,4000);
 setTimeout(refresh,1500);
 })();
 </script>
+
+<!-- ════════════════════════════════════════════════════════════
+     RAPPEL FIN DE POSTE NON EFFECTUÉE (clôture de la veille oubliée)
+     ════════════════════════════════════════════════════════════ -->
+<div id="fp-reminder-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24500;justify-content:center;align-items:center;padding:16px;">
+  <div style="background:var(--bg-card,#fff);border-radius:18px;max-width:440px;width:100%;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);">
+    <div style="background:linear-gradient(135deg,#e67e22,#d35400);padding:18px 20px;color:#fff;display:flex;align-items:center;gap:10px;">
+      <div style="font-size:1.6rem;">⚠️</div>
+      <div style="font-size:1.08rem;font-weight:900;">Fin de poste non effectuée</div>
+    </div>
+    <div style="padding:20px;">
+      <div style="font-size:.9rem;color:var(--text-main,#2c3e50);line-height:1.55;">
+        Attention, vous n'avez pas effectué la <strong>fin de poste de la veille</strong> (<span id="fp-reminder-date" style="font-weight:800;color:#d35400;">—</span>).<br><br>
+        Merci de remplir les informations et de confirmer.
+      </div>
+      <div style="display:flex;gap:8px;margin-top:18px;">
+        <button onclick="window._fpReminderFill()" style="flex:2;padding:12px;background:linear-gradient(135deg,#e67e22,#d35400);color:#fff;border:none;border-radius:10px;font-weight:900;font-size:.9rem;cursor:pointer;">📝 Remplir la fin de poste</button>
+        <button onclick="window._fpReminderClose()" style="flex:1;padding:12px;background:rgba(0,0,0,.06);color:var(--text-main,#2c3e50);border:none;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;">Plus tard</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+var _shown=false, _missedDate=null;
+/* Trouve le jour passé (≤10 j) ayant des ventes mais aucune clôture finale */
+function _findMissedDay(){
+  var sales=[],clot=[];
+  try{sales=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');}catch(e){}
+  try{clot=JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]');}catch(e){}
+  if(!Array.isArray(sales)||!Array.isArray(clot))return null;
+  var closed={};
+  clot.forEach(function(h){ if(h&&h.date&&!h.partiel) closed[h.date]=true; });
+  var saleDays={};
+  sales.forEach(function(s){ if(s&&!s.cancelled){ var d=String(s.date||'').split('T')[0]; if(d)saleDays[d]=true; } });
+  var todayStr=new Date().toISOString().split('T')[0];
+  var lim=new Date(); lim.setDate(lim.getDate()-10); var limStr=lim.toISOString().split('T')[0];
+  var missed=Object.keys(saleDays).filter(function(d){ return d<todayStr && d>=limStr && !closed[d]; });
+  if(!missed.length)return null;
+  missed.sort();
+  return missed[missed.length-1]; /* jour manqué le plus récent (la veille en général) */
+}
+function _show(dateStr){
+  var m=document.getElementById('fp-reminder-modal'); if(!m)return;
+  _missedDate=dateStr;
+  var d=new Date(dateStr+'T12:00:00');
+  var lbl=d.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  var el=document.getElementById('fp-reminder-date'); if(el)el.textContent=lbl;
+  m.style.display='flex';
+}
+window._fpReminderFill=function(){
+  var m=document.getElementById('fp-reminder-modal'); if(m)m.style.display='none';
+  if(_missedDate && typeof window._openFinPoste==='function') window._openFinPoste(_missedDate);
+};
+window._fpReminderClose=function(){ var m=document.getElementById('fp-reminder-modal'); if(m)m.style.display='none'; };
+function _check(){
+  if(_shown)return;
+  if(typeof currentUser==='undefined' || !currentUser)return; /* attendre la connexion */
+  var miss=_findMissedDay();
+  if(miss){ _shown=true; _show(miss); }
+}
+/* Vérification au démarrage (après connexion) + filet jusqu'à 60 s */
+setTimeout(_check,2500);
+var _try=0, _iv=setInterval(function(){ _try++; if(_shown||_try>40){clearInterval(_iv);return;} _check(); },1500);
+/* Fermer en cliquant sur le fond */
+setTimeout(function(){var m=document.getElementById('fp-reminder-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._fpReminderClose();});},1800);
+})();
+</script>
+
