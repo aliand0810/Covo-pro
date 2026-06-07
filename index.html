@@ -20466,6 +20466,12 @@ logout = function(skipConfirmation = false) {
         const product = products.find(p => p.id === productId);
         if (!product || product.stock <= 0) return;
 
+        // Article au kg : ouvrir la fenêtre de saisie du poids avant l'ajout au panier
+        if (product.unitType === 'kg' && typeof openKgModal === 'function') {
+            openKgModal(productId);
+            return;
+        }
+
         const existing = cart.find(c => c.id === productId);
 
         // ── Tarif d'achat admin autorisé ? ──────────────────────────────────
@@ -28715,7 +28721,8 @@ logout = function(skipConfirmation = false) {
                 originalPrice: product.pricePerKg,
                 quantity: kg,
                 unitType: 'kg',
-                discount: disc
+                discount: disc,
+                tvaRate: (product.tvaRate != null) ? product.tvaRate : null
             });
         }
 
@@ -50277,9 +50284,10 @@ function injectWidget(){
     +'</div>'
     +'<div id="lty-autocomplete"></div>'
     +'<div id="lty-redeem-zone">'
+    +  '<div style="font-size:.74rem;font-weight:900;color:#7c3aed;margin-bottom:7px;display:flex;align-items:center;gap:5px;">💜 Payer par points de fidélité</div>'
     +  '<div class="lrz-head"><span id="lrz-bal">0 pts = 0.00€</span><button onclick="window._ltyUseAll()" style="background:rgba(139,92,246,.15);color:#7c3aed;border:none;border-radius:6px;padding:3px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Tout utiliser</button></div>'
     +  '<div id="lrz-input-row" style="display:flex;gap:6px;">'
-    +    '<input type="number" id="lrz-inp" placeholder="Montant à déduire en € (ex: 2)" min="0.01" step="0.01" style="flex:1;" oninput="window._ltyCalcRed()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ltyApplyRed();}">'
+    +    '<input type="number" id="lrz-inp" placeholder="Montant à régler en points (€)" min="0.01" step="0.01" style="flex:1;" oninput="window._ltyCalcRed()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ltyApplyRed();}">'
     +    '<button onclick="window._ltyApplyRed()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:800;font-size:.78rem;white-space:nowrap;">Appliquer</button>'
     +  '</div>'
     +  '<div id="lrz-info" style="font-size:.68rem;color:var(--text-muted);margin-top:4px;"></div>'
@@ -50311,7 +50319,7 @@ function renderWidget(){
     /* Afficher zone remise si pts > 0 */
     if(red){
       if((cu.points||0)>0){
-        red.style.display='';
+        red.style.display='block';
         var bal=document.getElementById('lrz-bal');
         if(bal)bal.textContent=(cu.points||0)+' pts = '+ptsToEuros(cu.points||0).toFixed(2)+'€';
         /* Si remise déjà appliquée */
@@ -51403,7 +51411,15 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
         +  '<input id="lty-inp" placeholder="🔍 Nom ou scanner la carte client…" autocomplete="off" oninput="window._ltySearch(this.value)" onkeydown="if(event.key===\'Enter\')window._ltyConfirm()" style="flex:1;padding:8px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);">'
         +  '<button onclick="window._ltyConfirm()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">✔</button>'
         +'</div>'
-        +'<div id="lty-autocomplete"></div>';
+        +'<div id="lty-autocomplete"></div>'
+        +'<div id="lty-redeem-zone">'
+        +  '<div style="font-size:.74rem;font-weight:900;color:#7c3aed;margin-bottom:7px;display:flex;align-items:center;gap:5px;">💜 Payer par points de fidélité</div>'
+        +  '<div class="lrz-head"><span id="lrz-bal">0 pts = 0.00€</span><button onclick="window._ltyUseAll()" style="background:rgba(139,92,246,.15);color:#7c3aed;border:none;border-radius:6px;padding:3px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Tout utiliser</button></div>'
+        +  '<div id="lrz-input-row" style="display:flex;gap:6px;"><input type="number" id="lrz-inp" placeholder="Montant à régler en points (€)" min="0.01" step="0.01" style="flex:1;" oninput="window._ltyCalcRed()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ltyApplyRed();}"><button onclick="window._ltyApplyRed()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:800;font-size:.78rem;white-space:nowrap;">Appliquer</button></div>'
+        +  '<div id="lrz-info" style="font-size:.68rem;color:var(--text-muted);margin-top:4px;"></div>'
+        +  '<div id="lty-discount-applied" style="display:none;margin-top:7px;padding:6px 10px;background:rgba(5,150,105,.08);border-radius:8px;border-left:3px solid #059669;flex-direction:row;align-items:center;justify-content:space-between;"><span style="font-size:.78rem;font-weight:800;color:#059669;" id="lty-disc-lbl">—</span><button onclick="window._ltyCancelRed()" style="background:rgba(239,68,68,.1);color:#dc2626;border:none;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700;cursor:pointer;">✕</button></div>'
+        +'</div>'
+        +'<div id="cart-lty-line" style="display:none;padding:6px 0;border-top:1px dashed rgba(5,150,105,.4);"></div>';
       btn.parentNode.insertBefore(w, btn);
     }
 
@@ -51424,6 +51440,7 @@ body.dark-mode #lty-client-box{background:var(--bg-card,#1e293b);}
         disp.style.display = 'none';
         if (scan) scan.style.display = 'flex';
       }
+      if (typeof window._ltyRenderWidget === 'function') window._ltyRenderWidget();
     }
 
     /* Délai pour laisser toggleCart ouvrir le panier */
@@ -51610,7 +51627,15 @@ window._handleLoyaltyScan = function (val) {
       +   '<input id="lty-inp" placeholder="🔍 Nom ou scanner la carte client…" autocomplete="off" oninput="window._ltySearch(this.value)" onkeydown="if(event.key===\'Enter\')window._ltyConfirm()" style="flex:1;padding:8px 10px;border:1.5px solid rgba(139,92,246,.3);border-radius:8px;font-size:.84rem;background:var(--input-bg,#fff);color:var(--text-main);">'
       +   '<button onclick="window._ltyConfirm()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">✔</button>'
       + '</div>'
-      + '<div id="lty-autocomplete"></div>';
+      + '<div id="lty-autocomplete"></div>'
+      + '<div id="lty-redeem-zone">'
+      +   '<div style="font-size:.74rem;font-weight:900;color:#7c3aed;margin-bottom:7px;display:flex;align-items:center;gap:5px;">💜 Payer par points de fidélité</div>'
+      +   '<div class="lrz-head"><span id="lrz-bal">0 pts = 0.00€</span><button onclick="window._ltyUseAll()" style="background:rgba(139,92,246,.15);color:#7c3aed;border:none;border-radius:6px;padding:3px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Tout utiliser</button></div>'
+      +   '<div id="lrz-input-row" style="display:flex;gap:6px;"><input type="number" id="lrz-inp" placeholder="Montant à régler en points (€)" min="0.01" step="0.01" style="flex:1;" oninput="window._ltyCalcRed()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ltyApplyRed();}"><button onclick="window._ltyApplyRed()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:800;font-size:.78rem;white-space:nowrap;">Appliquer</button></div>'
+      +   '<div id="lrz-info" style="font-size:.68rem;color:var(--text-muted);margin-top:4px;"></div>'
+      +   '<div id="lty-discount-applied" style="display:none;margin-top:7px;padding:6px 10px;background:rgba(5,150,105,.08);border-radius:8px;border-left:3px solid #059669;flex-direction:row;align-items:center;justify-content:space-between;"><span style="font-size:.78rem;font-weight:800;color:#059669;" id="lty-disc-lbl">—</span><button onclick="window._ltyCancelRed()" style="background:rgba(239,68,68,.1);color:#dc2626;border:none;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700;cursor:pointer;">✕</button></div>'
+      + '</div>'
+      + '<div id="cart-lty-line" style="display:none;padding:6px 0;border-top:1px dashed rgba(5,150,105,.4);"></div>';
     btn.parentNode.insertBefore(w, btn);
     return true;
   }
@@ -52672,3 +52697,101 @@ setTimeout(_ltyStatsRefresh,1800);
 })();
 </script>
 
+<!-- ════════════════════════════════════════════════════════════
+     RÉGLAGES DES POINTS FIDÉLITÉ (valeur d'un point + gain par €)
+     ════════════════════════════════════════════════════════════ -->
+<style>
+#lset-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24000;justify-content:center;align-items:center;padding:16px;}
+#lset-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:430px;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden;}
+body.dark-mode #lset-box{background:var(--bg-card,#1e293b);}
+.lset-lbl{font-size:.68rem;font-weight:800;color:#7c3aed;text-transform:uppercase;letter-spacing:.6px;display:block;margin-bottom:5px;}
+.lset-fld{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:.95rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);}
+.lset-fld:focus{outline:none;border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.12);}
+</style>
+<div id="lset-modal">
+  <div id="lset-box">
+    <div style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);padding:16px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:1.05rem;font-weight:900;">⚙️ Réglages des points fidélité</div>
+      <button onclick="window._lsetClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:1.1rem;width:30px;height:30px;border-radius:8px;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:18px 20px;">
+      <label class="lset-lbl">Points gagnés pour 1 € dépensé</label>
+      <input class="lset-fld" id="lset-ppe" type="number" min="0" step="0.1" placeholder="1" oninput="window._lsetPreview()">
+      <div style="height:14px;"></div>
+      <label class="lset-lbl">Valeur d'1 point (en €)</label>
+      <input class="lset-fld" id="lset-val" type="number" min="0" step="0.01" placeholder="0.05" oninput="window._lsetPreview()">
+      <div id="lset-preview" style="margin-top:14px;background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.2);border-radius:9px;padding:11px 13px;font-size:.82rem;color:#6d28d9;line-height:1.5;"></div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;">
+      <button onclick="window._lsetSave()" style="flex:2;padding:12px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:10px;font-weight:900;font-size:.9rem;cursor:pointer;">💾 Enregistrer</button>
+      <button onclick="window._lsetClose()" style="flex:1;padding:12px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:10px;font-weight:700;font-size:.85rem;cursor:pointer;">Annuler</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{}};}catch(e){return{customers:[],settings:{}};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+function toast(m){if(typeof showScanToast==='function')showScanToast(m);}
+
+window._lsetOpen=function(){
+  if(!_lsetIsAdmin()){toast('🚫 Réservé aux administrateurs');return;}
+  var s=(lg().settings)||{};
+  var ppe=parseFloat(s.pointsPerEuro); if(isNaN(ppe))ppe=1;
+  var thr=parseFloat(s.rewardThreshold); var val=parseFloat(s.rewardValue);
+  var perPoint=(thr>0 && !isNaN(val))?(val/thr):(isNaN(val)?0.05:val);
+  document.getElementById('lset-ppe').value=ppe;
+  document.getElementById('lset-val').value=+perPoint.toFixed(4);
+  window._lsetPreview();
+  document.getElementById('lset-modal').style.display='flex';
+};
+window._lsetClose=function(){var m=document.getElementById('lset-modal');if(m)m.style.display='none';};
+window._lsetPreview=function(){
+  var pp=parseFloat(document.getElementById('lset-val').value)||0;
+  var ppe=parseFloat(document.getElementById('lset-ppe').value)||0;
+  var el=document.getElementById('lset-preview'); if(!el)return;
+  el.innerHTML='💜 1 point = <strong>'+pp.toFixed(2)+' €</strong> · 100 points = <strong>'+(pp*100).toFixed(2)+' €</strong>'
+    +'<br>🛒 1 € dépensé rapporte <strong>'+ppe+' point(s)</strong>';
+};
+window._lsetSave=function(){
+  var ppe=parseFloat(document.getElementById('lset-ppe').value);
+  var val=parseFloat(document.getElementById('lset-val').value);
+  if(isNaN(ppe)||ppe<0){toast('⚠️ Points par € invalide');return;}
+  if(isNaN(val)||val<0){toast('⚠️ Valeur du point invalide');return;}
+  var d=lg(); if(!d.settings)d.settings={};
+  d.settings.pointsPerEuro=ppe;
+  d.settings.rewardThreshold=1;
+  d.settings.rewardValue=val;
+  ls(d);
+  toast('✅ Réglages des points enregistrés');
+  window._lsetClose();
+  if(typeof window._ltyRenderWidget==='function')window._ltyRenderWidget();
+};
+
+/* Réservé aux admins / master (pas aux caissiers) */
+function _lsetIsAdmin(){
+  return (typeof isAdmin !== 'undefined' && isAdmin)
+      || (typeof window._isMasterUser === 'function' && window._isMasterUser())
+      || (typeof currentUser !== 'undefined' && currentUser && (currentUser.role === 'admin' || currentUser.isMaster));
+}
+/* Bouton « ⚙️ Points » dans l'entête de l'onglet Fidélité */
+function injectBtn(){
+  var existing=document.getElementById('lset-header-btn');
+  if(!_lsetIsAdmin()){ if(existing)existing.remove(); return; }
+  var newBtn=document.querySelector('#tab-fidelite [onclick*="_ltyNewClient"]');
+  if(!newBtn || existing)return;
+  var b=document.createElement('button'); b.id='lset-header-btn'; b.type='button';
+  b.onclick=function(){window._lsetOpen();};
+  b.style.cssText='background:rgba(255,255,255,.2);border:1.5px solid rgba(255,255,255,.4);color:white;border-radius:10px;padding:8px 14px;font-weight:800;font-size:.82rem;cursor:pointer;margin-right:8px;';
+  b.innerHTML='⚙️ Points';
+  newBtn.parentNode.insertBefore(b,newBtn);
+}
+var _ws=window.switchTab;
+if(typeof _ws==='function'){window.switchTab=function(name){_ws.apply(this,arguments);if(name==='fidelite')setTimeout(injectBtn,500);};}
+var _wt=window.toggleAdminModal;
+if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(injectBtn,600);};}
+setTimeout(function(){var m=document.getElementById('lset-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._lsetClose();});injectBtn();},1800);
+})();
+</script>
