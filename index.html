@@ -53127,3 +53127,67 @@ setTimeout(function(){var m=document.getElementById('fp-reminder-modal');if(m)m.
 })();
 </script>
 
+<!-- ════════════════════════════════════════════════════════════
+     ADMIN-DÉVELOPPEUR : saisie d'une fin de poste pour un jour passé
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+function _missedDays(){
+  var sales=[],clot=[];
+  try{sales=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');}catch(e){}
+  try{clot=JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]');}catch(e){}
+  var closed={}; (Array.isArray(clot)?clot:[]).forEach(function(h){ if(h&&h.date&&!h.partiel)closed[h.date]=true; });
+  var saleDays={}; (Array.isArray(sales)?sales:[]).forEach(function(s){ if(s&&!s.cancelled){ var d=String(s.date||'').split('T')[0]; if(d)saleDays[d]=true; } });
+  var todayStr=new Date().toISOString().split('T')[0];
+  var lim=new Date(); lim.setDate(lim.getDate()-31); var limStr=lim.toISOString().split('T')[0];
+  return Object.keys(saleDays).filter(function(d){ return d<todayStr && d>=limStr && !closed[d]; }).sort().reverse();
+}
+window._fpDevOpen=function(d){ if(d && typeof window._openFinPoste==='function') window._openFinPoste(d); };
+window._fpDevOpenPicked=function(){
+  var di=document.getElementById('fp-dev-date'); var d=di?di.value:'';
+  if(!d){ if(typeof showScanToast==='function')showScanToast('⚠️ Choisissez une date'); return; }
+  window._fpDevOpen(d);
+};
+function _renderMissedList(){
+  var el=document.getElementById('fp-dev-missed-list'); if(!el)return;
+  var days=_missedDays();
+  if(!days.length){ el.innerHTML='<div style="font-size:0.76rem;color:var(--text-muted,#888);padding:4px 0;">✅ Aucune fin de poste manquante détectée.</div>'; return; }
+  el.innerHTML=days.map(function(d){
+    var dt=new Date(d+'T12:00:00').toLocaleDateString('fr-FR',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;background:rgba(230,126,34,0.07);border:1px solid rgba(230,126,34,0.3);border-radius:9px;margin-bottom:6px;">'
+      +'<span style="font-size:0.82rem;font-weight:700;color:var(--text-main,#2c3e50);">📅 '+dt+'</span>'
+      +'<button onclick="window._fpDevOpen(\''+d+'\')" style="background:#d35400;color:#fff;border:none;border-radius:7px;padding:5px 11px;font-size:0.76rem;font-weight:800;cursor:pointer;">📝 Remplir</button>'
+      +'</div>';
+  }).join('');
+}
+window._fpDevRenderMissed=_renderMissedList;
+function _injectDevCard(){
+  var body=document.getElementById('admin-sec-dev-body');
+  if(!body || document.getElementById('fp-dev-card'))return;
+  var card=document.createElement('div');
+  card.id='fp-dev-card';
+  card.style.cssText='background:var(--bg-body,#f8fafc);border:1.5px solid rgba(230,126,34,0.4);border-radius:12px;padding:18px 20px;margin-bottom:16px;';
+  card.innerHTML=
+     '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">'
+    +'<div style="width:30px;height:30px;background:linear-gradient(135deg,#e67e22,#d35400);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">🏁</div>'
+    +'<div><div style="font-size:0.72rem;font-weight:800;color:#d35400;text-transform:uppercase;letter-spacing:0.8px;">Fin de poste — jour passé</div>'
+    +'<div style="font-size:0.65rem;color:var(--text-muted,#888);margin-top:1px;">Saisir une clôture oubliée pour une date donnée</div></div></div>'
+    +'<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">'
+    +'<input type="date" id="fp-dev-date" style="padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.84rem;background:var(--input-bg,#fff);color:var(--text-main);">'
+    +'<button onclick="window._fpDevOpenPicked()" style="padding:8px 14px;background:linear-gradient(135deg,#e67e22,#d35400);color:#fff;border:none;border-radius:9px;font-weight:800;font-size:0.84rem;cursor:pointer;box-shadow:0 3px 10px rgba(230,126,34,0.3);">📝 Ouvrir la fin de poste</button></div>'
+    +'<div style="font-size:0.62rem;font-weight:800;color:#d35400;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Jours avec ventes mais sans clôture</div>'
+    +'<div id="fp-dev-missed-list"></div>';
+  body.appendChild(card);
+  var di=document.getElementById('fp-dev-date');
+  if(di){ var t=new Date(); di.max=t.toISOString().split('T')[0]; var y=new Date(); y.setDate(y.getDate()-1); di.value=y.toISOString().split('T')[0]; }
+  _renderMissedList();
+}
+/* Injecter à l'ouverture du panneau admin + filet au démarrage */
+var _wt=window.toggleAdminModal;
+if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(function(){_injectDevCard();_renderMissedList();},350);};}
+var _wsec=window.toggleAdminSection;
+if(typeof _wsec==='function'){window.toggleAdminSection=function(){_wsec.apply(this,arguments);setTimeout(function(){_injectDevCard();_renderMissedList();},120);};}
+setTimeout(function(){_injectDevCard();},2200);
+})();
+</script>
