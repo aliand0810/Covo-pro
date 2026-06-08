@@ -20685,6 +20685,38 @@ logout = function(skipConfirmation = false) {
         return { id:p.id, name:p.name, stock:(p.stock||0), unitType:p.unitType||'unit',
                  price:(p.unitType==='kg'?(p.pricePerKg||0):(p.price||0)), barcode:p.barcode||'' };
     };
+    // Ajoute au panier un article réservé (ne touche pas au stock : géré par l'appelant)
+    window._ltyAddReservedToCart = function(productId, qty, resId) {
+        var product = products.find(function(p){ return String(p.id) === String(productId); });
+        if (!product) return false;
+        qty = parseFloat(qty) || 0;
+        if (qty <= 0) return false;
+        var disc = product.promo || 0;
+        var base = (product.unitType === 'kg') ? (product.pricePerKg || 0) : (product.price || 0);
+        var price = (typeof window._promoPrice === 'function') ? window._promoPrice(base, disc, product.costPrice) : base * (1 - disc/100);
+        var existing = cart.find(function(c){ return c.id === product.id; });
+        if (existing) {
+            existing.quantity = (product.unitType === 'kg') ? parseFloat((existing.quantity + qty).toFixed(3)) : (existing.quantity + qty);
+            existing._resvIds = (existing._resvIds || []).concat([resId]);
+            existing._reserved = true;
+        } else {
+            cart.push({
+                id: product.id,
+                name: product.name + ' 📦',
+                price: price,
+                originalPrice: base,
+                unitPrice: price,
+                quantity: qty,
+                unitType: product.unitType || 'unit',
+                discount: disc,
+                tvaRate: (product.tvaRate != null) ? product.tvaRate : null,
+                _reserved: true,
+                _resvIds: [resId]
+            });
+        }
+        if (typeof updateCartUI === 'function') updateCartUI();
+        return true;
+    };
 
     function updateCartQuantity(productId, change) {
         const item = cart.find(c => c.id === productId);
@@ -50224,6 +50256,8 @@ window._previewNewPwdBarcode = function(){
 .lty-row:hover{background:rgba(139,92,246,.07);border-color:rgba(139,92,246,.2);}
 .lty-row.active{background:rgba(139,92,246,.13);border-color:rgba(139,92,246,.38);}
 .lty-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:900;color:white;flex-shrink:0;}
+.lty-row-meta{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:5px;flex-shrink:0;max-width:46%;}
+.lty-badge-chip{font-weight:800;font-size:.62rem;padding:2px 8px;border-radius:11px;white-space:nowrap;line-height:1.55;display:inline-flex;align-items:center;}
 #lty-detail-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-muted,#94a3b8);gap:8px;}
 #lty-detail-view{display:none;flex-direction:column;flex:1;overflow:hidden;}
 #lty-detail-top{padding:16px 20px;background:var(--bg-card,#fff);border-bottom:1px solid var(--border-color,#e8ecf0);flex-shrink:0;}
@@ -50679,7 +50713,7 @@ function refreshStats(){
   if(s2)s2.textContent=totalPts;
   if(s3)s3.textContent=totalCA.toFixed(0)+'€';
   var badge=document.getElementById('lty-badge');
-  if(badge){badge.textContent=d.customers.length;badge.style.display=d.customers.length?'':'none';}
+  if(badge){var _ra=(typeof window._ltyResvAvailCount==='function')?window._ltyResvAvailCount():0;badge.textContent=_ra;badge.style.display=_ra>0?'':'none';badge.title=_ra+' réservation(s) disponible(s)';}
 }
 
 window._ltyFilterList=function(q){renderList(q||'');};
@@ -50696,8 +50730,10 @@ function renderList(q){
     return '<div class="lty-row'+(c.id===_ltyTabId?' active':'')+'" onclick="window._ltyShowDetail(\''+c.id+'\')">'
       +'<div class="lty-av">'+esc(ini(c.name))+'</div>'
       +'<div style="flex:1;min-width:0;"><div style="font-weight:800;font-size:.83rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(c.name)+'</div>'
-      +'<div style="font-size:.67rem;color:var(--text-muted);">'+nb+' ticket(s) · '+last+'</div></div>'
-      +'<span style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;font-weight:800;font-size:.66rem;padding:2px 7px;border-radius:12px;white-space:nowrap;">⭐ '+(c.points||0)+'</span>'
+      +'<div style="font-size:.67rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+nb+' ticket(s) · '+last+'</div></div>'
+      +'<div class="lty-row-meta">'
+      +  '<span class="lty-badge-chip" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;">⭐ '+(c.points||0)+'</span>'
+      +'</div>'
       +'</div>';
   }).join('');
 }
@@ -51873,9 +51909,9 @@ function decorateList(){
     var existing=r.querySelector('.credit-row-badge');
     if(due>0){
       if(!existing){
-        existing=document.createElement('span'); existing.className='credit-row-badge';
-        existing.style.cssText='background:rgba(217,119,6,.16);color:#b45309;font-weight:800;font-size:.6rem;padding:2px 6px;border-radius:10px;white-space:nowrap;margin-left:4px;';
-        r.appendChild(existing);
+        existing=document.createElement('span'); existing.className='credit-row-badge lty-badge-chip';
+        existing.style.cssText='background:rgba(217,119,6,.16);color:#b45309;';
+        (r.querySelector('.lty-row-meta')||r).appendChild(existing);
       }
       existing.textContent='📒 '+due.toFixed(2)+'€';
     } else if(existing){ existing.remove(); }
@@ -53189,5 +53225,207 @@ if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,ar
 var _wsec=window.toggleAdminSection;
 if(typeof _wsec==='function'){window.toggleAdminSection=function(){_wsec.apply(this,arguments);setTimeout(function(){_injectDevCard();_renderMissedList();},120);};}
 setTimeout(function(){_injectDevCard();},2200);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     BADGE ONGLET FIDÉLITÉ : montant total des crédits dus par les clients
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+function _totalCredit(){
+  try{
+    var d=JSON.parse(localStorage.getItem('covo_loyalty')||'null')||{customers:[]};
+    var s=0; (d.customers||[]).forEach(function(c){ s+=(+c.credit||0); });
+    return s;
+  }catch(e){return 0;}
+}
+/* Nombre total de réservations DISPONIBLES (article mis de côté ou stock suffisant), tous clients */
+window._ltyResvAvailCount=function(){
+  try{
+    var d=JSON.parse(localStorage.getItem('covo_loyalty')||'null')||{customers:[]};
+    var n=0;
+    (d.customers||[]).forEach(function(c){
+      (c.reservations||[]).forEach(function(r){
+        if(!r)return;
+        var held=(r.decremented!==false);
+        var stockOk=false;
+        try{ var p=(typeof window._ltyGetProduct==='function')?window._ltyGetProduct(r.productId):null; if(p && (+p.stock||0)>=(+r.qty||0)) stockOk=true; }catch(e){}
+        if(held||stockOk)n++;
+      });
+    });
+    return n;
+  }catch(e){return 0;}
+};
+/* Nb de réservations disponibles pour UN client */
+function _clientAvailResv(c){
+  var n=0;
+  ((c&&c.reservations)||[]).forEach(function(r){
+    if(!r)return;
+    var held=(r.decremented!==false);
+    var stockOk=false;
+    try{ var p=(typeof window._ltyGetProduct==='function')?window._ltyGetProduct(r.productId):null; if(p&&(+p.stock||0)>=(+r.qty||0))stockOk=true; }catch(e){}
+    if(held||stockOk)n++;
+  });
+  return n;
+}
+/* CSS d'animation (injecté une fois) */
+function _injectResvCSS(){
+  if(document.getElementById('lty-resv-anim-css'))return;
+  var st=document.createElement('style'); st.id='lty-resv-anim-css';
+  st.textContent=''
+    +'@keyframes ltyResvGlow{0%,100%{box-shadow:0 0 0 0 rgba(5,150,105,0);}50%{box-shadow:0 0 0 3px rgba(5,150,105,.40);}}'
+    +'@keyframes ltyResvBadge{0%,100%{transform:scale(1);}50%{transform:scale(1.10);}}'
+    +'.lty-row-resv-ready{animation:ltyResvGlow 1.5s ease-in-out infinite;border-radius:9px;}'
+    +'.lty-resv-ready-badge{display:inline-flex;align-items:center;gap:3px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-size:.62rem;font-weight:800;padding:2px 8px;border-radius:11px;white-space:nowrap;line-height:1.55;box-shadow:0 2px 8px rgba(5,150,105,.5);animation:ltyResvBadge 1.1s ease-in-out infinite;}';
+  document.head.appendChild(st);
+}
+/* Décorer les lignes clients ayant une réservation prête */
+function _decorateResvRows(){
+  var rows=document.querySelectorAll('#lty-list-inner .lty-row');
+  if(!rows.length)return;
+  _injectResvCSS();
+  var d; try{d=JSON.parse(localStorage.getItem('covo_loyalty')||'null')||{customers:[]};}catch(e){d={customers:[]};}
+  var byId={}; (d.customers||[]).forEach(function(c){ byId[c.id]=c; });
+  rows.forEach(function(row){
+    var oc=row.getAttribute('onclick')||''; var m=oc.match(/'(CLT-\d+)'/); if(!m)return;
+    var c=byId[m[1]];
+    var n=c?_clientAvailResv(c):0;
+    var badge=row.querySelector('.lty-resv-ready-badge');
+    if(n>0){
+      row.classList.add('lty-row-resv-ready');
+      if(!badge){ badge=document.createElement('span'); badge.className='lty-resv-ready-badge'; (row.querySelector('.lty-row-meta')||row).appendChild(badge); }
+      badge.textContent='📦 Prêt'+(n>1?' ×'+n:'');
+    } else {
+      row.classList.remove('lty-row-resv-ready');
+      if(badge)badge.remove();
+    }
+  });
+}
+window._ltyDecorateResvRows=_decorateResvRows;
+function refresh(){
+  var btn=document.getElementById('tab-btn-fidelite');
+  if(!btn)return;
+  if(getComputedStyle(btn).position==='static')btn.style.position='relative';
+  var b=document.getElementById('lty-credit-badge');
+  if(!b){
+    b=document.createElement('span');
+    b.id='lty-credit-badge';
+    b.style.cssText='position:absolute;bottom:2px;right:3px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-size:.54rem;padding:1px 5px;border-radius:8px;font-weight:900;line-height:1.4;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:none;z-index:2;';
+    btn.appendChild(b);
+  }
+  var c=_totalCredit();
+  if(c>0.005){ b.textContent='📒'+c.toFixed(0)+'€'; b.title='Crédit total dû par les clients : '+c.toFixed(2)+' €'; b.style.display=''; }
+  else b.style.display='none';
+  /* Badge « réservations disponibles » (remplace le compteur de clients) */
+  var rb=document.getElementById('lty-badge');
+  if(rb){ var ra=window._ltyResvAvailCount(); rb.textContent=ra; rb.style.display=ra>0?'':'none'; rb.title=ra+' réservation(s) disponible(s)'; }
+  _decorateResvRows();
+}
+window._ltyCreditBadgeRefresh=refresh;
+var _ws=window.switchTab;
+if(typeof _ws==='function'){window.switchTab=function(){_ws.apply(this,arguments);setTimeout(refresh,200);};}
+var _wt=window.toggleAdminModal;
+if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(refresh,300);};}
+var _wr=window._ltyRefresh;
+if(typeof _wr==='function'){window._ltyRefresh=function(){_wr.apply(this,arguments);setTimeout(refresh,40);};}
+var _wf=window._ltyFilterList;
+if(typeof _wf==='function'){window._ltyFilterList=function(){_wf.apply(this,arguments);setTimeout(_decorateResvRows,30);};}
+setInterval(refresh,4000);
+setTimeout(refresh,1700);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     RÉSERVATIONS : ajout auto au panier + marquage « Récupérée » au paiement
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));}
+function toast(m){if(typeof showScanToast==='function')showScanToast(m);}
+
+var _added={};        /* resId déjà ajoutés au panier (session) */
+var _lastClientId=null;
+
+function _availResv(c){
+  var out=[];
+  ((c&&c.reservations)||[]).forEach(function(r){
+    if(!r||!r.id)return;
+    var held=(r.decremented!==false);
+    var stockOk=false;
+    try{ var p=(typeof window._ltyGetProduct==='function')?window._ltyGetProduct(r.productId):null; if(p&&(+p.stock||0)>=(+r.qty||0))stockOk=true; }catch(e){}
+    if(held||stockOk)out.push(r);
+  });
+  return out;
+}
+function _autoAdd(){
+  var cu=window._ltyCu; if(!cu)return;
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===cu.id;}); if(idx===-1)return;
+  var c=d.customers[idx];
+  var list=_availResv(c), changed=false, addedN=0;
+  list.forEach(function(r){
+    if(_added[r.id])return;
+    /* Article mis de côté (stock déjà décrémenté) → on restitue le stock pour que la vente
+       le décompte une seule fois ; la réservation reste disponible (couverte par le stock). */
+    if(r.decremented!==false && typeof window._ltyAdjustStockForReservation==='function'){
+      window._ltyAdjustStockForReservation(r.productId, +r.qty, 'Réservation → panier');
+      r.decremented=false; changed=true;
+    }
+    if(typeof window._ltyAddReservedToCart==='function' && window._ltyAddReservedToCart(r.productId, r.qty, r.id)){
+      _added[r.id]=true; addedN++;
+    }
+  });
+  if(changed)ls(d);
+  if(addedN>0){ toast('📦 '+addedN+' article(s) réservé(s) ajouté(s) au panier'); }
+}
+function _sync(){
+  var cu=window._ltyCu; var id=cu?cu.id:null;
+  if(id!==_lastClientId){
+    _lastClientId=id;
+    if(!id){ _added={}; }
+    else { setTimeout(_autoAdd,40); }
+  }
+}
+/* Détecter la sélection / le scan d'un client */
+var _prevRW=window._ltyRenderWidget;
+if(typeof _prevRW==='function'){window._ltyRenderWidget=function(){_prevRW.apply(this,arguments);setTimeout(_sync,0);};}
+setInterval(_sync,400);
+
+/* Réinitialiser quand on vide le panier */
+var _prevEmpty=window.emptyCart;
+if(typeof _prevEmpty==='function'){window.emptyCart=function(){_prevEmpty.apply(this,arguments);_added={};};}
+
+/* Après paiement : marquer comme « Récupérée » les réservations vendues */
+var _prevSR=window.showReceipt;
+window.showReceipt=function(sale){
+  if(typeof _prevSR==='function')_prevSR.apply(this,arguments);
+  try{
+    if(!sale||!sale.items)return;
+    var resIds=[];
+    sale.items.forEach(function(it){ if(it&&it._resvIds&&it._resvIds.length){ it._resvIds.forEach(function(x){resIds.push(x);}); } });
+    if(!resIds.length){ return; }
+    var d=lg(), changed=false;
+    (d.customers||[]).forEach(function(c){
+      if(!c.reservations)return;
+      var keep=[];
+      c.reservations.forEach(function(r){
+        if(r && resIds.indexOf(r.id)>=0){ changed=true; delete _added[r.id]; }
+        else keep.push(r);
+      });
+      c.reservations=keep;
+    });
+    if(changed){
+      ls(d);
+      toast('✅ Réservation(s) récupérée(s)');
+      if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+      if(typeof window._ltyCreditBadgeRefresh==='function')window._ltyCreditBadgeRefresh();
+    }
+    _added={};
+  }catch(e){}
+};
 })();
 </script>
