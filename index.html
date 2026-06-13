@@ -8125,8 +8125,10 @@ button, .btn, .retours-btn {
                     <select id="payment-method" onchange="togglePaymentInputs()">
                         <option value="cb">💳 Carte Bancaire uniquement</option>
                         <option value="cash">💶 Espèces uniquement</option>
-                        <option value="mixed">💳💶 Mixte (CB + Espèces)</option>
+                        <option value="ticket">🎟️ Ticket restaurant</option>
+                        <option value="mixed">💳💶 Mixte (CB + Espèces + Ticket)</option>
                         <option value="credit">📒 Crédit (compte client)</option>
+                        <option value="echel">📅 Paiement en plusieurs fois (2× ou 3×)</option>
                     </select>
 
                     <!-- Achat à crédit (compte client) -->
@@ -8152,6 +8154,10 @@ button, .btn, .retours-btn {
                         <div style="margin-bottom:6px;">
                             <label style="font-size:0.75rem; color:var(--gray);">💶 Montant Espèces (€)</label>
                             <input type="number" id="mixed-cash" step="0.01" min="0" placeholder="0.00" oninput="onMixedInput('cash')" style="width:100%; box-sizing:border-box;">
+                        </div>
+                        <div style="margin-bottom:6px;">
+                            <label style="font-size:0.75rem; color:var(--gray);">🎟️ Montant Ticket resto (€)</label>
+                            <input type="number" id="mixed-ticket" step="0.01" min="0" placeholder="0.00" oninput="onMixedInput('ticket')" style="width:100%; box-sizing:border-box;">
                         </div>
                         <div id="mixed-summary" style="background:var(--bg-card,#f0f8ff);border-radius:10px;padding:12px 14px;font-size:0.85rem;border:2px solid var(--border-color,#cce0ff);margin-top:4px;">
                             <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;">
@@ -20449,24 +20455,15 @@ function toggleInfoSection(headerElement) {
         const total = Math.max(0, _grossTotal - _ltyDisc);
         const cbInput = document.getElementById('mixed-cb');
         const cashInput = document.getElementById('mixed-cash');
+        const tkInput = document.getElementById('mixed-ticket');
         const cbVal = parseFloat(cbInput.value) || 0;
         const cashVal = parseFloat(cashInput.value) || 0;
-
-        if (changedField === 'cb' && cbInput.value !== '') {
-            const remaining = total - cbVal;
-            if (remaining >= 0) {
-                cashInput.placeholder = remaining.toFixed(2);
-            } else {
-                cashInput.placeholder = '0.00';
-            }
-        } else if (changedField === 'cash' && cashInput.value !== '') {
-            const remaining = total - cashVal;
-            if (remaining >= 0) {
-                cbInput.placeholder = remaining.toFixed(2);
-            } else {
-                cbInput.placeholder = '0.00';
-            }
-        }
+        const tkVal = tkInput ? (parseFloat(tkInput.value) || 0) : 0;
+        const remaining = Math.max(0, total - (cbVal + cashVal + tkVal));
+        // Proposer le reste à payer sur les champs encore vides
+        if (changedField !== 'cb'   && cbInput.value   === '') cbInput.placeholder   = remaining.toFixed(2);
+        if (changedField !== 'cash' && cashInput.value === '') cashInput.placeholder = remaining.toFixed(2);
+        if (tkInput && changedField !== 'ticket' && tkInput.value === '') tkInput.placeholder = remaining.toFixed(2);
         updateMixedSummary();
     }
 
@@ -20476,7 +20473,9 @@ function toggleInfoSection(headerElement) {
         const total = Math.max(0, _grossTotal - _ltyDisc);
         const cbVal = parseFloat(document.getElementById('mixed-cb').value) || 0;
         const cashVal = parseFloat(document.getElementById('mixed-cash').value) || 0;
-        const paid = cbVal + cashVal;
+        const _tkEl = document.getElementById('mixed-ticket');
+        const tkVal = _tkEl ? (parseFloat(_tkEl.value) || 0) : 0;
+        const paid = cbVal + cashVal + tkVal;
         const remaining = total - paid;
         const change = paid - total;
 
@@ -21063,6 +21062,7 @@ logout = function(skipConfirmation = false) {
         let received = netDue;
         let receivedCash = 0;
         let receivedCB = 0;
+        let receivedTicket = 0;
         let change = 0;
 
         if (method === 'cash') {
@@ -21070,14 +21070,18 @@ logout = function(skipConfirmation = false) {
             if (!received || received < netDue) { showScanToast('❌ Montant reçu insuffisant'); return; }
             receivedCash = received;
             change = received - netDue;
+        } else if (method === 'ticket') {
+            // Ticket restaurant : encaissé en totalité, aucune monnaie rendue
+            receivedTicket = netDue; received = netDue; change = 0;
         } else if (method === 'mixed') {
             receivedCB = parseFloat(document.getElementById('mixed-cb').value) || 0;
             receivedCash = parseFloat(document.getElementById('mixed-cash').value) || 0;
-            received = receivedCB + receivedCash;
+            receivedTicket = parseFloat((document.getElementById('mixed-ticket') || {}).value) || 0;
+            received = receivedCB + receivedCash + receivedTicket;
             if (received < netDue - 0.001) { showScanToast('❌ Montant total insuffisant'); return; }
             change = received - netDue;
-        } else if (method === 'credit') {
-            // Achat à crédit (compte client) : aucun encaissement immédiat
+        } else if (method === 'credit' || method === 'echel') {
+            // Crédit / paiement échelonné : aucun encaissement immédiat au comptoir
             received = 0; receivedCash = 0; receivedCB = 0; change = 0;
         } else {
             // CB only
@@ -21095,6 +21099,7 @@ logout = function(skipConfirmation = false) {
             received: received,
             receivedCash: receivedCash,
             receivedCB: receivedCB,
+            receivedTicket: receivedTicket,
             change: change
         };
         
@@ -21153,6 +21158,7 @@ logout = function(skipConfirmation = false) {
         document.getElementById('mixed-cash').value = '';
         document.getElementById('mixed-cb').placeholder = '0.00';
         document.getElementById('mixed-cash').placeholder = '0.00';
+        var _mtk = document.getElementById('mixed-ticket'); if (_mtk) { _mtk.value = ''; _mtk.placeholder = '0.00'; }
         updateCartUI();
         toggleCart();
         showScanToast('✅ Vente validée !');
@@ -21169,14 +21175,17 @@ logout = function(skipConfirmation = false) {
         let methodLabel;
         if (sale.method === 'cb') methodLabel = 'Carte Bancaire';
         else if (sale.method === 'cash') methodLabel = 'Espèces';
+        else if (sale.method === 'ticket') methodLabel = '🎟️ Ticket restaurant';
         else if (sale.method === 'credit') methodLabel = '📒 Crédit (compte client)';
-        else methodLabel = 'Mixte (CB + Espèces)';
+        else if (sale.method === 'echel') methodLabel = '📅 Paiement échelonné';
+        else methodLabel = 'Mixte (CB + Espèces + Ticket)';
 
         let paymentDetails = '';
         if (sale.method === 'cash') {
             paymentDetails = `Reçu: ${sale.received.toFixed(2)}€<br>Rendu: ${sale.change.toFixed(2)}€`;
         } else if (sale.method === 'mixed') {
-            paymentDetails = `💳 CB: ${sale.receivedCB.toFixed(2)}€<br>💶 Espèces: ${sale.receivedCash.toFixed(2)}€`;
+            paymentDetails = `💳 CB: ${(sale.receivedCB||0).toFixed(2)}€<br>💶 Espèces: ${(sale.receivedCash||0).toFixed(2)}€`;
+            if ((sale.receivedTicket||0) > 0.001) paymentDetails += `<br>🎟️ Ticket resto: ${sale.receivedTicket.toFixed(2)}€`;
             if (sale.change > 0.001) paymentDetails += `<br>Rendu: ${sale.change.toFixed(2)}€`;
         }
 
@@ -22156,8 +22165,10 @@ logout = function(skipConfirmation = false) {
         let methodLabel;
         if (sale.method === 'cb') methodLabel = 'Carte Bancaire';
         else if (sale.method === 'cash') methodLabel = 'Espèces';
+        else if (sale.method === 'ticket') methodLabel = '🎟️ Ticket restaurant';
         else if (sale.method === 'credit') methodLabel = '📒 Crédit (compte client)';
-        else methodLabel = 'Mixte (CB + Espèces)';
+        else if (sale.method === 'echel') methodLabel = '📅 Paiement échelonné';
+        else methodLabel = 'Mixte (CB + Espèces + Ticket)';
 
         const hasRetours = sale.items && sale.items.some(i => i.retourne);
 
@@ -53872,5 +53883,695 @@ if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,ar
 var _wsec=window.toggleAdminSection;
 if(typeof _wsec==='function'){window.toggleAdminSection=function(){_wsec.apply(this,arguments);setTimeout(function(){_injectNfcCard();_renderNfcList();},130);};}
 setTimeout(_injectNfcCard,2400);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     PAIEMENT EN PLUSIEURS FOIS (2/3/4×) — clients fidélité — COVO Pro v28
+     Échéancier mensuel · suivi dans la fiche client · règlement par échéance
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[],settings:{pointsPerEuro:1}};}catch(e){return{customers:[],settings:{pointsPerEuro:1}};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));if(typeof window._ltyDriveSync==='function')window._ltyDriveSync();}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function toast(m,t){if(typeof showScanToast==='function')showScanToast(m,t||'');}
+function find(id){return lg().customers.find(function(x){return x.id===id;});}
+function ppe(){var s=lg().settings||{};return +(s.pointsPerEuro||1);}
+function cartTotalNet(){var el=document.getElementById('cart-total');return el?(parseFloat(String(el.innerText||'').replace(',','.'))||0):0;}
+function addMonths(d,m){var x=new Date(d.getTime());var day=x.getDate();x.setMonth(x.getMonth()+m);if(x.getDate()<day)x.setDate(0);return x;}
+function fmtD(iso){try{return new Date(iso).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});}catch(e){return '';}}
+function split(total,n){var parts=[],acc=0,base=Math.floor((total/n)*100)/100;for(var i=0;i<n;i++){if(i<n-1){parts.push(base);acc=+(acc+base).toFixed(2);}else{parts.push(+(total-acc).toFixed(2));}}return parts;}
+
+window._echelN=2;
+
+/* ── Fenêtre (modale) de configuration du paiement échelonné ── */
+function injectEchelModal(){
+  if(document.getElementById('echel-modal'))return;
+  var m=document.createElement('div'); m.id='echel-modal';
+  m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:23200;justify-content:center;align-items:center;padding:16px;';
+  m.innerHTML=''
+    +'<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;">'
+    +'<div style="background:linear-gradient(135deg,#1565c0,#0d47a1);padding:16px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;">'
+    +'<div style="font-size:1.05rem;font-weight:900;">📅 Paiement en plusieurs fois</div>'
+    +'<button onclick="window._echelCloseModal()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:1.1rem;width:30px;height:30px;border-radius:8px;cursor:pointer;">✕</button></div>'
+    +'<div style="padding:20px;">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(37,99,235,.08);border-radius:10px;padding:11px 14px;margin-bottom:16px;">'
+    +'<div><div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Client</div><div id="echel-m-name" style="font-weight:900;font-size:1rem;color:var(--text-main);">—</div></div>'
+    +'<div style="text-align:right;"><div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Total</div><div id="echel-m-total" style="font-weight:900;font-size:1.2rem;color:#1e40af;">0.00€</div></div></div>'
+    +'<div style="font-size:.68rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Nombre de fois</div>'
+    +'<div style="display:flex;gap:8px;margin-bottom:16px;">'
+    +'<button type="button" id="echel-n-2" onclick="window._echelSetN(2)" style="flex:1;padding:11px 4px;border-radius:9px;border:1.5px solid #ccc;background:#f4f4f4;font-weight:800;font-size:.9rem;cursor:pointer;">2 fois</button>'
+    +'<button type="button" id="echel-n-3" onclick="window._echelSetN(3)" style="flex:1;padding:11px 4px;border-radius:9px;border:1.5px solid #ccc;background:#f4f4f4;font-weight:800;font-size:.9rem;cursor:pointer;">3 fois</button></div>'
+    +'<div style="font-size:.68rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Mode du 1ᵉʳ paiement (obligatoire)</div>'
+    +'<select id="echel-m-method" onchange="window._echelModalRefresh()" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;font-size:.88rem;background:var(--input-bg,#fff);color:var(--text-main);margin-bottom:14px;">'
+    +'<option value="cash">💶 Espèces</option><option value="cb">💳 Carte bancaire</option></select>'
+    +'<div id="echel-m-table" style="margin-bottom:16px;"></div>'
+    +'<div style="display:flex;gap:8px;">'
+    +'<button onclick="window._echelConfirm()" style="flex:2;padding:13px;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;border:none;border-radius:11px;font-weight:900;font-size:.92rem;cursor:pointer;">✅ Valider le paiement</button>'
+    +'<button onclick="window._echelCloseModal()" style="flex:1;padding:13px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:11px;font-weight:700;font-size:.85rem;cursor:pointer;">Annuler</button></div>'
+    +'</div></div>';
+  m.addEventListener('click',function(e){if(e.target===m)window._echelCloseModal();});
+  document.body.appendChild(m);
+}
+
+function _echelRevertSelect(){var s=document.getElementById('payment-method');if(s&&s.value==='echel'){s.value='cb';if(typeof window.togglePaymentInputs==='function')window.togglePaymentInputs();}}
+
+window._echelOpenModal=function(){
+  injectEchelModal();
+  var cu=window._ltyCu;
+  if(!cu){toast('❌ Sélectionnez un client fidélité pour le paiement échelonné'); _echelRevertSelect(); return;}
+  if(cartTotalNet()<=0){toast('⚠️ Panier vide'); _echelRevertSelect(); return;}
+  var nm=document.getElementById('echel-m-name'); if(nm)nm.textContent=cu.name||'';
+  var tt=document.getElementById('echel-m-total'); if(tt)tt.textContent=cartTotalNet().toFixed(2)+'€';
+  window._echelSetN(window._echelN||2);
+  var md=document.getElementById('echel-modal'); if(md)md.style.display='flex';
+};
+window._echelCloseModal=function(){var m=document.getElementById('echel-modal');if(m)m.style.display='none';};
+
+window._echelSetN=function(n){
+  window._echelN=n;
+  [2,3].forEach(function(k){var b=document.getElementById('echel-n-'+k);if(b){if(k===n){b.style.background='#1565c0';b.style.color='#fff';b.style.borderColor='#1565c0';}else{b.style.background='#f4f4f4';b.style.color='#111';b.style.borderColor='#ccc';}}});
+  window._echelModalRefresh();
+};
+
+window._echelModalRefresh=function(){
+  var tbl=document.getElementById('echel-m-table'); if(!tbl)return;
+  var total=cartTotalNet(); var n=window._echelN||2;
+  var parts=split(total,n); var now=new Date();
+  var method=(document.getElementById('echel-m-method')||{}).value||'cash';
+  var mlabel=(method==='cb')?'💳 Carte':'💶 Espèces';
+  var h='<table style="width:100%;border-collapse:collapse;font-size:.8rem;">'
+    +'<thead><tr style="text-align:left;color:var(--text-muted);font-size:.64rem;text-transform:uppercase;letter-spacing:.4px;"><th style="padding:4px 4px;">Échéance</th><th style="padding:4px 4px;">Montant</th><th style="padding:4px 4px;">Date</th></tr></thead><tbody>';
+  parts.forEach(function(a,i){
+    var due=(i===0)?now:addMonths(now,i);
+    var when=(i===0)?('🟢 Maintenant · '+mlabel):('🕒 '+fmtD(due.toISOString()));
+    h+='<tr style="border-top:1px solid var(--border-color,#eee);"><td style="padding:6px 4px;font-weight:700;color:var(--text-main);">'+(i+1)+'/'+n+'</td><td style="padding:6px 4px;font-weight:800;color:#1e40af;">'+a.toFixed(2)+'€</td><td style="padding:6px 4px;color:var(--text-main);">'+when+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  tbl.innerHTML=h;
+};
+
+window._echelConfirm=function(){
+  var cu=window._ltyCu;
+  if(!cu){toast('❌ Aucun client fidélité');return;}
+  if(cartTotalNet()<=0){toast('⚠️ Panier vide');return;}
+  var method=(document.getElementById('echel-m-method')||{}).value||'cash';
+  window._echelCfg={n:(window._echelN||2),method:method};
+  window._echelReady=true;
+  window._echelCloseModal();
+  if(typeof window.validateSale==='function')window.validateSale();
+};
+
+/* Hook togglePaymentInputs : ouvrir la fenêtre dès qu'on choisit le mode échelonné */
+var _prevTPI=window.togglePaymentInputs;
+window.togglePaymentInputs=function(){
+  if(typeof _prevTPI==='function')_prevTPI.apply(this,arguments);
+  var m=document.getElementById('payment-method');
+  if(m&&m.value==='echel'&&!window._echelReady){ window._echelOpenModal(); }
+};
+
+/* Garde-fou validateSale */
+var _prevVS=window.validateSale;
+window.validateSale=function(){
+  var m=document.getElementById('payment-method');
+  if(m&&m.value==='echel'){
+    var cu=window._ltyCu;
+    if(!cu){toast('❌ Sélectionnez un client fidélité pour le paiement échelonné');return;}
+    if(cartTotalNet()<=0){toast('⚠️ Panier vide');return;}
+    if(!window._echelReady){ window._echelOpenModal(); return; }
+    var cfg=window._echelCfg||{n:2,method:'cash'};
+    window._echelSnap={id:cu.id,n:cfg.n,payNow:true,method:cfg.method};
+    window._echelReady=false;
+    /* Points gagnés au règlement des échéances, pas à l'achat : neutraliser le moteur fidélité */
+    window._ltyCu=null; window._ltyRed=null;
+    if(typeof window._ltyRenderWidget==='function')window._ltyRenderWidget();
+  }
+  return (typeof _prevVS==='function')?_prevVS.apply(this,arguments):undefined;
+};
+
+/* Création de l'échéancier après la vente */
+var _prevSR=window.showReceipt;
+window.showReceipt=function(sale){
+  if(typeof _prevSR==='function')_prevSR.apply(this,arguments);
+  if(sale&&sale.method==='echel'&&window._echelSnap){
+    var snap=window._echelSnap; window._echelSnap=null;
+    var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===snap.id;});
+    if(idx!==-1){
+      var c=d.customers[idx];
+      var total=+(sale.total||0).toFixed(2);
+      var parts=split(total,snap.n); var now=new Date();
+      var plan={id:'ECH-'+Date.now(),saleId:sale.id,ticketNum:sale.ticketNum||sale.id,date:now.toISOString(),total:total,n:snap.n,method:(snap.method||'cash'),items:[]};
+      parts.forEach(function(a,i){plan.items.push({num:i+1,amount:a,due:(i===0?now:addMonths(now,i)).toISOString(),paid:false,paidDate:null,method:null,points:0});});
+      c.echeances=c.echeances||[];
+      c.echeances.unshift(plan);
+      c.credit=+(((c.credit||0))+total).toFixed(2);
+      if(!c.history)c.history=[];
+      c.history.unshift({date:now.toISOString(),saleId:sale.id,ticketNum:plan.ticketNum,amount:total,method:'echel',points:0,type:'echel_purchase',cashier:sale.cashier||'',note:'Achat en '+snap.n+' fois',items:(sale.items||[]).map(function(it){return{name:it.name||'',quantity:it.quantity||1,unitType:it.unitType||'unit',price:it.price||0,total:+(((it.quantity||1)*(it.price||0)).toFixed(2))};})});
+      c.history=c.history.slice(0,300);
+      ls(d);
+      sale._echelName=c.name; sale._echelNb=snap.n;
+      if(snap.payNow){ window._echelSettle(snap.id,plan.id,1,snap.method,true); }
+      else { if(typeof window._ltyRefresh==='function')window._ltyRefresh(); toast('📅 '+c.name+' : '+snap.n+' échéances créées · 1ʳᵉ le '+fmtD(plan.items[0].due)); }
+    }
+  }
+  if(sale&&sale.method==='echel'){
+    setTimeout(function(){
+      var content=document.getElementById('receipt-content');
+      if(content&&!content.querySelector('.echel-rcpt-line')){
+        var div=document.createElement('div');div.className='echel-rcpt-line';
+        div.style.cssText='margin-top:10px;padding:10px 14px;background:rgba(37,99,235,.08);border-radius:10px;border-left:3px solid #1565c0;';
+        div.innerHTML='<div style="font-weight:900;color:#1e40af;font-size:.83rem;">📅 Paiement en '+(sale._echelNb||'')+' fois'+(sale._echelName?' — '+esc(sale._echelName):'')+'</div>'
+          +'<div style="font-size:.72rem;margin-top:3px;color:#1e3a8a;">Échéancier mensuel enregistré sur le compte fidélité. À régler depuis la fiche client.</div>';
+        content.appendChild(div);
+      }
+    },200);
+  }
+};
+
+/* ── Règlement d'une échéance ── */
+window._echelSettle=function(clientId,planId,num,method,silent){
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===clientId;}); if(idx===-1)return;
+  var c=d.customers[idx];
+  var plan=(c.echeances||[]).find(function(p){return p.id===planId;}); if(!plan)return;
+  var it=plan.items.find(function(x){return x.num===num;}); if(!it||it.paid)return;
+  var amt=+(it.amount||0).toFixed(2);
+  var earned=Math.floor(amt*ppe());
+  it.paid=true; it.paidDate=new Date().toISOString(); it.method=method||plan.method||'cash'; it.points=earned;
+  c.credit=+(Math.max(0,(c.credit||0)-amt)).toFixed(2);
+  c.totalSpent=+(((c.totalSpent||0)+amt)).toFixed(2);
+  c.points=(c.points||0)+earned;
+  if(!c.history)c.history=[];
+  c.history.unshift({date:it.paidDate,saleId:plan.saleId,ticketNum:plan.ticketNum,amount:amt,method:it.method,points:earned,type:'echel_repay',cashier:(typeof currentUser!=='undefined'&&currentUser?currentUser.username:'')||'',note:'Échéance '+num+'/'+plan.n});
+  c.history=c.history.slice(0,300);
+  ls(d);
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+  if(!silent)toast('✅ Échéance '+num+'/'+plan.n+' réglée ('+amt.toFixed(2)+'€) · +'+earned+' pts','success');
+  if(window._echelDetailId===clientId)setTimeout(function(){injectEchelSection(clientId);},30);
+};
+
+/* ── Section « Paiements échelonnés » dans la fiche client ── */
+function injectEchelSection(id){
+  window._echelDetailId=id;
+  var scroll=document.getElementById('lty-detail-scroll'); if(!scroll)return;
+  var old=document.getElementById('lty-echel-card'); if(old)old.remove();
+  var c=find(id); if(!c)return;
+  var plans=(c.echeances||[]); if(!plans.length)return;
+  var now=Date.now();
+  var card=document.createElement('div'); card.id='lty-echel-card'; card.style.cssText='margin-bottom:14px;';
+  var html='<div style="background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.3);border-radius:12px;padding:11px 14px;">'
+    +'<div style="font-size:.62rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;">📅 Paiements échelonnés ('+plans.length+')</div>';
+  plans.forEach(function(p){
+    var paidN=p.items.filter(function(x){return x.paid;}).length;
+    var resteP=+(p.items.reduce(function(a,x){return a+(x.paid?0:(x.amount||0));},0)).toFixed(2);
+    html+='<div style="border-top:1px dashed rgba(37,99,235,.3);padding:9px 0;">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">'
+      +'<div style="font-weight:700;font-size:.82rem;color:var(--text-main);">🧾 #'+esc(String(p.ticketNum))+' · '+p.total.toFixed(2)+'€ en '+p.n+' fois</div>'
+      +'<div style="font-size:.7rem;color:var(--text-muted);">'+paidN+'/'+p.n+' réglée(s) · reste '+resteP.toFixed(2)+'€</div></div>'
+      +'<div style="margin-bottom:7px;"><span style="font-size:.66rem;color:var(--text-muted);margin-right:5px;">Régler en</span><select id="echel-pm-'+p.id+'" style="font-size:.72rem;padding:4px 7px;border-radius:7px;border:1.5px solid var(--border-color,#ddd);background:var(--input-bg,#fff);color:var(--text-main);"><option value="cash">💶 Espèces</option><option value="cb">💳 CB</option><option value="ticket">🎟️ Ticket resto</option></select></div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:.76rem;">'
+      +'<thead><tr style="text-align:left;color:var(--text-muted);font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;"><th style="padding:3px 4px;">Mens.</th><th style="padding:3px 4px;">Montant</th><th style="padding:3px 4px;">Date</th><th style="padding:3px 4px;">Statut</th><th></th></tr></thead><tbody>';
+    p.items.forEach(function(it){
+      var late=(!it.paid && new Date(it.due).getTime()<now);
+      var statut=it.paid?('<span style="color:#059669;font-weight:800;">✅ Réglée</span>'):(late?('<span style="color:#dc2626;font-weight:800;">⏰ En retard</span>'):('<span style="color:#b45309;font-weight:700;">🕒 À venir</span>'));
+      var act=it.paid?'':('<button onclick="window._echelSettle(\''+esc(id)+'\',\''+esc(p.id)+'\','+it.num+',(document.getElementById(\'echel-pm-'+p.id+'\')||{}).value)" style="background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;border:none;border-radius:6px;padding:4px 9px;font-size:.7rem;font-weight:800;cursor:pointer;white-space:nowrap;">💵 Régler</button>');
+      html+='<tr style="border-top:1px solid var(--border-color,#eee);">'
+        +'<td style="padding:5px 4px;font-weight:700;color:var(--text-main);">'+it.num+'/'+p.n+'</td>'
+        +'<td style="padding:5px 4px;font-weight:800;color:#1e40af;">'+it.amount.toFixed(2)+'€</td>'
+        +'<td style="padding:5px 4px;color:var(--text-main);">'+fmtD(it.due)+(it.paid&&it.paidDate?('<br><span style="font-size:.62rem;color:#059669;">payé '+fmtD(it.paidDate)+'</span>'):'')+'</td>'
+        +'<td style="padding:5px 4px;">'+statut+'</td>'
+        +'<td style="padding:5px 4px;text-align:right;">'+act+'</td></tr>';
+    });
+    html+='</tbody></table></div>';
+  });
+  html+='</div>';
+  card.innerHTML=html;
+  scroll.appendChild(card);
+}
+window._echelInjectSection=injectEchelSection;
+
+var _wSD2=window._ltyShowDetail;
+if(typeof _wSD2==='function'){window._ltyShowDetail=function(id){_wSD2.apply(this,arguments);setTimeout(function(){injectEchelSection(id);},45);};}
+
+/* Rafraîchir le tableau de la fenêtre si elle est ouverte quand le client/panier change */
+var _prevRW2=window._ltyRenderWidget;
+if(typeof _prevRW2==='function'){window._ltyRenderWidget=function(){_prevRW2.apply(this,arguments);var md=document.getElementById('echel-modal');if(md&&md.style.display!=='none'){var cu=window._ltyCu;var nm=document.getElementById('echel-m-name');if(nm)nm.textContent=cu?(cu.name||''):'—';var tt=document.getElementById('echel-m-total');if(tt)tt.textContent=cartTotalNet().toFixed(2)+'€';window._echelModalRefresh();}};}
+
+setTimeout(injectEchelModal,1500);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     FIDÉLITÉ · VUE D'ENSEMBLE — tableau de bord 3 onglets — COVO Pro v28
+     Paiements échelonnés en cours · Réservations · Historique caisse
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function toast(m,t){if(typeof showScanToast==='function')showScanToast(m,t||'');}
+function customers(){return (lg().customers||[]);}
+function getProd(pid){return (typeof window._ltyGetProduct==='function')?window._ltyGetProduct(pid):null;}
+function fmtD(iso){try{return new Date(iso).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});}catch(e){return '—';}}
+function fmtDT(iso){try{var d=new Date(iso);return d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}catch(e){return '—';}}
+function resvAvail(r){var p=getProd(r.productId);var s=p?p.stock:null;return (r.decremented!==false)||(s!=null&&s>=(r.qty||0));}
+
+var _tab='echel';
+
+/* Comptes pour les onglets */
+function cntEchel(){var n=0;customers().forEach(function(c){(c.echeances||[]).forEach(function(p){if(p.items.some(function(x){return !x.paid;}))n++;});});return n;}
+function cntResv(){var n=0;customers().forEach(function(c){n+=(c.reservations||[]).length;});return n;}
+
+function emptyMsg(t){return '<div style="text-align:center;padding:34px 10px;color:var(--text-muted,#8a94a6);font-size:.86rem;">'+t+'</div>';}
+function metric(label,val,color){return '<div style="flex:1;min-width:90px;background:var(--bg-body,#f4f6fb);border-radius:10px;padding:9px 11px;text-align:center;"><div style="font-size:1.15rem;font-weight:900;color:'+(color||'var(--text-main)')+';">'+val+'</div><div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#8a94a6);margin-top:1px;">'+label+'</div></div>';}
+
+/* ── Onglet : Paiements échelonnés en cours ── */
+function renderEchel(){
+  var rows=[],totReste=0,nbLate=0,now=Date.now();
+  customers().forEach(function(c){(c.echeances||[]).forEach(function(p){
+    var unpaid=p.items.filter(function(x){return !x.paid;});
+    if(!unpaid.length)return;
+    var next=unpaid.slice().sort(function(a,b){return new Date(a.due)-new Date(b.due);})[0];
+    var reste=+(unpaid.reduce(function(a,x){return a+(x.amount||0);},0)).toFixed(2);
+    totReste+=reste; var late=new Date(next.due).getTime()<now; if(late)nbLate++;
+    rows.push({c:c,p:p,next:next,reste:reste,paid:p.items.length-unpaid.length,late:late});
+  });});
+  var head='<div style="display:flex;gap:8px;margin-bottom:12px;">'+metric('Plans en cours',rows.length,'#7c3aed')+metric('À recouvrer',totReste.toFixed(0)+'€','#1e40af')+metric('En retard',nbLate,nbLate>0?'#dc2626':'#059669')+'</div>';
+  if(!rows.length)return head+emptyMsg('Aucun paiement échelonné en cours.');
+  rows.sort(function(a,b){return new Date(a.next.due)-new Date(b.next.due);});
+  var h=head+'<table style="width:100%;border-collapse:collapse;font-size:.78rem;"><thead><tr style="text-align:left;color:var(--text-muted,#8a94a6);font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;"><th style="padding:5px 4px;">Client</th><th style="padding:5px 4px;">Plan</th><th style="padding:5px 4px;">Reste</th><th style="padding:5px 4px;">Prochaine</th><th></th></tr></thead><tbody>';
+  rows.forEach(function(r){
+    var chip=r.late?'<span style="color:#dc2626;font-weight:800;">⏰ '+fmtD(r.next.due)+'</span>':'<span style="color:#b45309;font-weight:700;">🕒 '+fmtD(r.next.due)+'</span>';
+    h+='<tr style="border-top:1px solid var(--border-color,#eee);">'
+      +'<td style="padding:7px 4px;font-weight:700;color:var(--text-main);">'+esc(r.c.name||'')+'</td>'
+      +'<td style="padding:7px 4px;color:var(--text-main);">'+r.p.total.toFixed(2)+'€ · '+r.paid+'/'+r.p.n+'</td>'
+      +'<td style="padding:7px 4px;font-weight:800;color:#1e40af;">'+r.reste.toFixed(2)+'€</td>'
+      +'<td style="padding:7px 4px;">'+chip+' · <strong>'+r.next.amount.toFixed(2)+'€</strong></td>'
+      +'<td style="padding:7px 4px;text-align:right;"><button onclick="window._echelPayOpen(\''+esc(r.c.id)+'\',\''+esc(r.p.id)+'\')" style="background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;border:none;border-radius:7px;padding:5px 11px;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;">💵 Régler ›</button></td></tr>';
+  });
+  return h+'</tbody></table>';
+}
+
+/* ── Onglet : Réservations ── */
+function renderResv(){
+  var rows=[],nbDispo=0;
+  customers().forEach(function(c){(c.reservations||[]).forEach(function(r){
+    var av=resvAvail(r); if(av)nbDispo++;
+    rows.push({c:c,r:r,av:av});
+  });});
+  var head='<div style="display:flex;gap:8px;margin-bottom:12px;">'+metric('Réservations',rows.length,'#d97706')+metric('Disponibles',nbDispo,nbDispo>0?'#059669':'var(--text-main)')+metric('En attente',rows.length-nbDispo,'#b45309')+'</div>';
+  if(!rows.length)return head+emptyMsg('Aucune réservation enregistrée.');
+  rows.sort(function(a,b){return (b.av?1:0)-(a.av?1:0);});
+  var h=head+'<table style="width:100%;border-collapse:collapse;font-size:.78rem;"><thead><tr style="text-align:left;color:var(--text-muted,#8a94a6);font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;"><th style="padding:5px 4px;">Client</th><th style="padding:5px 4px;">Article</th><th style="padding:5px 4px;">Statut</th><th></th></tr></thead><tbody>';
+  rows.forEach(function(x){
+    var unit=x.r.unitType==='kg'?(x.r.qty+' kg'):('×'+x.r.qty);
+    var st=x.av?'<span style="color:#059669;font-weight:800;">✅ Disponible</span>':'<span style="color:#b45309;font-weight:700;">⏳ En attente</span>';
+    h+='<tr style="border-top:1px solid var(--border-color,#eee);">'
+      +'<td style="padding:7px 4px;font-weight:700;color:var(--text-main);">'+esc(x.c.name||'')+'</td>'
+      +'<td style="padding:7px 4px;color:var(--text-main);">'+esc(x.r.productName||'')+' <span style="color:var(--text-muted,#8a94a6);">'+unit+'</span><br><span style="font-size:.66rem;color:var(--text-muted,#8a94a6);">'+fmtD(x.r.date)+'</span></td>'
+      +'<td style="padding:7px 4px;">'+st+'</td>'
+      +'<td style="padding:7px 4px;text-align:right;"><button onclick="window._ltyDashGoClient(\''+esc(x.c.id)+'\')" style="background:rgba(217,119,6,.14);color:#b45309;border:none;border-radius:7px;padding:5px 10px;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;">Ouvrir ›</button></td></tr>';
+  });
+  return h+'</tbody></table>';
+}
+
+/* ── Onglet : Historique caisse (clients fidélité) ── */
+function histLabel(t){var M={credit:'🎁 Achat',debit:'↩️ Rachat points',credit_purchase:'📒 Achat à crédit',credit_repay:'💵 Règlement crédit',echel_purchase:'📅 Achat en plusieurs fois',echel_repay:'💳 Règlement échéance'};return M[t]||(t||'Opération');}
+function methLabel(m){var M={cash:'💶 Espèces',cb:'💳 CB',mixed:'💳💶 Mixte',ticket:'🎟️ Ticket',credit:'📒 Crédit',echel:'📅 Échelonné'};return M[m]||(m||'');}
+function renderHist(){
+  var ents=[],totMnt=0;
+  customers().forEach(function(c){(c.history||[]).forEach(function(h){ents.push({name:c.name||'',h:h});});});
+  ents.sort(function(a,b){return new Date(b.h.date)-new Date(a.h.date);});
+  ents.slice(0,300).forEach(function(e){totMnt+=(+(e.h.amount||0));});
+  var shown=ents.slice(0,150);
+  var head='<div style="display:flex;gap:8px;margin-bottom:12px;">'+metric('Opérations',ents.length,'#7c3aed')+metric('Volume',totMnt.toFixed(0)+'€','#1e40af')+metric('Clients',customers().filter(function(c){return (c.history||[]).length;}).length,'var(--text-main)')+'</div>';
+  if(!shown.length)return head+emptyMsg('Aucune opération enregistrée.');
+  var h=head+'<table style="width:100%;border-collapse:collapse;font-size:.76rem;"><thead><tr style="text-align:left;color:var(--text-muted,#8a94a6);font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;"><th style="padding:5px 4px;">Date</th><th style="padding:5px 4px;">Client</th><th style="padding:5px 4px;">Opération</th><th style="padding:5px 4px;text-align:right;">Montant</th></tr></thead><tbody>';
+  shown.forEach(function(e){
+    var pts=e.h.points?('<br><span style="font-size:.62rem;color:'+(e.h.points>0?'#059669':'#dc2626')+';">'+(e.h.points>0?'+':'')+e.h.points+' pts</span>'):'';
+    h+='<tr style="border-top:1px solid var(--border-color,#eee);">'
+      +'<td style="padding:6px 4px;color:var(--text-muted,#8a94a6);white-space:nowrap;">'+fmtDT(e.h.date)+(e.h.ticketNum?('<br><span style="font-size:.62rem;">#'+esc(String(e.h.ticketNum))+'</span>'):'')+'</td>'
+      +'<td style="padding:6px 4px;font-weight:700;color:var(--text-main);">'+esc(e.name)+'</td>'
+      +'<td style="padding:6px 4px;color:var(--text-main);">'+histLabel(e.h.type)+(e.h.method?(' <span style="font-size:.64rem;color:var(--text-muted,#8a94a6);">'+methLabel(e.h.method)+'</span>'):'')+'</td>'
+      +'<td style="padding:6px 4px;text-align:right;font-weight:800;color:#1e40af;white-space:nowrap;">'+(+(e.h.amount||0)).toFixed(2)+'€'+pts+'</td></tr>';
+  });
+  if(ents.length>150)h+='<tr><td colspan="4" style="padding:8px 4px;text-align:center;color:var(--text-muted,#8a94a6);font-size:.7rem;">… '+(ents.length-150)+' opération(s) plus anciennes</td></tr>';
+  return h+'</tbody></table>';
+}
+
+function renderTabs(){
+  var defs=[['echel','📅 Paiements échelonnés',cntEchel()],['resv','📦 Réservations',cntResv()],['hist','🧾 Historique caisse',null]];
+  var el=document.getElementById('lty-dash-tabs'); if(!el)return;
+  el.innerHTML=defs.map(function(d){
+    var active=(_tab===d[0]);
+    var badge=(d[2]!=null&&d[2]>0)?('<span style="margin-left:5px;background:'+(active?'rgba(255,255,255,.25)':'rgba(124,58,237,.15)')+';color:'+(active?'#fff':'#7c3aed')+';border-radius:9px;padding:0 6px;font-size:.64rem;font-weight:900;">'+d[2]+'</span>'):'';
+    return '<button onclick="window._ltyDashTab(\''+d[0]+'\')" style="flex:1;min-width:0;padding:9px 6px;border:none;cursor:pointer;font-size:.74rem;font-weight:800;border-bottom:2.5px solid '+(active?'#7c3aed':'transparent')+';background:'+(active?'#7c3aed':'transparent')+';color:'+(active?'#fff':'var(--text-main)')+';border-radius:'+(active?'8px 8px 0 0':'0')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+d[1]+badge+'</button>';
+  }).join('');
+}
+function renderBody(){
+  var b=document.getElementById('lty-dash-body'); if(!b)return;
+  b.innerHTML=(_tab==='echel')?renderEchel():(_tab==='resv')?renderResv():renderHist();
+}
+
+window._ltyDashTab=function(name){_tab=name;renderTabs();renderBody();};
+
+function injectModal(){
+  if(document.getElementById('lty-dash-modal'))return;
+  var m=document.createElement('div'); m.id='lty-dash-modal';
+  m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:23400;justify-content:center;align-items:center;padding:16px;';
+  m.innerHTML=''
+    +'<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:660px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+    +'<div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">'
+    +'<div><div style="font-size:1.02rem;font-weight:900;">📊 Vue d\'ensemble — Fidélité</div>'
+    +'<div style="font-size:.68rem;color:rgba(255,255,255,.8);margin-top:1px;">Paiements échelonnés · Réservations · Historique caisse</div></div>'
+    +'<button onclick="window._ltyDashClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
+    +'<div id="lty-dash-tabs" style="display:flex;gap:4px;padding:8px 12px 0;border-bottom:1px solid var(--border-color,#eee);flex-shrink:0;"></div>'
+    +'<div id="lty-dash-body" style="overflow-y:auto;flex:1;padding:14px 16px;"></div>'
+    +'</div>';
+  m.addEventListener('click',function(e){if(e.target===m)window._ltyDashClose();});
+  document.body.appendChild(m);
+}
+
+window._ltyDashOpen=function(){ injectModal(); renderTabs(); renderBody(); document.getElementById('lty-dash-modal').style.display='flex'; };
+window._ltyDashClose=function(){ var m=document.getElementById('lty-dash-modal'); if(m)m.style.display='none'; };
+window._ltyDashGoClient=function(id){ window._ltyDashClose(); if(typeof window._ltyShowDetail==='function')window._ltyShowDetail(id); };
+
+/* Bouton « Vue d'ensemble » dans l'en-tête Fidélité */
+function injectDashBtn(){
+  var anchor=document.querySelector('#tab-fidelite [onclick*="_ltyNewClient"]')||document.getElementById('wa-header-btn');
+  if(!anchor||document.getElementById('lty-dash-btn'))return;
+  var b=document.createElement('button'); b.id='lty-dash-btn'; b.type='button';
+  b.onclick=function(){window._ltyDashOpen();};
+  b.style.cssText='background:linear-gradient(135deg,#7c3aed,#5b21b6);border:1.5px solid rgba(255,255,255,.4);color:#fff;border-radius:10px;padding:8px 14px;font-weight:800;font-size:.82rem;cursor:pointer;margin-right:8px;';
+  b.innerHTML='📊 Vue d\'ensemble';
+  anchor.parentNode.insertBefore(b,anchor);
+}
+var _ws=window.switchTab;
+if(typeof _ws==='function'){window.switchTab=function(name){_ws.apply(this,arguments);if(name==='fidelite')setTimeout(injectDashBtn,520);};}
+var _wt=window.toggleAdminModal;
+if(typeof _wt==='function'){window.toggleAdminModal=function(){_wt.apply(this,arguments);setTimeout(injectDashBtn,620);};}
+/* Rafraîchir si la fenêtre est ouverte */
+var _wr=window._ltyRefresh;
+if(typeof _wr==='function'){window._ltyRefresh=function(){_wr.apply(this,arguments);var m=document.getElementById('lty-dash-modal');if(m&&m.style.display!=='none'){renderTabs();renderBody();}};}
+setTimeout(injectDashBtn,1800);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     FIDÉLITÉ · COCKPIT CLIENT — en-tête synthétique au clic — COVO Pro v28
+     Niveau fidélité · santé du compte · tuiles KPI (échéances, réserv., crédit)
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function find(id){return (lg().customers||[]).find(function(x){return x.id===id;});}
+function ini(n){n=String(n||'').trim();if(!n)return'?';var p=n.split(/\s+/);return ((p[0][0]||'')+(p[1]?p[1][0]:'')).toUpperCase();}
+function fmtD(iso){try{return new Date(iso).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'});}catch(e){return '—';}}
+function getProd(pid){return (typeof window._ltyGetProduct==='function')?window._ltyGetProduct(pid):null;}
+function resvAvail(r){var p=getProd(r.productId);var s=p?p.stock:null;return (r.decremented!==false)||(s!=null&&s>=(r.qty||0));}
+
+function tier(pts){
+  pts=+(pts||0);
+  if(pts>=1500)return {n:'Platine',ico:'💎',c:'#6d28d9',bg:'rgba(109,40,217,.13)'};
+  if(pts>=600) return {n:'Or',ico:'🥇',c:'#b8860b',bg:'rgba(217,160,11,.15)'};
+  if(pts>=200) return {n:'Argent',ico:'🥈',c:'#64748b',bg:'rgba(100,116,139,.15)'};
+  return {n:'Bronze',ico:'🥉',c:'#b45309',bg:'rgba(180,83,9,.13)'};
+}
+function health(c){
+  var now=Date.now(),soon=now+7*86400000,overdue=false,upcoming=false;
+  (c.echeances||[]).forEach(function(p){p.items.forEach(function(it){if(!it.paid){var t=new Date(it.due).getTime();if(t<now)overdue=true;else if(t<=soon)upcoming=true;}});});
+  if(overdue) return {txt:'Paiement en retard',c:'#dc2626',bg:'rgba(220,38,38,.12)',dot:'🔴'};
+  if(upcoming)return {txt:'Échéance proche',c:'#b45309',bg:'rgba(217,119,6,.14)',dot:'🟠'};
+  return {txt:'Compte à jour',c:'#059669',bg:'rgba(5,150,105,.12)',dot:'🟢'};
+}
+function tile(ico,val,label,col){
+  return '<div style="flex:1;min-width:96px;background:var(--bg-body,#f4f7fb);border:1px solid var(--border-color,#eef1f6);border-radius:11px;padding:9px 11px;">'
+    +'<div style="font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#94a3b8);">'+ico+' '+label+'</div>'
+    +'<div style="font-size:1.02rem;font-weight:900;margin-top:3px;color:'+(col||'var(--text-main)')+';">'+val+'</div></div>';
+}
+
+function renderCockpit(id){
+  var top=document.getElementById('lty-detail-top'); if(!top)return;
+  var c=find(id); if(!c)return;
+  window._ltyCockpitId=id;
+  var t=tier(c.points), h=health(c);
+  var credit=+(c.credit||0);
+  var echReste=0,echPlans=0,nextDue=null;
+  (c.echeances||[]).forEach(function(p){var u=p.items.filter(function(x){return !x.paid;});if(u.length){echPlans++;u.forEach(function(x){echReste+=(x.amount||0);});var nd=u.slice().sort(function(a,b){return new Date(a.due)-new Date(b.due);})[0];if(!nextDue||new Date(nd.due)<new Date(nextDue))nextDue=nd.due;}});
+  echReste=+echReste.toFixed(2);
+  var resvTot=(c.reservations||[]).length, resvDispo=(c.reservations||[]).filter(resvAvail).length;
+  var nbTkt=(c.history||[]).filter(function(x){return x.type==='credit'&&x.saleId;}).length;
+
+  var html=''
+    +'<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;">'
+    +'<div style="width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#6d28d9);display:flex;align-items:center;justify-content:center;font-size:1.15rem;font-weight:900;color:#fff;flex-shrink:0;box-shadow:0 4px 12px rgba(124,58,237,.3);">'+esc(ini(c.name))+'</div>'
+    +'<div style="flex:1;min-width:160px;">'
+    +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    +'<span style="font-weight:900;font-size:1.08rem;color:var(--text-main);">'+esc(c.name)+'</span>'
+    +'<span style="background:'+t.bg+';color:'+t.c+';padding:2px 10px;border-radius:20px;font-weight:900;font-size:.72rem;">'+t.ico+' '+t.n+'</span>'
+    +'</div>'
+    +'<div style="font-size:.72rem;color:var(--text-muted);margin-top:3px;">'+(c.phone?'📞 '+esc(c.phone)+'  ':'')+(c.barcode?'🎫 '+esc(c.barcode):(c.email?'✉️ '+esc(c.email):''))+'</div>'
+    +'<div style="display:inline-flex;align-items:center;gap:6px;margin-top:7px;background:'+h.bg+';color:'+h.c+';padding:4px 11px;border-radius:20px;font-weight:800;font-size:.74rem;">'+h.dot+' '+h.txt+'</div>'
+    +'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
+    +'<button onclick="if(typeof _loyaltyOpenModal===\'function\')_loyaltyOpenModal(\''+esc(id)+'\')" style="background:rgba(245,158,11,.12);color:#d97706;border:none;border-radius:8px;padding:6px 11px;font-size:.76rem;font-weight:800;cursor:pointer;white-space:nowrap;">✏️ Modifier</button>'
+    +'<button onclick="window._ltyPrintCard&&window._ltyPrintCard(\''+esc(id)+'\')" style="background:rgba(139,92,246,.12);color:#7c3aed;border:none;border-radius:8px;padding:6px 11px;font-size:.76rem;font-weight:800;cursor:pointer;white-space:nowrap;">🖨️ Carte</button>'
+    +'</div>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;margin-top:13px;flex-wrap:wrap;">'
+    +tile('💜','<span>'+(c.points||0)+'</span>','Points','#7c3aed')
+    +tile('📒',credit>0?(credit.toFixed(2)+'€'):'0€','Crédit dû',credit>0?'#dc2626':'#059669')
+    +tile('📅',echPlans?(echReste.toFixed(2)+'€'):'—',echPlans?('Échéances · '+echPlans+' plan'+(echPlans>1?'s':'')+(nextDue?(' · '+fmtD(nextDue)):'')):'Échéances','#1e40af')
+    +tile('📦',resvTot?(resvDispo+'/'+resvTot):'0','Réserv. dispo',resvDispo>0?'#059669':'var(--text-main)')
+    +tile('💰',(c.totalSpent||0).toFixed(0)+'€','Dépensé','#0f766e')
+    +'</div>';
+  top.innerHTML=html;
+}
+window._ltyRenderCockpit=renderCockpit;
+
+/* Enrichir l'en-tête après le rendu de base (s'exécute en dernier) */
+var _wSD3=window._ltyShowDetail;
+if(typeof _wSD3==='function'){window._ltyShowDetail=function(id){_wSD3.apply(this,arguments);try{renderCockpit(id);}catch(e){}};}
+
+/* Rafraîchir le cockpit (sans toucher au corps) quand les données changent */
+var _wRef=window._ltyRefresh;
+if(typeof _wRef==='function'){window._ltyRefresh=function(){_wRef.apply(this,arguments);var v=document.getElementById('lty-detail-view');if(window._ltyCockpitId&&v&&v.style.display!=='none'){try{renderCockpit(window._ltyCockpitId);}catch(e){}}};}
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     FIDÉLITÉ · FENÊTRE DE RÈGLEMENT D'ÉCHÉANCE — COVO Pro v28
+     Ouverte depuis « 💵 Régler » du tableau de bord (paiements échelonnés)
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function find(id){return (lg().customers||[]).find(function(x){return x.id===id;});}
+function fmtD(iso){try{return new Date(iso).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});}catch(e){return '—';}}
+
+function injectPayModal(){
+  if(document.getElementById('echel-pay-modal'))return;
+  var m=document.createElement('div'); m.id='echel-pay-modal';
+  m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.74);backdrop-filter:blur(8px);z-index:23600;justify-content:center;align-items:center;padding:16px;';
+  m.innerHTML=''
+    +'<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:470px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+    +'<div style="background:linear-gradient(135deg,#1565c0,#0d47a1);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">'
+    +'<div style="font-size:1.02rem;font-weight:900;">💳 Régler une échéance</div>'
+    +'<button onclick="window._echelPayClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
+    +'<div id="echel-pay-body" style="overflow-y:auto;flex:1;padding:18px 20px;"></div></div>';
+  m.addEventListener('click',function(e){if(e.target===m)window._echelPayClose();});
+  document.body.appendChild(m);
+}
+
+window._echelPayOpen=function(clientId,planId){
+  injectPayModal();
+  window._echelPayCtx={clientId:clientId,planId:planId};
+  renderPayBody();
+  var md=document.getElementById('echel-pay-modal'); if(md)md.style.display='flex';
+};
+window._echelPayClose=function(){var m=document.getElementById('echel-pay-modal');if(m)m.style.display='none';window._echelPayCtx=null;};
+
+function renderPayBody(){
+  var ctx=window._echelPayCtx; if(!ctx)return;
+  var b=document.getElementById('echel-pay-body'); if(!b)return;
+  var c=find(ctx.clientId);
+  var plan=c?(c.echeances||[]).find(function(p){return p.id===ctx.planId;}):null;
+  if(!c||!plan){b.innerHTML='<div style="text-align:center;color:var(--text-muted);padding:24px;">Échéancier introuvable.</div>';return;}
+  var now=Date.now();
+  var unpaid=plan.items.filter(function(x){return !x.paid;});
+  var reste=+(unpaid.reduce(function(a,x){return a+(x.amount||0);},0)).toFixed(2);
+  var paidN=plan.items.length-unpaid.length;
+  var next=unpaid.slice().sort(function(a,b){return new Date(a.due)-new Date(b.due);})[0];
+  var h=''
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;background:rgba(37,99,235,.08);border-radius:11px;padding:12px 14px;margin-bottom:14px;">'
+    +'<div><div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Client</div><div style="font-weight:900;font-size:1rem;color:var(--text-main);">'+esc(c.name||'')+'</div>'
+    +'<div style="font-size:.7rem;color:var(--text-muted);margin-top:2px;">🧾 #'+esc(String(plan.ticketNum))+' · '+plan.total.toFixed(2)+'€ en '+plan.n+' fois</div></div>'
+    +'<div style="text-align:right;flex-shrink:0;"><div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;font-weight:700;">Reste dû</div><div style="font-weight:900;font-size:1.25rem;color:#1e40af;">'+reste.toFixed(2)+'€</div><div style="font-size:.66rem;color:var(--text-muted);">'+paidN+'/'+plan.n+' réglée(s)</div></div></div>';
+  if(!unpaid.length){
+    b.innerHTML=h+'<div style="text-align:center;padding:14px;background:rgba(5,150,105,.1);border-radius:11px;color:#059669;font-weight:800;">✅ Échéancier entièrement réglé</div>'
+      +'<button onclick="window._echelPayClose()" style="width:100%;margin-top:14px;padding:12px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:11px;font-weight:700;cursor:pointer;">Fermer</button>';
+    return;
+  }
+  h+='<div style="font-size:.68rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Mode de paiement</div>'
+    +'<select id="echel-pay-method" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;font-size:.88rem;background:var(--input-bg,#fff);color:var(--text-main);margin-bottom:14px;">'
+    +'<option value="cash">💶 Espèces</option><option value="cb">💳 Carte bancaire</option><option value="ticket">🎟️ Ticket restaurant</option></select>'
+    +'<div style="font-size:.68rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Échéances</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:.78rem;"><tbody>';
+  plan.items.forEach(function(it){
+    var isNext=next&&it.num===next.num;
+    var late=(!it.paid&&new Date(it.due).getTime()<now);
+    var statut=it.paid?'<span style="color:#059669;font-weight:800;">✅ Réglée</span>':(late?'<span style="color:#dc2626;font-weight:800;">⏰ '+fmtD(it.due)+'</span>':'<span style="color:#b45309;font-weight:700;">🕒 '+fmtD(it.due)+'</span>');
+    var act=it.paid?'':'<button onclick="window._echelPayDo('+it.num+')" style="background:rgba(37,99,235,.12);color:#1565c0;border:none;border-radius:7px;padding:5px 10px;font-size:.72rem;font-weight:800;cursor:pointer;white-space:nowrap;">Régler '+it.amount.toFixed(2)+'€</button>';
+    h+='<tr style="border-top:1px solid var(--border-color,#eee);'+(isNext?'background:rgba(37,99,235,.06);':'')+'">'
+      +'<td style="padding:8px 4px;font-weight:700;color:var(--text-main);">'+it.num+'/'+plan.n+(isNext?' <span style="font-size:.58rem;color:#1565c0;font-weight:900;">• PROCHAINE</span>':'')+'</td>'
+      +'<td style="padding:8px 4px;font-weight:800;color:#1e40af;">'+it.amount.toFixed(2)+'€</td>'
+      +'<td style="padding:8px 4px;">'+statut+'</td>'
+      +'<td style="padding:8px 4px;text-align:right;">'+act+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  if(next){
+    h+='<button onclick="window._echelPayDo('+next.num+')" style="width:100%;margin-top:16px;padding:13px;background:linear-gradient(135deg,#1565c0,#0d47a1);color:#fff;border:none;border-radius:11px;font-weight:900;font-size:.92rem;cursor:pointer;">💵 Régler la prochaine échéance — '+next.amount.toFixed(2)+'€</button>';
+  }
+  b.innerHTML=h;
+}
+
+window._echelPayDo=function(num){
+  var ctx=window._echelPayCtx; if(!ctx)return;
+  var method=(document.getElementById('echel-pay-method')||{}).value||'cash';
+  if(typeof window._echelSettle==='function')window._echelSettle(ctx.clientId,ctx.planId,num,method);
+  renderPayBody();
+};
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     FIDÉLITÉ · ONGLETS DU DÉTAIL CLIENT — COVO Pro v28
+     Aperçu · 📒 Compte crédit · 📅 Paiements échelonnés · 🧾 Historique
+     ════════════════════════════════════════════════════════════ -->
+<style>
+#lty-hist-card{background:var(--bg-card,#fff);border:1px solid var(--border-color,#eef1f6);border-radius:12px;padding:13px 15px;}
+#lty-det-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-top:13px;}
+.lty-det-tab{flex:1;min-width:118px;padding:9px 10px;border:1.5px solid var(--border-color,#e3e8ef);background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);border-radius:10px;font-size:.75rem;font-weight:800;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all .13s;}
+.lty-det-tab:hover{border-color:#8b5cf6;}
+.lty-det-tab.active{background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border-color:#6d28d9;box-shadow:0 3px 10px rgba(124,58,237,.3);}
+</style>
+<script>
+(function(){
+'use strict';
+var SEC=[
+  {k:'apercu',label:'📝 Aperçu',id:'lty-resv-note-card'},
+  {k:'credit',label:'📒 Compte crédit',id:'credit-detail-card'},
+  {k:'echel', label:'📅 Paiements échelonnés',id:'lty-echel-card'},
+  {k:'hist',  label:'🧾 Historique des tickets',id:'lty-hist-card'}
+];
+function wrapHist(){
+  var sc=document.getElementById('lty-detail-scroll'); if(!sc)return;
+  var list=document.getElementById('lty-tickets-list'); if(!list)return;
+  var card=document.getElementById('lty-hist-card');
+  if(!card){ card=document.createElement('div'); card.id='lty-hist-card'; list.parentNode.insertBefore(card, list); }
+  /* Rapatrier le titre « Historique des tickets » s'il est resté hors de la carte */
+  Array.prototype.slice.call(sc.children).forEach(function(ch){
+    if(ch!==card && ch.id!=='lty-det-tabs' && ch.children.length===0 && /Historique des tickets/i.test(ch.textContent||'')) card.appendChild(ch);
+  });
+  if(list.parentNode!==card) card.appendChild(list);
+}
+function ensureEchel(){
+  var sc=document.getElementById('lty-detail-scroll'); if(!sc)return;
+  if(document.getElementById('lty-echel-card'))return;
+  var card=document.createElement('div'); card.id='lty-echel-card';
+  card.innerHTML='<div style="background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.3);border-radius:12px;padding:14px;"><div style="font-size:.62rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;">📅 Paiements échelonnés</div><div style="font-size:.82rem;color:var(--text-muted,#8a94a6);">Aucun paiement échelonné en cours.</div></div>';
+  sc.appendChild(card);
+}
+function applyTab(){
+  SEC.forEach(function(s){var e=document.getElementById(s.id); if(e)e.style.display=(s.k===window._ltyDetTab)?'':'none';});
+  var bar=document.getElementById('lty-det-tabs');
+  if(bar)Array.prototype.forEach.call(bar.querySelectorAll('.lty-det-tab'),function(btn){btn.classList.toggle('active',btn.getAttribute('data-k')===window._ltyDetTab);});
+}
+window._ltyDetTabShow=function(k){window._ltyDetTab=k;applyTab();};
+function build(){
+  var sc=document.getElementById('lty-detail-scroll'); if(!sc)return;
+  try{
+    wrapHist(); ensureEchel();
+    var avail=SEC.filter(function(s){return document.getElementById(s.id);});
+    if(!avail.length)return;
+    if(!window._ltyDetTab || !avail.some(function(s){return s.k===window._ltyDetTab;})) window._ltyDetTab=avail[0].k;
+    var bar=document.getElementById('lty-det-tabs');
+    if(!bar){bar=document.createElement('div');bar.id='lty-det-tabs';}
+    bar.innerHTML=avail.map(function(s){return '<button class="lty-det-tab" data-k="'+s.k+'" onclick="window._ltyDetTabShow(\''+s.k+'\')">'+s.label+'</button>';}).join('');
+    /* La barre vit dans l'en-tête fixe (sous le cockpit), hors de la zone défilante : aucun module ne peut insérer au-dessus */
+    var topEl=document.getElementById('lty-detail-top'); if(topEl)topEl.appendChild(bar);
+    /* Ordonner les sections dans la zone défilante */
+    SEC.forEach(function(s){var e=document.getElementById(s.id); if(e)sc.appendChild(e);});
+    applyTab();
+  }catch(e){}
+}
+var _wSD4=window._ltyShowDetail;
+if(typeof _wSD4==='function'){window._ltyShowDetail=function(id){_wSD4.apply(this,arguments);setTimeout(build,170);};}
+var _wRef4=window._ltyRefresh;
+if(typeof _wRef4==='function'){window._ltyRefresh=function(){_wRef4.apply(this,arguments);var v=document.getElementById('lty-detail-view');if(v&&v.style.display!=='none')setTimeout(build,70);};}
+setTimeout(build,2100);
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     FIDÉLITÉ · LIAISON CRÉDIT ⇄ ÉCHÉANCES — COVO Pro v28
+     Régler le « Compte crédit » solde aussi les échéances correspondantes
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+var LK='covo_loyalty';
+function lg(){try{return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]};}catch(e){return{customers:[]};}}
+function ls(d){localStorage.setItem(LK,JSON.stringify(d));if(typeof window._ltyDriveSync==='function')window._ltyDriveSync();}
+function find(id){return (lg().customers||[]).find(function(x){return x.id===id;});}
+function toast(m,t){if(typeof showScanToast==='function')showScanToast(m,t||'');}
+
+/* Marque comme réglées les échéances couvertes par le montant (plus anciennes d'abord).
+   N'AGIT PAS sur le crédit/points : déjà gérés par _creditDoRepay (pas de double-comptage). */
+function settleEchelByAmount(id, amount, method){
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;}); if(idx<0)return 0;
+  var c=d.customers[idx]; if(!c.echeances||!c.echeances.length)return 0;
+  var unpaid=[];
+  c.echeances.forEach(function(p){(p.items||[]).forEach(function(it){if(!it.paid)unpaid.push(it);});});
+  if(!unpaid.length)return 0;
+  unpaid.sort(function(a,b){return new Date(a.due)-new Date(b.due);});
+  var rem=+amount, n=0, now=new Date().toISOString();
+  unpaid.forEach(function(it){
+    if(!it.paid && rem+0.001>=(it.amount||0)){ it.paid=true; it.paidDate=now; it.method=method||'credit'; rem=+(rem-(it.amount||0)).toFixed(2); n++; }
+  });
+  if(n>0) ls(d);
+  return n;
+}
+
+var _origRepay=window._creditDoRepay;
+if(typeof _origRepay==='function'){
+  window._creditDoRepay=function(){
+    var id=window._creditRepayId;
+    var methEl=document.getElementById('credit-repay-method');
+    var meth=methEl?methEl.value:'cash';
+    var before=+((find(id)||{}).credit||0);
+    _origRepay.apply(this, arguments);              /* règle le crédit (réduit l'ardoise, points, journal) */
+    var after=+((find(id)||{}).credit||0);
+    var settled=+(before-after).toFixed(2);
+    if(id && settled>0.001){
+      var n=settleEchelByAmount(id, settled, meth);
+      if(n>0){
+        toast('📅 '+n+' échéance(s) également soldée(s)','success');
+        if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+        if(typeof window._echelInjectSection==='function' && window._echelDetailId===id)setTimeout(function(){window._echelInjectSection(id);},40);
+      }
+    }
+  };
+}
 })();
 </script>
