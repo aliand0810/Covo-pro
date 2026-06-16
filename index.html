@@ -19417,9 +19417,25 @@ function toggleInfoSection(headerElement) {
         
         const product = products.find(p => p.id === editingProductId);
         if (!product) return;
-        
+
         const perms = cashierPermissions.permissions;
-        
+
+        // ⛔ Interdiction de DIMINUER le stock depuis la fiche produit (réduction = via Inventaire)
+        if (perms.stock) {
+            var _curStk = +(product.stock || 0);
+            var _rawStk = (document.getElementById('edit-stock') || {}).value;
+            var _newStk = (product.unitType === 'kg') ? (parseFloat(_rawStk) || 0) : (parseInt(_rawStk) || 0);
+            if (_newStk < _curStk - 0.0001) {
+                window._stockDecPendingId = product.id;
+                var _se = document.getElementById('edit-stock');
+                if (_se) _se.value = (product.unitType === 'kg') ? _curStk : Math.round(_curStk);
+                var _cemModal = document.getElementById('cashier-edit-modal');
+                if (_cemModal) _cemModal.style.display = 'none';     // fermer la fiche AVANT le message
+                if (typeof window._stockDecreaseWarn === 'function') window._stockDecreaseWarn(product.id);
+                return; // enregistrement bloqué tant que le stock est diminué
+            }
+        }
+
         // Update only allowed fields
         if (perms.name) product.name = document.getElementById('edit-name').value;
         if (perms.image) product.image = document.getElementById('edit-image').value;
@@ -24350,6 +24366,21 @@ logout = function(skipConfirmation = false) {
         if (_pemProductId == null) return;
         const p = products.find(x => x.id == _pemProductId);
         if (!p) return;
+        // ⛔ Interdiction de DIMINUER le stock depuis la fiche produit (réduction = via Inventaire)
+        var _pemIsKg = document.getElementById('pem-unit-type')?.value === 'kg';
+        var _pemStEl = document.getElementById('pem-stock');
+        if (_pemStEl && _pemStEl.value !== '') {
+            var _curS = +(p.stock || 0);
+            var _newS = _pemIsKg ? (parseFloat(_pemStEl.value) || 0) : (parseInt(_pemStEl.value) || 0);
+            if (_newS < _curS - 0.0001) {
+                window._stockDecPendingId = p.id;
+                _pemStEl.value = _pemIsKg ? _curS : Math.round(_curS);
+                var _pemModal = document.getElementById('product-edit-modal');
+                if (_pemModal) _pemModal.style.display = 'none';     // fermer la fiche AVANT le message
+                if (typeof window._stockDecreaseWarn === 'function') window._stockDecreaseWarn(p.id);
+                return; // enregistrement bloqué tant que le stock est diminué
+            }
+        }
         const isKg = document.getElementById('pem-unit-type')?.value === 'kg';
         p.unitType = isKg ? 'kg' : 'unit';
 
@@ -54575,5 +54606,51 @@ if(typeof _origRepay==='function'){
     }
   };
 }
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     STOCK · INTERDICTION DE DIMINUTION DEPUIS LA FICHE PRODUIT — COVO Pro v28
+     Message + accès direct à l'Inventaire
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+function injectWarn(){
+  if(document.getElementById('stock-dec-warn-modal'))return;
+  var m=document.createElement('div'); m.id='stock-dec-warn-modal';
+  m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);z-index:24000;justify-content:center;align-items:center;padding:18px;';
+  m.innerHTML=''
+    +'<div style="background:var(--bg-card,#fff);border-radius:16px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;border:1.5px solid #f39c12;">'
+    +'<div style="background:linear-gradient(135deg,#f39c12,#e67e22);padding:14px 18px;color:#fff;display:flex;align-items:center;gap:9px;font-weight:900;font-size:1rem;">⚠️ Diminution de stock non autorisée</div>'
+    +'<div style="padding:18px 20px;font-size:.88rem;line-height:1.55;color:var(--text-main,#2c3e50);">'
+    +'Vous ne pouvez pas <strong>diminuer le stock</strong> directement depuis la fiche produit.<br><br>'
+    +'Pour effectuer une réduction de stock, veuillez accéder à la section <strong>« Inventaire »</strong> et procéder à l’ajustement depuis cet écran.'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;padding:0 20px 18px;">'
+    +'<button onclick="window._stockGoInventaire()" style="flex:2;padding:11px;background:linear-gradient(135deg,#8e44ad,#6d28d9);color:#fff;border:none;border-radius:10px;font-weight:800;font-size:.86rem;cursor:pointer;">📋 Aller à l’Inventaire</button>'
+    +'<button onclick="window._stockDecreaseWarnClose()" style="flex:1;padding:11px;background:rgba(0,0,0,.06);color:var(--text-main,#2c3e50);border:none;border-radius:10px;font-weight:700;font-size:.84rem;cursor:pointer;">Compris</button>'
+    +'</div></div>';
+  m.addEventListener('click',function(e){if(e.target===m)window._stockDecreaseWarnClose();});
+  document.body.appendChild(m);
+}
+window._stockDecreaseWarn=function(id){ if(id!=null)window._stockDecPendingId=id; injectWarn(); var m=document.getElementById('stock-dec-warn-modal'); if(m)m.style.display='flex'; };
+window._stockDecreaseWarnClose=function(){ var m=document.getElementById('stock-dec-warn-modal'); if(m)m.style.display='none'; };
+window._stockGoInventaire=function(){
+  window._stockDecreaseWarnClose();
+  var pid=window._stockDecPendingId;
+  ['product-edit-modal','cashier-edit-modal'].forEach(function(idn){var e=document.getElementById(idn); if(e)e.style.display='none';});
+  if(typeof switchTab==='function'){ try{ switchTab('inventaire'); }catch(e){} }
+  /* Ouvrir directement la fiche stock du produit concerné dans l'Inventaire */
+  setTimeout(function(){
+    try{
+      if(typeof window.invtStartSession==='function' && !window._invtSession){ window.invtStartSession(); }
+      var prod=(typeof products!=='undefined'?products:[]).find(function(x){return String(x.id)===String(pid);});
+      var sEl=document.getElementById('invt-search');
+      if(sEl && prod){ sEl.value=prod.name||''; if(typeof invtSearchOninput==='function'){ try{ invtSearchOninput(); }catch(e){} } }
+      setTimeout(function(){ if(pid!=null && typeof window._invtProductTap==='function'){ try{ window._invtProductTap(pid); }catch(e){} } }, 190);
+    }catch(e){}
+  }, 360);
+};
 })();
 </script>
