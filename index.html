@@ -6699,6 +6699,14 @@ button, .btn, .retours-btn {
                         &#128193; <span id="gdrive-folder-info-name"></span>
                     </div>
 
+                    <!-- Contrôle des dossiers en double -->
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+                        <button onclick="window._gdDedupeBackupFolders&&window._gdDedupeBackupFolders(false)" id="gd-dedupe-btn" title="Vérifie qu'il n'existe qu'un seul dossier COVO_PRO_BACKUPS et corrige les doublons vides"
+                            style="background:#fff; border:1.5px solid #f39c12; color:#b9770e; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:700; white-space:nowrap;">
+                            &#128269; V&eacute;rifier les doublons
+                        </button>
+                        <span id="gd-dedupe-status" style="font-size:0.76rem; color:#666;"></span>
+                    </div>
 
                 </div><!-- /gdrive-folder-section -->
 
@@ -22279,6 +22287,7 @@ logout = function(skipConfirmation = false) {
             <div style="border-top:1px dashed #000; padding-top:10px;">
                 ${itemsRows}
             </div>
+            <script type="application/json" id="covo-sale-data">${JSON.stringify({id:sale.id,ticketNum:_dlTicket,date:sale.date,cashier:sale.cashierId||sale.cashier,total:sale.total,method:sale.method,items:(sale.items||[]).map(function(it){return {name:it.name,quantity:it.quantity,price:it.price,unitType:it.unitType||'unit',total:_cartLineTotal(it),retourne:!!it.retourne};})}).replace(/</g,'\\u003c')}<\/script>
             ${totalRow}
             <div style="text-align:right; font-size:0.88rem; margin-top:5px; color:#444;">
                 💳 Mode : ${methodLabel}<br>
@@ -40041,6 +40050,7 @@ function initAdminSections() {
                 await _gdEnsureFile();
                 _gdUpdateFolderInfo();
                 _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + ' · 📁 ' + _gdFolderName);
+                if (!window._gdDedupeRan) { window._gdDedupeRan = true; setTimeout(function(){ if (typeof window._gdDedupeBackupFolders === 'function') window._gdDedupeBackupFolders(true); }, 2200); }
                 return;
             }
         }
@@ -40069,6 +40079,7 @@ function initAdminSections() {
         await _gdEnsureFile();
         _gdUpdateFolderInfo();
         _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + ' · 📁 ' + _gdFolderName);
+        if (!window._gdDedupeRan) { window._gdDedupeRan = true; setTimeout(function(){ if (typeof window._gdDedupeBackupFolders === 'function') window._gdDedupeBackupFolders(true); }, 2200); }
     }
 
     // Créer un dossier sur Drive par nom
@@ -40114,6 +40125,48 @@ function initAdminSections() {
         }
         return folder;
     }
+
+    // ── Détecter & corriger les dossiers « COVO_PRO_BACKUPS » en double (anomalie) ──
+    window._gdDedupeBackupFolders = async function(silent) {
+        const statusEl = document.getElementById('gd-dedupe-status');
+        const setS = (t, c) => { if (statusEl) { statusEl.textContent = t; statusEl.style.color = c || '#666'; } };
+        if (typeof _gdFetch !== 'function' || !_gdConnected) { if (!silent) setS('⚠️ Google Drive non connecté', '#c0392b'); return; }
+        if (!silent) setS('⏳ Analyse des dossiers…', '#666');
+        try {
+            const mime = 'application/vnd.google-apps.folder';
+            const q = encodeURIComponent("name='" + GD_DEFAULT_FOLDER.replace(/'/g, "\\'") + "' and mimeType='" + mime + "' and trashed=false");
+            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,createdTime)&orderBy=createdTime&pageSize=100');
+            const data = await resp.json();
+            const folders = (data.files || []);
+            if (folders.length <= 1) { if (!silent) setS('✅ Aucun doublon · 1 seul dossier « ' + GD_DEFAULT_FOLDER + ' »', '#2e7d32'); return; }
+            // Canonique : le dossier actuellement sélectionné s'il en fait partie, sinon le plus ancien
+            const canonical = folders.find(f => f.id === _gdFolderId) || folders[0];
+            const dupes = folders.filter(f => f.id !== canonical.id);
+            let trashed = 0, kept = 0; const trashedIds = [];
+            for (const f of dupes) {
+                let n = 1; // par défaut : prudence (ne pas supprimer en cas de doute)
+                try {
+                    const cr = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent("'" + f.id + "' in parents and trashed=false") + '&fields=files(id)&pageSize=5');
+                    const cd = await cr.json();
+                    n = (cd.files || []).length;
+                } catch(e) { n = 1; }
+                if (n === 0) {
+                    // Dossier vide → mise à la corbeille (réversible)
+                    try { await _gdFetch('https://www.googleapis.com/drive/v3/files/' + f.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); trashed++; trashedIds.push(f.id); } catch(e) {}
+                } else { kept++; }
+            }
+            _gdFolderId = canonical.id; _gdFolderName = canonical.name;
+            try { localStorage.setItem('gdrive_folder_id', _gdFolderId); localStorage.setItem('gdrive_folder_name', _gdFolderName); } catch(e) {}
+            if (Array.isArray(_gdAllFolders)) _gdAllFolders = _gdAllFolders.filter(f => trashedIds.indexOf(f.id) < 0);
+            let msg = '⚠️ ' + folders.length + ' dossiers « ' + GD_DEFAULT_FOLDER + ' » → 1 conservé';
+            if (trashed) msg += ' · ' + trashed + ' vide(s) corrigé(s)';
+            if (kept)    msg += ' · ' + kept + ' avec données (à fusionner manuellement)';
+            setS(msg, kept ? '#b9770e' : '#2e7d32');
+            if (!silent || trashed) { if (typeof showScanToast === 'function') showScanToast(msg, kept ? 'warning' : 'success'); }
+            if (typeof gdriveRefreshFolders === 'function') { try { await gdriveRefreshFolders(); } catch(e) {} }
+            if (typeof _gdUpdateFolderInfo === 'function') { try { _gdUpdateFolderInfo(); } catch(e) {} }
+        } catch(e) { if (!silent) setS('❌ Erreur lors de la vérification des doublons', '#c0392b'); }
+    };
 
     // Fonction appelée quand on sélectionne un dossier dans le dropdown
     window.gdriveOnFolderSelect = async function() {
@@ -42531,7 +42584,7 @@ function initAdminSections() {
                     <input type="checkbox" data-idx="${i}" ${isDup?'':'checked'} style="width:16px;height:16px;accent-color:#27ae60;flex-shrink:0;">
                     <div style="flex:1;min-width:0;">
                         <div style="font-weight:700;font-size:0.83rem;color:var(--text-main);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                            ${isDup?'⛔ ':'🧾 '}${s._ticketId?`N°${s._ticketId} — `:''}${s.cashier||'?'} — ${fmtDate}
+                            ${isDup?'⛔ ':'🧾 '}${s.ticketNum?`N°${s.ticketNum} — `:''}${s.cashier||'?'} — ${fmtDate}
                         </div>
                         <div style="font-size:0.72rem;color:var(--text-muted,#888);margin-top:2px;">
                             ${s.items?.length||0} article(s) · ${parseFloat(s.total).toFixed(2)} € · ${s.method==='cb'?'💳 CB':s.method==='mixed'?'💳💶 Mixte':'💶 Espèces'}
@@ -42546,6 +42599,7 @@ function initAdminSections() {
                                 return `<span style="color:${notFound>0?'#e67e22':'#27ae60'};font-weight:600;"> · 📦 ${found}/${s.items.length} stock${found>1?'s':''} identifié${found>1?'s':''}</span>`;
                             })()}
                         </div>
+                        ${(s.items&&s.items.length)?`<div style="font-size:0.7rem;color:var(--text-main,#444);margin-top:5px;line-height:1.5;border-top:1px dashed var(--border-color,#eee);padding-top:5px;">🛒 ${s.items.map(it=>`${(it.name||'?')} <strong>${it.unitType==='kg'?(it.quantity+' kg'):('×'+it.quantity)}</strong> <span style="color:var(--text-muted,#999);">${parseFloat(it.total!=null?it.total:(it.quantity||1)*(it.price||0)).toFixed(2)}€</span>`).join(' &nbsp;·&nbsp; ')}</div>`:'<div style="font-size:0.68rem;color:#e67e22;margin-top:4px;">⚠️ Aucun article détecté dans ce ticket</div>'}
                     </div>
                     <div style="font-weight:800;font-size:0.9rem;color:#27ae60;flex-shrink:0;">${parseFloat(s.total).toFixed(2)} €</div>`;
                 listEl.appendChild(row);
@@ -42562,38 +42616,54 @@ function initAdminSections() {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const text = doc.body?.innerText || doc.body?.textContent || '';
 
-        // ── Extraire le N° de ticket ──────────────────────────────────
-        let ticketId = null;
-        const idMatch = text.match(/[Tt]icket\s*[Nn]°?\s*[:#]?\s*([A-Za-z0-9\-]+)/)
-            || text.match(/N°\s*([A-Za-z0-9\-]+)/)
-            || text.match(/#([A-Za-z0-9\-]+)/);
-        if (idMatch) ticketId = idMatch[1].trim();
+        // ── JSON embarqué (tickets COVO récents) : source prioritaire et fiable ──
+        let _json = null;
+        const _jEl0 = doc.getElementById('covo-sale-data');
+        if (_jEl0) { try { _json = JSON.parse(_jEl0.textContent || '{}'); } catch(e) { _json = null; } }
 
-        // Depuis le nom de fichier (ticket_2026-04-06_14-30-25_#123.html)
-        if (!ticketId) {
-            const fnId = fileName.match(/#([A-Za-z0-9\-]+)/);
-            if (fnId) ticketId = fnId[1];
+        // ── Identifiant unique de la vente depuis le nom de fichier (#<saleId>) ──
+        let fileId = null;
+        const _fnId = fileName.match(/#\s*([0-9]{6,})/) || fileName.match(/#([A-Za-z0-9\-]+)/);
+        if (_fnId) fileId = _fnId[1];
+
+        // ── N° de ticket (affichage) : N° séquentiel réel ──
+        let ticketNum = (_json && _json.ticketNum != null) ? String(_json.ticketNum) : null;
+        if (!ticketNum) {
+            const _tnM = text.match(/[Tt]icket\s*N°\s*([A-Za-z0-9\-]+)/);
+            if (_tnM) ticketNum = _tnM[1].trim();
         }
 
-        // Chercher le total
-        let total = 0;
-        const totalMatch = text.match(/Total[^\d]*([\d]+[.,][\d]{2})\s*€/i)
-            || text.match(/TOTAL[^\d]*([\d]+[.,][\d]{2})/i)
-            || text.match(/([\d]+[.,][\d]{2})\s*€\s*(?:TTC)?$/im);
-        if (totalMatch) total = parseFloat(totalMatch[1].replace(',', '.'));
+        // ── Identifiant unique pour le dédoublonnage : JSON.id > #fichier > N° ──
+        const uid = (_json && _json.id != null) ? String(_json.id) : (fileId || ticketNum || ('IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)));
 
-        // Chercher la date
-        let date = null;
-        const dateMatch = text.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})[^\d]*(\d{2}):(\d{2})/)
-            || text.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
-        if (dateMatch) {
-            try {
-                if (dateMatch[0].includes('T') || dateMatch[3].length === 4) {
-                    date = new Date(dateMatch[0].replace(' ', 'T')).toISOString();
-                } else {
-                    date = new Date(`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}T${dateMatch[4]}:${dateMatch[5]}:00`).toISOString();
-                }
-            } catch(e) {}
+        // ── Total ──
+        let total = 0;
+        if (_json && _json.total != null) total = parseFloat(_json.total) || 0;
+        if (!total) {
+            const totalMatch = text.match(/Total[^\d]*([\d]+[.,][\d]{2})\s*€/i)
+                || text.match(/TOTAL[^\d]*([\d]+[.,][\d]{2})/i)
+                || text.match(/([\d]+[.,][\d]{2})\s*€\s*(?:TTC)?$/im);
+            if (totalMatch) total = parseFloat(totalMatch[1].replace(',', '.'));
+        }
+
+        // ── Date « vendu » : JSON.date > timestamp du saleId (#fichier) > texte > nom de fichier > maintenant ──
+        let date = (_json && _json.date) ? _json.date : null;
+        if (!date && fileId && /^[0-9]{12,14}$/.test(fileId)) {
+            const _t = Number(fileId);
+            if (_t > 1262304000000 && _t < 4102444800000) date = new Date(_t).toISOString(); // plage 2010–2100
+        }
+        if (!date) {
+            const dateMatch = text.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})[^\d]*(\d{2}):(\d{2})/)
+                || text.match(/(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/);
+            if (dateMatch) {
+                try {
+                    if (dateMatch[0].includes('T') || dateMatch[3].length === 4) {
+                        date = new Date(dateMatch[0].replace(' ', 'T')).toISOString();
+                    } else {
+                        date = new Date(`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}T${dateMatch[4]}:${dateMatch[5]}:00`).toISOString();
+                    }
+                } catch(e) {}
+            }
         }
         if (!date) {
             const fnMatch = fileName.match(/(\d{4}-\d{2}-\d{2})[_\-](\d{2}[-:]\d{2})/);
@@ -42601,32 +42671,64 @@ function initAdminSections() {
             else date = new Date().toISOString();
         }
 
-        // Caissier
-        let cashier = 'Import manuel';
-        const cashierMatch = text.match(/[Cc]aissier\s*:?\s*([A-Za-zÀ-ÿ\-_0-9 ]+)/);
-        if (cashierMatch) cashier = cashierMatch[1].trim().split('\n')[0].trim();
+        // ── Caissier ──
+        let cashier = (_json && _json.cashier) ? String(_json.cashier) : 'Import manuel';
+        if (cashier === 'Import manuel') {
+            const cashierMatch = text.match(/[Cc]aissier\s*:?\s*([A-Za-zÀ-ÿ\-_0-9 ]+)/);
+            if (cashierMatch) cashier = cashierMatch[1].trim().split('\n')[0].trim();
+        }
 
-        // Mode de paiement
-        let method = 'cash';
-        if (/carte|cb|bancaire/i.test(text))  method = 'cb';
-        if (/mixte|espèces.*carte|cb.*espèces/i.test(text)) method = 'mixed';
+        // ── Mode de paiement ──
+        let method = (_json && _json.method) ? String(_json.method) : 'cash';
+        if (!(_json && _json.method)) {
+            if (/carte|cb|bancaire/i.test(text))  method = 'cb';
+            if (/mixte|espèces.*carte|cb.*espèces/i.test(text)) method = 'mixed';
+        }
 
-        // Articles
+        // ── Articles ──────────────────────────────────────────────────
+        // 1) JSON embarqué (tickets COVO récents) — fiable
         const items = [];
-        const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-        lines.forEach(line => {
-            const m = line.match(/^(.+?)\s+x?\s*(\d+(?:[.,]\d+)?)\s+([\d]+[.,][\d]{2})\s*€/i);
-            if (m) {
-                items.push({ name: m[1].trim(), quantity: parseFloat(m[2].replace(',','.')), price: parseFloat(m[3].replace(',','.')) });
-            }
-        });
+        const _jsonEl = doc.getElementById('covo-sale-data');
+        if (_jsonEl) {
+            try {
+                const _jd = JSON.parse(_jsonEl.textContent || '{}');
+                if (Array.isArray(_jd.items)) _jd.items.forEach(it => {
+                    if (it && it.retourne) return; // exclure les articles retournés du décompte stock
+                    items.push({ name: it.name || '', quantity: +(it.quantity || 1), price: +(it.price || 0), unitType: it.unitType || 'unit', total: +(it.total != null ? it.total : (it.quantity || 1) * (it.price || 0)) });
+                });
+            } catch(e) {}
+        }
+        // 2) Sinon : parsing du DOM — lignes article = <span>Nom xN</span><span>X.XX€</span>
+        //    (les retours, dont la ligne contient « RETOURNÉ », sont automatiquement exclus)
+        if (!items.length) {
+            Array.prototype.forEach.call(doc.querySelectorAll('div'), div => {
+                if (div.children.length !== 2) return;
+                const a = div.children[0], b = div.children[1];
+                if (a.tagName !== 'SPAN' || b.tagName !== 'SPAN') return;
+                const left = (a.textContent || '').replace(/\s+/g, ' ').trim();
+                const right = (b.textContent || '').trim();
+                if (!left) return;
+                const pm = right.match(/^(-?[\d]+[.,][\d]{2})\s*€$/); // total « propre » → exclut les lignes RETOURNÉ
+                if (!pm) return;
+                if (/^(total|reçu|recu|rendu|mode|tva|sous[- ]?total|monnaie|cb|esp|carte)/i.test(left)) return;
+                const totalLine = parseFloat(pm[1].replace(',', '.'));
+                let qty = 1, name = left, isKg = false, unitPrice = null;
+                const km = left.match(/^(.*?)\s+([\d]+(?:[.,][\d]+)?)\s*kg\s*[×x]\s*([\d]+(?:[.,][\d]+)?)/i);
+                const um = left.match(/^(.*?)\s+x\s*([\d]+(?:[.,][\d]+)?)$/i);
+                if (km) { name = km[1].trim(); qty = parseFloat(km[2].replace(',', '.')); isKg = true; unitPrice = parseFloat(km[3].replace(',', '.')); }
+                else if (um) { name = um[1].trim(); qty = parseFloat(um[2].replace(',', '.')); }
+                if (!name) return;
+                items.push({ name: name, quantity: qty, price: unitPrice != null ? unitPrice : (qty ? +(totalLine / qty).toFixed(2) : totalLine), unitType: isKg ? 'kg' : 'unit', total: totalLine });
+            });
+        }
 
         if (!total || total <= 0) return null;
 
         return {
-            id:        ticketId || ('IMP-' + Date.now() + '-' + Math.random().toString(36).slice(2,6)),
-            _ticketId: ticketId,  // toujours présent pour la vérification doublon
-            date,
+            id:        uid,                 // identifiant unique de la vente (timestamp d'origine)
+            _ticketId: uid,                 // utilisé pour le dédoublonnage
+            ticketNum: ticketNum || uid,    // N° de ticket affiché (séquentiel réel)
+            date,                           // date « vendu » d'origine → comptabilisé le bon jour
             cashier,
             cashierId: null,
             total,
@@ -53499,18 +53601,34 @@ setTimeout(refresh,1500);
 'use strict';
 var _shown=false, _missedDate=null;
 /* Trouve le jour passé (≤10 j) ayant des ventes mais aucune clôture finale */
+function _localDay(v){ var dt=new Date(v); if(isNaN(dt.getTime())) return String(v||'').split('T')[0]; return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
+function _dayClosed(d){
+  if(!d) return true;
+  if(localStorage.getItem('covo_fp_done_'+d)) return true; /* flag explicite « fait » */
+  return false;
+}
 function _findMissedDay(){
   var sales=[],clot=[];
   try{sales=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');}catch(e){}
   try{clot=JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]');}catch(e){}
   if(!Array.isArray(sales)||!Array.isArray(clot))return null;
+  /* Jours clôturés — toutes représentations possibles (date métier + jour UTC/local du moment) */
   var closed={};
-  clot.forEach(function(h){ if(h&&h.date&&!h.partiel) closed[h.date]=true; });
+  clot.forEach(function(h){
+    if(!h||h.partiel) return;
+    if(h.date){ closed[String(h.date).split('T')[0]]=true; closed[_localDay(h.date)]=true; }
+    if(h.datetime){ closed[String(h.datetime).split('T')[0]]=true; closed[_localDay(h.datetime)]=true; }
+  });
   var saleDays={};
   sales.forEach(function(s){ if(s&&!s.cancelled){ var d=String(s.date||'').split('T')[0]; if(d)saleDays[d]=true; } });
   var todayStr=new Date().toISOString().split('T')[0];
   var lim=new Date(); lim.setDate(lim.getDate()-10); var limStr=lim.toISOString().split('T')[0];
-  var missed=Object.keys(saleDays).filter(function(d){ return d<todayStr && d>=limStr && !closed[d] && !(typeof window._clotIsIgnored==='function' && window._clotIsIgnored(d)); });
+  var missed=Object.keys(saleDays).filter(function(d){
+    if(d>=todayStr || d<limStr) return false;
+    if(closed[d] || _dayClosed(d)) return false;
+    if(typeof window._clotIsIgnored==='function' && window._clotIsIgnored(d)) return false;
+    return true;
+  });
   if(!missed.length)return null;
   missed.sort();
   return missed[missed.length-1]; /* jour manqué le plus récent (la veille en général) */
@@ -53555,16 +53673,22 @@ window._clotIgnore=function(d){ try{ var a=JSON.parse(localStorage.getItem('covo
 window._clotIgnoreCount=function(){ try{ var a=JSON.parse(localStorage.getItem('covo_clot_ignored')||'[]'); return Array.isArray(a)?a.length:0; }catch(e){return 0;} };
 window._clotUnignoreAll=function(){ try{ localStorage.removeItem('covo_clot_ignored'); if(typeof window._gdTriggerAutoSave==='function')window._gdTriggerAutoSave(); }catch(e){} if(typeof window._fpDevRenderMissed==='function')window._fpDevRenderMissed(); };
 window._clotIgnoreDay=function(d){ if(typeof window._clotIgnore==='function')window._clotIgnore(d); if(typeof showScanToast==='function')showScanToast('🚫 Jour ignoré — plus de rappel'); if(typeof window._fpDevRenderMissed==='function')window._fpDevRenderMissed(); };
+function _mdLocalDay(v){ var dt=new Date(v); if(isNaN(dt.getTime())) return String(v||'').split('T')[0]; return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
 function _missedDays(){
   var sales=[],clot=[];
   try{sales=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');}catch(e){}
   try{clot=JSON.parse(localStorage.getItem('covo_caisse_historique')||'[]');}catch(e){}
-  var closed={}; (Array.isArray(clot)?clot:[]).forEach(function(h){ if(h&&h.date&&!h.partiel)closed[h.date]=true; });
+  var closed={};
+  (Array.isArray(clot)?clot:[]).forEach(function(h){
+    if(!h||h.partiel)return;
+    if(h.date){ closed[String(h.date).split('T')[0]]=true; closed[_mdLocalDay(h.date)]=true; }
+    if(h.datetime){ closed[String(h.datetime).split('T')[0]]=true; closed[_mdLocalDay(h.datetime)]=true; }
+  });
   var ign=_ignoredSet();
   var saleDays={}; (Array.isArray(sales)?sales:[]).forEach(function(s){ if(s&&!s.cancelled){ var d=String(s.date||'').split('T')[0]; if(d)saleDays[d]=true; } });
   var todayStr=new Date().toISOString().split('T')[0];
   var lim=new Date(); lim.setDate(lim.getDate()-31); var limStr=lim.toISOString().split('T')[0];
-  return Object.keys(saleDays).filter(function(d){ return d<todayStr && d>=limStr && !closed[d] && !ign[d]; }).sort().reverse();
+  return Object.keys(saleDays).filter(function(d){ return d<todayStr && d>=limStr && !closed[d] && !localStorage.getItem('covo_fp_done_'+d) && !ign[d]; }).sort().reverse();
 }
 window._fpDevOpen=function(d){ if(d && typeof window._openFinPoste==='function') window._openFinPoste(d); };
 window._fpDevOpenPicked=function(){
