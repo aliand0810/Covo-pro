@@ -4954,12 +4954,18 @@ button, .btn, .retours-btn {
                             <select class="retours-filter-sel" id="ech-cat-filter" onchange="filterEcheancesByCat(this.value)">
                                 <option value="">Toutes catégories</option>
                             </select>
+                            <select class="retours-filter-sel" id="ech-sort-filter" onchange="filterEcheancesBySort(this.value)" title="Trier par délai / DLC">
+                                <option value="">↕️ Tri par défaut</option>
+                                <option value="asc">⏱️ Délai : du plus petit au plus grand</option>
+                                <option value="desc">⏱️ Délai : du plus grand au plus petit</option>
+                            </select>
                             <button class="retours-btn retours-btn-success" onclick="openRetourModal('rm-echeance')">➕ Ajouter article</button>
+                            <button class="retours-btn" style="background:#1565c0;color:#fff;" title="Ajouter automatiquement tous les produits du catalogue" onclick="window._echImportAllProducts&&window._echImportAllProducts()">📥 Importer tous les produits</button>
                             <button class="retours-btn retours-btn-outline" onclick="exportEcheances()">⬇️ CSV</button>
                         </div>
                     </div>
                     <div class="retours-table-wrap"><table class="retours-table">
-                        <thead><tr><th>Article</th><th>Référence</th><th>Catégorie</th><th>DLC / DLUO</th><th>Délai restant</th><th>Stock</th><th>Emplacement</th><th>État</th><th>Actions</th></tr></thead>
+                        <thead><tr><th>Article</th><th>Référence</th><th>Catégorie</th><th>DLC / DLUO</th><th>Délai restant</th><th>Stock</th><th>Emplacement</th><th>État</th></tr></thead>
                         <tbody id="echeances-tbody"></tbody>
                     </table></div>
                 </div>
@@ -38056,9 +38062,21 @@ function marcBulkSetComment() {
 }
 function renderEcheances(data) {
     const tb = document.getElementById('echeances-tbody');
-    if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="9"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📅</div><h3 style="margin:8px 0 4px;">Aucune échéance enregistrée</h3><p style="font-size:0.82rem;">Cliquez sur "Ajouter article" pour commencer.</p></div></td></tr>`; return; }
+    if (!data || !data.length) { tb.innerHTML=`<tr><td colspan="8"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📅</div><h3 style="margin:8px 0 4px;">Aucune échéance enregistrée</h3><p style="font-size:0.82rem;">Cliquez sur "Ajouter article" pour commencer.</p></div></td></tr>`; return; }
     const today = new Date(); today.setHours(0,0,0,0);
     tb.innerHTML = data.map(e => {
+        if (!e.date || isNaN(new Date(e.date).getTime())) {
+            return `<tr style="cursor:pointer;" onclick="window._echOpenProduct('${e.id}')" title="Ouvrir la fiche produit">
+                <td><strong>${e.article}</strong>${e.remarque?`<div style="font-size:0.72rem;color:#7f8c8d;">${e.remarque}</div>`:''}</td>
+                <td><code style="font-size:0.74rem;color:#7f8c8d">${e.ref||'-'}</code></td>
+                <td style="font-size:0.77rem">${e.categorie}</td>
+                <td><span style="font-size:0.78rem;color:#95a5a6;">📅 À définir</span></td>
+                <td><span style="font-size:0.76rem;color:#95a5a6;">—</span></td>
+                <td><strong>${e.stock}</strong> u.</td>
+                <td style="font-size:0.77rem;color:#7f8c8d">${e.emplacement||'-'}</td>
+                <td><span class="retours-badge-st" style="background:#ecf0f1;color:#7f8c8d;">DLC à définir</span></td>
+            </tr>`;
+        }
         const d = new Date(e.date); d.setHours(0,0,0,0);
         const diff = Math.ceil((d-today)/86400000);
         let sc,sl,cc,pc,pp;
@@ -38067,7 +38085,7 @@ function renderEcheances(data) {
         else if (diff<=7) { sc='rbadge-urgent';sl='Bientôt';cc='soon';pc='soon';pp=Math.max(15,100-diff*10); }
         else { sc='rbadge-ok';sl='OK';cc='ok';pc='ok';pp=Math.max(5,Math.min(45,100-diff*2)); }
         const dt = diff<0?`Expiré il y a ${Math.abs(diff)}j`:diff===0?'Expire auj.':diff+'j restants';
-        return `<tr>
+        return `<tr style="cursor:pointer;" onclick="window._echOpenProduct('${e.id}')" title="Ouvrir la fiche produit">
             <td><strong>${e.article}</strong>${e.remarque?`<div style="font-size:0.72rem;color:#7f8c8d;">${e.remarque}</div>`:''}</td>
             <td><code style="font-size:0.74rem;color:#7f8c8d">${e.ref||'-'}</code></td>
             <td style="font-size:0.77rem">${e.categorie}</td>
@@ -38076,13 +38094,23 @@ function renderEcheances(data) {
             <td><strong>${e.stock}</strong> u.</td>
             <td style="font-size:0.77rem;color:#7f8c8d">${e.emplacement||'-'}</td>
             <td><span class="retours-badge-st ${sc}">${sl}</span></td>
-            <td><div style="display:flex;gap:4px;">
-                <button class="retours-btn retours-btn-sm retours-btn-outline" onclick="editEch('${e.id}')">✏️</button>
-                <button class="retours-btn retours-btn-sm" style="background:#e74c3c;color:white;" onclick="delEch('${e.id}')">🗑️</button>
-            </div></td>
         </tr>`;
     }).join('');
 }
+/* Clic sur une ligne d'échéance → ouvrir la fiche produit (comme dans Produits) */
+window._echOpenProduct = function(echId){
+    var list = rLoad('echeances');
+    var e = (list||[]).find(function(x){ return x.id===echId; });
+    if(!e) return;
+    var prods = (typeof products!=='undefined' && Array.isArray(products)) ? products : [];
+    var rk = ((e.ref||'')+'').toLowerCase().trim();
+    var nk = ((e.article||'')+'').toLowerCase().trim();
+    var p = (rk ? prods.find(function(x){ return ((x.barcode||'')+'').toLowerCase().trim()===rk; }) : null)
+         || (nk ? prods.find(function(x){ return ((x.name||'')+'').toLowerCase().trim()===nk; }) : null);
+    if(p && typeof openProductEditModal==='function'){ openProductEditModal(p.id); }
+    else if(typeof editEch==='function'){ editEch(echId); }   /* fallback : éditer l'échéance si pas de produit lié */
+    else if(typeof rToast==='function'){ rToast('Produit introuvable dans le catalogue', 'error'); }
+};
 
 // ===== RENDER HISTORIQUE =====
 const RHIST_ICONS = {created:'📥',approved:'✅',refused:'❌',processing:'⚙️',sent:'📤',credited:'💳',expired:'⏰',alert:'⚠️',modified:'✏️',deleted:'🗑️',invest:'💼',catalogue:'📋'};
@@ -38875,7 +38903,43 @@ let eft='', efs='', efc='';
 function filterEcheances(t) { eft=t.toLowerCase(); applyEchFilter(); }
 function filterEcheancesByStatus(s) { efs=s; applyEchFilter(); }
 function filterEcheancesByCat(c) { efc=c; applyEchFilter(); }
+/* Import : ajoute tous les produits du catalogue aux échéances (réf/nom non dupliqués) */
+function _echImportAllProducts(opts){
+  opts = opts || {};
+  var prods = (typeof products!=='undefined' && Array.isArray(products)) ? products : [];
+  var list = rLoad('echeances');
+  var seen = {};
+  list.forEach(function(e){ var k=((e.ref||e.article||'')+'').toLowerCase().trim(); if(k)seen[k]=true; });
+  var added=0, n=list.length;
+  prods.forEach(function(p){
+    if(!p || p.active===false) return;
+    var key=((p.barcode||p.name||'')+'').toLowerCase().trim();
+    if(!key || seen[key]) return;
+    seen[key]=true; n++;
+    list.push({
+      id:'EC-'+String(n).padStart(3,'0')+'-'+Math.random().toString(36).slice(2,5),
+      article:p.name||'', date:p.expiryDate||'', ref:p.barcode||'',
+      categorie:p.category||'-',
+      stock:(p.unitType==='kg')?(parseFloat(p.stock)||0):(parseInt(p.stock)||0),
+      emplacement:p.emplacement||p.location||'', remarque:'', _auto:true
+    });
+    added++;
+  });
+  if(added>0) rSave('echeances', list);
+  if(!opts.silent && typeof rToast==='function') rToast(added>0?('📥 '+added+' produit(s) ajouté(s) aux échéances'):'✅ Tous les produits sont déjà présents', added>0?'success':'info');
+  if(!opts.noRender && typeof applyEchFilter==='function') applyEchFilter();
+  return added;
+}
+window._echImportAllProducts = _echImportAllProducts;
+
 function applyEchFilter() {
+    /* Pré-remplissage automatique (une seule fois) avec tous les produits du catalogue */
+    if (!localStorage.getItem('covo_ech_autoinit')) {
+        try {
+            if (typeof products!=='undefined' && products && products.length) _echImportAllProducts({silent:true, noRender:true});
+            localStorage.setItem('covo_ech_autoinit','1');
+        } catch(e){}
+    }
     let d = rLoad('echeances');
     if (eft) d = d.filter(e=>[e.article,e.ref||''].join(' ').toLowerCase().includes(eft));
     if (efc) d = d.filter(e=>e.categorie===efc);
@@ -53235,10 +53299,31 @@ function _resvNotify(customer,r,currentStock){
 }
 /* Surveiller les hausses de stock (réapprovisionnement) */
 var _origLogStock=window._logStockChange;
+/* Synchronise l'échéance (DLC) d'un produit dans covo_echeances */
+function _dlcSyncEcheance(p){
+  try{
+    var key=((p.barcode||p.name||'')+'').toLowerCase().trim(); if(!key)return;
+    var ech=JSON.parse(localStorage.getItem('covo_echeances')||'[]'); if(!Array.isArray(ech))return;
+    var ch=false;
+    ech.forEach(function(e){ var k=((e.ref||e.article||'')+'').toLowerCase().trim(); if(k===key && e.date){ e.date=''; ch=true; } });
+    if(ch){ localStorage.setItem('covo_echeances', JSON.stringify(ech)); if(typeof applyEchFilter==='function'){try{applyEchFilter();}catch(_e){}} }
+  }catch(e){}
+}
 window._logStockChange=function(product,before,after,type,reason,meta){
   if(typeof _origLogStock==='function')_origLogStock.apply(this,arguments);
   try{ if(product && typeof after==='number' && typeof before==='number' && after>before){ _resvCheckRestock(product.id,after); } }catch(e){}
+  /* Stock à zéro → effacer automatiquement la DLC du produit */
+  try{ if(product && typeof after==='number' && after<=0 && product.expiryDate){ product.expiryDate=null; _dlcSyncEcheance(product); } }catch(e){}
 };
+/* Nettoyage initial : effacer la DLC de tous les produits déjà à zéro */
+function _dlcSweepZeroStock(){
+  try{
+    var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[]; var changed=false;
+    prods.forEach(function(p){ if(p && (parseFloat(p.stock)||0)<=0 && p.expiryDate){ p.expiryDate=null; _dlcSyncEcheance(p); changed=true; } });
+    if(changed){ try{ localStorage.setItem('covo_products', JSON.stringify(products)); }catch(e){} if(typeof renderProducts==='function'){try{renderProducts();}catch(e){}} }
+  }catch(e){}
+}
+setTimeout(_dlcSweepZeroStock, 2200);
 
 /* Fermer la modale au clic sur le fond */
 setTimeout(function(){var m=document.getElementById('resv-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._resvClose();});},1700);
