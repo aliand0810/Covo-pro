@@ -38899,10 +38899,11 @@ function applyMarcFilter() {
     renderMarchandise(d);
 }
 
-let eft='', efs='', efc='';
+let eft='', efs='', efc='', efSort='';
 function filterEcheances(t) { eft=t.toLowerCase(); applyEchFilter(); }
 function filterEcheancesByStatus(s) { efs=s; applyEchFilter(); }
 function filterEcheancesByCat(c) { efc=c; applyEchFilter(); }
+function filterEcheancesBySort(v) { efSort=v; applyEchFilter(); }
 /* Import : ajoute tous les produits du catalogue aux échéances (réf/nom non dupliqués) */
 function _echImportAllProducts(opts){
   opts = opts || {};
@@ -38932,6 +38933,15 @@ function _echImportAllProducts(opts){
 }
 window._echImportAllProducts = _echImportAllProducts;
 
+/* Stock réel d'une échéance (recherché dans le catalogue par réf/nom, sinon snapshot) */
+function _echLiveStock(e){
+  var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+  var rk=((e.ref||'')+'').toLowerCase().trim(), nk=((e.article||'')+'').toLowerCase().trim();
+  var p=(rk?prods.find(function(x){return ((x.barcode||'')+'').toLowerCase().trim()===rk;}):null)
+     ||(nk?prods.find(function(x){return ((x.name||'')+'').toLowerCase().trim()===nk;}):null);
+  return p ? (parseFloat(p.stock)||0) : (parseFloat(e.stock)||0);
+}
+
 function applyEchFilter() {
     /* Pré-remplissage automatique (une seule fois) avec tous les produits du catalogue */
     if (!localStorage.getItem('covo_ech_autoinit')) {
@@ -38941,6 +38951,8 @@ function applyEchFilter() {
         } catch(e){}
     }
     let d = rLoad('echeances');
+    /* Masquer les produits dont le stock (réel) est à zéro */
+    d = d.filter(e => _echLiveStock(e) > 0);
     if (eft) d = d.filter(e=>[e.article,e.ref||''].join(' ').toLowerCase().includes(eft));
     if (efc) d = d.filter(e=>e.categorie===efc);
     if (efs) {
@@ -38953,6 +38965,16 @@ function applyEchFilter() {
             if (efs==='soon') return diff>3&&diff<=7;
             if (efs==='ok') return diff>7;
             return true;
+        });
+    }
+    if (efSort==='asc' || efSort==='desc') {
+        d = d.slice().sort(function(a,b){
+            var ta=new Date(a.date).getTime(), tb=new Date(b.date).getTime();
+            var na=isNaN(ta), nb=isNaN(tb);
+            if (na && nb) return 0;
+            if (na) return 1;   // « À définir » (sans DLC) toujours en fin
+            if (nb) return -1;
+            return efSort==='asc' ? (ta-tb) : (tb-ta);
         });
     }
     renderEcheances(d);
