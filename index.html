@@ -33143,7 +33143,14 @@ window._openFinPoste = function(forDateStr) {
     if (!modal) return;
 
     // Pré-remplir le contenu
-    document.getElementById('fp-date').textContent = today.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+    var _fpDateLbl = today.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+    document.getElementById('fp-date').textContent = _fpDateLbl;
+    // Titre : « Clôture de veille » avec la date quand on clôture un jour passé
+    var _fpTitleEl = document.getElementById('fp-title');
+    if (_fpTitleEl) {
+        if (forDateStr) { _fpTitleEl.innerHTML = '🗓️ Clôture de veille — <span style="font-weight:900;">' + _fpDateLbl + '</span>'; }
+        else { _fpTitleEl.textContent = '🏁 Fin de poste'; }
+    }
     document.getElementById('fp-nb-tx').textContent = nbTx + ' vente' + (nbTx > 1 ? 's' : '') + (nbRetours ? ' + ' + nbRetours + ' retour(s)' : '');
     document.getElementById('fp-total-jour').textContent = totalJour.toFixed(2) + ' €';
     document.getElementById('fp-theor-esp').textContent = totalEsp.toFixed(2) + ' €';
@@ -33358,6 +33365,12 @@ window._renderCaisseHist = function() {
 };
 
 // ===== ONGLET CLÔTURES — RENDU COMPLET =====
+/* Jour MÉTIER d'une clôture (la date réelle clôturée), pas le moment de saisie.
+   Indispensable pour les clôtures de veille saisies un autre jour. */
+function _clotDay(h){
+    if (h && h.date) { var dd = new Date(h.date + 'T12:00:00'); if (!isNaN(dd.getTime())) return dd; }
+    return new Date(h ? h.datetime : Date.now());
+}
 function renderCloturesTab() {
     var hist = _loadCaisseHistorique();
     var period = (document.getElementById('cloture-filter-period') || {}).value || '30';
@@ -33371,16 +33384,16 @@ function renderCloturesTab() {
         var toVal   = (document.getElementById('cloture-date-to') || {}).value || '';
         if (fromVal) {
             var fromDate = new Date(fromVal + 'T00:00:00');
-            filtered = filtered.filter(function(h) { return new Date(h.datetime) >= fromDate; });
+            filtered = filtered.filter(function(h) { return _clotDay(h) >= fromDate; });
         }
         if (toVal) {
             var toDate = new Date(toVal + 'T23:59:59');
-            filtered = filtered.filter(function(h) { return new Date(h.datetime) <= toDate; });
+            filtered = filtered.filter(function(h) { return _clotDay(h) <= toDate; });
         }
     } else if (period !== 'all') {
         var days = parseInt(period);
         var cutoff = new Date(now.getTime() - days * 86400000);
-        filtered = hist.filter(function(h) { return new Date(h.datetime) >= cutoff; });
+        filtered = hist.filter(function(h) { return _clotDay(h) >= cutoff; });
     }
     if (typeF === 'final')   filtered = filtered.filter(function(h) { return !h.partiel; });
     else if (typeF === 'partiel') filtered = filtered.filter(function(h) { return h.partiel; });
@@ -33445,7 +33458,7 @@ function renderCloturesTab() {
     var isAdm = currentUser && (currentUser.role === 'admin' || currentUser.isMaster || currentUser.id === 'USR-MASTER');
 
     // Sort newest first
-    var sorted = filtered.slice().sort(function(a, b) { return new Date(b.datetime) - new Date(a.datetime); });
+    var sorted = filtered.slice().sort(function(a, b) { var db=_clotDay(b)-_clotDay(a); return db!==0 ? db : (new Date(b.datetime||0) - new Date(a.datetime||0)); });
 
     var thStyle  = 'padding:9px 10px;text-align:left;font-size:0.63rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;';
     var thStyleR = thStyle + 'text-align:right;';
@@ -33468,9 +33481,11 @@ function renderCloturesTab() {
 
     sorted.forEach(function(h, idx) {
         var d = new Date(h.datetime);
-        var dateStr = d.toLocaleDateString('fr-FR', {weekday:'short', day:'2-digit', month:'short'});
-        var yearStr = d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '';
+        var bizDate = _clotDay(h);   // jour réellement clôturé (ex. la veille)
+        var dateStr = bizDate.toLocaleDateString('fr-FR', {weekday:'short', day:'2-digit', month:'short'});
+        var yearStr = bizDate.getFullYear() !== now.getFullYear() ? ' ' + bizDate.getFullYear() : '';
         var timeStr = d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+        var _backDated = h.date && (bizDate.toDateString() !== d.toDateString());
 
         // Durée de poste
         var dureeStr = '';
@@ -33510,6 +33525,9 @@ function renderCloturesTab() {
         t += '<td style="padding:8px 10px;min-width:118px;">';
         t += '<div style="font-weight:700;font-size:0.78rem;color:var(--text-main,#2c3e50);">'+dateStr+yearStr+'</div>';
         t += '<div style="font-size:0.67rem;color:var(--text-muted,#888);margin-top:1px;">🏁 Fin : '+timeStr+'</div>';
+        if (_backDated) {
+            t += '<div style="font-size:0.6rem;color:#e67e22;margin-top:1px;font-weight:700;">📝 Clôture de veille · saisie le '+d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})+'</div>';
+        }
         if (h.prisePoste) {
             t += '<div style="font-size:0.63rem;color:#8e44ad;margin-top:1px;">▶ Début : '+h.prisePoste+(dureeStr ? ' <span style="background:rgba(142,68,173,0.1);color:#8e44ad;border-radius:4px;padding:0 4px;font-weight:700;">('+dureeStr+')</span>' : '')+'</div>';
         }
@@ -44961,7 +44979,7 @@ function initAdminSections() {
         <!-- Header -->
         <div style="background:linear-gradient(135deg,#c0392b,#e74c3c);padding:18px 22px;display:flex;align-items:center;justify-content:space-between;border-radius:18px 18px 0 0;">
           <div>
-            <div style="font-size:1.05rem;font-weight:900;color:#fff;">🏁 Fin de poste</div>
+            <div id="fp-title" style="font-size:1.05rem;font-weight:900;color:#fff;">🏁 Fin de poste</div>
             <div id="fp-date" style="font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:3px;"></div>
           </div>
           <button onclick="document.getElementById('fin-poste-modal').style.display='none'"
@@ -51250,10 +51268,11 @@ function renderTickets(c){
     el.innerHTML='<div style="text-align:center;padding:30px;color:var(--text-muted);"><div style="font-size:2rem;margin-bottom:8px;">🧾</div><div style="font-size:.85rem;font-weight:700;">Aucun ticket</div><div style="font-size:.75rem;margin-top:4px;">Les achats apparaîtront ici automatiquement</div></div>';
     return;
   }
-  var mi={cb:'💳',cash:'💶',mixed:'💳💶',points:'💜','points+cb':'💜+💳','points+cash':'💜+💶'};
+  var mi={cb:'💳',cash:'💶',mixed:'💳💶',ticket:'🎟️',credit:'📒',echel:'📅',points:'💜','points+cb':'💜+💳','points+cash':'💜+💶'};
   el.innerHTML=hist.map(function(h,i){
-    var isTicket=!!(h.saleId&&h.type==='credit');
+    var isTicket=!!(h.saleId&&(h.type==='credit'||h.type==='credit_purchase'||h.type==='echel_purchase'));
     var ico=isTicket?(mi[h.method]||'🧾'):'📝';
+    var typeLabel=h.type==='credit_purchase'?'📒 Achat à crédit':h.type==='echel_purchase'?('📅 '+(h.note||'Paiement en plusieurs fois')):'';
     var dt=new Date(h.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'});
     var hr=new Date(h.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
     var ca=h.cashier?' · '+esc(h.cashier):'';
@@ -51284,7 +51303,7 @@ function renderTickets(c){
       +'<div style="flex:1;min-width:0;">'
       +'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-bottom:3px;">'+tnBadge+'</div>'
       +'<div style="font-size:.73rem;color:var(--text-muted);">'+ico+' '+dt+' '+hr+ca+'</div>'
-      +'<div style="font-size:.8rem;font-weight:700;margin-top:2px;">'+(isTicket?'<span style="color:#059669;">'+(h.amount||0).toFixed(2)+'€</span>'+(h._ltyDiscount?'<span style="font-size:.68rem;color:#7c3aed;margin-left:5px;">(−'+h._ltyDiscount.toFixed(2)+'€ pts)</span>':''):'<span style="color:var(--text-muted);">'+(h.note||'Ajustement')+'</span>')+'</div>'
+      +'<div style="font-size:.8rem;font-weight:700;margin-top:2px;">'+(isTicket?'<span style="color:#059669;">'+(h.amount||0).toFixed(2)+'€</span>'+(h._ltyDiscount?'<span style="font-size:.68rem;color:#7c3aed;margin-left:5px;">(−'+h._ltyDiscount.toFixed(2)+'€ pts)</span>':'')+(typeLabel?'<span style="font-size:.64rem;color:#1565c0;margin-left:6px;font-weight:700;">'+typeLabel+'</span>':''):'<span style="color:var(--text-muted);">'+(h.note||'Ajustement')+'</span>')+'</div>'
       +'</div>'
       +'<div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">'+viewBtn+ptsBadge+(hasItems?'<span class="lx" style="margin-left:4px;color:var(--text-muted);font-size:.75rem;">▼</span>':'')+'</div>'
       +'</div>'
@@ -51299,7 +51318,7 @@ window._ltyOpenRcpt=function(i){
   var modal=document.getElementById('lty-rcpt-modal');
   var content=document.getElementById('lty-rcpt-content');
   if(!modal||!content)return;
-  var ml={cb:'💳 Carte Bancaire',cash:'💶 Espèces',mixed:'💳💶 Mixte',points:'💜 Points','points+cb':'💜 Points + 💳 CB','points+cash':'💜 Points + 💶 Espèces'};
+  var ml={cb:'💳 Carte Bancaire',cash:'💶 Espèces',mixed:'💳💶 Mixte',ticket:'🎟️ Ticket restaurant',credit:'📒 Crédit (compte client)',echel:'📅 Paiement échelonné',points:'💜 Points','points+cb':'💜 Points + 💳 CB','points+cash':'💜 Points + 💶 Espèces'};
   var tn=h.ticketNum||h.saleId||null;
   var dt=new Date(h.date).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
   var hr=new Date(h.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -51398,7 +51417,7 @@ setTimeout(function(){injectWidget();injectTab();refreshStats();},1200);
            : (h.ticketNum && String(h.ticketNum).length > 8) ? h.ticketNum
            : (h.saleId || h.ticketNum || null);
 
-    var mi = {cb:'💳 CB',cash:'💶 Espèces',mixed:'💳💶 Mixte',points:'💜 Points','points+cb':'💜+💳','points+cash':'💜+💶'};
+    var mi = {cb:'💳 CB',cash:'💶 Espèces',mixed:'💳💶 Mixte',ticket:'🎟️ Ticket restaurant',credit:'📒 Crédit (compte client)',echel:'📅 Paiement échelonné',points:'💜 Points','points+cb':'💜+💳','points+cash':'💜+💶'};
     var dt = new Date(h.date).toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
     var hr = new Date(h.date).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
