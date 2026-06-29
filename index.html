@@ -44355,8 +44355,13 @@ function initAdminSections() {
         if (nameEl)  nameEl.textContent  = p.name || '—';
         if (stockEl) stockEl.textContent = (p.stock || 0) + (p.unitType === 'kg' ? ' kg' : ' u.');
         var existing = window._invtSession.counts[pid];
-        // Valeur de départ = comptage existant OU 0 (jamais p.stock — l'inventaire part de zéro)
-        var initQty  = existing != null ? existing : 0;
+        // Valeur de départ : comptage existant ; sinon au SCAN physique → 1 (1ʳᵉ unité comptée),
+        // à l'ouverture manuelle (clic liste) → 0 (jamais p.stock — l'inventaire part de zéro)
+        var _firstStep = p.unitType === 'kg' ? 0.1 : 1;
+        var initQty;
+        if (existing != null)      { initQty = existing; }
+        else if (!fromTap)         { initQty = _firstStep; window._invtSession.counts[pid] = initQty; } // compteur = 1 dès le scan
+        else                       { initQty = 0; }
         if (qtyEl) {
             qtyEl.value = initQty;
             // NE PAS appeler focus() ni select() :
@@ -44365,7 +44370,7 @@ function initAdminSections() {
             // L'utilisateur clique sur le champ pour l'éditer manuellement si besoin.
             qtyEl.blur();
         }
-        if (cntEl) cntEl.textContent = existing != null ? existing : '—';
+        if (cntEl) cntEl.textContent = (window._invtSession.counts[pid] != null) ? window._invtSession.counts[pid] : '—';
         // Flash visuel sur le nom pour signaler le changement d'article
         if (nameEl) {
             nameEl.style.color = '#f1c40f';
