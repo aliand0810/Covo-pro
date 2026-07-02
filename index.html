@@ -45098,6 +45098,36 @@ function initAdminSections() {
                   <div id="fp-ecart-esp" style="font-size:1rem;font-weight:900;color:var(--text-main,#2c3e50);">—</div>
                 </div>
               </div>
+
+              <!-- Comptage détaillé billets & pièces -->
+              <div style="margin-top:10px;border-top:1.5px dashed var(--border-color,#e0e0e0);padding-top:10px;">
+                <div onclick="var b=document.getElementById('fp-cash-body');b.style.display=(b.style.display==='none'||!b.style.display)?'block':'none';this.querySelector('.fp-cc-arrow').textContent=b.style.display==='block'?'▾':'▸';"
+                     style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;">
+                  <div style="font-size:0.68rem;font-weight:800;color:#16a085;text-transform:uppercase;letter-spacing:.4px;">🧮 Détailler le comptage — billets &amp; pièces</div>
+                  <span class="fp-cc-arrow" style="font-size:0.9rem;color:var(--text-muted,#888);">▸</span>
+                </div>
+                <div id="fp-cash-body" style="display:none;margin-top:10px;">
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+                    <div>
+                      <div style="font-size:0.64rem;font-weight:800;color:#16a085;text-transform:uppercase;margin-bottom:6px;">💶 Billets</div>
+                      <div id="fp-cc-bills" style="display:flex;flex-direction:column;gap:5px;"></div>
+                    </div>
+                    <div>
+                      <div style="font-size:0.64rem;font-weight:800;color:#e67e22;text-transform:uppercase;margin-bottom:6px;">🪙 Pièces</div>
+                      <div id="fp-cc-coins" style="display:flex;flex-direction:column;gap:5px;"></div>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1.5px dashed var(--border-color,#ddd);">
+                    <span style="font-size:0.82rem;font-weight:800;color:var(--text-main,#2c3e50);">Total compté</span>
+                    <span id="fp-cc-total" style="font-size:1.2rem;font-weight:900;color:#16a085;">0.00 €</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;">
+                    <button type="button" onclick="window._fpResetCashCount&&window._fpResetCashCount()"
+                            style="padding:6px 12px;background:rgba(231,76,60,0.1);color:#e74c3c;border:1.5px solid rgba(231,76,60,0.35);border-radius:7px;font-size:0.76rem;font-weight:700;cursor:pointer;">↺ Réinitialiser</button>
+                    <span style="flex:1;font-size:0.72rem;color:var(--text-muted,#999);">Le total renseigne automatiquement le « Montant compté » ci-dessus.</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- CB compté -->
@@ -55084,5 +55114,62 @@ window._rachatRender=function(filter){
   h+='</tbody></table></div>';
   body.innerHTML=h;
 };
+})();
+</script>
+<script>
+/* ===== Comptage de caisse (billets & pièces) — Fin de poste ===== */
+(function(){
+  var BILLS=[500,200,100,50,20,10,5];
+  var COINS=[2,1,0.5,0.2,0.1,0.05,0.02,0.01];
+  function euro(v){ return (v>=1 ? v : v.toFixed(2)) + ' €'; }
+  function rowHTML(v){
+    return '<div style="display:flex;align-items:center;gap:6px;">'
+      +'<span style="width:56px;font-size:.74rem;font-weight:700;color:var(--text-main);text-align:right;">'+euro(v)+'</span>'
+      +'<span style="color:var(--text-muted,#999);font-size:.72rem;">×</span>'
+      +'<input type="number" min="0" step="1" inputmode="numeric" class="fp-cc-inp" data-val="'+v+'" placeholder="0" oninput="window._fpCashCalc()" '
+      +'style="width:50px;padding:4px 6px;border:1.5px solid var(--border-color,#ddd);border-radius:6px;font-size:.8rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">'
+      +'<span style="color:var(--text-muted,#999);font-size:.72rem;">=</span>'
+      +'<span class="fp-cc-sub" style="flex:1;font-size:.76rem;font-weight:700;color:var(--text-main);text-align:right;">0.00 €</span>'
+      +'</div>';
+  }
+  window._fpRenderCashCount=function(){
+    var b=document.getElementById('fp-cc-bills'), c=document.getElementById('fp-cc-coins');
+    if(!b||!c) return;
+    if(b.getAttribute('data-built')==='1') return;
+    b.innerHTML=BILLS.map(rowHTML).join('');
+    c.innerHTML=COINS.map(rowHTML).join('');
+    b.setAttribute('data-built','1');
+  };
+  window._fpCashCalc=function(){
+    var inps=document.querySelectorAll('.fp-cc-inp'); var total=0;
+    inps.forEach(function(inp){
+      var qty=parseInt(inp.value,10)||0; if(qty<0){ qty=0; inp.value=0; }
+      var val=parseFloat(inp.getAttribute('data-val'))||0;
+      var sub=qty*val; total+=sub;
+      var subEl=inp.parentNode.querySelector('.fp-cc-sub');
+      if(subEl) subEl.textContent=sub.toFixed(2)+' €';
+    });
+    total=+total.toFixed(2);
+    var tEl=document.getElementById('fp-cc-total'); if(tEl) tEl.textContent=total.toFixed(2)+' €';
+    var recu=document.getElementById('fp-recu-esp');
+    if(recu){ recu.value = total>0 ? total.toFixed(2) : ''; if(typeof window._fpCalcEcart==='function') window._fpCalcEcart('esp'); }
+    return total;
+  };
+  window._fpResetCashCount=function(){
+    document.querySelectorAll('.fp-cc-inp').forEach(function(inp){ inp.value=''; });
+    document.querySelectorAll('.fp-cc-sub').forEach(function(s){ s.textContent='0.00 €'; });
+    var tEl=document.getElementById('fp-cc-total'); if(tEl) tEl.textContent='0.00 €';
+  };
+  // Construire les lignes + réinitialiser à chaque ouverture de « Fin de poste »
+  if(typeof window._openFinPoste==='function'){
+    var _origOFP=window._openFinPoste;
+    window._openFinPoste=function(){
+      var r=_origOFP.apply(this,arguments);
+      try{ window._fpRenderCashCount(); window._fpResetCashCount(); }catch(e){}
+      return r;
+    };
+  }
+  if(document.readyState!=='loading'){ try{ window._fpRenderCashCount(); }catch(e){} }
+  else document.addEventListener('DOMContentLoaded', function(){ try{ window._fpRenderCashCount(); }catch(e){} });
 })();
 </script>
