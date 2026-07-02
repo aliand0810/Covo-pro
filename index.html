@@ -4595,6 +4595,9 @@ button, .btn, .retours-btn {
                     <button onclick="invtToggleSection('ventes')" id="invt-btn-ventes" style="padding:9px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.82rem;font-weight:700;cursor:pointer;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);">
                         🛒 Ventes récentes
                     </button>
+                    <button onclick="window._rachatOpen&&window._rachatOpen()" id="invt-btn-rachat" title="Capacité de rachat : combien d'unités finançables par le bénéfice réalisé" style="padding:9px 14px;border:none;border-radius:9px;font-size:0.82rem;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#16a085,#1abc9c);color:#fff;">
+                        💰 Capacité de rachat
+                    </button>
                 </div>
 
                 <!-- Résumé pertes post-validation -->
@@ -7810,6 +7813,20 @@ button, .btn, .retours-btn {
                 </div>
                 <div style="margin-top:8px;font-size:0.74rem;color:var(--text-muted);background:rgba(22,160,133,0.07);border-radius:6px;padding:6px 10px;">
                     ℹ️ Le numéro s'incrémente automatiquement à chaque vente validée.
+                </div>
+            </div>
+
+            <!-- ─── Format d'impression ─── -->
+            <div style="margin-bottom:16px;padding:14px;background:var(--bg-card-2,#f8fafc);border-radius:10px;border:1.5px solid var(--border-color,#e0e0e0);">
+                <h4 style="margin:0 0 12px;color:var(--text-main);display:flex;align-items:center;gap:8px;font-size:0.9rem;">🖨️ Format d'impression</h4>
+                <label style="font-size:0.76rem;font-weight:700;color:var(--text-muted);display:block;margin-bottom:4px;">Adapter le ticket à votre imprimante</label>
+                <select id="rcpt-paper" onchange="_rcptAutoSave()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:0.88rem;background:var(--bg-body);color:var(--text-main);">
+                    <option value="58">Thermique 58 mm (petit rouleau)</option>
+                    <option value="80">Thermique 80 mm (rouleau large)</option>
+                    <option value="a4">A4 (imprimante bureau)</option>
+                </select>
+                <div style="margin-top:8px;font-size:0.74rem;color:var(--text-muted);background:rgba(22,160,133,0.07);border-radius:6px;padding:6px 10px;">
+                    ℹ️ Le ticket s'adapte à la largeur choisie. À l'impression, tout le texte sort en <strong>noir pur</strong> (optimisé pour le noir et blanc).
                 </div>
             </div>
 
@@ -21443,6 +21460,23 @@ logout = function(skipConfirmation = false) {
 
     function printReceipt() {
         const receiptContent = document.getElementById('receipt-content').innerHTML;
+        // ── Format papier selon l'imprimante configurée ──
+        const _pcfg  = (typeof appSettings !== 'undefined' && appSettings.rcpt) ? appSettings.rcpt : {};
+        const _paper = _pcfg.paperWidth || '58';
+        let _pageCss, _bodyCss, _bcW, _bcH, _bcFont;
+        if (_paper === '80') {
+            _pageCss = '@page{size:80mm auto;margin:0;}';
+            _bodyCss = 'width:80mm;padding:3mm 3mm 6mm;font-size:12.5px;line-height:1.35;';
+            _bcW = 1.8; _bcH = 50; _bcFont = 11;
+        } else if (_paper === 'a4') {
+            _pageCss = '@page{size:A4;margin:12mm;}';
+            _bodyCss = 'max-width:320px;margin:0 auto;padding:4px;font-size:13px;line-height:1.4;';
+            _bcW = 1.8; _bcH = 50; _bcFont = 11;
+        } else { // 58 mm par défaut
+            _pageCss = '@page{size:58mm auto;margin:0;}';
+            _bodyCss = 'width:58mm;padding:2mm 2mm 5mm;font-size:11px;line-height:1.3;';
+            _bcW = 1.4; _bcH = 38; _bcFont = 9;
+        }
         const printWindow = window.open('', '_blank');
         printWindow.document.write(`
             <!DOCTYPE html>
@@ -21450,15 +21484,22 @@ logout = function(skipConfirmation = false) {
             <head>
                 <title>Ticket de caisse</title>
                 <style>
+                    ${_pageCss}
+                    html, body { margin: 0; }
                     body {
                         font-family: 'Courier New', monospace;
-                        padding: 20px;
-                        max-width: 300px;
-                        margin: 0 auto;
+                        color: #000;
+                        ${_bodyCss}
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
                     }
-                    @media print {
-                        body { margin: 0; padding: 10px; }
-                    }
+                    /* Tout le texte en noir pur — lisible même en impression N&B */
+                    body * { color: #000 !important; }
+                    /* Séparateurs pointillés bien visibles */
+                    body [style*="dashed"] { border-color: #000 !important; }
+                    strong, b { font-weight: 700; }
+                    svg { max-width: 100%; }
+                    @media print { html, body { margin: 0; } body { box-shadow: none; } }
                 </style>
             </head>
             <body>${receiptContent}</body>
@@ -21467,7 +21508,7 @@ logout = function(skipConfirmation = false) {
                 document.querySelectorAll('svg[id="receipt-barcode-svg"]').forEach(function(svg) {
                     var num = svg.nextElementSibling ? svg.nextElementSibling.textContent.replace('N° ','').trim() : null;
                     if (num && typeof JsBarcode !== 'undefined') {
-                        try { JsBarcode(svg, num, {format:'CODE128',width:1.8,height:50,displayValue:true,fontSize:11,margin:4}); } catch(e){}
+                        try { JsBarcode(svg, num, {format:'CODE128',width:${_bcW},height:${_bcH},displayValue:true,fontSize:${_bcFont},margin:2,lineColor:'#000'}); } catch(e){}
                     }
                 });
             <\/script>
@@ -21476,7 +21517,7 @@ logout = function(skipConfirmation = false) {
         printWindow.document.close();
         setTimeout(() => {
             printWindow.print();
-        }, 250);
+        }, 300);
     }
 
     // ===== IMPRESSION D'ÉTIQUETTES =====
@@ -21665,6 +21706,7 @@ logout = function(skipConfirmation = false) {
             email:         '',
             caisseNum:     'Caisse 1',
             ticketCounter: 1,
+            paperWidth:    '58',
             tvaEnabled:    false,
             tva20:         false,
             tva10:         false,
@@ -21697,6 +21739,7 @@ logout = function(skipConfirmation = false) {
         v('rcpt-email',           r.email      || '');
         v('rcpt-caisse-num',      r.caisseNum  !== undefined ? r.caisseNum : 'Caisse 1');
         v('rcpt-ticket-counter',  r.ticketCounter !== undefined ? r.ticketCounter : 1);
+        v('rcpt-paper',           r.paperWidth || '58');
         c('rcpt-tva-enabled',     r.tvaEnabled);
         c('rcpt-tva-20',          r.tva20);
         c('rcpt-tva-10',          r.tva10);
@@ -21723,6 +21766,7 @@ logout = function(skipConfirmation = false) {
             email:         gv('rcpt-email'),
             caisseNum:     gv('rcpt-caisse-num')   || 'Caisse 1',
             ticketCounter: parseInt(gv('rcpt-ticket-counter')) || 1,
+            paperWidth:    gv('rcpt-paper')        || '58',
             tvaEnabled:    tvaEnabled,
             tva20:         gc('rcpt-tva-20'),
             tva10:         gc('rcpt-tva-10'),
@@ -54906,6 +54950,128 @@ window._stockGoInventaire=function(){
       setTimeout(function(){ if(pid!=null && typeof window._invtProductTap==='function'){ try{ window._invtProductTap(pid); }catch(e){} } }, 190);
     }catch(e){}
   }, 360);
+};
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
+     CAPACITÉ DE RACHAT — suivi des réapprovisionnements — COVO Pro v28
+     Bénéfice total (marge u. × ventes) ÷ prix d'achat = unités finançables
+     ════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+'use strict';
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function _sales(){ try{return JSON.parse(localStorage.getItem('covo_sales_history')||'[]');}catch(e){return[];} }
+function _soldMap(){
+  var byId={}, byName={};
+  (_sales()||[]).forEach(function(s){
+    if(!s||s.cancelled) return;
+    (s.items||[]).forEach(function(it){
+      if(!it||it.retourne) return;
+      var q=parseFloat(it.quantity)||0; if(q<=0) return;
+      if(it.id!=null && it.id!=='') byId[it.id]=(byId[it.id]||0)+q;
+      var nk=((it.name||'').replace(' 🏷️','')+'').toLowerCase().trim(); if(nk) byName[nk]=(byName[nk]||0)+q;
+    });
+  });
+  return {byId:byId, byName:byName};
+}
+function _qtySold(p, sm){
+  if(sm.byId[p.id]!=null) return sm.byId[p.id];
+  var nk=((p.name||'')+'').toLowerCase().trim();
+  return sm.byName[nk]||0;
+}
+function injectModal(){
+  if(document.getElementById('rachat-modal'))return;
+  var m=document.createElement('div'); m.id='rachat-modal';
+  m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:23800;justify-content:center;align-items:center;padding:14px;';
+  m.innerHTML=''
+    +'<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:940px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+    +'<div style="background:linear-gradient(135deg,#16a085,#1abc9c);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;flex-wrap:wrap;gap:8px;">'
+    +'<div><div style="font-size:1.02rem;font-weight:900;">💰 Capacité de rachat — suivi des réapprovisionnements</div>'
+    +'<div style="font-size:.68rem;color:rgba(255,255,255,.85);margin-top:1px;">Bénéfice total (marge × ventes) ÷ prix d\'achat = unités finançables sans toucher au capital</div></div>'
+    +'<button onclick="window._rachatClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;flex-shrink:0;">✕</button></div>'
+    +'<div style="padding:12px 16px 0;flex-shrink:0;"><input id="rachat-search" oninput="window._rachatRender(this.value)" placeholder="🔍 Rechercher un produit…" style="width:100%;box-sizing:border-box;padding:8px 12px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;font-size:.85rem;background:var(--input-bg,#fff);color:var(--text-main);"></div>'
+    +'<div id="rachat-summary" style="padding:10px 16px 0;flex-shrink:0;"></div>'
+    +'<div id="rachat-body" style="overflow:auto;flex:1;padding:10px 16px 16px;"></div>'
+    +'</div>';
+  m.addEventListener('click',function(e){if(e.target===m)window._rachatClose();});
+  document.body.appendChild(m);
+  if(!document.getElementById('rachat-style')){
+    var st=document.createElement('style'); st.id='rachat-style';
+    st.textContent='#rachat-body table thead th{position:sticky;top:0;z-index:1;}'
+      +'#rachat-body table tbody tr:nth-child(even){background:rgba(127,140,141,.05);}'
+      +'#rachat-body table tbody tr:hover{background:rgba(22,160,133,.09);}';
+    document.head.appendChild(st);
+  }
+}
+window._rachatOpen=function(){ injectModal(); window._rachatRender(''); var md=document.getElementById('rachat-modal'); if(md)md.style.display='flex'; var s=document.getElementById('rachat-search'); if(s)s.value=''; };
+window._rachatClose=function(){ var m=document.getElementById('rachat-modal'); if(m)m.style.display='none'; };
+
+window._rachatRender=function(filter){
+  var body=document.getElementById('rachat-body'); if(!body)return;
+  var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+  var sm=_soldMap();
+  var q=(filter||'').toLowerCase().trim();
+  var rows=prods.filter(function(p){ return p && p.active!==false && (!q || ((p.name||'')+' '+(p.barcode||'')).toLowerCase().indexOf(q)>=0); })
+    .map(function(p){
+      var isKg=p.unitType==='kg';
+      var vente=isKg?(parseFloat(p.pricePerKg)||0):(parseFloat(p.price)||0);
+      var achat=(p.costPrice!=null)?(parseFloat(p.costPrice)||0):null;
+      var sold=_qtySold(p,sm);
+      var margeU=(achat!=null)?+(vente-achat).toFixed(2):null;            // marge unitaire
+      var benef=(margeU!=null)?+(margeU*sold).toFixed(2):null;             // bénéfice total = marge × ventes
+      var capa=(achat!=null&&achat>0&&benef!=null&&benef>0)?(isKg?+(benef/achat).toFixed(2):Math.floor(benef/achat)):0; // bénéfice ÷ prix d'achat
+      return {p:p,isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa};
+    });
+  rows.sort(function(a,b){ return (b.capa-a.capa) || ((b.benef||0)-(a.benef||0)); });
+
+  var totBenef=0, totCapa=0, nbAlert=0;
+  rows.forEach(function(r){ if(r.benef!=null)totBenef+=r.benef; totCapa+=(typeof r.capa==='number'?r.capa:0); if(r.achat!=null&&r.achat>0&&r.capa===0)nbAlert++; });
+
+  var sumEl=document.getElementById('rachat-summary');
+  if(sumEl){
+    var card=function(ic,lbl,val,col,bg){return '<div style="flex:1;min-width:150px;background:var(--bg-card,#fff);border:1px solid var(--border-color,#eef1f6);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:11px;">'
+      +'<div style="width:38px;height:38px;border-radius:10px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">'+ic+'</div>'
+      +'<div style="min-width:0;"><div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#8a94a6);">'+lbl+'</div>'
+      +'<div style="font-size:1.15rem;font-weight:900;color:'+col+';line-height:1.1;margin-top:2px;">'+val+'</div></div></div>';};
+    sumEl.innerHTML='<div style="display:flex;gap:10px;flex-wrap:wrap;">'
+      +card('💵','Bénéfice total',totBenef.toFixed(2)+'€','#16a085','rgba(22,160,133,.12)')
+      +card('📦','Capacité de rachat',Math.floor(totCapa)+' u.','#1e40af','rgba(37,99,235,.12)')
+      +card(nbAlert?'⚠️':'✅','Marge insuffisante',nbAlert+(nbAlert>1?' produits':' produit'),nbAlert?'#e74c3c':'#16a085',nbAlert?'rgba(231,76,60,.12)':'rgba(39,174,96,.12)')
+      +'</div>';
+  }
+
+  if(!rows.length){ body.innerHTML='<div style="text-align:center;padding:40px 10px;color:var(--text-muted,#8a94a6);"><div style="font-size:2rem;">💰</div><div style="margin-top:6px;font-size:.85rem;font-weight:700;">Aucun produit</div></div>'; return; }
+
+  var h='<div style="border:1px solid var(--border-color,#eef1f6);border-radius:12px;overflow:hidden;">'
+    +'<table style="width:100%;border-collapse:collapse;font-size:.78rem;min-width:760px;">'
+    +'<thead><tr style="background:var(--bg-body,#f4f7fb);color:var(--text-muted,#7a8699);font-size:.6rem;text-transform:uppercase;letter-spacing:.5px;">'
+    +'<th style="padding:9px 10px;text-align:left;">Article</th>'
+    +'<th style="padding:9px 8px;text-align:right;">Prix achat</th>'
+    +'<th style="padding:9px 8px;text-align:right;">Prix vente</th>'
+    +'<th style="padding:9px 8px;text-align:right;">Marge u.</th>'
+    +'<th style="padding:9px 8px;text-align:right;">Vendus</th>'
+    +'<th style="padding:9px 8px;text-align:right;">Bénéfice total</th>'
+    +'<th style="padding:9px 12px;text-align:right;">Capacité de rachat</th>'
+    +'</tr></thead><tbody>';
+  rows.forEach(function(r){
+    var noCost=(r.achat==null||r.achat<=0);
+    var dot, capaCell;
+    if(noCost){ dot='#e67e22'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(230,126,34,.12);color:#b9650f;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">⚠️ Prix d\'achat manquant</span>'; }
+    else if(r.capa===0){ dot='#e74c3c'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(231,76,60,.12);color:#c0392b;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">🔴 0 · marge insuffisante</span>'; }
+    else { dot='#16a085'; capaCell='<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(22,160,133,.14);color:#0e6b58;border-radius:20px;padding:3px 12px;font-weight:900;font-size:.8rem;white-space:nowrap;">'+r.capa+(r.isKg?' kg':' u.')+'</span>'; }
+    h+='<tr style="border-top:1px solid var(--border-color,#f0f2f5);">'
+      +'<td style="padding:9px 10px;"><div style="display:flex;align-items:center;gap:8px;"><span style="width:8px;height:8px;border-radius:50%;background:'+dot+';flex-shrink:0;"></span><div style="min-width:0;"><div style="font-weight:700;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px;">'+esc(r.p.name||'—')+'</div>'+(r.p.barcode?'<div style="font-size:.62rem;color:var(--text-muted,#9aa4b2);font-family:monospace;">'+esc(r.p.barcode)+'</div>':'')+'</div></div></td>'
+      +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.achat!=null?r.achat.toFixed(2)+'€':'—')+'</td>'
+      +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.vente?r.vente.toFixed(2)+'€'+(r.isKg?'/kg':''):'—')+'</td>'
+      +'<td style="padding:9px 8px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:'+((r.margeU!=null&&r.margeU<0)?'#e74c3c':'#16a085')+';">'+(r.margeU!=null?((r.margeU>=0?'+':'')+r.margeU.toFixed(2)+'€'):'—')+'</td>'
+      +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.isKg?r.sold.toFixed(3):r.sold)+'</td>'
+      +'<td style="padding:9px 8px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;color:#1e40af;">'+(r.benef!=null?r.benef.toFixed(2)+'€':'—')+'</td>'
+      +'<td style="padding:9px 12px;text-align:right;">'+capaCell+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  body.innerHTML=h;
 };
 })();
 </script>
