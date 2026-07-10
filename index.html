@@ -6795,11 +6795,21 @@ button, .btn, .retours-btn {
                       &#128269; Analyser
                     </button>
                   </div>
-                  <button onclick="window._gdDailyClean ? window._gdDailyClean(true) : (window._gdBackupRotation&&window._gdBackupRotation.run(false))"
-                    style="width:100%;margin-top:8px;padding:9px 10px;background:linear-gradient(135deg,#16a085,#0e6655);color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.84rem;cursor:pointer;">
-                    &#129529; Nettoyer maintenant &mdash; Param&egrave;tres, Catalogue &amp; Sauvegardes
-                  </button>
-                  <div style="font-size:0.72rem;color:#888;margin-top:5px;">Ex&eacute;cute imm&eacute;diatement le nettoyage quotidien (&eacute;lagage de l'historique Param&egrave;tres et Catalogues + purge des anciennes sauvegardes), sans attendre le passage automatique.</div>
+                  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #e0e0e0;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                      <label style="font-size:0.74rem;font-weight:800;color:#0e6655;">Conserver&nbsp;:</label>
+                      <select id="gd-manual-keep" style="padding:6px 9px;border:1.5px solid #ccc;border-radius:7px;font-size:0.8rem;font-weight:700;background:#fff;color:#111;">
+                        <option value="2">2 jours de sauvegarde</option>
+                        <option value="3">3 jours de sauvegarde</option>
+                      </select>
+                    </div>
+                    <button onclick="window._gdManualClean && window._gdManualClean()"
+                      style="width:100%;padding:9px 10px;background:linear-gradient(135deg,#16a085,#0e6655);color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.84rem;cursor:pointer;">
+                      &#129529; Nettoyer maintenant &mdash; Param&egrave;tres, Catalogue &amp; Sauvegardes
+                    </button>
+                    <div style="font-size:0.72rem;color:#888;margin-top:5px;">Efface les sauvegardes plus anciennes que la p&eacute;riode choisie (une confirmation est demand&eacute;e). Le r&eacute;sultat reste affich&eacute; pour la journ&eacute;e.</div>
+                    <div id="gd-manual-status" style="font-size:0.76rem;font-weight:700;color:#0e6655;margin-top:7px;min-height:16px;"></div>
+                  </div>
                   <div id="gd-rot-scan-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:180px;overflow-y:auto;margin-top:8px;"></div>
                 </div>
 
@@ -55284,5 +55294,81 @@ window._rachatRender=function(filter){
     }
     localStorage.setItem('covo_dedup_sales_v1','1');
   }catch(e){}
+})();
+</script>
+<script>
+/* ===== Nettoyage Drive manuel : confirmation + rétention (2/3 j) + état du jour ===== */
+(function(){
+  var STATUS_KEY='covo_gd_manual_status';
+
+  window._gdManualClean = async function(){
+    var sel  = document.getElementById('gd-manual-keep');
+    var keep = sel ? (parseInt(sel.value,10)||2) : 2;
+    var ok = confirm(
+      'Nettoyage Google Drive\n\n'
+      + '• Conserver ' + keep + ' jour(s) de sauvegarde\n'
+      + '• Effacer TOUTES les sauvegardes plus anciennes\n'
+      + '  (paramètres, catalogue et sauvegardes générales)\n\n'
+      + 'Cette suppression est définitive. Continuer ?'
+    );
+    if(!ok) return;
+
+    var statusEl = document.getElementById('gd-manual-status');
+    if(statusEl){ statusEl.style.color='#888'; statusEl.textContent='⏳ Nettoyage en cours…'; }
+
+    // 1) Appliquer la rétention choisie (partagée avec la rotation)
+    try {
+      if(window._gdBackupRotation && typeof window._gdBackupRotation.setDays==='function') window._gdBackupRotation.setDays(keep);
+      else if(window._backupRotation && typeof window._backupRotation.save==='function') window._backupRotation.save({days:keep});
+    } catch(e){}
+
+    // 2) Lancer le nettoyage complet (paramètres/catalogue + sauvegardes)
+    var deleted = 0;
+    try {
+      if(typeof window._gdDailyClean==='function') { await window._gdDailyClean(true); }
+      else if(window._gdBackupRotation && typeof window._gdBackupRotation.run==='function') { deleted = await window._gdBackupRotation.run(false); }
+    } catch(e){}
+
+    // 3) Récupérer le nombre supprimé (mémorisé par la rotation)
+    try {
+      var cfg = (window._gdBackupRotation && typeof window._gdBackupRotation.get==='function') ? window._gdBackupRotation.get() : {};
+      if(typeof cfg.lastCount==='number') deleted = cfg.lastCount;
+    } catch(e){}
+
+    // 4) État du jour (préservé)
+    var now   = new Date();
+    var today = now.toISOString().split('T')[0];
+    var txt   = '✅ Nettoyé le ' + now.toLocaleString('fr-FR')
+              + ' — ' + deleted + ' sauvegarde(s) supprimée(s) · rétention ' + keep + ' j'
+              + ' · historique Paramètres/Catalogue élagué.';
+    try { localStorage.setItem(STATUS_KEY, JSON.stringify({date:today, text:txt, keep:keep})); } catch(e){}
+    if(statusEl){ statusEl.style.color='#0e6655'; statusEl.textContent=txt; }
+  };
+
+  // Restaure la rétention choisie + l'état (résultat du jour conservé)
+  window._gdManualStatusRestore = function(){
+    try {
+      var sel      = document.getElementById('gd-manual-keep');
+      var statusEl = document.getElementById('gd-manual-status');
+      var raw      = localStorage.getItem(STATUS_KEY);
+      if(!raw) return;
+      var o = JSON.parse(raw);
+      if(sel && o.keep) sel.value = String(o.keep);
+      if(statusEl){
+        var today = new Date().toISOString().split('T')[0];
+        if(o.date === today){ statusEl.style.color='#0e6655'; statusEl.textContent=o.text; }
+        else { statusEl.style.color='#888'; statusEl.textContent='Dernier nettoyage : ' + (o.text||'').replace(/^✅ Nettoyé le /,''); }
+      }
+    } catch(e){}
+  };
+
+  function _restore(){ try{ window._gdManualStatusRestore(); }catch(e){} }
+  if(document.readyState!=='loading') setTimeout(_restore, 600);
+  else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_restore, 600); });
+  // Rafraîchir aussi à l'ouverture de l'admin (le panneau peut être monté à ce moment)
+  if(typeof window.toggleAdminModal==='function'){
+    var _prevTAM2 = window.toggleAdminModal;
+    window.toggleAdminModal = function(){ var r=_prevTAM2.apply(this,arguments); setTimeout(_restore, 400); return r; };
+  }
 })();
 </script>
