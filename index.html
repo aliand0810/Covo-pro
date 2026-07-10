@@ -42369,8 +42369,28 @@ function initAdminSections() {
         } catch(e) { /* silencieux */ }
     }
 
+    // Classe les archives : on GARDE la plus récente de chacun des N jours les plus
+    // récents ; tout le reste (doublons du même jour + jours au-delà de N) = à supprimer.
+    // Ainsi, même si toutes les archives datent du même jour, les doublons sont purgés.
+    function _gdParamsClassify(files, keepDays) {
+        var days = parseInt(keepDays, 10); if (isNaN(days) || days < 1) days = 2;
+        var sorted = (files || []).slice().sort(function(a, b){ return new Date(b.modifiedTime).getTime() - new Date(a.modifiedTime).getTime(); });
+        var keptDays = [], keepSet = {};
+        sorted.forEach(function(f){
+            var dayStr = new Date(f.modifiedTime).toISOString().split('T')[0];
+            if (keptDays.indexOf(dayStr) === -1) {
+                if (keptDays.length < days) { keptDays.push(dayStr); keepSet[f.id] = true; }
+            }
+            // même jour déjà représenté → doublon → à supprimer
+        });
+        // Sécurité : toujours conserver au moins l'archive la plus récente
+        if (sorted.length && !Object.keys(keepSet).length) keepSet[sorted[0].id] = true;
+        (files || []).forEach(function(f){ f._date = new Date(f.modifiedTime); f._old = !keepSet[f.id]; });
+        return files;
+    }
+
     // Liste l'historique « Paramètres et Catalogues » avec total + à supprimer.
-    // keepDays : conserver les archives des N derniers jours ; le reste = à supprimer.
+    // keepDays : conserver 1 archive/jour sur les N jours les plus récents ; le reste = à supprimer.
     window._gdScanParamsHistory = async function(keepDays, targetElId) {
         var elId = targetElId || 'gd-manual-cat-result';
         var el = document.getElementById(elId);
@@ -42389,8 +42409,7 @@ function initAdminSections() {
             var _trashed = window._gdRecentlyTrashed || {};
             var files = (data.files || []).filter(function(f){ return !_trashed[f.id]; });
             var days = parseInt(keepDays, 10); if (isNaN(days) || days < 1) days = 2;
-            var cutoff = Date.now() - days * 24 * 3600 * 1000;
-            files.forEach(function(f){ f._date = new Date(f.modifiedTime); f._old = f._date.getTime() < cutoff; });
+            _gdParamsClassify(files, days);
             var oldCount = files.filter(function(f){ return f._old; }).length;
             if (el) {
                 if (!files.length) {
@@ -42427,11 +42446,8 @@ function initAdminSections() {
             var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500');
             var data = await resp.json();
             var files = data.files || [];
-            var days = parseInt(keepDays, 10); if (isNaN(days) || days < 1) days = 2;
-            var cutoff = Date.now() - days * 24 * 3600 * 1000;
-            var old = files.filter(function(f){ return new Date(f.modifiedTime).getTime() < cutoff; });
-            // Sécurité : toujours conserver au moins l'archive la plus récente
-            if (files.length > 0 && old.length === files.length) old = old.slice(1);
+            _gdParamsClassify(files, keepDays);
+            var old = files.filter(function(f){ return f._old; });
             window._gdRecentlyTrashed = window._gdRecentlyTrashed || {};
             var deleted = 0;
             for (var i = 0; i < old.length; i++) {
