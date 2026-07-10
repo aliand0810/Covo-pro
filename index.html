@@ -6795,6 +6795,11 @@ button, .btn, .retours-btn {
                       &#128269; Analyser
                     </button>
                   </div>
+                  <button onclick="window._gdDailyClean ? window._gdDailyClean(true) : (window._gdBackupRotation&&window._gdBackupRotation.run(false))"
+                    style="width:100%;margin-top:8px;padding:9px 10px;background:linear-gradient(135deg,#16a085,#0e6655);color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.84rem;cursor:pointer;">
+                    &#129529; Nettoyer maintenant &mdash; Param&egrave;tres, Catalogue &amp; Sauvegardes
+                  </button>
+                  <div style="font-size:0.72rem;color:#888;margin-top:5px;">Ex&eacute;cute imm&eacute;diatement le nettoyage quotidien (&eacute;lagage de l'historique Param&egrave;tres et Catalogues + purge des anciennes sauvegardes), sans attendre le passage automatique.</div>
                   <div id="gd-rot-scan-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:180px;overflow-y:auto;margin-top:8px;"></div>
                 </div>
 
@@ -21063,6 +21068,16 @@ logout = function(skipConfirmation = false) {
     function validateSale() {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
 
+        // ── Garantie tarif HT (prix d'achat) ────────────────────────────────
+        // Si un client « tarif prix d'achat » est actif, re-tarifer le panier au
+        // prix d'achat AVANT toute lecture du total : couvre le cas où l'article a
+        // été ajouté avant la sélection du client (déclencheur de re-tarif manqué).
+        if (typeof window._costPriceClientActive === 'function' && window._costPriceClientActive()
+            && typeof window._repriceCartForCostClient === 'function') {
+            window._repriceCartForCostClient();
+            if (typeof updateCartUI === 'function') updateCartUI();
+        }
+
         // ── Vérifier si des articles au tarif d'achat sont dans le panier ──
         const _costItems = cart.filter(function(item){ return item.costPriceApplied; });
         if (_costItems.length > 0) {
@@ -21103,6 +21118,11 @@ logout = function(skipConfirmation = false) {
 
     function _doValidateSale() {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
+        // Filet : garantir le tarif HT si un client « tarif prix d'achat » est actif
+        if (typeof window._costPriceClientActive === 'function' && window._costPriceClientActive()
+            && typeof window._repriceCartForCostClient === 'function') {
+            window._repriceCartForCostClient();
+        }
         const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const method = document.getElementById('payment-method').value;
         // Remise points fidélité : la caisse encaisse le NET (montant après déduction des points)
@@ -42338,7 +42358,10 @@ function initAdminSections() {
             var today   = new Date().toISOString().split('T')[0];
             var flagKey = 'covo_gd_daily_clean';
             if (!force && localStorage.getItem(flagKey) === today) return; // déjà nettoyé aujourd'hui
-            if (!_gdConnected || !_gdAccessToken || !_gdFolderId) return;   // Drive non connecté → réessai plus tard
+            if (!_gdConnected || !_gdAccessToken || !_gdFolderId) {          // Drive non connecté
+                if (force && typeof showScanToast === 'function') showScanToast('⚠️ Google Drive non connecté', 'warning');
+                return;
+            }
 
             var trimmed = 0;
             // 1) Historique Paramètres et Catalogues
