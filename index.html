@@ -6808,6 +6808,11 @@ button, .btn, .retours-btn {
                       &#129529; Nettoyer maintenant &mdash; Param&egrave;tres, Catalogue &amp; Sauvegardes
                     </button>
                     <div style="font-size:0.72rem;color:#888;margin-top:5px;">Efface les sauvegardes plus anciennes que la p&eacute;riode choisie (une confirmation est demand&eacute;e). Le r&eacute;sultat reste affich&eacute; pour la journ&eacute;e.</div>
+                    <button type="button" onclick="window._gdScanParamsHistory && window._gdScanParamsHistory((document.getElementById('gd-manual-keep')||{}).value)"
+                      style="width:100%;margin-top:7px;padding:8px 10px;background:#f4f4f4;color:#111;border:1.5px solid #ccc;border-radius:8px;font-weight:700;font-size:0.8rem;cursor:pointer;">
+                      &#128269; Voir l'historique Param&egrave;tres &amp; Catalogue (total / &agrave; supprimer)
+                    </button>
+                    <div id="gd-manual-cat-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:200px;overflow-y:auto;margin-top:7px;"></div>
                     <div id="gd-manual-status" style="font-size:0.76rem;font-weight:700;color:#0e6655;margin-top:7px;min-height:16px;"></div>
                   </div>
                   <div id="gd-rot-scan-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:180px;overflow-y:auto;margin-top:8px;"></div>
@@ -42357,6 +42362,75 @@ function initAdminSections() {
         } catch(e) { /* silencieux */ }
     }
 
+    // Liste l'historique « Paramètres et Catalogues » avec total + à supprimer.
+    // keepDays : conserver les archives des N derniers jours ; le reste = à supprimer.
+    window._gdScanParamsHistory = async function(keepDays, targetElId) {
+        var elId = targetElId || 'gd-manual-cat-result';
+        var el = document.getElementById(elId);
+        if (el) { el.style.display = 'block'; el.innerHTML = '<em style="color:#888;">⏳ Analyse de l\'historique Paramètres et Catalogues…</em>'; }
+        if (!_gdConnected || !_gdAccessToken || !_gdFolderId) {
+            if (el) el.innerHTML = '<span style="color:#e74c3c;">⚠ Google Drive non connecté.</span>';
+            return null;
+        }
+        try {
+            await _gdEnsureParamsFolder();
+            if (!_gdParamsHistId) { if (el) el.innerHTML = '<em style="color:#888;">Aucun historique trouvé.</em>'; return { files:[], total:0, toDelete:0 }; }
+            var q = encodeURIComponent('\'' + _gdParamsHistId + '\' in parents and trashed=false and mimeType=\'application/json\'');
+            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500');
+            var data = await resp.json();
+            var files = data.files || [];
+            var days = parseInt(keepDays, 10); if (isNaN(days) || days < 1) days = 2;
+            var cutoff = Date.now() - days * 24 * 3600 * 1000;
+            files.forEach(function(f){ f._date = new Date(f.modifiedTime); f._old = f._date.getTime() < cutoff; });
+            var oldCount = files.filter(function(f){ return f._old; }).length;
+            if (el) {
+                if (!files.length) {
+                    el.innerHTML = '<em style="color:#888;">Aucune archive Paramètres/Catalogue trouvée.</em>';
+                } else {
+                    var html = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
+                        + files.length + ' archive(s) au total — conserver ' + days + ' j · <span style="color:#dc2626;">' + oldCount + ' à supprimer</span></div>';
+                    files.forEach(function(f){
+                        var col  = f._old ? '#dc2626' : '#16a34a';
+                        var icon = f._old ? '🗑' : '✅';
+                        var nm   = (f.name || '').replace(/^covo_params_/, '').replace(/\.json$/, '');
+                        html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
+                            + '<span>' + icon + '</span>'
+                            + '<span style="flex:1;font-family:monospace;font-size:0.72rem;color:' + col + ';">' + nm + '</span>'
+                            + '<span style="font-size:0.68rem;color:#888;">' + (f._date ? f._date.toLocaleDateString('fr-FR') : '?') + '</span>'
+                            + '</div>';
+                    });
+                    el.innerHTML = html;
+                }
+            }
+            return { files: files, total: files.length, toDelete: oldCount };
+        } catch(e) {
+            if (el) el.innerHTML = '<span style="color:#e74c3c;">Erreur : ' + (e && e.message ? e.message : e) + '</span>';
+            return null;
+        }
+    };
+
+    // Purge l'historique Paramètres et Catalogues selon la rétention en JOURS (garde ≥ 1 archive).
+    window._gdPurgeParamsHistoryByDays = async function(keepDays) {
+        try {
+            await _gdEnsureParamsFolder();
+            if (!_gdParamsHistId) return 0;
+            var q = encodeURIComponent('\'' + _gdParamsHistId + '\' in parents and trashed=false and mimeType=\'application/json\'');
+            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500');
+            var data = await resp.json();
+            var files = data.files || [];
+            var days = parseInt(keepDays, 10); if (isNaN(days) || days < 1) days = 2;
+            var cutoff = Date.now() - days * 24 * 3600 * 1000;
+            var old = files.filter(function(f){ return new Date(f.modifiedTime).getTime() < cutoff; });
+            // Sécurité : toujours conserver au moins l'archive la plus récente
+            if (files.length > 0 && old.length === files.length) old = old.slice(1);
+            var deleted = 0;
+            for (var i = 0; i < old.length; i++) {
+                try { await _gdFetch('https://www.googleapis.com/drive/v3/files/' + old[i].id + '/trash', { method: 'POST' }); deleted++; } catch(e) {}
+            }
+            return deleted;
+        } catch(e) { return 0; }
+    };
+
     // ═══════════════════════════════════════════════════════════════
     // NETTOYAGE QUOTIDIEN AUTOMATIQUE — Paramètres et Catalogues (+ sauvegardes)
     //   • Élague l'historique « Paramètres et Catalogues / Historique » (garde les 30 récents)
@@ -42373,11 +42447,16 @@ function initAdminSections() {
                 return;
             }
 
-            var trimmed = 0;
-            // 1) Historique Paramètres et Catalogues
+            // Rétention en jours (partagée avec la rotation)
+            var keepDays = 2;
+            try { if (window._gdBackupRotation && typeof window._gdBackupRotation._days === 'function') keepDays = window._gdBackupRotation._days(); } catch(e){}
+
+            var trimmed = 0, paramsDeleted = 0;
+            // 1) Historique Paramètres et Catalogues (purge par jours de rétention)
             try {
                 await _gdEnsureParamsFolder();
-                await _gdTrimParamsHistory();
+                if (typeof window._gdPurgeParamsHistoryByDays === 'function') paramsDeleted = await window._gdPurgeParamsHistoryByDays(keepDays);
+                else await _gdTrimParamsHistory();
             } catch(e) { console.warn('_gdDailyClean params:', e); }
 
             // 2) Sauvegardes générales (rétention partagée)
@@ -42389,6 +42468,7 @@ function initAdminSections() {
 
             localStorage.setItem(flagKey, today);
             localStorage.setItem('covo_gd_daily_clean_ts', new Date().toISOString());
+            try { localStorage.setItem('covo_gd_last_clean', JSON.stringify({ backups: trimmed || 0, params: paramsDeleted || 0, keep: keepDays, ts: new Date().toISOString() })); } catch(e){}
             if (force && typeof showScanToast === 'function')
                 showScanToast('🧹 Nettoyage Drive effectué (paramètres, catalogue & sauvegardes)', 'success');
         } catch(e) { console.warn('_gdDailyClean:', e); }
@@ -55304,9 +55384,16 @@ window._rachatRender=function(filter){
   window._gdManualClean = async function(){
     var sel  = document.getElementById('gd-manual-keep');
     var keep = sel ? (parseInt(sel.value,10)||2) : 2;
+
+    // 0) Afficher d'abord l'historique Paramètres/Catalogue (total + à supprimer)
+    var scan = null;
+    try { if(typeof window._gdScanParamsHistory==='function') scan = await window._gdScanParamsHistory(keep); } catch(e){}
+
+    var msgListe = scan ? ('• Historique Paramètres/Catalogue : ' + scan.total + ' archive(s), ' + scan.toDelete + ' à supprimer\n') : '';
     var ok = confirm(
       'Nettoyage Google Drive\n\n'
       + '• Conserver ' + keep + ' jour(s) de sauvegarde\n'
+      + msgListe
       + '• Effacer TOUTES les sauvegardes plus anciennes\n'
       + '  (paramètres, catalogue et sauvegardes générales)\n\n'
       + 'Cette suppression est définitive. Continuer ?'
@@ -55323,24 +55410,28 @@ window._rachatRender=function(filter){
     } catch(e){}
 
     // 2) Lancer le nettoyage complet (paramètres/catalogue + sauvegardes)
-    var deleted = 0;
+    var deleted = 0, paramsDeleted = 0;
     try {
       if(typeof window._gdDailyClean==='function') { await window._gdDailyClean(true); }
       else if(window._gdBackupRotation && typeof window._gdBackupRotation.run==='function') { deleted = await window._gdBackupRotation.run(false); }
     } catch(e){}
 
-    // 3) Récupérer le nombre supprimé (mémorisé par la rotation)
+    // 3) Récupérer les nombres supprimés (mémorisés par le nettoyage)
     try {
-      var cfg = (window._gdBackupRotation && typeof window._gdBackupRotation.get==='function') ? window._gdBackupRotation.get() : {};
-      if(typeof cfg.lastCount==='number') deleted = cfg.lastCount;
+      var lc = JSON.parse(localStorage.getItem('covo_gd_last_clean') || '{}');
+      if(typeof lc.backups==='number') deleted = lc.backups;
+      if(typeof lc.params==='number')  paramsDeleted = lc.params;
     } catch(e){}
 
-    // 4) État du jour (préservé)
+    // 4) Ré-afficher l'historique restant après nettoyage
+    try { if(typeof window._gdScanParamsHistory==='function') await window._gdScanParamsHistory(keep); } catch(e){}
+
+    // 5) État du jour (préservé)
     var now   = new Date();
     var today = now.toISOString().split('T')[0];
     var txt   = '✅ Nettoyé le ' + now.toLocaleString('fr-FR')
-              + ' — ' + deleted + ' sauvegarde(s) supprimée(s) · rétention ' + keep + ' j'
-              + ' · historique Paramètres/Catalogue élagué.';
+              + ' — ' + deleted + ' sauvegarde(s) + ' + paramsDeleted + ' archive(s) Paramètres/Catalogue supprimée(s)'
+              + ' · rétention ' + keep + ' j.';
     try { localStorage.setItem(STATUS_KEY, JSON.stringify({date:today, text:txt, keep:keep})); } catch(e){}
     if(statusEl){ statusEl.style.color='#0e6655'; statusEl.textContent=txt; }
   };
