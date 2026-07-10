@@ -4265,6 +4265,13 @@ button, .btn, .retours-btn {
                     <span class="stat-change" id="stat-invest-count" style="color:var(--text-muted,#888);">0 achat(s)</span>
                     <div style="font-size:0.7rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-invest-detail"></div>
                 </div>
+                <!-- 8b. Solde restant en caisse (recette − approvisionnements) -->
+                <div class="stat-card" style="border-left:4px solid #2563eb;">
+                    <h3>💰 Solde restant en caisse</h3>
+                    <div class="stat-value" id="stat-solde-restant" style="color:#2563eb;">0€</div>
+                    <span class="stat-change" id="stat-solde-sub" style="color:var(--text-muted,#888);">Recette − approvisionnements</span>
+                    <div style="font-size:0.7rem;color:var(--gray,#aaa);margin-top:4px;" id="stat-solde-detail"></div>
+                </div>
                 <!-- 9. CA perdu -->
                 <div class="stat-card" style="border-left:4px solid #e74c3c;">
                     <h3>📉 CA perdu</h3>
@@ -4597,6 +4604,9 @@ button, .btn, .retours-btn {
                     </button>
                     <button onclick="window._rachatOpen&&window._rachatOpen()" id="invt-btn-rachat" title="Capacité de rachat : combien d'unités finançables par le bénéfice réalisé" style="padding:9px 14px;border:none;border-radius:9px;font-size:0.82rem;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#16a085,#1abc9c);color:#fff;">
                         💰 Capacité de rachat
+                    </button>
+                    <button onclick="window._rndInvOpen&&window._rndInvOpen()" id="invt-btn-rndinv" title="Inventaire aléatoire : compter quelques articles tirés au hasard (comptage tournant)" style="padding:9px 14px;border:none;border-radius:9px;font-size:0.82rem;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#8e44ad,#9b59b6);color:#fff;">
+                        🎲 Inventaire aléatoire
                     </button>
                 </div>
 
@@ -23617,6 +23627,18 @@ logout = function(skipConfirmation = false) {
             _invDEl.textContent = _ip.join(' \u00b7 ');
         }
 
+        // \u2500\u2500 Solde restant en caisse = recette des ventes (p\u00e9riode) \u2212 approvisionnements (p\u00e9riode) \u2500\u2500
+        var _solde = periodTotal - _invPT;
+        var _soldeEl = document.getElementById('stat-solde-restant');
+        if (_soldeEl) {
+            _soldeEl.textContent = (_solde > 0 ? '+' : '') + _solde.toFixed(2) + '\u20ac';
+            _soldeEl.style.color = _solde >= 0 ? '#2563eb' : '#e74c3c';
+        }
+        var _soldeSubEl = document.getElementById('stat-solde-sub');
+        if (_soldeSubEl) _soldeSubEl.textContent = periodLabel + (_solde < 0 ? ' \u00b7 \u26a0\ufe0f n\u00e9gatif' : '');
+        var _soldeDetEl = document.getElementById('stat-solde-detail');
+        if (_soldeDetEl) _soldeDetEl.textContent = 'Recette ' + periodTotal.toFixed(2) + '\u20ac \u2212 Appro. ' + _invPT.toFixed(2) + '\u20ac';
+
         var _marcP = _marcList.filter(function(m) { return _inP(m.date); });
         var _lostPT = _marcP.reduce(function(s, m) { return s + (parseFloat(m.montant) || 0); }, 0);
         var _lostAll = _marcList.reduce(function(s, m) { return s + (parseFloat(m.montant) || 0); }, 0);
@@ -42478,16 +42500,18 @@ function initAdminSections() {
     };
 
     // ═══════════════════════════════════════════════════════════════
-    // NETTOYAGE QUOTIDIEN AUTOMATIQUE — Paramètres et Catalogues (+ sauvegardes)
-    //   • Élague l'historique « Paramètres et Catalogues / Historique » (garde les 30 récents)
-    //   • Purge les anciennes sauvegardes générales selon la rétention configurée
-    //   • S'exécute au plus une fois par jour (drapeau localStorage)
+    // NETTOYAGE AUTOMATIQUE EN ARRIÈRE-PLAN — Paramètres, Catalogue & Sauvegardes
+    //   Protocole : recherche (scan) → nettoyage (purge) → affichage (badge + état)
+    //   Cadence : au plus une fois toutes les 2 heures (throttle localStorage)
     // ═══════════════════════════════════════════════════════════════
+    var _GD_CLEAN_THROTTLE = 2 * 3600 * 1000; // 2 h
+
     window._gdDailyClean = async function(force) {
         try {
-            var today   = new Date().toISOString().split('T')[0];
-            var flagKey = 'covo_gd_daily_clean';
-            if (!force && localStorage.getItem(flagKey) === today) return; // déjà nettoyé aujourd'hui
+            if (!force) {
+                var lastTs = parseFloat(localStorage.getItem('covo_gd_auto_clean_ms') || '0') || 0;
+                if (Date.now() - lastTs < _GD_CLEAN_THROTTLE) return; // déjà nettoyé il y a moins de 2 h
+            }
             if (!_gdConnected || !_gdAccessToken || !_gdFolderId) {          // Drive non connecté
                 if (force && typeof showScanToast === 'function') showScanToast('⚠️ Google Drive non connecté', 'warning');
                 return;
@@ -42498,7 +42522,7 @@ function initAdminSections() {
             try { if (window._gdBackupRotation && typeof window._gdBackupRotation._days === 'function') keepDays = window._gdBackupRotation._days(); } catch(e){}
 
             var trimmed = 0, paramsDeleted = 0;
-            // 1) Historique Paramètres et Catalogues (purge par jours de rétention)
+            // 1) Historique Paramètres et Catalogues (recherche + purge par jours de rétention)
             try {
                 await _gdEnsureParamsFolder();
                 if (typeof window._gdPurgeParamsHistoryByDays === 'function') paramsDeleted = await window._gdPurgeParamsHistoryByDays(keepDays);
@@ -42512,22 +42536,61 @@ function initAdminSections() {
                 }
             } catch(e) { console.warn('_gdDailyClean rotation:', e); }
 
-            localStorage.setItem(flagKey, today);
+            localStorage.setItem('covo_gd_daily_clean', new Date().toISOString().split('T')[0]);
             localStorage.setItem('covo_gd_daily_clean_ts', new Date().toISOString());
-            try { localStorage.setItem('covo_gd_last_clean', JSON.stringify({ backups: trimmed || 0, params: paramsDeleted || 0, keep: keepDays, ts: new Date().toISOString() })); } catch(e){}
+            localStorage.setItem('covo_gd_auto_clean_ms', String(Date.now()));
+            var _info = { backups: trimmed || 0, params: paramsDeleted || 0, keep: keepDays, ts: new Date().toISOString(), auto: !force };
+            try { localStorage.setItem('covo_gd_last_clean', JSON.stringify(_info)); } catch(e){}
+            // 3) Affichage : icône/badge de confirmation
+            try { if (typeof window._gdAutoCleanBadge === 'function') window._gdAutoCleanBadge(_info); } catch(e){}
             if (force && typeof showScanToast === 'function')
                 showScanToast('🧹 Nettoyage Drive effectué (paramètres, catalogue & sauvegardes)', 'success');
         } catch(e) { console.warn('_gdDailyClean:', e); }
     };
 
-    // Planification : au chargement (après connexion Drive) puis vérification périodique.
-    (function _gdScheduleDailyClean() {
+    // ── Badge/icône d'état : confirme visuellement que le nettoyage a été effectué ──
+    window._gdAutoCleanBadge = function(info) {
+        try {
+            var host = document.getElementById('app-header-status') || document.body;
+            var b = document.getElementById('gd-autoclean-badge');
+            if (!b) {
+                b = document.createElement('div');
+                b.id = 'gd-autoclean-badge';
+                b.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:0.68rem;font-weight:800;padding:3px 9px;border-radius:20px;white-space:nowrap;cursor:default;';
+                host.appendChild(b);
+            }
+            if (!info) { try { info = JSON.parse(localStorage.getItem('covo_gd_last_clean') || 'null'); } catch(e) {} }
+            if (info && info.ts) {
+                var t  = new Date(info.ts);
+                var hh = t.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                var n  = (info.backups || 0) + (info.params || 0);
+                b.style.background = 'rgba(39,174,96,0.18)';
+                b.style.color = '#eafaf1';
+                b.textContent = '🧹✓ Nettoyé ' + hh;
+                b.title = 'Nettoyage automatique effectué le ' + t.toLocaleString('fr-FR')
+                        + ' — ' + n + ' fichier(s) supprimé(s) (paramètres, catalogue & sauvegardes).'
+                        + '\nPassage automatique toutes les 2 heures.';
+            } else {
+                b.style.background = 'rgba(255,255,255,0.12)';
+                b.style.color = 'rgba(255,255,255,0.75)';
+                b.textContent = '🧹 Auto';
+                b.title = 'Nettoyage automatique activé — toutes les 2 heures.';
+            }
+        } catch(e) {}
+    };
+
+    // Planification : au chargement (après connexion Drive) puis TOUTES LES 2 HEURES en arrière-plan.
+    (function _gdScheduleAutoClean() {
         function _kick() { try { window._gdDailyClean(); } catch(e) {} }
+        function _badge() { try { window._gdAutoCleanBadge(); } catch(e) {} }
+        // Restaurer l'icône d'état dès que possible
+        if (document.readyState !== 'loading') setTimeout(_badge, 700);
+        else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_badge, 700); });
         // Essais échelonnés au démarrage (laisse le temps à Drive de se connecter)
         setTimeout(_kick, 8000);
         setTimeout(_kick, 30000);
-        // Puis toutes les 3 h : ne nettoie réellement qu'une fois par jour (drapeau)
-        setInterval(_kick, 3 * 3600 * 1000);
+        // Puis toutes les 2 h : le throttle garantit au plus un nettoyage par tranche de 2 h
+        setInterval(_kick, 2 * 3600 * 1000);
     })();
 
     // Ouvrir le picker sur l'historique Paramètres et Catalogues
@@ -55570,5 +55633,167 @@ window._rachatRender=function(filter){
     var _prevTAM2 = window.toggleAdminModal;
     window.toggleAdminModal = function(){ var r=_prevTAM2.apply(this,arguments); setTimeout(_restore, 400); return r; };
   }
+})();
+</script>
+<script>
+/* ===== Inventaire aléatoire (comptage tournant) — COVO Pro ===== */
+(function(){
+  var CNT_KEY='covo_rndinv_count';
+  var DONE_PREFIX='covo_rndinv_done_';
+  function _today(){ return new Date().toISOString().split('T')[0]; }
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function _count(){ var n=parseInt(localStorage.getItem(CNT_KEY),10); return (n>=1&&n<=50)?n:5; }
+  function _activeProducts(){ return (typeof products!=='undefined'&&Array.isArray(products))?products.filter(function(p){return p&&p.active!==false;}):[]; }
+  function _pick(n){
+    var pool=_activeProducts().slice();
+    for(var i=pool.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=pool[i]; pool[i]=pool[j]; pool[j]=t; }
+    return pool.slice(0, Math.min(n, pool.length));
+  }
+  var _sel=[];
+
+  function injectModal(){
+    if(document.getElementById('rndinv-modal')) return;
+    var m=document.createElement('div'); m.id='rndinv-modal';
+    m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24200;justify-content:center;align-items:center;padding:14px;';
+    m.innerHTML=''
+      +'<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:680px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+      +'<div style="background:linear-gradient(135deg,#8e44ad,#9b59b6);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">'
+      +'<div><div style="font-size:1.02rem;font-weight:900;">🎲 Inventaire aléatoire</div>'
+      +'<div style="font-size:.68rem;color:rgba(255,255,255,.85);margin-top:1px;">Comptez les articles tirés au hasard, puis comparez au stock théorique</div></div>'
+      +'<button onclick="window._rndInvClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
+      +'<div style="padding:12px 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--border-color,#eee);">'
+      +'<label style="font-size:.78rem;font-weight:700;color:var(--text-main);">Nombre d\'articles :</label>'
+      +'<input id="rndinv-n" type="number" min="1" max="50" style="width:64px;padding:6px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:.85rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">'
+      +'<button onclick="window._rndInvDraw()" style="padding:7px 13px;background:rgba(142,68,173,.12);color:#8e44ad;border:1px solid rgba(142,68,173,.35);border-radius:8px;font-weight:800;font-size:.78rem;cursor:pointer;">🔁 Nouveau tirage</button>'
+      +'<label style="font-size:.74rem;color:var(--text-muted,#888);display:flex;align-items:center;gap:5px;margin-left:auto;cursor:pointer;"><input type="checkbox" id="rndinv-blind" onchange="window._rndInvToggleBlind()" checked> Comptage à l\'aveugle</label>'
+      +'</div>'
+      +'<div id="rndinv-body" style="overflow:auto;flex:1;padding:12px 18px;"></div>'
+      +'<div style="padding:12px 18px;border-top:1px solid var(--border-color,#eee);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;background:var(--bg-body,#f4f7f6);">'
+      +'<button onclick="window._rndInvClose()" style="padding:9px 16px;background:var(--bg-card,#fff);color:var(--text-main);border:1.5px solid var(--border-color,#ddd);border-radius:9px;font-weight:700;font-size:.82rem;cursor:pointer;">Fermer</button>'
+      +'<button onclick="window._rndInvValidate()" style="padding:9px 18px;background:linear-gradient(135deg,#8e44ad,#9b59b6);color:#fff;border:none;border-radius:9px;font-weight:800;font-size:.82rem;cursor:pointer;">✓ Comparer au stock</button>'
+      +'</div></div>';
+    m.addEventListener('click',function(e){ if(e.target===m) window._rndInvClose(); });
+    document.body.appendChild(m);
+  }
+
+  function _renderList(){
+    var body=document.getElementById('rndinv-body'); if(!body) return;
+    var blind=(document.getElementById('rndinv-blind')||{}).checked;
+    if(!_sel.length){ body.innerHTML='<div style="text-align:center;padding:36px 10px;color:var(--text-muted,#8a94a6);">Aucun article actif à inventorier.</div>'; return; }
+    var h='<div style="display:flex;flex-direction:column;gap:8px;">';
+    _sel.forEach(function(p,i){
+      var isKg=p.unitType==='kg';
+      h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border-color,#eef1f6);border-radius:10px;background:var(--bg-card,#fff);">'
+        +'<div style="width:26px;height:26px;border-radius:8px;background:rgba(142,68,173,.12);color:#8e44ad;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.72rem;flex-shrink:0;">'+(i+1)+'</div>'
+        +'<div style="flex:1;min-width:0;"><div style="font-weight:700;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name||'—')+'</div>'
+        +(p.barcode?'<div style="font-size:.64rem;color:var(--text-muted,#9aa4b2);font-family:monospace;">'+esc(p.barcode)+'</div>':'')
+        +(blind?'':'<div style="font-size:.66rem;color:#8e44ad;font-weight:700;">Stock théorique : '+(isKg?(parseFloat(p.stock)||0).toFixed(3)+' kg':(parseFloat(p.stock)||0))+'</div>')
+        +'</div>'
+        +'<input type="number" min="0" step="'+(isKg?'0.001':'1')+'" class="rndinv-inp" data-pid="'+esc(String(p.id))+'" placeholder="'+(isKg?'kg comptés':'qté comptée')+'" style="width:104px;padding:7px 9px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:.85rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">'
+        +'<div class="rndinv-res" data-pid="'+esc(String(p.id))+'" style="width:96px;text-align:right;font-size:.74rem;font-weight:800;"></div>'
+        +'</div>';
+    });
+    h+='</div>';
+    body.innerHTML=h;
+  }
+
+  window._rndInvToggleBlind=function(){
+    var vals={};
+    document.querySelectorAll('.rndinv-inp').forEach(function(inp){ vals[inp.getAttribute('data-pid')]=inp.value; });
+    _renderList();
+    document.querySelectorAll('.rndinv-inp').forEach(function(inp){ var v=vals[inp.getAttribute('data-pid')]; if(v!=null) inp.value=v; });
+  };
+
+  window._rndInvDraw=function(){
+    var nEl=document.getElementById('rndinv-n');
+    var n=nEl?(parseInt(nEl.value,10)||_count()):_count();
+    if(n<1)n=1; if(n>50)n=50;
+    localStorage.setItem(CNT_KEY,String(n));
+    _sel=_pick(n);
+    _renderList();
+  };
+
+  window._rndInvOpen=function(){
+    injectModal();
+    var nEl=document.getElementById('rndinv-n'); if(nEl) nEl.value=_count();
+    var bl=document.getElementById('rndinv-blind'); if(bl) bl.checked=true;
+    window._rndInvDraw();
+    var md=document.getElementById('rndinv-modal'); if(md) md.style.display='flex';
+    try{ localStorage.setItem(DONE_PREFIX+_today(),'1'); }catch(e){} // considéré fait pour aujourd'hui
+  };
+  window._rndInvClose=function(){ var m=document.getElementById('rndinv-modal'); if(m) m.style.display='none'; };
+
+  window._rndInvValidate=function(){
+    var inps=document.querySelectorAll('.rndinv-inp');
+    var ecarts=[], counted=0;
+    inps.forEach(function(inp){
+      var pid=inp.getAttribute('data-pid');
+      var p=_sel.filter(function(x){return String(x.id)===String(pid);})[0];
+      if(!p) return;
+      var resEl=document.querySelector('.rndinv-res[data-pid="'+pid+'"]');
+      var val=inp.value.trim();
+      if(val===''){ if(resEl){resEl.textContent='—';resEl.style.color='var(--text-muted,#999)';} return; }
+      counted++;
+      var cnt=parseFloat(val)||0, sys=parseFloat(p.stock)||0;
+      var ec=+(cnt-sys).toFixed(3);
+      if(resEl){
+        if(Math.abs(ec)<0.0005){ resEl.textContent='✓ OK'; resEl.style.color='#27ae60'; }
+        else { resEl.textContent=(ec>0?'+':'')+ec; resEl.style.color=ec>0?'#e67e22':'#e74c3c'; ecarts.push({p:p,cnt:cnt,sys:sys,ec:ec}); }
+      }
+    });
+    if(counted===0){ if(typeof showScanToast==='function') showScanToast('Saisissez au moins une quantité comptée','info'); return; }
+    window._rndInvEcarts=ecarts;
+    var body=document.getElementById('rndinv-body');
+    var old=document.getElementById('rndinv-summary'); if(old) old.remove();
+    var sum=document.createElement('div'); sum.id='rndinv-summary';
+    sum.style.cssText='margin-top:12px;padding:11px 13px;border-radius:10px;border:1.5px solid;';
+    if(!ecarts.length){
+      sum.style.borderColor='rgba(39,174,96,.4)'; sum.style.background='rgba(39,174,96,.08)';
+      sum.innerHTML='<div style="font-weight:800;color:#1e8449;font-size:.84rem;">✅ Aucun écart — '+counted+' article(s) conforme(s) au stock théorique.</div>';
+    } else {
+      sum.style.borderColor='rgba(231,76,60,.4)'; sum.style.background='rgba(231,76,60,.06)';
+      var rows=ecarts.map(function(e){
+        var kg=e.p.unitType==='kg';
+        return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:.75rem;padding:2px 0;"><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(e.p.name)+'</span>'
+          +'<span style="font-weight:800;white-space:nowrap;color:'+(e.ec>0?'#e67e22':'#e74c3c')+';">'+(kg?e.sys.toFixed(3):e.sys)+' → '+(kg?e.cnt.toFixed(3):e.cnt)+' ('+(e.ec>0?'+':'')+e.ec+')</span></div>';
+      }).join('');
+      sum.innerHTML='<div style="font-weight:800;color:#c0392b;font-size:.84rem;margin-bottom:6px;">⚠️ '+ecarts.length+' écart(s) sur '+counted+' comptage(s)</div>'+rows
+        +'<button onclick="window._rndInvApply()" style="margin-top:9px;padding:8px 14px;background:linear-gradient(135deg,#8e44ad,#9b59b6);color:#fff;border:none;border-radius:8px;font-weight:800;font-size:.78rem;cursor:pointer;">🔧 Corriger le stock (aligner sur le comptage)</button>';
+    }
+    if(body) body.appendChild(sum);
+    // révéler le stock théorique après comptage
+    var bl=document.getElementById('rndinv-blind'); if(bl&&bl.checked){ bl.checked=false; window._rndInvToggleBlind(); }
+  };
+
+  window._rndInvApply=function(){
+    var list=window._rndInvEcarts||[]; if(!list.length) return;
+    if(!confirm('Aligner le stock théorique sur les quantités comptées pour '+list.length+' article(s) ?')) return;
+    var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+    var n=0;
+    list.forEach(function(e){
+      var p=prods.filter(function(x){return String(x.id)===String(e.p.id);})[0];
+      if(!p) return;
+      var before=p.stock;
+      p.stock = (p.unitType==='kg') ? +Number(e.cnt).toFixed(3) : Math.round(e.cnt);
+      if(typeof window._logStockChange==='function'){ try{ window._logStockChange(p, before, p.stock, 'inventaire', 'Inventaire aléatoire', {}); }catch(err){} }
+      n++;
+    });
+    if(typeof saveAll==='function') saveAll();
+    if(typeof renderAll==='function') renderAll();
+    if(typeof window._gdTriggerAutoSave==='function') window._gdTriggerAutoSave();
+    if(typeof showScanToast==='function') showScanToast('✅ '+n+' correction(s) de stock appliquée(s)','success');
+    window._rndInvClose();
+  };
+
+  // ── Lancement automatique une fois par jour ──
+  function _doneToday(){ try{ return localStorage.getItem(DONE_PREFIX+_today())==='1'; }catch(e){ return false; } }
+  function _autoDaily(){
+    if(_doneToday()) return;
+    if(!_activeProducts().length) return;
+    if(typeof showScanToast==='function') showScanToast('🎲 Inventaire aléatoire du jour','info');
+    window._rndInvOpen();
+  }
+  if(document.readyState!=='loading') setTimeout(_autoDaily, 6000);
+  else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_autoDaily, 6000); });
 })();
 </script>
