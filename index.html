@@ -42327,6 +42327,50 @@ function initAdminSections() {
         } catch(e) { /* silencieux */ }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // NETTOYAGE QUOTIDIEN AUTOMATIQUE — Paramètres et Catalogues (+ sauvegardes)
+    //   • Élague l'historique « Paramètres et Catalogues / Historique » (garde les 30 récents)
+    //   • Purge les anciennes sauvegardes générales selon la rétention configurée
+    //   • S'exécute au plus une fois par jour (drapeau localStorage)
+    // ═══════════════════════════════════════════════════════════════
+    window._gdDailyClean = async function(force) {
+        try {
+            var today   = new Date().toISOString().split('T')[0];
+            var flagKey = 'covo_gd_daily_clean';
+            if (!force && localStorage.getItem(flagKey) === today) return; // déjà nettoyé aujourd'hui
+            if (!_gdConnected || !_gdAccessToken || !_gdFolderId) return;   // Drive non connecté → réessai plus tard
+
+            var trimmed = 0;
+            // 1) Historique Paramètres et Catalogues
+            try {
+                await _gdEnsureParamsFolder();
+                await _gdTrimParamsHistory();
+            } catch(e) { console.warn('_gdDailyClean params:', e); }
+
+            // 2) Sauvegardes générales (rétention partagée)
+            try {
+                if (window._gdBackupRotation && typeof window._gdBackupRotation.autoRun === 'function') {
+                    trimmed = await window._gdBackupRotation.autoRun();
+                }
+            } catch(e) { console.warn('_gdDailyClean rotation:', e); }
+
+            localStorage.setItem(flagKey, today);
+            localStorage.setItem('covo_gd_daily_clean_ts', new Date().toISOString());
+            if (force && typeof showScanToast === 'function')
+                showScanToast('🧹 Nettoyage Drive effectué (paramètres, catalogue & sauvegardes)', 'success');
+        } catch(e) { console.warn('_gdDailyClean:', e); }
+    };
+
+    // Planification : au chargement (après connexion Drive) puis vérification périodique.
+    (function _gdScheduleDailyClean() {
+        function _kick() { try { window._gdDailyClean(); } catch(e) {} }
+        // Essais échelonnés au démarrage (laisse le temps à Drive de se connecter)
+        setTimeout(_kick, 8000);
+        setTimeout(_kick, 30000);
+        // Puis toutes les 3 h : ne nettoie réellement qu'une fois par jour (drapeau)
+        setInterval(_kick, 3 * 3600 * 1000);
+    })();
+
     // Ouvrir le picker sur l'historique Paramètres et Catalogues
     window._gdOpenParamsHistory = async function() {
         if (!_gdConnected || !_gdAccessToken || !_gdFolderId) {
@@ -42916,8 +42960,19 @@ function initAdminSections() {
         const stockChanges = []; // { name, before, after, qty }
         let stockUpdated = 0;
         let stockNotFound = 0;
+        let duplicates = 0;
+
+        // ── Anti-doublon : IDs des ventes déjà enregistrées ───────────
+        // Empêche le double comptage du CA / de l'objectif / du stock lors d'une réimportation.
+        const _existingIds = new Set(salesHistory.map(function(x){ return (x && x.id != null) ? String(x.id) : null; }));
+        const _imported = [];
 
         toImport.forEach(s => {
+            // Ticket déjà présent → on l'ignore (ne pas recompter)
+            if (s && s.id != null && _existingIds.has(String(s.id))) { duplicates++; return; }
+            if (s && s.id != null) _existingIds.add(String(s.id));
+            _imported.push(s);
+
             // Ajouter à l'historique
             salesHistory.push(s);
 
@@ -42949,7 +43004,8 @@ function initAdminSections() {
         if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
 
         // ── Résultat ──────────────────────────────────────────────────
-        const totalCA  = toImport.reduce((sum, s) => sum + parseFloat(s.total), 0);
+        const totalCA  = _imported.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
+        const _nImported = _imported.length;
         const resultEl = document.getElementById('ticket-import-result');
         if (resultEl) {
             const stockRows = stockChanges.slice(0, 10).map(c =>
@@ -42964,12 +43020,16 @@ function initAdminSections() {
             resultEl.style.display = '';
             resultEl.innerHTML = `
                 <div style="background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:10px;padding:14px 16px;margin-bottom:8px;">
-                    <div style="font-weight:800;color:#1b5e20;font-size:0.88rem;margin-bottom:10px;">✅ ${toImport.length} ticket${toImport.length>1?'s':''} importé${toImport.length>1?'s':''} avec succès</div>
+                    <div style="font-weight:800;color:#1b5e20;font-size:0.88rem;margin-bottom:10px;">✅ ${_nImported} ticket${_nImported>1?'s':''} importé${_nImported>1?'s':''} avec succès${duplicates>0?` <span style="color:#e67e22;font-weight:700;">· ${duplicates} doublon${duplicates>1?'s':''} ignoré${duplicates>1?'s':''}</span>`:''}</div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:12px;">
                         <div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid #c8e6c9;">
-                            <div style="font-size:1.2rem;font-weight:900;color:#27ae60;">${toImport.length}</div>
+                            <div style="font-size:1.2rem;font-weight:900;color:#27ae60;">${_nImported}</div>
                             <div style="font-size:0.7rem;color:#666;">Tickets ajoutés</div>
                         </div>
+                        ${duplicates>0?`<div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid #ffe0b2;">
+                            <div style="font-size:1.2rem;font-weight:900;color:#e67e22;">${duplicates}</div>
+                            <div style="font-size:0.7rem;color:#666;">Doublons ignorés</div>
+                        </div>`:''}
                         <div style="background:white;border-radius:8px;padding:10px;text-align:center;border:1px solid #c8e6c9;">
                             <div style="font-size:1.2rem;font-weight:900;color:#1a73e8;">${totalCA.toFixed(2)} €</div>
                             <div style="font-size:0.7rem;color:#666;">CA comptabilisé</div>
@@ -43006,8 +43066,10 @@ function initAdminSections() {
         _ticketPendingImports = [];
         document.getElementById('ticket-import-input').value = '';
 
-        const toast = `✅ ${toImport.length} ticket${toImport.length>1?'s':''} importé${toImport.length>1?'s':''} · ${totalCA.toFixed(2)} € · ${stockUpdated} stock${stockUpdated>1?'s':''} mis à jour`;
-        showScanToast(toast, 'success');
+        const toast = _nImported === 0 && duplicates > 0
+            ? `ℹ️ ${duplicates} ticket${duplicates>1?'s':''} déjà importé${duplicates>1?'s':''} — aucun ajout (pas de double comptage)`
+            : `✅ ${_nImported} ticket${_nImported>1?'s':''} importé${_nImported>1?'s':''} · ${totalCA.toFixed(2)} € · ${stockUpdated} stock${stockUpdated>1?'s':''} mis à jour${duplicates>0?` · ${duplicates} doublon${duplicates>1?'s':''} ignoré${duplicates>1?'s':''}`:''}`;
+        showScanToast(toast, _nImported === 0 && duplicates > 0 ? 'info' : 'success');
         renderAll();
     };
 
@@ -55171,5 +55233,33 @@ window._rachatRender=function(filter){
   }
   if(document.readyState!=='loading'){ try{ window._fpRenderCashCount(); }catch(e){} }
   else document.addEventListener('DOMContentLoaded', function(){ try{ window._fpRenderCashCount(); }catch(e){} });
+})();
+</script>
+<script>
+/* ===== Nettoyage unique : supprime les ventes importées en double (id identique) ===== */
+(function(){
+  try{
+    if(localStorage.getItem('covo_dedup_sales_v1')==='1') return;
+    var raw=localStorage.getItem('covo_sales_history');
+    if(!raw){ localStorage.setItem('covo_dedup_sales_v1','1'); return; }
+    var arr=JSON.parse(raw);
+    if(!Array.isArray(arr)){ localStorage.setItem('covo_dedup_sales_v1','1'); return; }
+    var seen={}, out=[], removed=0;
+    arr.forEach(function(s){
+      var key=(s&&s.id!=null)?String(s.id):null;
+      if(key!==null){ if(seen[key]){ removed++; return; } seen[key]=1; }
+      out.push(s);
+    });
+    if(removed>0){
+      localStorage.setItem('covo_sales_history', JSON.stringify(out));
+      if(typeof salesHistory!=='undefined' && Array.isArray(salesHistory)){
+        salesHistory.length=0; Array.prototype.push.apply(salesHistory,out);
+      }
+      var msg='🧹 '+removed+' vente'+(removed>1?'s':'')+' en double supprimée'+(removed>1?'s':'')+' (imports répétés corrigés)';
+      if(typeof showScanToast==='function') setTimeout(function(){ try{showScanToast(msg,'success');}catch(e){} },1400);
+      if(typeof renderAll==='function') setTimeout(function(){ try{renderAll();}catch(e){} },400);
+    }
+    localStorage.setItem('covo_dedup_sales_v1','1');
+  }catch(e){}
 })();
 </script>
