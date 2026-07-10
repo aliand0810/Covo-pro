@@ -6808,10 +6808,17 @@ button, .btn, .retours-btn {
                       &#129529; Nettoyer maintenant &mdash; Param&egrave;tres, Catalogue &amp; Sauvegardes
                     </button>
                     <div style="font-size:0.72rem;color:#888;margin-top:5px;">Efface les sauvegardes plus anciennes que la p&eacute;riode choisie (une confirmation est demand&eacute;e). Le r&eacute;sultat reste affich&eacute; pour la journ&eacute;e.</div>
+                  <div style="display:flex;gap:6px;margin-top:7px;">
                     <button type="button" onclick="window._gdScanParamsHistory && window._gdScanParamsHistory((document.getElementById('gd-manual-keep')||{}).value)"
-                      style="width:100%;margin-top:7px;padding:8px 10px;background:#f4f4f4;color:#111;border:1.5px solid #ccc;border-radius:8px;font-weight:700;font-size:0.8rem;cursor:pointer;">
-                      &#128269; Voir l'historique Param&egrave;tres &amp; Catalogue (total / &agrave; supprimer)
+                      style="flex:1;padding:8px 10px;background:#f4f4f4;color:#111;border:1.5px solid #ccc;border-radius:8px;font-weight:700;font-size:0.8rem;cursor:pointer;">
+                      &#128269; Voir l'historique Param&egrave;tres &amp; Catalogue
                     </button>
+                    <button type="button" onclick="window._gdScanParamsHistory && window._gdScanParamsHistory((document.getElementById('gd-manual-keep')||{}).value)"
+                      title="Rafra&icirc;chir la liste" aria-label="Rafra&icirc;chir la liste"
+                      style="padding:8px 12px;background:#1565c0;color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.8rem;cursor:pointer;white-space:nowrap;">
+                      &#128260; Rafra&icirc;chir
+                    </button>
+                  </div>
                     <div id="gd-manual-cat-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:200px;overflow-y:auto;margin-top:7px;"></div>
                     <div id="gd-manual-status" style="font-size:0.76rem;font-weight:700;color:#0e6655;margin-top:7px;min-height:16px;"></div>
                   </div>
@@ -42376,9 +42383,11 @@ function initAdminSections() {
             await _gdEnsureParamsFolder();
             if (!_gdParamsHistId) { if (el) el.innerHTML = '<em style="color:#888;">Aucun historique trouvé.</em>'; return { files:[], total:0, toDelete:0 }; }
             var q = encodeURIComponent('\'' + _gdParamsHistId + '\' in parents and trashed=false and mimeType=\'application/json\'');
-            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500');
+            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500&_ts=' + Date.now());
             var data = await resp.json();
-            var files = data.files || [];
+            // Exclure les fichiers qu'on vient de mettre à la corbeille (Drive tarde à les masquer)
+            var _trashed = window._gdRecentlyTrashed || {};
+            var files = (data.files || []).filter(function(f){ return !_trashed[f.id]; });
             var days = parseInt(keepDays, 10); if (isNaN(days) || days < 1) days = 2;
             var cutoff = Date.now() - days * 24 * 3600 * 1000;
             files.forEach(function(f){ f._date = new Date(f.modifiedTime); f._old = f._date.getTime() < cutoff; });
@@ -42423,9 +42432,14 @@ function initAdminSections() {
             var old = files.filter(function(f){ return new Date(f.modifiedTime).getTime() < cutoff; });
             // Sécurité : toujours conserver au moins l'archive la plus récente
             if (files.length > 0 && old.length === files.length) old = old.slice(1);
+            window._gdRecentlyTrashed = window._gdRecentlyTrashed || {};
             var deleted = 0;
             for (var i = 0; i < old.length; i++) {
-                try { await _gdFetch('https://www.googleapis.com/drive/v3/files/' + old[i].id + '/trash', { method: 'POST' }); deleted++; } catch(e) {}
+                try {
+                    await _gdFetch('https://www.googleapis.com/drive/v3/files/' + old[i].id + '/trash', { method: 'POST' });
+                    deleted++;
+                    window._gdRecentlyTrashed[old[i].id] = Date.now(); // pour rafraîchir la liste tout de suite
+                } catch(e) {}
             }
             return deleted;
         } catch(e) { return 0; }
@@ -55197,6 +55211,55 @@ function _qtySold(p, sm){
   var nk=((p.name||'')+'').toLowerCase().trim();
   return sm.byName[nk]||0;
 }
+
+/* ── Réinitialisation des compteurs « vendus » / « capacité de rachat » ──
+   On mémorise une base par article (= total vendu au moment du reset).
+   Vendus effectifs = total vendu − base. L'historique des ventes n'est pas touché. */
+function _rachatResets(){ try{ return JSON.parse(localStorage.getItem('covo_rachat_reset')||'{}')||{}; }catch(e){ return {}; } }
+function _rachatSaveResets(o){ try{ localStorage.setItem('covo_rachat_reset', JSON.stringify(o||{})); }catch(e){} }
+function _rachatKey(p){ return (p&&p.id!=null&&p.id!=='')?('id:'+p.id):('nm:'+(((p&&p.name)||'').toLowerCase().trim())); }
+function _rachatSoldEff(p, sm, resets){
+  var total=_qtySold(p, sm);
+  var base=(resets && resets[_rachatKey(p)]!=null) ? (parseFloat(resets[_rachatKey(p)])||0) : 0;
+  return Math.max(0, +(total-base).toFixed(3));
+}
+function _rachatCurFilter(){ var s=document.getElementById('rachat-search'); return s?(s.value||''):''; }
+window._rachatToggleAll=function(cb){ var l=document.querySelectorAll('.rachat-sel'); for(var i=0;i<l.length;i++) l[i].checked=cb.checked; };
+window._rachatResetOne=function(pid){
+  var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+  var p=prods.find(function(x){ return String(x.id)===String(pid); }); if(!p) return;
+  var sm=_soldMap(), o=_rachatResets(); o[_rachatKey(p)]=_qtySold(p,sm); _rachatSaveResets(o);
+  window._rachatRender(_rachatCurFilter());
+  if(typeof showScanToast==='function') showScanToast('↺ Compteur réinitialisé : '+(p.name||''),'success');
+};
+window._rachatResetSelected=function(){
+  var checks=document.querySelectorAll('.rachat-sel:checked');
+  if(!checks.length){ if(typeof showScanToast==='function') showScanToast('Sélectionnez au moins un article','info'); return; }
+  var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+  var sm=_soldMap(), o=_rachatResets(), n=0;
+  checks.forEach(function(c){ var p=prods.find(function(x){return String(x.id)===String(c.getAttribute('data-pid'));}); if(p){ o[_rachatKey(p)]=_qtySold(p,sm); n++; } });
+  _rachatSaveResets(o);
+  window._rachatRender(_rachatCurFilter());
+  if(typeof showScanToast==='function') showScanToast('↺ '+n+' compteur(s) réinitialisé(s)','success');
+};
+window._rachatResetAll=function(){
+  if(!confirm('Réinitialiser les compteurs « vendus » et « capacité de rachat » de tous les articles affichés ?\n(L\'historique des ventes n\'est pas modifié.)')) return;
+  var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+  var sm=_soldMap(), o=_rachatResets(), n=0;
+  var q=_rachatCurFilter().toLowerCase().trim();
+  prods.filter(function(p){ return p && p.active!==false && (!q || ((p.name||'')+' '+(p.barcode||'')).toLowerCase().indexOf(q)>=0); })
+    .forEach(function(p){ o[_rachatKey(p)]=_qtySold(p,sm); n++; });
+  _rachatSaveResets(o);
+  window._rachatRender(_rachatCurFilter());
+  if(typeof showScanToast==='function') showScanToast('↺ '+n+' compteur(s) réinitialisé(s)','success');
+};
+window._rachatUndoOne=function(pid){
+  var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+  var p=prods.find(function(x){ return String(x.id)===String(pid); }); if(!p) return;
+  var o=_rachatResets(); delete o[_rachatKey(p)]; _rachatSaveResets(o);
+  window._rachatRender(_rachatCurFilter());
+  if(typeof showScanToast==='function') showScanToast('↺ Réinitialisation annulée : '+(p.name||''),'info');
+};
 function injectModal(){
   if(document.getElementById('rachat-modal'))return;
   var m=document.createElement('div'); m.id='rachat-modal';
@@ -55228,17 +55291,18 @@ window._rachatRender=function(filter){
   var body=document.getElementById('rachat-body'); if(!body)return;
   var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
   var sm=_soldMap();
+  var resets=_rachatResets();
   var q=(filter||'').toLowerCase().trim();
   var rows=prods.filter(function(p){ return p && p.active!==false && (!q || ((p.name||'')+' '+(p.barcode||'')).toLowerCase().indexOf(q)>=0); })
     .map(function(p){
       var isKg=p.unitType==='kg';
       var vente=isKg?(parseFloat(p.pricePerKg)||0):(parseFloat(p.price)||0);
       var achat=(p.costPrice!=null)?(parseFloat(p.costPrice)||0):null;
-      var sold=_qtySold(p,sm);
+      var sold=_rachatSoldEff(p,sm,resets);                                // vendus effectifs (après reset éventuel)
       var margeU=(achat!=null)?+(vente-achat).toFixed(2):null;            // marge unitaire
       var benef=(margeU!=null)?+(margeU*sold).toFixed(2):null;             // bénéfice total = marge × ventes
       var capa=(achat!=null&&achat>0&&benef!=null&&benef>0)?(isKg?+(benef/achat).toFixed(2):Math.floor(benef/achat)):0; // bénéfice ÷ prix d'achat
-      return {p:p,isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa};
+      return {p:p,isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa,hasReset:(resets[_rachatKey(p)]!=null)};
     });
   rows.sort(function(a,b){ return (b.capa-a.capa) || ((b.benef||0)-(a.benef||0)); });
 
@@ -55260,9 +55324,15 @@ window._rachatRender=function(filter){
 
   if(!rows.length){ body.innerHTML='<div style="text-align:center;padding:40px 10px;color:var(--text-muted,#8a94a6);"><div style="font-size:2rem;">💰</div><div style="margin-top:6px;font-size:.85rem;font-weight:700;">Aucun produit</div></div>'; return; }
 
-  var h='<div style="border:1px solid var(--border-color,#eef1f6);border-radius:12px;overflow:hidden;">'
-    +'<table style="width:100%;border-collapse:collapse;font-size:.78rem;min-width:760px;">'
+  var h='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;">'
+    +'<button onclick="window._rachatResetSelected()" style="padding:7px 12px;background:rgba(22,160,133,.12);color:#0e6b58;border:1px solid rgba(22,160,133,.35);border-radius:8px;font-weight:800;font-size:.74rem;cursor:pointer;">↺ Réinitialiser la sélection</button>'
+    +'<button onclick="window._rachatResetAll()" style="padding:7px 12px;background:rgba(231,76,60,.1);color:#c0392b;border:1px solid rgba(231,76,60,.35);border-radius:8px;font-weight:800;font-size:.74rem;cursor:pointer;">↺ Tout réinitialiser</button>'
+    +'<span style="font-size:.66rem;color:var(--text-muted,#8a94a6);">Remet à zéro « vendus » &amp; « capacité » sans toucher à l\'historique des ventes.</span>'
+    +'</div>'
+    +'<div style="border:1px solid var(--border-color,#eef1f6);border-radius:12px;overflow:hidden;">'
+    +'<table style="width:100%;border-collapse:collapse;font-size:.78rem;min-width:860px;">'
     +'<thead><tr style="background:var(--bg-body,#f4f7fb);color:var(--text-muted,#7a8699);font-size:.6rem;text-transform:uppercase;letter-spacing:.5px;">'
+    +'<th style="padding:9px 8px;text-align:center;width:30px;"><input type="checkbox" onclick="window._rachatToggleAll(this)" title="Tout sélectionner"></th>'
     +'<th style="padding:9px 10px;text-align:left;">Article</th>'
     +'<th style="padding:9px 8px;text-align:right;">Prix achat</th>'
     +'<th style="padding:9px 8px;text-align:right;">Prix vente</th>'
@@ -55270,6 +55340,7 @@ window._rachatRender=function(filter){
     +'<th style="padding:9px 8px;text-align:right;">Vendus</th>'
     +'<th style="padding:9px 8px;text-align:right;">Bénéfice total</th>'
     +'<th style="padding:9px 12px;text-align:right;">Capacité de rachat</th>'
+    +'<th style="padding:9px 8px;text-align:center;">Reset</th>'
     +'</tr></thead><tbody>';
   rows.forEach(function(r){
     var noCost=(r.achat==null||r.achat<=0);
@@ -55277,14 +55348,20 @@ window._rachatRender=function(filter){
     if(noCost){ dot='#e67e22'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(230,126,34,.12);color:#b9650f;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">⚠️ Prix d\'achat manquant</span>'; }
     else if(r.capa===0){ dot='#e74c3c'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(231,76,60,.12);color:#c0392b;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">🔴 0 · marge insuffisante</span>'; }
     else { dot='#16a085'; capaCell='<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(22,160,133,.14);color:#0e6b58;border-radius:20px;padding:3px 12px;font-weight:900;font-size:.8rem;white-space:nowrap;">'+r.capa+(r.isKg?' kg':' u.')+'</span>'; }
+    var pidStr=esc(String(r.p.id));
     h+='<tr style="border-top:1px solid var(--border-color,#f0f2f5);">'
+      +'<td style="padding:9px 8px;text-align:center;"><input type="checkbox" class="rachat-sel" data-pid="'+pidStr+'"></td>'
       +'<td style="padding:9px 10px;"><div style="display:flex;align-items:center;gap:8px;"><span style="width:8px;height:8px;border-radius:50%;background:'+dot+';flex-shrink:0;"></span><div style="min-width:0;"><div style="font-weight:700;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:230px;">'+esc(r.p.name||'—')+'</div>'+(r.p.barcode?'<div style="font-size:.62rem;color:var(--text-muted,#9aa4b2);font-family:monospace;">'+esc(r.p.barcode)+'</div>':'')+'</div></div></td>'
       +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.achat!=null?r.achat.toFixed(2)+'€':'—')+'</td>'
       +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.vente?r.vente.toFixed(2)+'€'+(r.isKg?'/kg':''):'—')+'</td>'
       +'<td style="padding:9px 8px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:'+((r.margeU!=null&&r.margeU<0)?'#e74c3c':'#16a085')+';">'+(r.margeU!=null?((r.margeU>=0?'+':'')+r.margeU.toFixed(2)+'€'):'—')+'</td>'
-      +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.isKg?r.sold.toFixed(3):r.sold)+'</td>'
+      +'<td style="padding:9px 8px;text-align:right;color:var(--text-main);font-variant-numeric:tabular-nums;">'+(r.isKg?r.sold.toFixed(3):r.sold)+(r.hasReset?' <span title="Compteur réinitialisé" style="font-size:.6rem;color:#16a085;font-weight:900;">↺</span>':'')+'</td>'
       +'<td style="padding:9px 8px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;color:#1e40af;">'+(r.benef!=null?r.benef.toFixed(2)+'€':'—')+'</td>'
-      +'<td style="padding:9px 12px;text-align:right;">'+capaCell+'</td></tr>';
+      +'<td style="padding:9px 12px;text-align:right;">'+capaCell+'</td>'
+      +'<td style="padding:9px 8px;text-align:center;white-space:nowrap;">'
+        +'<button onclick="window._rachatResetOne(\''+pidStr+'\')" title="Réinitialiser ce compteur" style="background:rgba(22,160,133,.12);color:#0e6b58;border:none;border-radius:6px;padding:4px 9px;font-weight:900;font-size:.78rem;cursor:pointer;">↺</button>'
+        +(r.hasReset?'<button onclick="window._rachatUndoOne(\''+pidStr+'\')" title="Annuler la réinitialisation" style="background:rgba(127,140,141,.12);color:#7a8699;border:none;border-radius:6px;padding:4px 8px;font-size:.78rem;cursor:pointer;margin-left:4px;">↶</button>':'')
+      +'</td></tr>';
   });
   h+='</tbody></table></div>';
   body.innerHTML=h;
