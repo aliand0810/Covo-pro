@@ -42354,6 +42354,32 @@ function initAdminSections() {
         }
     };
 
+    // Met un fichier à la corbeille — API Drive v3 : PATCH { trashed:true }
+    // (l'ancien endpoint POST .../trash est du v2 → 404, d'où les suppressions qui échouaient).
+    async function _gdTrashOne(id) {
+        try {
+            var r = await _gdFetch('https://www.googleapis.com/drive/v3/files/' + id + '?fields=id', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ trashed: true })
+            });
+            return !!(r && (r.ok || r.status === 200));
+        } catch(e) { return false; }
+    }
+    // Corbeille par lots (concurrence limitée) → rapide et sans dépasser les quotas.
+    async function _gdTrashMany(ids) {
+        window._gdRecentlyTrashed = window._gdRecentlyTrashed || {};
+        var deleted = 0, CHUNK = 10;
+        for (var i = 0; i < ids.length; i += CHUNK) {
+            var slice = ids.slice(i, i + CHUNK);
+            var results = await Promise.all(slice.map(function(id){ return _gdTrashOne(id); }));
+            for (var j = 0; j < results.length; j++) {
+                if (results[j]) { deleted++; window._gdRecentlyTrashed[slice[j]] = Date.now(); }
+            }
+        }
+        return deleted;
+    }
+
     async function _gdTrimParamsHistory() {
         if (!_gdParamsHistId) return;
         try {
@@ -42363,9 +42389,7 @@ function initAdminSections() {
             const files = data.files || [];
             if (files.length <= GD_PARAMS_MAX_HIST) return;
             const toDelete = files.slice(GD_PARAMS_MAX_HIST);
-            for (const f of toDelete) {
-                try { await _gdFetch('https://www.googleapis.com/drive/v3/files/' + f.id + '/trash', { method: 'POST' }); } catch(e) { /* silencieux */ }
-            }
+            await _gdTrashMany(toDelete.map(function(f){ return f.id; }));
         } catch(e) { /* silencieux */ }
     }
 
@@ -42403,7 +42427,7 @@ function initAdminSections() {
             await _gdEnsureParamsFolder();
             if (!_gdParamsHistId) { if (el) el.innerHTML = '<em style="color:#888;">Aucun historique trouvé.</em>'; return { files:[], total:0, toDelete:0 }; }
             var q = encodeURIComponent('\'' + _gdParamsHistId + '\' in parents and trashed=false and mimeType=\'application/json\'');
-            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500&_ts=' + Date.now());
+            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=1000&_ts=' + Date.now());
             var data = await resp.json();
             // Exclure les fichiers qu'on vient de mettre à la corbeille (Drive tarde à les masquer)
             var _trashed = window._gdRecentlyTrashed || {};
@@ -42443,20 +42467,12 @@ function initAdminSections() {
             await _gdEnsureParamsFolder();
             if (!_gdParamsHistId) return 0;
             var q = encodeURIComponent('\'' + _gdParamsHistId + '\' in parents and trashed=false and mimeType=\'application/json\'');
-            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500');
+            var resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=1000');
             var data = await resp.json();
             var files = data.files || [];
             _gdParamsClassify(files, keepDays);
             var old = files.filter(function(f){ return f._old; });
-            window._gdRecentlyTrashed = window._gdRecentlyTrashed || {};
-            var deleted = 0;
-            for (var i = 0; i < old.length; i++) {
-                try {
-                    await _gdFetch('https://www.googleapis.com/drive/v3/files/' + old[i].id + '/trash', { method: 'POST' });
-                    deleted++;
-                    window._gdRecentlyTrashed[old[i].id] = Date.now(); // pour rafraîchir la liste tout de suite
-                } catch(e) {}
-            }
+            var deleted = await _gdTrashMany(old.map(function(f){ return f.id; }));
             return deleted;
         } catch(e) { return 0; }
     };
