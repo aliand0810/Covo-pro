@@ -4608,6 +4608,9 @@ button, .btn, .retours-btn {
                     <button onclick="window._rndInvOpen&&window._rndInvOpen()" id="invt-btn-rndinv" title="Inventaire aléatoire : compter quelques articles tirés au hasard (comptage tournant)" style="padding:9px 14px;border:none;border-radius:9px;font-size:0.82rem;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#8e44ad,#9b59b6);color:#fff;">
                         🎲 Inventaire aléatoire
                     </button>
+                    <button onclick="window._reorderOpen&&window._reorderOpen()" id="invt-btn-reorder" title="Réapprovisionnement par lot : recommandations d'achat selon le conditionnement" style="padding:9px 14px;border:none;border-radius:9px;font-size:0.82rem;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#c0392b,#e74c3c);color:#fff;">
+                        📦 Réappro. par lot <span id="reorder-badge" style="display:none;background:#fff;color:#c0392b;border-radius:20px;padding:0 6px;font-size:0.7rem;margin-left:2px;">0</span>
+                    </button>
                 </div>
 
                 <!-- Résumé pertes post-validation -->
@@ -9762,6 +9765,37 @@ button, .btn, .retours-btn {
             } else {
                 benefBlockA.style.display = 'none';
             }
+        }
+
+        // Conditionnement / réapprovisionnement (par article) — admin
+        var _roBlock = document.getElementById('pd-reorder-block');
+        if (_roBlock) {
+            var _roAdmin = typeof isAdmin !== 'undefined' && isAdmin;
+            if (_roAdmin) {
+                var _roPackEl = document.getElementById('pd-reorder-pack');
+                var _roThEl   = document.getElementById('pd-reorder-th');
+                if (_roPackEl) _roPackEl.value = (p.reorderPack != null && p.reorderPack > 0) ? p.reorderPack : '';
+                if (_roThEl)   _roThEl.value   = (p.reorderThreshold != null && p.reorderThreshold !== '') ? p.reorderThreshold : '';
+                var _roMinEl = document.getElementById('pd-reorder-min');
+                if (_roMinEl)  _roMinEl.value  = (p.reorderMinLots != null && p.reorderMinLots >= 1) ? p.reorderMinLots : '';
+                var _roFinEl = document.getElementById('pd-reorder-finance');
+                if (_roFinEl) {
+                    var _fin = (typeof window._reorderFinance === 'function') ? window._reorderFinance(p) : null;
+                    if (!_fin) { _roFinEl.textContent = ''; }
+                    else if (_fin.ok) { _roFinEl.innerHTML = '✅ Rachat finançable par les ventes : ' + _fin.minLots + ' lot(s) de ' + _fin.pk + ' = ' + _fin.neededCost.toFixed(2) + '€ (couvert par le bénéfice ' + _fin.benef.toFixed(2) + '€)'; _roFinEl.style.color = '#0e6b58'; }
+                    else { _roFinEl.innerHTML = '⚠️ Les ventes financent ' + _fin.affordableLots + '/' + _fin.minLots + ' lot(s) — il manque ' + _fin.manque.toFixed(2) + '€ (bénéfice réalisé ' + _fin.benef.toFixed(2) + '€)'; _roFinEl.style.color = '#c0392b'; }
+                }
+                var _roSt = document.getElementById('pd-reorder-status');
+                if (_roSt) {
+                    var _pk = (p.reorderPack != null && p.reorderPack > 0) ? parseFloat(p.reorderPack) : null;
+                    var _th = (p.reorderThreshold != null && p.reorderThreshold !== '') ? parseFloat(p.reorderThreshold) : _pk;
+                    var _stk = parseFloat(p.stock || 0);
+                    if (_pk == null) { _roSt.textContent = 'Non configuré — indiquez le conditionnement pour activer les recommandations d\'achat.'; _roSt.style.color = 'var(--text-muted,#7f8c8d)'; }
+                    else if (_stk <= _th) { var _need = Math.max(1, Math.ceil((_th - _stk) / _pk)); _roSt.innerHTML = '🚨 À réapprovisionner : <strong style="color:#c0392b;">acheter ' + _need + ' lot(s)</strong> (= ' + (_need * _pk) + ' u.) · stock ' + _stk + ' ≤ seuil ' + _th; _roSt.style.color = 'var(--text-main)'; }
+                    else { _roSt.innerHTML = '✅ Stock suffisant (' + _stk + ') · seuil ' + _th + ' · lot de ' + _pk; _roSt.style.color = '#1e8449'; }
+                }
+                _roBlock.style.display = '';
+            } else { _roBlock.style.display = 'none'; }
         }
 
         const dlcBlock = document.getElementById('pd-dlc-block');
@@ -22262,6 +22296,110 @@ logout = function(skipConfirmation = false) {
         if (modal) modal.style.display = 'none';
     };
 
+    // Impression grille A4 : remplit une feuille A4 d'étiquettes prêtes à découper
+    window._printMultiLabelsA4 = function() {
+        var s = window._lblSettings || {};
+        var fmt = localStorage.getItem('covo_label_format') || '50x30';
+        var parts = fmt.split('x');
+        var wMM = parseInt(parts[0]) || 50;
+        var hMM = parseInt(parts[1]) || 30;
+        var shopName = (typeof appSettings !== 'undefined' && appSettings.shopName) ? appSettings.shopName : '';
+
+        var items = [];
+        document.querySelectorAll('#lbl-multi-list .lbl-multi-row').forEach(function(row) {
+            var chk = row.querySelector('.lbl-multi-chk');
+            if (!chk || !chk.checked) return;
+            var pid = parseInt(row.getAttribute('data-id'));
+            var qty = Math.max(1, Math.min(99, parseInt((row.querySelector('.lbl-multi-qty') || {}).value || '1') || 1));
+            var p = (typeof products !== 'undefined') ? products.find(function(x) { return x.id === pid; }) : null;
+            if (p) items.push({ p: p, qty: qty });
+        });
+        if (items.length === 0) { if (typeof showScanToast === 'function') showScanToast('⚠️ Sélectionnez au moins un produit', 'warning'); return; }
+        var totalLabels = items.reduce(function(acc, it) { return acc + it.qty; }, 0);
+
+        function buildLabelHTML(p) {
+            var price = p.price !== undefined ? parseFloat(p.price).toFixed(2) : '';
+            if (p.unitType === 'kg' && p.pricePerKg) price = parseFloat(p.pricePerKg).toFixed(2);
+            var unitSuffix = p.unitType === 'kg' ? ' €/kg' : ' €';
+            var displayPriceHTML = '<span class="lbl-price-main">' + price + unitSuffix + '</span>';
+            if (p.promo && p.promo > 0) {
+                var promoP = window._promoPrice(parseFloat(price), p.promo, p.costPrice).toFixed(2);
+                displayPriceHTML = '<span class="lbl-price-old">' + price + unitSuffix + '</span>'
+                    + '<span class="lbl-price-main lbl-price-promo">' + promoP + unitSuffix + '</span>'
+                    + '<span class="lbl-price-badge">-' + p.promo + '%</span>';
+            }
+            var bc = (p.barcode || '').trim();
+            var bcFormat = 'CODE128';
+            if (/^\d{13}$/.test(bc)) bcFormat = 'EAN13';
+            else if (/^\d{8}$/.test(bc)) bcFormat = 'EAN8';
+            var svgId = 'lbl-bc-' + p.id + '-' + Math.random().toString(36).slice(2);
+            var html = '<div class="lbl-wrap">';
+            if (s.showShop !== false && shopName) html += '<div class="lbl-shop">' + shopName.replace(/</g, '&lt;') + '</div>';
+            if (s.showName !== false) html += '<div class="lbl-name">' + (p.name || '').replace(/</g, '&lt;') + '</div>';
+            if (s.showCategory && p.category) html += '<div class="lbl-cat">' + p.category.replace(/</g, '&lt;') + '</div>';
+            if (s.showPrice !== false && price) html += '<div class="lbl-price">' + displayPriceHTML + '</div>';
+            if (s.showBarcode !== false && bc) html += '<div class="lbl-barcode-wrap"><svg id="' + svgId + '" class="bc-svg" data-value="' + bc.replace(/"/g, '') + '" data-format="' + bcFormat + '"></svg></div>';
+            html += '</div>';
+            return html;
+        }
+
+        var cellsHTML = '';
+        items.forEach(function(it) {
+            for (var i = 0; i < it.qty; i++) { cellsHTML += '<div class="lbl-cell">' + buildLabelHTML(it.p) + '</div>'; }
+        });
+
+        var margin = 8, gap = 2;
+        var cols = Math.max(1, Math.floor((210 - 2 * margin + gap) / (wMM + gap)));
+        var perPage = cols * Math.max(1, Math.floor((297 - 2 * margin + gap) / (hMM + gap)));
+        var bcH = hMM <= 30 ? 22 : 32;
+
+        var win = window.open('', '_blank');
+        if (!win) { if (typeof showScanToast === 'function') showScanToast('⚠️ Autorisez les popups pour imprimer', 'warning'); return; }
+
+        win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
+            + '<title>Étiquettes A4 (' + totalLabels + ')<\/title>'
+            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>'
+            + '<style>'
+            + '* { box-sizing:border-box; margin:0; padding:0; }'
+            + '@page { size:A4; margin:' + margin + 'mm; }'
+            + 'body { background:white; font-family:Arial,sans-serif; }'
+            + '.sheet { display:flex; flex-wrap:wrap; gap:' + gap + 'mm; align-content:flex-start; }'
+            + '.lbl-cell { width:' + wMM + 'mm; height:' + hMM + 'mm; border:1px dashed #999; page-break-inside:avoid; break-inside:avoid; overflow:hidden; display:flex; align-items:center; justify-content:center; }'
+            + '.lbl-wrap { width:100%; padding:1.5mm 2mm; display:flex; flex-direction:column; align-items:center; gap:0.6mm; }'
+            + '.lbl-shop { font-size:5pt; color:#333; text-align:center; text-transform:uppercase; letter-spacing:0.4px; }'
+            + '.lbl-name { font-size:8.5pt; font-weight:900; color:#000; text-align:center; line-height:1.15; word-break:break-word; max-width:100%; }'
+            + '.lbl-cat  { font-size:5pt; color:#333; text-align:center; }'
+            + '.lbl-price { display:flex; align-items:baseline; justify-content:center; gap:3px; flex-wrap:wrap; margin:0.4mm 0; }'
+            + '.lbl-price-main { font-size:13pt; font-weight:900; color:#000; }'
+            + '.lbl-price-old { font-size:6.5pt; text-decoration:line-through; color:#777; }'
+            + '.lbl-price-promo { color:#c0392b; }'
+            + '.lbl-price-badge { font-size:6pt; font-weight:800; background:#e74c3c; color:#fff; padding:1px 4px; border-radius:3px; }'
+            + '.lbl-barcode-wrap { width:100%; display:flex; justify-content:center; margin-top:0.8mm; }'
+            + '.lbl-barcode-wrap svg { max-width:100%; height:auto; }'
+            + '@media screen { body { padding:14px; background:#e9e9ee; } .sheet { background:white; box-shadow:0 2px 12px rgba(0,0,0,0.15); padding:' + margin + 'mm; width:210mm; margin:0 auto; } }'
+            + '@media print { body { background:white; } }'
+            + '<\/style>'
+            + '<\/head><body><div class="sheet">'
+            + cellsHTML
+            + '<\/div>'
+            + '<script>'
+            + 'window.addEventListener("load",function(){'
+            + '  document.querySelectorAll(".bc-svg").forEach(function(el){'
+            + '    var v=el.getAttribute("data-value"),f=el.getAttribute("data-format");'
+            + '    if(!v)return;'
+            + '    try{JsBarcode(el,v,{format:f,width:1.3,height:' + bcH + ',displayValue:true,fontSize:7,margin:1,textMargin:1});}'
+            + '    catch(e){try{JsBarcode(el,v,{format:"CODE128",width:1.3,height:' + bcH + ',displayValue:true,fontSize:7,margin:1});}catch(e2){}}'
+            + '  });'
+            + '  setTimeout(function(){window.print();},650);'
+            + '});'
+            + '<\/script>'
+            + '<\/body><\/html>');
+        win.document.close();
+        if (typeof showScanToast === 'function') showScanToast('📄 ' + totalLabels + ' étiquette(s) · ' + cols + ' par ligne · ~' + perPage + '/page A4', 'success');
+        var modalA = document.getElementById('lbl-multi-modal');
+        if (modalA) modalA.style.display = 'none';
+    };
+
 
     // Load label settings when admin panel opens
     document.addEventListener('DOMContentLoaded', function() {
@@ -24921,6 +25059,22 @@ logout = function(skipConfirmation = false) {
         if (id == null) return;
         if (typeof window._rachatResetOne === 'function') window._rachatResetOne(String(id));
         if (typeof window.openProductDetail === 'function') window.openProductDetail(id); // rafraîchit la fiche
+    };
+
+    // Enregistrer le conditionnement / seuil de réappro depuis la fiche produit
+    window._pdReorderSave = function() {
+        var id = (window._pdCurrentProductId != null) ? window._pdCurrentProductId
+               : (typeof _pdCurrentId !== 'undefined' ? _pdCurrentId : null);
+        if (id == null) return;
+        var pk = document.getElementById('pd-reorder-pack');
+        var th = document.getElementById('pd-reorder-th');
+        var ml = document.getElementById('pd-reorder-min');
+        var pkv = pk ? pk.value : '', thv = th ? th.value : '', mlv = ml ? ml.value : '';
+        if ((parseFloat(pkv) || 0) <= 0) { if (typeof showScanToast === 'function') showScanToast('⚠️ Indiquez les unités par lot', 'info'); return; }
+        if (typeof window._reorderSet === 'function') window._reorderSet(id, pkv, thv, mlv);
+        if (typeof window._reorderBadge === 'function') window._reorderBadge();
+        if (typeof showScanToast === 'function') showScanToast('📦 Conditionnement enregistré', 'success');
+        if (typeof window.openProductDetail === 'function') window.openProductDetail(id);
     };
 
     window.pdClearPack = function() {
@@ -29542,6 +29696,28 @@ logout = function(skipConfirmation = false) {
                         <div id="pd-marge-bar" style="height:100%;border-radius:10px;background:linear-gradient(90deg,#27ae60,#2ecc71);transition:width 0.5s;width:0%;"></div>
                     </div>
                 </div>
+            </div>
+            <!-- conditionnement / réapprovisionnement (par article) -->
+            <div id="pd-reorder-block" style="display:none;margin-bottom:10px;background:rgba(231,76,60,0.05);border:1.5px solid rgba(231,76,60,0.25);border-radius:10px;padding:10px 13px;">
+                <div style="font-size:0.68rem;font-weight:800;color:#c0392b;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:7px;">&#x1f4e6; Conditionnement &amp; r&eacute;approvisionnement</div>
+                <div id="pd-reorder-status" style="font-size:0.74rem;color:var(--text-muted,#7f8c8d);margin-bottom:9px;"></div>
+                <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                    <div>
+                        <label style="font-size:0.64rem;font-weight:700;color:#c0392b;display:block;margin-bottom:3px;">Unit&eacute;s par lot</label>
+                        <input type="number" id="pd-reorder-pack" min="0" step="1" placeholder="ex 24" style="width:82px;padding:6px 8px;border:1.5px solid rgba(231,76,60,0.35);border-radius:7px;font-size:0.9rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);">
+                    </div>
+                    <div>
+                        <label style="font-size:0.64rem;font-weight:700;color:#c0392b;display:block;margin-bottom:3px;">Alerte si stock &le;</label>
+                        <input type="number" id="pd-reorder-th" min="0" step="1" placeholder="ex 24" style="width:82px;padding:6px 8px;border:1.5px solid rgba(231,76,60,0.35);border-radius:7px;font-size:0.9rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);">
+                    </div>
+                    <div>
+                        <label style="font-size:0.64rem;font-weight:700;color:#c0392b;display:block;margin-bottom:3px;">Achat habituel (lots)</label>
+                        <input type="number" id="pd-reorder-min" min="1" step="1" placeholder="ex 3" style="width:82px;padding:6px 8px;border:1.5px solid rgba(231,76,60,0.35);border-radius:7px;font-size:0.9rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);">
+                    </div>
+                    <button onclick="window._pdReorderSave&&window._pdReorderSave()" style="padding:7px 14px;background:linear-gradient(135deg,#c0392b,#e74c3c);color:white;border:none;border-radius:8px;font-weight:700;font-size:0.8rem;cursor:pointer;white-space:nowrap;">&#x1f4be; Enregistrer</button>
+                </div>
+                <div id="pd-reorder-finance" style="font-size:0.72rem;font-weight:800;margin-top:8px;"></div>
+                <div style="font-size:0.64rem;color:var(--text-muted,#999);margin-top:6px;">Seuil vide = alerte &agrave; un lot complet. Une recommandation d'achat s'affiche quand le stock atteint le seuil.</div>
             </div>
             <div id="pd-note" style="font-size:0.82rem;color:var(--gray,#7f8c8d);margin-bottom:12px;display:none;"></div>
             <!-- pack block -->
@@ -45336,7 +45512,8 @@ function initAdminSections() {
           <div id="lbl-multi-count-info" style="font-size:0.82rem;color:var(--text-muted,#888);font-weight:600;">0 étiquette(s)</div>
           <div style="display:flex;gap:8px;">
             <button onclick="document.getElementById('lbl-multi-modal').style.display='none'" style="padding:9px 18px;background:var(--bg-card,#fff);color:var(--text-main);border:1.5px solid var(--border-color,#ddd);border-radius:9px;cursor:pointer;font-size:0.85rem;font-weight:600;">Annuler</button>
-            <button onclick="_printMultiLabels()" style="padding:9px 22px;background:linear-gradient(135deg,#16a085,#1abc9c);color:white;border:none;border-radius:9px;cursor:pointer;font-size:0.85rem;font-weight:800;box-shadow:0 4px 14px rgba(22,160,133,0.35);">🖨️ Imprimer les étiquettes</button>
+            <button onclick="_printMultiLabelsA4()" title="Remplir une feuille A4 avec une grille d'étiquettes prêtes à découper" style="padding:9px 18px;background:linear-gradient(135deg,#2563eb,#1e40af);color:white;border:none;border-radius:9px;cursor:pointer;font-size:0.85rem;font-weight:800;box-shadow:0 4px 14px rgba(37,99,235,0.35);">📄 Feuille A4 (à découper)</button>
+            <button onclick="_printMultiLabels()" title="Une étiquette par page (imprimante à rouleau)" style="padding:9px 18px;background:linear-gradient(135deg,#16a085,#1abc9c);color:white;border:none;border-radius:9px;cursor:pointer;font-size:0.85rem;font-weight:800;box-shadow:0 4px 14px rgba(22,160,133,0.35);">🖨️ Rouleau</button>
           </div>
         </div>
       </div>
@@ -55388,7 +55565,8 @@ window._rachatInfoFor=function(p){
   var margeU=(achat!=null)?+(vente-achat).toFixed(2):null;
   var benef=(margeU!=null)?+(margeU*sold).toFixed(2):null;
   var capa=(achat!=null&&achat>0&&benef!=null&&benef>0)?(isKg?+(benef/achat).toFixed(2):Math.floor(benef/achat)):0;
-  return {isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa,hasReset:(resets[_rachatKey(p)]!=null),noCost:(achat==null||achat<=0)};
+  var montant=(achat!=null&&achat>0&&typeof capa==='number'&&capa>0)?+(capa*achat).toFixed(2):0; // € à dépenser pour racheter cette capacité
+  return {isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa,montant:montant,hasReset:(resets[_rachatKey(p)]!=null),noCost:(achat==null||achat<=0)};
 };
 /* Libellé + couleur cohérents pour la capacité de rachat d'un produit */
 window._rachatCapaText=function(info){
@@ -55397,7 +55575,7 @@ window._rachatCapaText=function(info){
     if(info.margeU!=null && info.margeU>0) return {text:'0 · aucune vente', color:'#7a8699'};
     return {text:'0 · marge insuffisante', color:'#e74c3c'};
   }
-  return {text: info.capa+(info.isKg?' kg':' u.')+(info.hasReset?' ↺':''), color:'#0e6b58'};
+  return {text: info.capa+(info.isKg?' kg':' u.')+((info.montant>0)?' · '+info.montant.toFixed(2)+'€':'')+(info.hasReset?' ↺':''), color:'#0e6b58'};
 };
 window._rachatToggleAll=function(cb){ var l=document.querySelectorAll('.rachat-sel'); for(var i=0;i<l.length;i++) l[i].checked=cb.checked; };
 window._rachatResetOne=function(pid){
@@ -55483,12 +55661,12 @@ window._rachatRender=function(filter){
       return {p:p,isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa,hasReset:(resets[_rachatKey(p)]!=null)};
     });
   // ── Totaux + insights (sur l'ensemble filtré par la recherche) ──
-  var totBenef=0, totCapa=0, nbAlert=0, nbRentable=0, nbNoCost=0, sumMarge=0, nMarge=0, top=null;
+  var totBenef=0, totCapa=0, totMontant=0, nbAlert=0, nbRentable=0, nbNoCost=0, sumMarge=0, nMarge=0, top=null;
   rows.forEach(function(r){
     if(r.benef!=null)totBenef+=r.benef;
     totCapa+=(typeof r.capa==='number'?r.capa:0);
     var noCost=(r.achat==null||r.achat<=0);
-    if(noCost) nbNoCost++; else if(r.capa===0) nbAlert++; else nbRentable++;
+    if(noCost) nbNoCost++; else if(r.capa===0) nbAlert++; else { nbRentable++; totMontant+=r.capa*r.achat; }
     if(r.margeU!=null && r.vente>0){ sumMarge+=(r.margeU/r.vente*100); nMarge++; }
     if(!noCost && r.capa>0 && (!top || r.capa>top.capa)) top=r;
   });
@@ -55503,6 +55681,7 @@ window._rachatRender=function(filter){
     sumEl.innerHTML='<div style="display:flex;gap:10px;flex-wrap:wrap;">'
       +card('💵','Bénéfice total',totBenef.toFixed(2)+'€','#16a085','rgba(22,160,133,.12)')
       +card('📦','Capacité totale',Math.floor(totCapa)+' u. · marge moy. '+avgMarge.toFixed(0)+'%','#1e40af','rgba(37,99,235,.12)')
+      +card('💶','Montant à utiliser',totMontant.toFixed(2)+'€','#0e6b58','rgba(22,160,133,.12)')
       +card('🏆','Top opportunité',top?(esc(top.p.name)+' · '+top.capa+(top.isKg?' kg':' u.')):'—','#b45309','rgba(245,158,11,.14)')
       +card(nbAlert?'⚠️':'✅','Marge insuffisante',nbAlert+(nbAlert>1?' produits':' produit'),nbAlert?'#e74c3c':'#16a085',nbAlert?'rgba(231,76,60,.12)':'rgba(39,174,96,.12)')
       +'</div>';
@@ -55566,7 +55745,7 @@ window._rachatRender=function(filter){
     var dot, capaCell;
     if(noCost){ dot='#e67e22'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(230,126,34,.12);color:#b9650f;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">⚠️ Prix d\'achat manquant</span>'; }
     else if(r.capa===0){ dot='#e74c3c'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(231,76,60,.12);color:#c0392b;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">🔴 0 · marge insuffisante</span>'; }
-    else { dot='#16a085'; var _pct=maxCapa>0?Math.round((r.capa/maxCapa)*100):0; capaCell='<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px;"><span style="display:inline-flex;align-items:center;gap:4px;background:rgba(22,160,133,.14);color:#0e6b58;border-radius:20px;padding:3px 12px;font-weight:900;font-size:.8rem;white-space:nowrap;">'+r.capa+(r.isKg?' kg':' u.')+'</span><div title="'+_pct+'% du meilleur article" style="width:90px;height:5px;background:rgba(22,160,133,.14);border-radius:20px;overflow:hidden;"><div style="height:100%;width:'+_pct+'%;background:linear-gradient(90deg,#16a085,#1abc9c);border-radius:20px;transition:width .3s;"></div></div></div>'; }
+    else { dot='#16a085'; var _pct=maxCapa>0?Math.round((r.capa/maxCapa)*100):0; capaCell='<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px;"><span style="display:inline-flex;align-items:center;gap:4px;background:rgba(22,160,133,.14);color:#0e6b58;border-radius:20px;padding:3px 12px;font-weight:900;font-size:.8rem;white-space:nowrap;">'+r.capa+(r.isKg?' kg':' u.')+'</span><div title="'+_pct+'% du meilleur article" style="width:90px;height:5px;background:rgba(22,160,133,.14);border-radius:20px;overflow:hidden;"><div style="height:100%;width:'+_pct+'%;background:linear-gradient(90deg,#16a085,#1abc9c);border-radius:20px;transition:width .3s;"></div></div><div style="font-size:.62rem;color:#0e6b58;font-weight:800;margin-top:1px;">≈ '+(r.capa*r.achat).toFixed(2)+'€ à utiliser</div></div>'; }
     var pidStr=esc(String(r.p.id));
     h+='<tr style="border-top:1px solid var(--border-color,#f0f2f5);">'
       +'<td style="padding:9px 8px;text-align:center;"><input type="checkbox" class="rachat-sel" data-pid="'+pidStr+'"></td>'
@@ -56004,5 +56183,191 @@ window._rachatRender=function(filter){
   }
   if(document.readyState!=='loading') setTimeout(_autoDaily, 6000);
   else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_autoDaily, 6000); });
+})();
+</script>
+<script>
+/* ===== Réapprovisionnement par conditionnement (pack/lot) — COVO Pro =====
+   1) Config par produit : reorderPack (unités/lot) + reorderThreshold (seuil d'alerte)
+   2) Alerte intelligente : recommandation uniquement quand stock ≤ seuil (réglable)
+   3) Traçabilité : journal des configs et recommandations (covo_reappro_log)          */
+(function(){
+  var LOG_KEY='covo_reappro_log';
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function _prods(){ return (typeof products!=='undefined'&&Array.isArray(products))?products:[]; }
+  function _num(v){ var n=parseFloat(v); return isNaN(n)?null:n; }
+  function _log(entry){ try{ var a=JSON.parse(localStorage.getItem(LOG_KEY)||'[]'); if(!Array.isArray(a))a=[]; a.unshift(Object.assign({ts:new Date().toISOString()},entry)); a=a.slice(0,300); localStorage.setItem(LOG_KEY,JSON.stringify(a)); }catch(e){} }
+  function _pack(p){ var pk=_num(p&&p.reorderPack); return (pk!=null&&pk>0)?pk:null; }
+  function _threshold(p){ var th=_num(p&&p.reorderThreshold); if(th!=null&&th>=0) return th; var pk=_pack(p); return pk; }
+
+  // 1) Enregistrer le conditionnement d'un produit
+  window._reorderSet=function(pid, pack, threshold, minLots){
+    var p=_prods().filter(function(x){return String(x.id)===String(pid);})[0]; if(!p) return false;
+    var pk=_num(pack), th=_num(threshold), ml=_num(minLots);
+    p.reorderPack = (pk!=null&&pk>0)?pk:0;
+    p.reorderThreshold = (th!=null&&th>=0)?th:((pk!=null&&pk>0)?pk:0);
+    p.reorderMinLots = (ml!=null&&ml>=1)?Math.round(ml):1;
+    if(typeof saveAll==='function') saveAll();
+    if(typeof window._gdTriggerAutoSave==='function') window._gdTriggerAutoSave();
+    _log({type:'config', productId:p.id, name:p.name, pack:p.reorderPack, threshold:p.reorderThreshold, minLots:p.reorderMinLots});
+    return true;
+  };
+
+  // Financement du rachat par les ventes : le bénéfice réalisé couvre-t-il l'achat habituel ?
+  window._reorderFinance=function(p){
+    if(!p) return null;
+    var pk=_pack(p); if(pk==null) return null;
+    var achat=_num(p.costPrice); if(achat==null||achat<=0) return null;
+    var ml=_num(p.reorderMinLots); ml=(ml!=null&&ml>=1)?Math.round(ml):1;
+    var neededUnits=ml*pk;
+    var neededCost=+(neededUnits*achat).toFixed(2);
+    var info=(typeof window._rachatInfoFor==='function')?window._rachatInfoFor(p):null;
+    var benef=(info&&info.benef!=null)?info.benef:0;
+    var affordableUnits=Math.floor(benef/achat);
+    var affordableLots=Math.floor(affordableUnits/pk);
+    return {pk:pk, achat:achat, minLots:ml, neededUnits:neededUnits, neededCost:neededCost, benef:+benef.toFixed(2), affordableUnits:affordableUnits, affordableLots:affordableLots, ok:(benef+0.001>=neededCost), manque:+Math.max(0,neededCost-benef).toFixed(2)};
+  };
+  function _financeLine(p){
+    var f=(typeof window._reorderFinance==='function')?window._reorderFinance(p):null;
+    if(!f) return '';
+    if(f.ok) return '<div style="font-size:.62rem;color:#0e6b58;font-weight:800;margin-top:1px;">✅ Finançable par les ventes : '+f.minLots+' lot(s) = '+f.neededCost.toFixed(2)+'€ ≤ bénéfice '+f.benef.toFixed(2)+'€</div>';
+    return '<div style="font-size:.62rem;color:#c0392b;font-weight:800;margin-top:1px;">⚠️ Ventes financent '+f.affordableLots+'/'+f.minLots+' lot(s) — manque '+f.manque.toFixed(2)+'€ (bénéfice '+f.benef.toFixed(2)+'€)</div>';
+  }
+
+  // 2) Recommandations : produits avec conditionnement et stock ≤ seuil
+  window._reorderReco=function(){
+    var out=[];
+    _prods().forEach(function(p){
+      if(!p||p.active===false) return;
+      var pk=_pack(p); if(pk==null) return;
+      var th=_threshold(p); if(th==null) return;
+      var stock=_num(p.stock)||0;
+      if(stock<=th){
+        var packs=Math.max(1, Math.ceil((th-stock)/pk));
+        out.push({p:p, stock:stock, th:th, pk:pk, packs:packs, units:packs*pk});
+      }
+    });
+    out.sort(function(a,b){ return (a.stock-a.th)-(b.stock-b.th); });
+    return out;
+  };
+
+  window._reorderAck=function(pid){
+    var p=_prods().filter(function(x){return String(x.id)===String(pid);})[0]; if(!p) return;
+    var pk=_pack(p), th=_threshold(p), stock=_num(p.stock)||0;
+    var packs=Math.max(1, Math.ceil((th-stock)/pk));
+    _log({type:'reco', productId:p.id, name:p.name, stock:stock, threshold:th, pack:pk, packs:packs, units:packs*pk});
+    if(typeof showScanToast==='function') showScanToast('🧾 Réappro noté : '+(p.name||'')+' — '+packs+' lot(s)','success');
+  };
+
+  window._reorderBadge=function(){
+    try{
+      var n=(window._reorderReco()||[]).length;
+      var b=document.getElementById('reorder-badge');
+      if(b){ b.textContent=n; b.style.display=n>0?'':'none'; }
+    }catch(e){}
+  };
+
+  function injectModal(){
+    if(document.getElementById('reorder-modal')) return;
+    var m=document.createElement('div'); m.id='reorder-modal';
+    m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24300;justify-content:center;align-items:center;padding:14px;';
+    m.innerHTML=''
+      +'<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:820px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+      +'<div style="background:linear-gradient(135deg,#c0392b,#e74c3c);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">'
+      +'<div><div style="font-size:1.02rem;font-weight:900;">📦 Réapprovisionnement par lot</div>'
+      +'<div style="font-size:.68rem;color:rgba(255,255,255,.85);margin-top:1px;">Recommandations d\'achat selon le conditionnement (pack) et le seuil de chaque produit</div></div>'
+      +'<button onclick="window._reorderClose()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
+      +'<div style="overflow:auto;flex:1;padding:14px 18px;">'
+      +'<div style="font-size:.72rem;font-weight:900;color:#c0392b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">🚨 Recommandations d\'achat</div>'
+      +'<div id="reorder-reco" style="margin-bottom:18px;"></div>'
+      +'<div style="font-size:.72rem;font-weight:900;color:#8e44ad;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;border-top:1px dashed var(--border-color,#e0e0e0);padding-top:14px;">⚙️ Configuration du conditionnement (par produit)</div>'
+      +'<input id="reorder-search" oninput="window._reorderCfgSearch(this.value)" placeholder="🔍 Rechercher un produit à configurer…" style="width:100%;box-sizing:border-box;padding:8px 12px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;font-size:.85rem;background:var(--input-bg,#fff);color:var(--text-main);margin-bottom:10px;">'
+      +'<div id="reorder-cfg"></div>'
+      +'</div></div>';
+    m.addEventListener('click',function(e){ if(e.target===m) window._reorderClose(); });
+    document.body.appendChild(m);
+  }
+
+  function _renderReco(){
+    var el=document.getElementById('reorder-reco'); if(!el) return;
+    var recos=window._reorderReco();
+    if(!recos.length){ el.innerHTML='<div style="background:rgba(39,174,96,.08);border:1.5px solid rgba(39,174,96,.35);border-radius:10px;padding:14px 16px;color:#1e8449;font-weight:800;font-size:.85rem;">✅ Aucun réapprovisionnement nécessaire pour le moment.</div>'; return; }
+    var h='<div style="display:flex;flex-direction:column;gap:8px;">';
+    recos.forEach(function(r){
+      var isKg=r.p.unitType==='kg';
+      var stockTxt=isKg?r.stock.toFixed(3)+' kg':r.stock;
+      h+='<div style="display:flex;align-items:center;gap:11px;padding:10px 12px;border:1.5px solid rgba(231,76,60,.3);border-radius:12px;background:rgba(231,76,60,.05);">'
+        +'<div style="font-size:1.2rem;flex-shrink:0;">🛒</div>'
+        +'<div style="flex:1;min-width:0;"><div style="font-weight:800;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(r.p.name||'—')+'</div>'
+        +'<div style="font-size:.68rem;color:var(--text-muted,#8a94a6);">Stock '+stockTxt+' · seuil '+r.th+' · lot de '+r.pk+'</div>'+_financeLine(r.p)+'</div>'
+        +'<div style="text-align:right;flex-shrink:0;"><div style="font-weight:900;color:#c0392b;font-size:.92rem;white-space:nowrap;">Acheter '+r.packs+' lot'+(r.packs>1?'s':'')+'</div>'
+        +'<div style="font-size:.66rem;color:var(--text-muted,#8a94a6);">= '+r.units+(isKg?' kg':' u.')+'</div></div>'
+        +'<button onclick="window._reorderAck(\''+esc(String(r.p.id))+'\')" title="Marquer comme noté (journalisé)" style="background:rgba(39,174,96,.14);color:#1e8449;border:none;border-radius:8px;padding:7px 11px;font-size:.74rem;font-weight:800;cursor:pointer;flex-shrink:0;white-space:nowrap;">✓ Noté</button>'
+        +'</div>';
+    });
+    h+='</div>';
+    el.innerHTML=h;
+  }
+
+  window._reorderCfgSearch=function(q){ _renderConfig(q); };
+  function _renderConfig(q){
+    var el=document.getElementById('reorder-cfg'); if(!el) return;
+    q=(q||'').toLowerCase().trim();
+    var list=_prods().filter(function(p){ return p && p.active!==false && (q ? (((p.name||'')+' '+(p.barcode||'')).toLowerCase().indexOf(q)>=0) : (_pack(p)!=null)); });
+    if(!q && !list.length){ el.innerHTML='<div style="font-size:.78rem;color:var(--text-muted,#8a94a6);padding:6px 2px;">Aucun produit configuré. Recherchez un produit ci-dessus pour définir son conditionnement.</div>'; return; }
+    if(q && !list.length){ el.innerHTML='<div style="font-size:.78rem;color:var(--text-muted,#8a94a6);padding:6px 2px;">Aucun produit trouvé.</div>'; return; }
+    list=list.slice(0,40);
+    var h='<div style="display:flex;flex-direction:column;gap:7px;">';
+    list.forEach(function(p){
+      var pid=esc(String(p.id)); var pk=_pack(p), th=_threshold(p);
+      var isKg=p.unitType==='kg';
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color,#eef1f6);border-radius:10px;background:var(--bg-card,#fff);flex-wrap:wrap;">'
+        +'<div style="flex:1;min-width:120px;"><div style="font-weight:700;font-size:.82rem;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name||'—')+'</div>'
+        +'<div style="font-size:.62rem;color:var(--text-muted,#9aa4b2);">Stock '+(isKg?((_num(p.stock)||0).toFixed(3)+' kg'):(_num(p.stock)||0))+(pk!=null?' · configuré : lot '+pk+' / seuil '+th:' · non configuré')+'</div>'+_financeLine(p)+'</div>'
+        +'<label style="font-size:.6rem;font-weight:800;color:var(--text-muted,#8a94a6);text-transform:uppercase;">Lot<br><input id="reorder-pack-'+pid+'" type="number" min="0" step="'+(isKg?'0.001':'1')+'" value="'+(p.reorderPack!=null&&p.reorderPack>0?p.reorderPack:'')+'" placeholder="ex 24" style="width:66px;padding:5px 7px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:.8rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);"></label>'
+        +'<label style="font-size:.6rem;font-weight:800;color:var(--text-muted,#8a94a6);text-transform:uppercase;">Seuil ≤<br><input id="reorder-th-'+pid+'" type="number" min="0" step="'+(isKg?'0.001':'1')+'" value="'+(p.reorderThreshold!=null&&p.reorderThreshold!==''?p.reorderThreshold:'')+'" placeholder="ex 24" style="width:66px;padding:5px 7px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:.8rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);"></label>'
+        +'<label style="font-size:.6rem;font-weight:800;color:#c0392b;text-transform:uppercase;">Achat habituel (lots)<br><input id="reorder-min-'+pid+'" type="number" min="1" step="1" value="'+(p.reorderMinLots!=null&&p.reorderMinLots>=1?p.reorderMinLots:'')+'" placeholder="1" style="width:66px;padding:5px 7px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:.8rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);"></label>'
+        +'<button onclick="window._reorderSaveRow(\''+pid+'\')" style="background:linear-gradient(135deg,#16a085,#0e6655);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.74rem;font-weight:800;cursor:pointer;">💾</button>'
+        +(pk!=null?'<button onclick="window._reorderClear(\''+pid+'\')" title="Retirer le conditionnement" style="background:rgba(231,76,60,.1);color:#e74c3c;border:none;border-radius:8px;padding:7px 10px;font-size:.74rem;font-weight:800;cursor:pointer;">✕</button>':'')
+        +'</div>';
+    });
+    h+='</div>';
+    el.innerHTML=h;
+  }
+
+  window._reorderSaveRow=function(pid){
+    var pk=document.getElementById('reorder-pack-'+pid), th=document.getElementById('reorder-th-'+pid), ml=document.getElementById('reorder-min-'+pid);
+    var pkv=pk?pk.value:'', thv=th?th.value:'', mlv=ml?ml.value:'';
+    if((parseFloat(pkv)||0)<=0){ if(typeof showScanToast==='function') showScanToast('⚠️ Indiquez un conditionnement (unités/lot)','info'); return; }
+    window._reorderSet(pid, pkv, thv, mlv);
+    if(typeof showScanToast==='function') showScanToast('💾 Conditionnement enregistré','success');
+    _renderReco(); _renderConfig((document.getElementById('reorder-search')||{}).value||''); window._reorderBadge();
+  };
+  window._reorderClear=function(pid){
+    var p=_prods().filter(function(x){return String(x.id)===String(pid);})[0]; if(!p) return;
+    delete p.reorderPack; delete p.reorderThreshold;
+    if(typeof saveAll==='function') saveAll();
+    _log({type:'clear', productId:p.id, name:p.name});
+    _renderReco(); _renderConfig((document.getElementById('reorder-search')||{}).value||''); window._reorderBadge();
+    if(typeof showScanToast==='function') showScanToast('Conditionnement retiré','info');
+  };
+
+  window._reorderOpen=function(){ injectModal(); _renderReco(); _renderConfig(''); var md=document.getElementById('reorder-modal'); if(md)md.style.display='flex'; };
+  window._reorderClose=function(){ var m=document.getElementById('reorder-modal'); if(m)m.style.display='none'; };
+
+  // Badge + alerte quotidienne
+  function _autoCheck(){
+    try{
+      window._reorderBadge();
+      var recos=window._reorderReco(); if(!recos.length) return;
+      var today=new Date().toISOString().split('T')[0];
+      if(localStorage.getItem('covo_reappro_alert_'+today)==='1') return;
+      localStorage.setItem('covo_reappro_alert_'+today,'1');
+      if(typeof showScanToast==='function') showScanToast('📦 '+recos.length+' produit(s) à réapprovisionner','warning');
+    }catch(e){}
+  }
+  if(document.readyState!=='loading') setTimeout(_autoCheck, 7000);
+  else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_autoCheck, 7000); });
+  // Rafraîchir le badge périodiquement (le stock change avec les ventes)
+  setInterval(function(){ try{ window._reorderBadge(); }catch(e){} }, 60000);
 })();
 </script>
