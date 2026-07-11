@@ -52800,7 +52800,10 @@ function injectDetailCredit(id){
     +'<div style="font-size:1.4rem;font-weight:900;color:'+(due>0?'#b45309':'#059669')+';margin-top:2px;">'+due.toFixed(2)+'€ <span style="font-size:.7rem;font-weight:600;color:var(--text-muted);">'+(due>0?'dû':'à jour')+'</span></div>'
     +(lim>0?'<div style="font-size:.68rem;color:var(--text-muted);">Plafond : '+lim.toFixed(2)+'€</div>':'<div style="font-size:.68rem;color:var(--text-muted);">Plafond illimité</div>')
     +'</div>'
+    +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
+    +'<button onclick="window._creditAddManual(\''+id+'\')" style="background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">➕ Dette manuelle</button>'
     +(due>0?'<button onclick="window._creditOpenRepay(\''+id+'\')" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">💵 Régler le crédit</button>':'')
+    +'</div>'
     +'</div>';
   if(ledger.length){
     inner+='<div style="margin-top:10px;border-top:1px dashed rgba(217,119,6,.3);padding-top:8px;">'
@@ -52810,7 +52813,7 @@ function injectDetailCredit(id){
         var isP=h.type==='credit_purchase';
         var sign=isP?'+':'−';
         var col=isP?'#b45309':'#059669';
-        var lbl=isP?'Achat à crédit':('Règlement'+(h.method?' ('+(h.method==='cb'?'CB':'espèces')+')':''));
+        var lbl=isP?(h.manual?'Dette manuelle':'Achat à crédit'):('Règlement'+(h.method?' ('+(h.method==='cb'?'CB':'espèces')+')':''));
         var pts=(!isP&&h.points)?' · +'+h.points+' pts':'';
         return '<div style="display:flex;justify-content:space-between;font-size:.74rem;padding:2px 0;"><span style="color:var(--text-main);">'+dt+' · '+lbl+pts+'</span><span style="font-weight:800;color:'+col+';">'+sign+(h.amount||0).toFixed(2)+'€</span></div>';
       }).join('')
@@ -53004,6 +53007,33 @@ window._creditDoRepay=function(){
   toast("✅ Règlement "+amt.toFixed(2)+"€ · +"+earned+" pts · Reste "+c.credit.toFixed(2)+"€","success");
 };
 window._creditCloseRepay=function(){var m=document.getElementById('credit-repay-modal');if(m)m.style.display='none';window._creditRepayId=null;};
+
+/* Ajouter une dette au compte crédit avec un montant saisi manuellement */
+window._creditAddManual=function(id){
+  var c=find(id); if(!c){toast('⚠️ Client introuvable');return;}
+  var raw=prompt('💶 Montant de la dette à ajouter (€) pour '+c.name+' :','');
+  if(raw===null)return;
+  var amt=parseFloat(String(raw).replace(',','.'));
+  if(isNaN(amt)||amt<=0){toast('⚠️ Montant invalide');return;}
+  amt=+amt.toFixed(2);
+  var note=prompt('📝 Motif de la dette (optionnel) :','');
+  if(note===null)note='';
+  var lim=limitOf(c);
+  var futur=+(creditOf(c)+amt).toFixed(2);
+  if(lim>0 && futur>lim+0.001){
+    if(!confirm('⚠️ Nouveau solde '+futur.toFixed(2)+'€ dépasse le plafond ('+lim.toFixed(2)+'€).\nAjouter cette dette quand même ?'))return;
+  }
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;}); if(idx===-1)return;
+  var cu=d.customers[idx];
+  cu.credit=+(((cu.credit||0)+amt)).toFixed(2);
+  if(!cu.history)cu.history=[];
+  cu.history.unshift({date:new Date().toISOString(),saleId:null,amount:amt,method:null,points:0,type:'credit_purchase',manual:true,cashier:(typeof currentUser!=='undefined'&&currentUser?currentUser.username:'')||'',note:note||'Dette manuelle'});
+  cu.history=cu.history.slice(0,300);
+  ls(d);
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh(); else injectDetailCredit(id);
+  if(typeof window._ltyCreditBadgeRefresh==='function')window._ltyCreditBadgeRefresh();
+  toast('📒 Dette de '+amt.toFixed(2)+'€ ajoutée · Solde dû '+cu.credit.toFixed(2)+'€','success');
+};
 (function(){var m=document.getElementById('credit-repay-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._creditCloseRepay();});})();
 
 /* ── Init ── */
@@ -55683,14 +55713,19 @@ window._rachatRender=function(filter){
     var h='<div style="display:flex;flex-direction:column;gap:8px;">';
     _sel.forEach(function(p,i){
       var isKg=p.unitType==='kg';
+      var _img=(p.image||'').trim();
       h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border-color,#eef1f6);border-radius:10px;background:var(--bg-card,#fff);">'
-        +'<div style="width:26px;height:26px;border-radius:8px;background:rgba(142,68,173,.12);color:#8e44ad;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.72rem;flex-shrink:0;">'+(i+1)+'</div>'
+        +'<div style="width:24px;height:24px;border-radius:7px;background:rgba(142,68,173,.12);color:#8e44ad;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:.7rem;flex-shrink:0;">'+(i+1)+'</div>'
+        +(_img
+            ? '<img src="'+esc(_img)+'" alt="" onclick="window._rndInvZoom(this.src)" onerror="this.onerror=null;this.outerHTML=\'<div style=&quot;width:44px;height:44px;border-radius:8px;background:rgba(142,68,173,.06);display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;&quot;>📦</div>\'" style="width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0;cursor:zoom-in;border:1px solid var(--border-color,#eef1f6);">'
+            : '<div style="width:44px;height:44px;border-radius:8px;background:rgba(142,68,173,.06);display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">📦</div>')
         +'<div style="flex:1;min-width:0;"><div style="font-weight:700;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name||'—')+'</div>'
         +(p.barcode?'<div style="font-size:.64rem;color:var(--text-muted,#9aa4b2);font-family:monospace;">'+esc(p.barcode)+'</div>':'')
         +(blind?'':'<div style="font-size:.66rem;color:#8e44ad;font-weight:700;">Stock théorique : '+(isKg?(parseFloat(p.stock)||0).toFixed(3)+' kg':(parseFloat(p.stock)||0))+'</div>')
         +'</div>'
-        +'<input type="number" min="0" step="'+(isKg?'0.001':'1')+'" class="rndinv-inp" data-pid="'+esc(String(p.id))+'" placeholder="'+(isKg?'kg comptés':'qté comptée')+'" style="width:104px;padding:7px 9px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:.85rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">'
-        +'<div class="rndinv-res" data-pid="'+esc(String(p.id))+'" style="width:96px;text-align:right;font-size:.74rem;font-weight:800;"></div>'
+        +'<input type="number" min="0" step="'+(isKg?'0.001':'1')+'" class="rndinv-inp" data-pid="'+esc(String(p.id))+'" placeholder="'+(isKg?'kg comptés':'qté comptée')+'" style="width:98px;padding:7px 9px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:.85rem;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">'
+        +'<div class="rndinv-res" data-pid="'+esc(String(p.id))+'" style="width:78px;text-align:right;font-size:.74rem;font-weight:800;"></div>'
+        +'<button onclick="window._rndInvIgnore(\''+esc(String(p.id))+'\')" title="Ignorer cet article (le retirer du comptage)" style="background:rgba(231,76,60,.1);color:#e74c3c;border:none;border-radius:7px;padding:6px 9px;font-size:.82rem;cursor:pointer;flex-shrink:0;">🚫</button>'
         +'</div>';
     });
     h+='</div>';
@@ -55702,6 +55737,31 @@ window._rachatRender=function(filter){
     document.querySelectorAll('.rndinv-inp').forEach(function(inp){ vals[inp.getAttribute('data-pid')]=inp.value; });
     _renderList();
     document.querySelectorAll('.rndinv-inp').forEach(function(inp){ var v=vals[inp.getAttribute('data-pid')]; if(v!=null) inp.value=v; });
+  };
+
+  // Retirer un article du comptage (ignoré)
+  window._rndInvIgnore=function(pid){
+    var vals={};
+    document.querySelectorAll('.rndinv-inp').forEach(function(inp){ vals[inp.getAttribute('data-pid')]=inp.value; });
+    _sel=_sel.filter(function(p){ return String(p.id)!==String(pid); });
+    var old=document.getElementById('rndinv-summary'); if(old) old.remove();
+    _renderList();
+    document.querySelectorAll('.rndinv-inp').forEach(function(inp){ var v=vals[inp.getAttribute('data-pid')]; if(v!=null) inp.value=v; });
+    if(typeof showScanToast==='function') showScanToast('🚫 Article retiré du comptage','info');
+  };
+
+  // Agrandir l'image d'un article
+  window._rndInvZoom=function(src){
+    if(!src) return;
+    var ov=document.getElementById('rndinv-zoom');
+    if(!ov){
+      ov=document.createElement('div'); ov.id='rndinv-zoom';
+      ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:24500;display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out;';
+      ov.addEventListener('click',function(){ ov.style.display='none'; });
+      document.body.appendChild(ov);
+    }
+    ov.innerHTML='<img src="'+String(src).replace(/"/g,'&quot;')+'" style="max-width:92vw;max-height:92vh;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6);">';
+    ov.style.display='flex';
   };
 
   window._rndInvDraw=function(){
