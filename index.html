@@ -9752,6 +9752,12 @@ button, .btn, .retours-btn {
                 document.getElementById('pd-benef-cost').textContent  = prixAchatA.toFixed(2) + ' €';
                 document.getElementById('pd-benef-stock').textContent = (benefA * stockA >= 0 ? '+' : '') + (benefA * stockA).toFixed(2) + ' €';
                 document.getElementById('pd-benef-stock').style.color = colA;
+                var _riElA = document.getElementById('pd-benef-rachat');
+                if (_riElA) {
+                    var _riA = (typeof window._rachatInfoFor === 'function') ? window._rachatInfoFor(p) : null;
+                    var _tA = (typeof window._rachatCapaText === 'function') ? window._rachatCapaText(_riA) : { text: '—', color: '#999' };
+                    _riElA.textContent = _tA.text; _riElA.style.color = _tA.color;
+                }
                 benefBlockA.style.display = '';
             } else {
                 benefBlockA.style.display = 'none';
@@ -24206,6 +24212,12 @@ logout = function(skipConfirmation = false) {
                 document.getElementById('pd-benef-cost').textContent=pa.toFixed(2)+' €';
                 document.getElementById('pd-benef-stock').textContent=(pa*st).toFixed(2)+' €';
                 document.getElementById('pd-benef-stock').style.color=co;
+                var _riEl=document.getElementById('pd-benef-rachat');
+                if(_riEl){
+                    var _ri=(typeof window._rachatInfoFor==='function')?window._rachatInfoFor(p):null;
+                    var _t=(typeof window._rachatCapaText==='function')?window._rachatCapaText(_ri):{text:'—',color:'#999'};
+                    _riEl.textContent=_t.text; _riEl.style.color=_t.color;
+                }
                 var mbEl=document.getElementById('pd-marge-bar');
                 var mpEl=document.getElementById('pd-markup-pct');
                 if (mbEl) { var mf=parseFloat(mg); mbEl.style.width=Math.min(100,Math.max(0,mf))+'%'; mbEl.style.background=mf>=30?'linear-gradient(90deg,#27ae60,#2ecc71)':mf>=15?'linear-gradient(90deg,#f39c12,#e67e22)':'linear-gradient(90deg,#e74c3c,#c0392b)'; }
@@ -24900,6 +24912,15 @@ logout = function(skipConfirmation = false) {
         openProductDetail(_pdCurrentId);
         if (typeof renderProducts === 'function') renderProducts();
         showScanToast('✅ Tarif pack enregistré');
+    };
+
+    // Réinitialiser la capacité de rachat du produit affiché dans la fiche
+    window._pdResetRachat = function() {
+        var id = (window._pdCurrentProductId != null) ? window._pdCurrentProductId
+               : (typeof _pdCurrentId !== 'undefined' ? _pdCurrentId : null);
+        if (id == null) return;
+        if (typeof window._rachatResetOne === 'function') window._rachatResetOne(String(id));
+        if (typeof window.openProductDetail === 'function') window.openProductDetail(id); // rafraîchit la fiche
     };
 
     window.pdClearPack = function() {
@@ -29504,6 +29525,13 @@ logout = function(skipConfirmation = false) {
                     <div style="background:rgba(39,174,96,0.1);border-radius:8px;padding:6px 9px;">
                         <div style="font-size:0.85rem;font-weight:700;" id="pd-benef-stock">&#8212;</div>
                         <div style="font-size:0.6rem;color:#7f8c8d;">&#x1f4e6; Valeur stock</div>
+                    </div>
+                    <div style="grid-column:1 / -1;background:rgba(22,160,133,0.10);border-radius:8px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                        <div style="min-width:0;">
+                            <div style="font-size:0.92rem;font-weight:800;color:#0e6b58;" id="pd-benef-rachat">&#8212;</div>
+                            <div style="font-size:0.6rem;color:#7f8c8d;">&#x1f4b0; Capacit&eacute; de rachat</div>
+                        </div>
+                        <button onclick="window._pdResetRachat&&window._pdResetRachat()" title="R&eacute;initialiser la capacit&eacute; de rachat de cet article" style="background:rgba(22,160,133,0.18);color:#0e6b58;border:none;border-radius:8px;width:30px;height:30px;font-size:0.9rem;font-weight:900;cursor:pointer;flex-shrink:0;">&#8634;</button>
                     </div>
                 </div>
                 <div>
@@ -55349,6 +55377,28 @@ function _rachatSoldEff(p, sm, resets){
   return Math.max(0, +(total-base).toFixed(3));
 }
 function _rachatCurFilter(){ var s=document.getElementById('rachat-search'); return s?(s.value||''):''; }
+/* Infos capacité de rachat pour UN produit (réutilisable ailleurs, ex. inventaire aléatoire) */
+window._rachatInfoFor=function(p){
+  if(!p) return null;
+  var sm=_soldMap(), resets=_rachatResets();
+  var isKg=p.unitType==='kg';
+  var vente=isKg?(parseFloat(p.pricePerKg)||0):(parseFloat(p.price)||0);
+  var achat=(p.costPrice!=null)?(parseFloat(p.costPrice)||0):null;
+  var sold=_rachatSoldEff(p,sm,resets);
+  var margeU=(achat!=null)?+(vente-achat).toFixed(2):null;
+  var benef=(margeU!=null)?+(margeU*sold).toFixed(2):null;
+  var capa=(achat!=null&&achat>0&&benef!=null&&benef>0)?(isKg?+(benef/achat).toFixed(2):Math.floor(benef/achat)):0;
+  return {isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa,hasReset:(resets[_rachatKey(p)]!=null),noCost:(achat==null||achat<=0)};
+};
+/* Libellé + couleur cohérents pour la capacité de rachat d'un produit */
+window._rachatCapaText=function(info){
+  if(!info || info.noCost) return {text:'—', color:'#e67e22'};
+  if(info.capa===0){
+    if(info.margeU!=null && info.margeU>0) return {text:'0 · aucune vente', color:'#7a8699'};
+    return {text:'0 · marge insuffisante', color:'#e74c3c'};
+  }
+  return {text: info.capa+(info.isKg?' kg':' u.')+(info.hasReset?' ↺':''), color:'#0e6b58'};
+};
 window._rachatToggleAll=function(cb){ var l=document.querySelectorAll('.rachat-sel'); for(var i=0;i<l.length;i++) l[i].checked=cb.checked; };
 window._rachatResetOne=function(pid){
   var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
@@ -55385,6 +55435,9 @@ window._rachatUndoOne=function(pid){
   window._rachatRender(_rachatCurFilter());
   if(typeof showScanToast==='function') showScanToast('↺ Réinitialisation annulée : '+(p.name||''),'info');
 };
+window._rachatSort='capa'; window._rachatFilterMode='all';
+window._rachatSetSort=function(v){ window._rachatSort=v; window._rachatRender(_rachatCurFilter()); };
+window._rachatSetFilter=function(v){ window._rachatFilterMode=v; window._rachatRender(_rachatCurFilter()); };
 function injectModal(){
   if(document.getElementById('rachat-modal'))return;
   var m=document.createElement('div'); m.id='rachat-modal';
@@ -55429,30 +55482,70 @@ window._rachatRender=function(filter){
       var capa=(achat!=null&&achat>0&&benef!=null&&benef>0)?(isKg?+(benef/achat).toFixed(2):Math.floor(benef/achat)):0; // bénéfice ÷ prix d'achat
       return {p:p,isKg:isKg,vente:vente,achat:achat,sold:sold,margeU:margeU,benef:benef,capa:capa,hasReset:(resets[_rachatKey(p)]!=null)};
     });
-  rows.sort(function(a,b){ return (b.capa-a.capa) || ((b.benef||0)-(a.benef||0)); });
-
-  var totBenef=0, totCapa=0, nbAlert=0;
-  rows.forEach(function(r){ if(r.benef!=null)totBenef+=r.benef; totCapa+=(typeof r.capa==='number'?r.capa:0); if(r.achat!=null&&r.achat>0&&r.capa===0)nbAlert++; });
+  // ── Totaux + insights (sur l'ensemble filtré par la recherche) ──
+  var totBenef=0, totCapa=0, nbAlert=0, nbRentable=0, nbNoCost=0, sumMarge=0, nMarge=0, top=null;
+  rows.forEach(function(r){
+    if(r.benef!=null)totBenef+=r.benef;
+    totCapa+=(typeof r.capa==='number'?r.capa:0);
+    var noCost=(r.achat==null||r.achat<=0);
+    if(noCost) nbNoCost++; else if(r.capa===0) nbAlert++; else nbRentable++;
+    if(r.margeU!=null && r.vente>0){ sumMarge+=(r.margeU/r.vente*100); nMarge++; }
+    if(!noCost && r.capa>0 && (!top || r.capa>top.capa)) top=r;
+  });
+  var avgMarge=nMarge?(sumMarge/nMarge):0;
 
   var sumEl=document.getElementById('rachat-summary');
   if(sumEl){
-    var card=function(ic,lbl,val,col,bg){return '<div style="flex:1;min-width:150px;background:var(--bg-card,#fff);border:1px solid var(--border-color,#eef1f6);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:11px;">'
+    var card=function(ic,lbl,val,col,bg){return '<div style="flex:1;min-width:158px;background:var(--bg-card,#fff);border:1px solid var(--border-color,#eef1f6);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:11px;">'
       +'<div style="width:38px;height:38px;border-radius:10px;background:'+bg+';display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">'+ic+'</div>'
       +'<div style="min-width:0;"><div style="font-size:.58rem;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#8a94a6);">'+lbl+'</div>'
-      +'<div style="font-size:1.15rem;font-weight:900;color:'+col+';line-height:1.1;margin-top:2px;">'+val+'</div></div></div>';};
+      +'<div style="font-size:1.12rem;font-weight:900;color:'+col+';line-height:1.1;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+val+'</div></div></div>';};
     sumEl.innerHTML='<div style="display:flex;gap:10px;flex-wrap:wrap;">'
       +card('💵','Bénéfice total',totBenef.toFixed(2)+'€','#16a085','rgba(22,160,133,.12)')
-      +card('📦','Capacité de rachat',Math.floor(totCapa)+' u.','#1e40af','rgba(37,99,235,.12)')
+      +card('📦','Capacité totale',Math.floor(totCapa)+' u. · marge moy. '+avgMarge.toFixed(0)+'%','#1e40af','rgba(37,99,235,.12)')
+      +card('🏆','Top opportunité',top?(esc(top.p.name)+' · '+top.capa+(top.isKg?' kg':' u.')):'—','#b45309','rgba(245,158,11,.14)')
       +card(nbAlert?'⚠️':'✅','Marge insuffisante',nbAlert+(nbAlert>1?' produits':' produit'),nbAlert?'#e74c3c':'#16a085',nbAlert?'rgba(231,76,60,.12)':'rgba(39,174,96,.12)')
       +'</div>';
   }
 
   if(!rows.length){ body.innerHTML='<div style="text-align:center;padding:40px 10px;color:var(--text-muted,#8a94a6);"><div style="font-size:2rem;">💰</div><div style="margin-top:6px;font-size:.85rem;font-weight:700;">Aucun produit</div></div>'; return; }
 
+  // ── Filtre + tri dynamiques ──
+  var _mode=window._rachatFilterMode||'all', _sort=window._rachatSort||'capa';
+  var displayRows=rows.filter(function(r){
+    var noCost=(r.achat==null||r.achat<=0);
+    if(_mode==='rentable') return !noCost && r.capa>0;
+    if(_mode==='alert')    return !noCost && r.capa===0;
+    if(_mode==='nocost')   return noCost;
+    if(_mode==='reset')    return r.hasReset;
+    return true;
+  });
+  displayRows.sort(function(a,b){
+    if(_sort==='benef') return (b.benef||0)-(a.benef||0);
+    if(_sort==='marge') return ((b.margeU==null?-1e9:b.margeU))-((a.margeU==null?-1e9:a.margeU));
+    if(_sort==='sold')  return (b.sold||0)-(a.sold||0);
+    if(_sort==='name')  return String(a.p.name||'').localeCompare(String(b.p.name||''));
+    return (b.capa-a.capa)||((b.benef||0)-(a.benef||0));
+  });
+  var maxCapa=0; displayRows.forEach(function(r){ if(typeof r.capa==='number'&&r.capa>maxCapa)maxCapa=r.capa; });
+  var _chip=function(mode,label,count,acol){ var on=(_mode===mode); return '<button onclick="window._rachatSetFilter(\''+mode+'\')" style="padding:5px 11px;border-radius:20px;font-size:.7rem;font-weight:800;cursor:pointer;border:1.5px solid '+(on?acol:'var(--border-color,#e0e0e0)')+';background:'+(on?acol:'var(--bg-card,#fff)')+';color:'+(on?'#fff':'var(--text-muted,#7a8699)')+';white-space:nowrap;">'+label+(count!=null?' ('+count+')':'')+'</button>'; };
+  var _opt=function(v,l){ return '<option value="'+v+'"'+(_sort===v?' selected':'')+'>'+l+'</option>'; };
+
   var h='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;">'
     +'<button onclick="window._rachatResetSelected()" style="padding:7px 12px;background:rgba(22,160,133,.12);color:#0e6b58;border:1px solid rgba(22,160,133,.35);border-radius:8px;font-weight:800;font-size:.74rem;cursor:pointer;">↺ Réinitialiser la sélection</button>'
     +'<button onclick="window._rachatResetAll()" style="padding:7px 12px;background:rgba(231,76,60,.1);color:#c0392b;border:1px solid rgba(231,76,60,.35);border-radius:8px;font-weight:800;font-size:.74rem;cursor:pointer;">↺ Tout réinitialiser</button>'
     +'<span style="font-size:.66rem;color:var(--text-muted,#8a94a6);">Remet à zéro « vendus » &amp; « capacité » sans toucher à l\'historique des ventes.</span>'
+    +'</div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px;">'
+    +_chip('all','Tous',rows.length,'#1e40af')
+    +_chip('rentable','✅ Rentables',nbRentable,'#16a085')
+    +_chip('alert','🔴 Marge insuff.',nbAlert,'#e74c3c')
+    +_chip('nocost','⚠️ Sans prix d\'achat',nbNoCost,'#e67e22')
+    +_chip('reset','↺ Réinitialisés',null,'#8e44ad')
+    +'<span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--text-muted,#7a8699);font-weight:700;white-space:nowrap;">Trier :'
+    +'<select onchange="window._rachatSetSort(this.value)" style="padding:5px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:.72rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main);cursor:pointer;">'
+    +_opt('capa','Capacité ↓')+_opt('benef','Bénéfice ↓')+_opt('marge','Marge unitaire ↓')+_opt('sold','Ventes ↓')+_opt('name','Nom A→Z')
+    +'</select></span>'
     +'</div>'
     +'<div style="border:1px solid var(--border-color,#eef1f6);border-radius:12px;overflow:hidden;">'
     +'<table style="width:100%;border-collapse:collapse;font-size:.78rem;min-width:860px;">'
@@ -55467,12 +55560,13 @@ window._rachatRender=function(filter){
     +'<th style="padding:9px 12px;text-align:right;">Capacité de rachat</th>'
     +'<th style="padding:9px 8px;text-align:center;">Reset</th>'
     +'</tr></thead><tbody>';
-  rows.forEach(function(r){
+  if(!displayRows.length){ h+='<tr><td colspan="9" style="padding:26px 10px;text-align:center;color:var(--text-muted,#8a94a6);font-size:.82rem;font-weight:700;">Aucun article pour ce filtre.</td></tr>'; }
+  displayRows.forEach(function(r){
     var noCost=(r.achat==null||r.achat<=0);
     var dot, capaCell;
     if(noCost){ dot='#e67e22'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(230,126,34,.12);color:#b9650f;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">⚠️ Prix d\'achat manquant</span>'; }
     else if(r.capa===0){ dot='#e74c3c'; capaCell='<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(231,76,60,.12);color:#c0392b;border-radius:20px;padding:3px 11px;font-weight:800;font-size:.7rem;white-space:nowrap;">🔴 0 · marge insuffisante</span>'; }
-    else { dot='#16a085'; capaCell='<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(22,160,133,.14);color:#0e6b58;border-radius:20px;padding:3px 12px;font-weight:900;font-size:.8rem;white-space:nowrap;">'+r.capa+(r.isKg?' kg':' u.')+'</span>'; }
+    else { dot='#16a085'; var _pct=maxCapa>0?Math.round((r.capa/maxCapa)*100):0; capaCell='<div style="display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px;"><span style="display:inline-flex;align-items:center;gap:4px;background:rgba(22,160,133,.14);color:#0e6b58;border-radius:20px;padding:3px 12px;font-weight:900;font-size:.8rem;white-space:nowrap;">'+r.capa+(r.isKg?' kg':' u.')+'</span><div title="'+_pct+'% du meilleur article" style="width:90px;height:5px;background:rgba(22,160,133,.14);border-radius:20px;overflow:hidden;"><div style="height:100%;width:'+_pct+'%;background:linear-gradient(90deg,#16a085,#1abc9c);border-radius:20px;transition:width .3s;"></div></div></div>'; }
     var pidStr=esc(String(r.p.id));
     h+='<tr style="border-top:1px solid var(--border-color,#f0f2f5);">'
       +'<td style="padding:9px 8px;text-align:center;"><input type="checkbox" class="rachat-sel" data-pid="'+pidStr+'"></td>'
@@ -55716,6 +55810,23 @@ window._rachatRender=function(filter){
     var phErr='<div style=&quot;width:52px;height:52px;border-radius:10px;background:rgba(142,68,173,.12);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;color:#8e44ad;font-weight:900;&quot;>'+init+'</div>';
     return '<img src="'+esc(src)+'" alt="" loading="lazy" onclick="window._rndInvZoom(this.src)" onerror="this.onerror=null;this.outerHTML=\''+phErr+'\'" style="width:52px;height:52px;object-fit:cover;border-radius:10px;flex-shrink:0;cursor:zoom-in;border:1px solid var(--border-color,#eef1f6);background:#f7f7fa;">';
   }
+  function _capaBadge(p){
+    var info=(typeof window._rachatInfoFor==='function')?window._rachatInfoFor(p):null;
+    if(!info) return '';
+    var txt, col;
+    if(info.noCost){ txt='prix d\'achat manquant'; col='#e67e22'; }
+    else if(info.capa===0){ if(info.margeU!=null&&info.margeU>0){ txt='0 · aucune vente'; col='#7a8699'; } else { txt='0 · marge insuffisante'; col='#e74c3c'; } }
+    else { txt=info.capa+(info.isKg?' kg':' u.'); col='#16a085'; }
+    return '<div style="font-size:.64rem;font-weight:800;color:'+col+';margin-top:2px;">💰 Rachat : '+txt+(info.hasReset?' <span title="Compteur réinitialisé" style="color:#8e44ad;">↺</span>':'')+'</div>';
+  }
+  window._rndInvResetCapa=function(pid){
+    if(typeof window._rachatResetOne==='function') window._rachatResetOne(pid);
+    var vals={};
+    document.querySelectorAll('.rndinv-inp').forEach(function(inp){ vals[inp.getAttribute('data-pid')]=inp.value; });
+    _renderList();
+    document.querySelectorAll('.rndinv-inp').forEach(function(inp){ var v=vals[inp.getAttribute('data-pid')]; if(v!=null) inp.value=v; });
+    _rndInvRefreshFilled();
+  };
   function _renderList(){
     var body=document.getElementById('rndinv-body'); if(!body) return;
     var blind=(document.getElementById('rndinv-blind')||{}).checked;
@@ -55735,9 +55846,11 @@ window._rachatRender=function(filter){
         +'<div style="flex:1;min-width:0;"><div style="font-weight:800;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(p.name||'—')+'</div>'
         +(p.barcode?'<div style="font-size:.64rem;color:var(--text-muted,#9aa4b2);font-family:monospace;">'+esc(p.barcode)+'</div>':'')
         +(blind?'<div style="font-size:.63rem;color:var(--text-muted,#9aa4b2);font-style:italic;">Comptage à l\'aveugle</div>':'<div style="font-size:.66rem;color:#8e44ad;font-weight:700;">Stock théorique : '+(isKg?(parseFloat(p.stock)||0).toFixed(3)+' kg':(parseFloat(p.stock)||0))+'</div>')
+        +_capaBadge(p)
         +'</div>'
         +'<input type="number" min="0" step="'+(isKg?'0.001':'1')+'" inputmode="decimal" class="rndinv-inp" data-pid="'+pid+'" oninput="window._rndInvLive(this)" placeholder="'+(isKg?'kg':'qté')+'" style="width:88px;padding:8px 9px;border:1.5px solid var(--border-color,#ddd);border-radius:9px;font-size:.9rem;font-weight:700;text-align:center;background:var(--input-bg,#fff);color:var(--text-main);">'
         +'<div class="rndinv-res" data-pid="'+pid+'" style="width:70px;text-align:right;font-size:.74rem;font-weight:800;"></div>'
+        +'<button onclick="window._rndInvResetCapa(\''+pid+'\')" title="Réinitialiser la capacité de rachat de cet article" style="background:rgba(22,160,133,.12);color:#0e6b58;border:none;border-radius:8px;width:32px;height:32px;font-size:.85rem;font-weight:900;cursor:pointer;flex-shrink:0;">↺</button>'
         +'<button onclick="window._rndInvIgnore(\''+pid+'\')" title="Ignorer cet article (le retirer du comptage)" style="background:rgba(231,76,60,.1);color:#e74c3c;border:none;border-radius:8px;width:32px;height:32px;font-size:.9rem;cursor:pointer;flex-shrink:0;">🚫</button>'
         +'</div>';
     });
