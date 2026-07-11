@@ -9736,6 +9736,8 @@ button, .btn, .retours-btn {
         stockEl.style.color = p.stock <= 0 ? '#e74c3c' : p.stock < 5 ? '#e67e22' : '#27ae60';
 
         document.getElementById('pd-promo').textContent = disc > 0 ? '-' + disc + '%' : 'Aucune';
+        var _promoBtn = document.getElementById('pd-promo-print-btn');
+        if (_promoBtn) _promoBtn.style.display = (p.promo && p.promo > 0) ? '' : 'none';
 
         // Bloc bénéfice — admin uniquement
         const benefBlockA = document.getElementById('pd-benef-block');
@@ -29755,6 +29757,7 @@ logout = function(skipConfirmation = false) {
             <button class="pd-add-btn" id="pd-add-btn" onclick="pdAddToCart()">&#x1f6d2; Ajouter au panier</button>
             <button id="pd-defect-btn" onclick="pdDeclareDefect()" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#e67e22,#d35400);color:white;font-size:0.9rem;font-weight:800;cursor:pointer;">&#x26a0;&#xfe0f; D&eacute;clarer un d&eacute;faut</button>
             <button id="pd-stock-history-btn" onclick="window._openStockHistory(window._pdCurrentProductId)" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#8e44ad,#7d3c98);color:white;font-size:0.88rem;font-weight:800;cursor:pointer;">&#x1f4ca; Historique du stock</button>
+            <button id="pd-promo-print-btn" onclick="window._promoPrintOpen&&window._promoPrintOpen(window._pdCurrentProductId)" style="display:none;width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;font-size:0.88rem;font-weight:800;cursor:pointer;">&#x1f5a8;&#xfe0f; Affiche promo A4</button>
         </div>
     </div>
 </div>
@@ -56369,5 +56372,103 @@ window._rachatRender=function(filter){
   else document.addEventListener('DOMContentLoaded', function(){ setTimeout(_autoCheck, 7000); });
   // Rafraîchir le badge périodiquement (le stock change avec les ventes)
   setInterval(function(){ try{ window._reorderBadge(); }catch(e){} }, 60000);
+})();
+</script>
+<script>
+/* ===== Impression d'affiches PROMO en A4 (pleine page ou plusieurs par page) ===== */
+(function(){
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function _prods(){ return (typeof products!=='undefined'&&Array.isArray(products))?products:[]; }
+  function _promoList(){ return _prods().filter(function(p){ return p && p.active!==false && p.promo && parseFloat(p.promo)>0; }); }
+  function _priceOf(p){ var isKg=p.unitType==='kg'; var base=isKg?(parseFloat(p.pricePerKg)||0):(parseFloat(p.price)||0); return {base:base, suffix:isKg?' €/kg':' €'}; }
+  function _newPrice(p, base){ return (typeof window._promoPrice==='function')?window._promoPrice(base, parseFloat(p.promo)||0, p.costPrice):(base*(1-(parseFloat(p.promo)||0)/100)); }
+
+  function _card(p, big){
+    var pr=_priceOf(p), np=_newPrice(p, pr.base), img=(p.img||'').trim();
+    var h='<div class="promo-card'+(big?' promo-big':'')+'">';
+    h+='<div class="promo-banner">🔥 PROMO 🔥</div>';
+    if(img) h+='<div class="promo-img"><img src="'+esc(img)+'" onerror="this.style.display=\'none\'"></div>';
+    h+='<div class="promo-name">'+esc(p.name||'')+'</div>';
+    h+='<div class="promo-badge">-'+(parseFloat(p.promo)||0)+'%</div>';
+    h+='<div class="promo-prices"><span class="promo-old">'+pr.base.toFixed(2)+pr.suffix+'</span><span class="promo-new">'+np.toFixed(2)+pr.suffix+'</span></div>';
+    if((p.barcode||'').trim()) h+='<div class="promo-bc">'+esc(String(p.barcode).trim())+'</div>';
+    h+='</div>';
+    return h;
+  }
+
+  function _css(){
+    return '*{box-sizing:border-box;margin:0;padding:0;}'
+      +'@page{size:A4;margin:8mm;}'
+      +'body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;}'
+      +'.promo-card{border:3px solid #e74c3c;border-radius:10px;padding:10mm 8mm;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4mm;break-inside:avoid;page-break-inside:avoid;background:#fff;position:relative;overflow:hidden;}'
+      +'.promo-banner{background:#e74c3c;color:#fff;font-weight:900;letter-spacing:2px;border-radius:20px;padding:2mm 6mm;font-size:13pt;}'
+      +'.promo-img img{max-width:100%;max-height:60mm;object-fit:contain;}'
+      +'.promo-name{font-weight:900;font-size:20pt;line-height:1.1;color:#000;word-break:break-word;}'
+      +'.promo-badge{background:#000;color:#ffd400;font-weight:900;font-size:22pt;border-radius:8px;padding:1mm 5mm;transform:rotate(-3deg);}'
+      +'.promo-prices{display:flex;align-items:baseline;justify-content:center;gap:5mm;flex-wrap:wrap;}'
+      +'.promo-old{font-size:16pt;color:#666;text-decoration:line-through;font-weight:700;}'
+      +'.promo-new{font-size:44pt;color:#e74c3c;font-weight:900;}'
+      +'.promo-bc{font-family:monospace;font-size:9pt;color:#333;margin-top:2mm;}'
+      /* Pleine page */
+      +'.promo-big{width:100%;height:277mm;justify-content:center;gap:8mm;page-break-after:always;}'
+      +'.promo-big .promo-banner{font-size:26pt;padding:3mm 10mm;}'
+      +'.promo-big .promo-img img{max-height:120mm;}'
+      +'.promo-big .promo-name{font-size:44pt;}'
+      +'.promo-big .promo-badge{font-size:48pt;padding:2mm 8mm;}'
+      +'.promo-big .promo-old{font-size:26pt;}'
+      +'.promo-big .promo-new{font-size:96pt;}'
+      /* Grille plusieurs par page */
+      +'.promo-grid{display:grid;grid-template-columns:1fr 1fr;gap:6mm;}'
+      +'.promo-grid .promo-card{min-height:86mm;}'
+      +'@media screen{body{background:#eee;padding:10px;}.promo-sheet{background:#fff;max-width:210mm;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.2);padding:8mm;}}';
+  }
+
+  function _print(inner, title){
+    var win=window.open('','_blank'); if(!win){ if(typeof showScanToast==='function') showScanToast('⚠️ Autorisez les popups pour imprimer','warning'); return; }
+    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+esc(title)+'<\/title><style>'+_css()+'<\/style></head><body><div class="promo-sheet">'+inner+'<\/div>'
+      +'<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});<\/script></body></html>');
+    win.document.close();
+  }
+
+  window._promoPrintFull=function(pid){
+    var p=_prods().filter(function(x){return String(x.id)===String(pid);})[0];
+    if(!p){ if(typeof showScanToast==='function') showScanToast('Produit introuvable','info'); return; }
+    _closeChoice();
+    _print(_card(p,true), 'Promo '+(p.name||''));
+  };
+  window._promoPrintAll=function(){
+    var list=_promoList();
+    if(!list.length){ if(typeof showScanToast==='function') showScanToast('Aucun article en promotion','info'); return; }
+    _closeChoice();
+    var inner='<div class="promo-grid">'+list.map(function(p){ return _card(p,false); }).join('')+'</div>';
+    _print(inner, 'Promotions ('+list.length+')');
+    if(typeof showScanToast==='function') showScanToast('🖨️ '+list.length+' article(s) en promo sur la feuille A4','success');
+  };
+
+  function _closeChoice(){ var m=document.getElementById('promo-choice-modal'); if(m) m.style.display='none'; }
+  window._promoPrintOpen=function(pid){
+    var p=_prods().filter(function(x){return String(x.id)===String(pid);})[0];
+    var nbPromo=_promoList().length;
+    var m=document.getElementById('promo-choice-modal');
+    if(!m){
+      m=document.createElement('div'); m.id='promo-choice-modal';
+      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);z-index:24600;justify-content:center;align-items:center;padding:16px;';
+      m.addEventListener('click',function(e){ if(e.target===m) _closeChoice(); });
+      document.body.appendChild(m);
+    }
+    m.innerHTML='<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:440px;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+      +'<div style="background:linear-gradient(135deg,#e74c3c,#c0392b);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;">'
+      +'<div style="font-size:1rem;font-weight:900;">🖨️ Imprimer une affiche promo A4</div>'
+      +'<button onclick="(document.getElementById(\'promo-choice-modal\')||{}).style&&(document.getElementById(\'promo-choice-modal\').style.display=\'none\')" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
+      +'<div style="padding:18px 20px;display:flex;flex-direction:column;gap:12px;">'
+      +'<button onclick="window._promoPrintFull(\''+esc(String(pid))+'\')" style="text-align:left;padding:14px 16px;background:rgba(231,76,60,.08);border:1.5px solid rgba(231,76,60,.35);border-radius:12px;cursor:pointer;">'
+      +'<div style="font-weight:900;color:#c0392b;font-size:.92rem;">📄 Toute la feuille — cet article</div>'
+      +'<div style="font-size:.74rem;color:var(--text-muted,#8a94a6);margin-top:2px;">Une grande affiche pleine page A4'+(p?' pour « '+esc(p.name||'')+' »':'')+'</div></button>'
+      +'<button onclick="window._promoPrintAll()" style="text-align:left;padding:14px 16px;background:rgba(37,99,235,.06);border:1.5px solid rgba(37,99,235,.3);border-radius:12px;cursor:pointer;">'
+      +'<div style="font-weight:900;color:#1e40af;font-size:.92rem;">🧾 Plusieurs articles en promo sur une page</div>'
+      +'<div style="font-size:.74rem;color:var(--text-muted,#8a94a6);margin-top:2px;">Tous les articles en promotion regroupés ('+nbPromo+' article'+(nbPromo>1?'s':'')+')</div></button>'
+      +'</div></div>';
+    m.style.display='flex';
+  };
 })();
 </script>
