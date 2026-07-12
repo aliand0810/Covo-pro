@@ -24632,7 +24632,7 @@ logout = function(skipConfirmation = false) {
                 price:      isKg ? null : _pemPriceVal,
                 costPrice:  parseFloat(document.getElementById('pem-cost')?.value) || null,
                 stock:      parseFloat(document.getElementById('pem-stock')?.value) || 0,
-                promo:      parseInt(document.getElementById('pem-promo')?.value) || 0,
+                promo:      (typeof window._pemGetPromo === 'function') ? window._pemGetPromo() : (parseInt(document.getElementById('pem-promo')?.value) || 0),
                 expiryDate: document.getElementById('pem-expiry')?.value || '',
                 unitType:   isKg ? 'kg' : 'unit',
                 pricePerKg: isKg ? _pemPriceVal : null,
@@ -24706,7 +24706,7 @@ logout = function(skipConfirmation = false) {
                 window._logStockChange(p, _before, p.stock, 'manual', 'Modification fiche produit', {});
             }
         }
-        p.promo = parseInt(document.getElementById('pem-promo').value) || 0;
+        p.promo = (typeof window._pemGetPromo === 'function') ? window._pemGetPromo() : (parseInt(document.getElementById('pem-promo').value) || 0);
         p.expiryDate = document.getElementById('pem-expiry').value || null;
         var _ptrS = document.getElementById('pem-tva-rate'); if (_ptrS) p.tvaRate = _ptrS.value !== '' ? parseFloat(_ptrS.value) : null;
 
@@ -31283,8 +31283,17 @@ logout = function(skipConfirmation = false) {
               style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
           </div>
           <div>
-            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Promotion (%)</label>
-            <select id="pem-promo" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);"></select>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:8px;">
+              <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);">Promotion</label>
+              <div style="display:inline-flex;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;overflow:hidden;">
+                <button type="button" id="pem-promo-mode-pct" onclick="window._pemPromoMode&&window._pemPromoMode('pct')" style="border:none;padding:4px 11px;font-size:0.7rem;font-weight:800;cursor:pointer;background:var(--primary,#3498db);color:#fff;">%</button>
+                <button type="button" id="pem-promo-mode-price" onclick="window._pemPromoMode&&window._pemPromoMode('price')" style="border:none;padding:4px 11px;font-size:0.7rem;font-weight:800;cursor:pointer;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">Prix &euro;</button>
+              </div>
+            </div>
+            <select id="pem-promo" onchange="window._pemPromoFromPct&&window._pemPromoFromPct()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);"></select>
+            <input type="number" id="pem-promo-price" min="0" step="0.01" placeholder="Prix promo (&euro;)" oninput="window._pemPromoFromPrice&&window._pemPromoFromPrice()" style="display:none;width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.88rem;font-weight:700;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);box-sizing:border-box;">
+            <input type="hidden" id="pem-promo-exact" value="">
+            <div id="pem-promo-preview" style="font-size:0.7rem;color:var(--text-muted,#8a94a6);margin-top:4px;font-weight:700;min-height:14px;"></div>
           </div>
         </div>
         <div id="pem-stock-alert" style="margin-top:8px;"></div>
@@ -51489,7 +51498,7 @@ function _renderRedState(){
     if(rowEl)rowEl.style.display='none';
     if(infoEl)infoEl.style.display='none';
     if(discDiv){discDiv.style.display='flex';}
-    if(lbl)lbl.textContent='🎁 −'+r.euros.toFixed(2)+'€ ('+r.points+' pts)';
+    if(lbl)lbl.textContent = r._avoir ? ('🧾 Avoir −'+r.euros.toFixed(2)+'€') : ('🎁 −'+r.euros.toFixed(2)+'€ ('+r.points+' pts)');
   } else {
     if(rowEl)rowEl.style.display='flex';
     if(inpEl)inpEl.value='';
@@ -51508,7 +51517,7 @@ function _updateDiscountLine(){
   var gross=parseFloat((tel?tel.innerText:'0'))||0;
   var net=Math.max(0,gross-r.euros);
   line.style.display='';
-  line.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.82rem;color:#059669;"><span>🎁 Points fidélité</span><span>−'+r.euros.toFixed(2)+'€</span></div>'
+  line.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.82rem;color:#059669;"><span>'+(r._avoir?'🧾 Avoir client':'🎁 Points fidélité')+'</span><span>−'+r.euros.toFixed(2)+'€</span></div>'
     +'<div style="display:flex;justify-content:space-between;font-size:1rem;font-weight:900;margin-top:3px;padding-top:3px;border-top:2px solid var(--border-color,#e0e0e0);"><span>Net à payer</span><span style="color:#059669;">'+net.toFixed(2)+'€</span></div>';
 }
 
@@ -51661,9 +51670,16 @@ window.showReceipt=function(sale){
     if(cu){
       var data=lg();var idx=data.customers.findIndex(function(x){return x.id===cu.id;});
       if(idx!==-1){
-        data.customers[idx].points=Math.max(0,(data.customers[idx].points||0)-red.points);
-        if(!data.customers[idx].history)data.customers[idx].history=[];
-        data.customers[idx].history.unshift({date:sale.date||new Date().toISOString(),saleId:sale.id,ticketNum:sale.id,amount:disc,method:sale.method||'',points:-red.points,type:'debit',cashier:sale.cashier||'',note:'Rachat points'});
+        if(red._avoir){
+          /* Débiter l'ardoise / avoir (ce que COVO devait au client) */
+          data.customers[idx].avoir=Math.max(0,+(((data.customers[idx].avoir||0))-disc).toFixed(2));
+          if(!data.customers[idx].history)data.customers[idx].history=[];
+          data.customers[idx].history.unshift({date:sale.date||new Date().toISOString(),saleId:sale.id,ticketNum:sale.id,amount:disc,method:sale.method||'',points:0,type:'avoir_use',cashier:sale.cashier||'',note:'Avoir utilisé'});
+        } else {
+          data.customers[idx].points=Math.max(0,(data.customers[idx].points||0)-red.points);
+          if(!data.customers[idx].history)data.customers[idx].history=[];
+          data.customers[idx].history.unshift({date:sale.date||new Date().toISOString(),saleId:sale.id,ticketNum:sale.id,amount:disc,method:sale.method||'',points:-red.points,type:'debit',cashier:sale.cashier||'',note:'Rachat points'});
+        }
         data.customers[idx].history=data.customers[idx].history.slice(0,300);
         ls(data);
         cu=data.customers[idx];
@@ -56480,5 +56496,197 @@ window._rachatRender=function(filter){
       +'</div></div>';
     m.style.display='flex';
   };
+})();
+</script>
+<script>
+/* ===== Promotion par % OU par prix (formulaire produit PEM) ===== */
+(function(){
+  function _el(id){ return document.getElementById(id); }
+  function _num(v){ var n=parseFloat(v); return isNaN(n)?null:n; }
+  function _base(){ return _num((_el('pem-price')||{}).value) || 0; }
+  function _cost(){ return _num((_el('pem-cost')||{}).value); }
+
+  // % effectif : champ exact (float, mode prix) sinon valeur du select
+  window._pemGetPromo=function(){
+    var ex=_el('pem-promo-exact');
+    var exv=ex && ex.value!=='' && ex.value!=null ? parseFloat(ex.value) : null;
+    if(exv!=null && !isNaN(exv)) return Math.max(0, Math.min(99, exv));
+    var sel=_el('pem-promo');
+    return parseFloat(sel?sel.value:0) || 0;
+  };
+
+  window._pemPromoPreview=function(){
+    var prev=_el('pem-promo-preview'); if(!prev) return;
+    var base=_base(), cost=_cost(), pct=window._pemGetPromo();
+    if(!base || !pct){ prev.textContent='Aucune promotion'; prev.style.color='var(--text-muted,#8a94a6)'; return; }
+    var pp=(typeof window._promoPrice==='function')?window._promoPrice(base, pct, (cost==null?undefined:cost)):(base*(1-pct/100));
+    prev.innerHTML='Prix promo : <span style="color:#c0392b;">'+pp.toFixed(2)+'€</span> · -'+(+pct).toFixed(pct%1?1:0)+'%';
+    prev.style.color='var(--text-main,#2c3e50)';
+  };
+
+  window._pemPromoFromPct=function(){
+    var sel=_el('pem-promo'), ex=_el('pem-promo-exact');
+    if(ex) ex.value = sel ? (parseFloat(sel.value)||0) : 0;
+    window._pemPromoPreview();
+  };
+
+  window._pemPromoFromPrice=function(){
+    var base=_base(), cost=_cost(), target=_num((_el('pem-promo-price')||{}).value);
+    var ex=_el('pem-promo-exact');
+    if(!base || target==null || target<0 || target>=base){ if(ex) ex.value = (target!=null && target>=base) ? '0' : ''; window._pemPromoPreview(); return; }
+    var pct;
+    if(cost!=null && cost>=0 && cost<base){ pct=(base-target)/(base-cost)*100; }
+    else { pct=(1-target/base)*100; }
+    pct=Math.max(0, Math.min(99, +pct.toFixed(2)));
+    if(ex) ex.value=pct;
+    window._pemPromoPreview();
+  };
+
+  window._pemPromoMode=function(m){
+    var sel=_el('pem-promo'), price=_el('pem-promo-price');
+    var bPct=_el('pem-promo-mode-pct'), bPrice=_el('pem-promo-mode-price');
+    var actBg='var(--primary,#3498db)', actFg='#fff', inBg='var(--input-bg,#f8f9fa)', inFg='var(--text-main,#2c3e50)';
+    if(m==='price'){
+      if(sel) sel.style.display='none'; if(price) price.style.display='';
+      // pré-remplir le champ prix avec le prix promo courant
+      var base=_base(), cost=_cost(), pct=window._pemGetPromo();
+      if(price && base){ var pp=(typeof window._promoPrice==='function')?window._promoPrice(base,pct,(cost==null?undefined:cost)):(base*(1-pct/100)); price.value = pct>0 ? pp.toFixed(2) : ''; }
+      if(bPrice){ bPrice.style.background=actBg; bPrice.style.color=actFg; } if(bPct){ bPct.style.background=inBg; bPct.style.color=inFg; }
+      window._pemPromoFromPrice();
+    } else {
+      if(sel) sel.style.display=''; if(price) price.style.display='none';
+      if(bPct){ bPct.style.background=actBg; bPct.style.color=actFg; } if(bPrice){ bPrice.style.background=inBg; bPrice.style.color=inFg; }
+      window._pemPromoFromPct();
+    }
+  };
+
+  // À l'ouverture du formulaire : refléter la promo réelle du produit (gère les % non standard/float)
+  if(typeof window.openProductEditModal==='function'){
+    var _wPEMp=window.openProductEditModal;
+    window.openProductEditModal=function(id){
+      var r=_wPEMp.apply(this,arguments);
+      setTimeout(function(){
+        try{
+          var prods=(typeof products!=='undefined'&&Array.isArray(products))?products:[];
+          var p=prods.filter(function(x){ return String(x.id)===String(id); })[0];
+          var promoVal=p?(parseFloat(p.promo)||0):0;
+          var sel=_el('pem-promo');
+          if(sel && promoVal>0){
+            var found=false;
+            for(var i=0;i<sel.options.length;i++){ if(Math.abs(parseFloat(sel.options[i].value)-promoVal)<1e-9){ sel.value=sel.options[i].value; found=true; break; } }
+            if(!found){ var o=document.createElement('option'); o.value=String(promoVal); o.textContent='-'+(+promoVal).toFixed(promoVal%1?1:0)+'%'; sel.appendChild(o); sel.value=String(promoVal); }
+          }
+          var price=_el('pem-promo-price'); if(price) price.value='';
+          window._pemPromoMode('pct');
+        }catch(e){}
+      }, 90);
+      return r;
+    };
+  }
+})();
+</script>
+<script>
+/* ===== Ardoise / Avoir client (COVO doit au client, réductible au prochain achat) ===== */
+(function(){
+  'use strict';
+  var LK='covo_loyalty';
+  function lg(){ try{ return JSON.parse(localStorage.getItem(LK)||'null')||{customers:[]}; }catch(e){ return {customers:[]}; } }
+  function ls(d){ localStorage.setItem(LK, JSON.stringify(d)); if(typeof window._ltyDriveSync==='function') window._ltyDriveSync(); }
+  function find(id){ return (lg().customers||[]).find(function(x){ return String(x.id)===String(id); }); }
+  function toast(m,t){ if(typeof showScanToast==='function') showScanToast(m,t||''); }
+  function _cashier(){ return (typeof currentUser!=='undefined'&&currentUser)?(currentUser.username||currentUser.name||''):''; }
+  function _refresh(id){ if(typeof window._ltyRefresh==='function') window._ltyRefresh(); setTimeout(function(){ _injectAvoirCard(id); }, 60); }
+
+  window._ltyAddAvoir=function(id){
+    var c=find(id); if(!c){ toast('⚠️ Client introuvable'); return; }
+    var raw=prompt('🧾 Montant de l\'avoir à créditer (€) — ce que COVO doit à '+c.name+' :','');
+    if(raw===null) return;
+    var amt=parseFloat(String(raw).replace(',','.'));
+    if(isNaN(amt)||amt<=0){ toast('⚠️ Montant invalide'); return; }
+    amt=+amt.toFixed(2);
+    var note=prompt('📝 Motif (remboursement, geste commercial…) :',''); if(note===null) note='';
+    var d=lg(); var idx=d.customers.findIndex(function(x){ return String(x.id)===String(id); }); if(idx<0) return;
+    d.customers[idx].avoir=+(((d.customers[idx].avoir||0))+amt).toFixed(2);
+    if(!d.customers[idx].history) d.customers[idx].history=[];
+    d.customers[idx].history.unshift({date:new Date().toISOString(),saleId:null,amount:amt,type:'avoir_add',note:note||'Avoir crédité',cashier:_cashier()});
+    d.customers[idx].history=d.customers[idx].history.slice(0,300);
+    ls(d);
+    toast('🧾 Avoir de '+amt.toFixed(2)+'€ crédité à '+c.name+' · Solde avoir '+d.customers[idx].avoir.toFixed(2)+'€','success');
+    _refresh(id);
+  };
+
+  window._ltyAdjustAvoir=function(id){
+    var c=find(id); if(!c) return;
+    var cur=+(c.avoir||0);
+    var raw=prompt('✏️ Nouveau solde d\'avoir pour '+c.name+' (€) — 0 pour solder :', cur.toFixed(2));
+    if(raw===null) return;
+    var val=parseFloat(String(raw).replace(',','.'));
+    if(isNaN(val)||val<0){ toast('⚠️ Valeur invalide'); return; }
+    val=+val.toFixed(2);
+    var d=lg(); var idx=d.customers.findIndex(function(x){ return String(x.id)===String(id); }); if(idx<0) return;
+    var delta=+(val-(d.customers[idx].avoir||0)).toFixed(2);
+    d.customers[idx].avoir=val;
+    if(!d.customers[idx].history) d.customers[idx].history=[];
+    d.customers[idx].history.unshift({date:new Date().toISOString(),saleId:null,amount:Math.abs(delta),type:'avoir_adjust',note:'Ajustement avoir → '+val.toFixed(2)+'€',cashier:_cashier()});
+    ls(d);
+    toast('✏️ Avoir ajusté : '+val.toFixed(2)+'€','success');
+    _refresh(id);
+  };
+
+  window._ltyUseAvoir=function(id){
+    var c=find(id); if(!c) return;
+    var avoir=+(c.avoir||0);
+    if(avoir<=0){ toast('Aucun avoir disponible pour ce client'); return; }
+    if(!window._ltyCu || String(window._ltyCu.id)!==String(id)){ toast('Sélectionnez d\'abord ce client au panier'); return; }
+    var tel=document.getElementById('cart-total');
+    var gross=parseFloat((tel?tel.innerText:'0').replace(',','.'))||0;
+    if(gross<=0){ toast('Panier vide — ajoutez des articles d\'abord'); return; }
+    var use=+Math.min(avoir, gross).toFixed(2);
+    window._ltyRed={euros:use, points:0, _avoir:true};
+    if(typeof window._ltyRenderWidget==='function') window._ltyRenderWidget();
+    toast('🧾 Avoir de '+use.toFixed(2)+'€ appliqué — net à payer réduit d\'autant','success');
+  };
+
+  function _injectAvoirCard(id){
+    var scroll=document.getElementById('lty-detail-scroll'); if(!scroll) return;
+    var old=document.getElementById('avoir-detail-card'); if(old) old.remove();
+    var c=find(id); if(!c) return;
+    var avoir=+(c.avoir||0);
+    var linked=window._ltyCu && String(window._ltyCu.id)===String(id);
+    var esc=function(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); };
+    var card=document.createElement('div'); card.id='avoir-detail-card';
+    card.style.cssText='margin-bottom:14px;border-radius:12px;padding:13px 15px;border:1.5px solid '+(avoir>0?'rgba(37,99,235,.4)':'rgba(148,163,184,.35)')+';background:'+(avoir>0?'rgba(37,99,235,.06)':'rgba(148,163,184,.05)')+';';
+    var ledger=(c.history||[]).filter(function(h){ return h.type==='avoir_add'||h.type==='avoir_use'||h.type==='avoir_adjust'; }).slice(0,10);
+    var inner='<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
+      +'<div><div style="font-size:.64rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.6px;">🧾 Ardoise — COVO vous doit</div>'
+      +'<div style="font-size:1.4rem;font-weight:900;color:'+(avoir>0?'#1e40af':'#64748b')+';margin-top:2px;">'+avoir.toFixed(2)+'€ <span style="font-size:.7rem;font-weight:600;color:var(--text-muted);">'+(avoir>0?'à utiliser':'aucun avoir')+'</span></div></div>'
+      +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
+      +'<button onclick="window._ltyAddAvoir(\''+esc(id)+'\')" style="background:linear-gradient(135deg,#2563eb,#1e40af);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">➕ Ajouter un avoir</button>'
+      +(avoir>0?'<button onclick="window._ltyUseAvoir(\''+esc(id)+'\')" style="background:'+(linked?'linear-gradient(135deg,#059669,#047857)':'#cbd5e1')+';color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;" title="'+(linked?'Réduire la vente en cours':'Sélectionnez ce client au panier')+'">💶 Utiliser sur la vente</button>':'')
+      +(avoir>0?'<button onclick="window._ltyAdjustAvoir(\''+esc(id)+'\')" style="background:rgba(148,163,184,.16);color:#475569;border:none;border-radius:10px;padding:7px 15px;font-weight:700;font-size:.76rem;cursor:pointer;white-space:nowrap;">✏️ Ajuster / régler</button>':'')
+      +'</div></div>';
+    if(ledger.length){
+      inner+='<div style="margin-top:10px;border-top:1px dashed rgba(37,99,235,.3);padding-top:8px;">'
+        +'<div style="font-size:.6rem;font-weight:800;color:#1e40af;text-transform:uppercase;margin-bottom:5px;">Mouvements de l\'ardoise</div>'
+        +ledger.map(function(h){
+          var dt=new Date(h.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});
+          var add=h.type==='avoir_add';
+          var lbl=add?'Avoir crédité':(h.type==='avoir_use'?'Avoir utilisé':'Ajustement');
+          var sign=add?'+':(h.type==='avoir_use'?'−':'');
+          var col=add?'#1e40af':(h.type==='avoir_use'?'#059669':'#64748b');
+          return '<div style="display:flex;justify-content:space-between;font-size:.74rem;padding:2px 0;"><span style="color:var(--text-main);">'+dt+' · '+lbl+(h.note?' — '+esc(h.note):'')+'</span><span style="font-weight:800;color:'+col+';">'+sign+(h.amount||0).toFixed(2)+'€</span></div>';
+        }).join('')
+        +'</div>';
+    }
+    card.innerHTML=inner;
+    scroll.insertBefore(card, scroll.firstChild);
+  }
+  window._injectAvoirCard=_injectAvoirCard;
+
+  /* Hook : injecter la carte ardoise à l'ouverture de la fiche client */
+  var _prevSD=window._ltyShowDetail;
+  if(typeof _prevSD==='function'){
+    window._ltyShowDetail=function(id){ var r=_prevSD.apply(this,arguments); setTimeout(function(){ try{ _injectAvoirCard(id); }catch(e){} }, 80); return r; };
+  }
 })();
 </script>
