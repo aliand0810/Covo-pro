@@ -56633,6 +56633,29 @@ window._rachatRender=function(filter){
     _refresh(id);
   };
 
+  // Régler la dette fidélité (crédit dû) du client avec son avoir (compensation)
+  window._ltyAvoirPayDebt=function(id){
+    var c=find(id); if(!c) return;
+    var avoir=+(c.avoir||0), credit=+(c.credit||0);
+    if(avoir<=0){ toast('Aucun avoir disponible'); return; }
+    if(credit<=0){ toast('Aucune dette à régler'); return; }
+    var pay=+Math.min(avoir, credit).toFixed(2);
+    if(!confirm('Régler '+pay.toFixed(2)+'€ de la dette de '+c.name+' avec son avoir ?\n\nAvoir : '+avoir.toFixed(2)+'€\nDette : '+credit.toFixed(2)+'€')) return;
+    var d=lg(); var idx=d.customers.findIndex(function(x){ return String(x.id)===String(id); }); if(idx<0) return;
+    d.customers[idx].avoir=+(((d.customers[idx].avoir||0))-pay).toFixed(2);
+    d.customers[idx].credit=+(((d.customers[idx].credit||0))-pay).toFixed(2);
+    if(!d.customers[idx].history) d.customers[idx].history=[];
+    d.customers[idx].history.unshift({date:new Date().toISOString(),saleId:null,amount:pay,type:'avoir_to_credit',note:'Dette réglée par avoir',cashier:_cashier()});
+    d.customers[idx].history=d.customers[idx].history.slice(0,300);
+    ls(d);
+    /* Régler aussi les échéances correspondantes si le module est présent */
+    if(typeof window._creditSettleEchel==='function'){ try{ window._creditSettleEchel(id, pay, 'avoir'); }catch(e){} }
+    toast('✅ '+pay.toFixed(2)+'€ de dette réglée avec l\'avoir · reste dette '+d.customers[idx].credit.toFixed(2)+'€ · avoir '+d.customers[idx].avoir.toFixed(2)+'€','success');
+    if(typeof window._ltyRefresh==='function') window._ltyRefresh();
+    if(typeof window._ltyCreditBadgeRefresh==='function') window._ltyCreditBadgeRefresh();
+    _refresh(id);
+  };
+
   window._ltyUseAvoir=function(id){
     var c=find(id); if(!c) return;
     var avoir=+(c.avoir||0);
@@ -56659,10 +56682,12 @@ window._rachatRender=function(filter){
     var ledger=(c.history||[]).filter(function(h){ return h.type==='avoir_add'||h.type==='avoir_use'||h.type==='avoir_adjust'; }).slice(0,10);
     var inner='<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
       +'<div><div style="font-size:.64rem;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.6px;">🧾 Ardoise — COVO vous doit</div>'
-      +'<div style="font-size:1.4rem;font-weight:900;color:'+(avoir>0?'#1e40af':'#64748b')+';margin-top:2px;">'+avoir.toFixed(2)+'€ <span style="font-size:.7rem;font-weight:600;color:var(--text-muted);">'+(avoir>0?'à utiliser':'aucun avoir')+'</span></div></div>'
+      +'<div style="font-size:1.4rem;font-weight:900;color:'+(avoir>0?'#1e40af':'#64748b')+';margin-top:2px;">'+avoir.toFixed(2)+'€ <span style="font-size:.7rem;font-weight:600;color:var(--text-muted);">'+(avoir>0?'à utiliser':'aucun avoir')+'</span></div>'
+      +(((+(c.credit||0))>0)?'<div style="font-size:.68rem;color:#b45309;font-weight:700;margin-top:1px;">📒 Dette en cours : '+(+(c.credit||0)).toFixed(2)+'€</div>':'')+'</div>'
       +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
       +'<button onclick="window._ltyAddAvoir(\''+esc(id)+'\')" style="background:linear-gradient(135deg,#2563eb,#1e40af);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">➕ Ajouter un avoir</button>'
       +(avoir>0?'<button onclick="window._ltyUseAvoir(\''+esc(id)+'\')" style="background:'+(linked?'linear-gradient(135deg,#059669,#047857)':'#cbd5e1')+';color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;" title="'+(linked?'Réduire la vente en cours':'Sélectionnez ce client au panier')+'">💶 Utiliser sur la vente</button>':'')
+      +((avoir>0 && (+(c.credit||0))>0)?'<button onclick="window._ltyAvoirPayDebt(\''+esc(id)+'\')" style="background:linear-gradient(135deg,#d97706,#b45309);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;" title="Compenser la dette du client avec son avoir">🔁 Régler la dette avec l\'avoir</button>':'')
       +(avoir>0?'<button onclick="window._ltyAdjustAvoir(\''+esc(id)+'\')" style="background:rgba(148,163,184,.16);color:#475569;border:none;border-radius:10px;padding:7px 15px;font-weight:700;font-size:.76rem;cursor:pointer;white-space:nowrap;">✏️ Ajuster / régler</button>':'')
       +'</div></div>';
     if(ledger.length){
