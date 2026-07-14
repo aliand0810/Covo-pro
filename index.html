@@ -20938,6 +20938,37 @@ logout = function(skipConfirmation = false) {
         if (typeof updateCartUI === 'function') updateCartUI();
     };
 
+    // ════════ AVANTAGE FIDÉLITÉ « PRIX D'ACHAT » — application infaillible ════════
+    // Lit le drapeau du client lié DIRECTEMENT dans covo_loyalty et force le prix d'achat
+    // sur chaque article du panier (ne revient JAMAIS au prix de vente). Renvoie true si appliqué.
+    window._ensureCostPriceForSale = function() {
+        try {
+            var cu = window._ltyCu || window._ltySnap; if (!cu) return false;
+            var c = null;
+            try { var _lg = JSON.parse(localStorage.getItem('covo_loyalty') || '{}'); c = (_lg.customers || []).filter(function(x){ return String(x.id) === String(cu.id); })[0]; } catch(e) {}
+            if (!c || !c.costPriceClient) return false;
+            var pos = (typeof window._costPriceClientPosition === 'function') ? window._costPriceClientPosition() : (parseFloat(c.costPricePosition) || 0);
+            pos = Math.max(0, Math.min(100, parseFloat(pos) || 0));
+            if (!Array.isArray(cart)) return false;
+            var applied = false;
+            cart.forEach(function(item) {
+                var prod = (typeof products !== 'undefined') ? products.find(function(p){ return p.id === item.id; }) : null;
+                if (!prod || prod.costPrice == null || prod.costPrice === '') return;
+                var base = (prod.unitType === 'kg') ? (parseFloat(prod.pricePerKg) || 0) : (parseFloat(prod.price) || 0);
+                var cp = parseFloat(prod.costPrice) || 0;
+                var eff = cp + (base - cp) * (pos / 100);
+                item.price = eff;
+                if (item.unitType !== 'kg') item.unitPrice = eff;
+                item.originalPrice = base;
+                item.discount = 0; item.nightTariff = false; item.packSize = 0; item.packPrice = 0;
+                item.costPriceApplied = true;
+                applied = true;
+            });
+            if (applied && typeof updateCartUI === 'function') updateCartUI();
+            return applied;
+        } catch(e) { return false; }
+    };
+
     // ════════ RÉSERVATION D'ARTICLE (fidélité) — accès au stock ════════
     // Ajuste le stock d'un article (deltaQty négatif = réservation, positif = restitution)
     window._ltyAdjustStockForReservation = function(productId, deltaQty, reason) {
@@ -21142,15 +21173,9 @@ logout = function(skipConfirmation = false) {
     function validateSale() {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
 
-        // ── Garantie tarif HT (prix d'achat) ────────────────────────────────
-        // Si un client « tarif prix d'achat » est actif, re-tarifer le panier au
-        // prix d'achat AVANT toute lecture du total : couvre le cas où l'article a
-        // été ajouté avant la sélection du client (déclencheur de re-tarif manqué).
-        if (typeof window._costPriceClientActive === 'function' && window._costPriceClientActive()
-            && typeof window._repriceCartForCostClient === 'function') {
-            window._repriceCartForCostClient();
-            if (typeof updateCartUI === 'function') updateCartUI();
-        }
+        // ── Garantie tarif « prix d'achat » (avantage fidélité) ─────────────
+        // Force le prix d'achat sur le panier avant toute lecture (ticket + objectif).
+        if (typeof window._ensureCostPriceForSale === 'function') window._ensureCostPriceForSale();
 
         // ── Vérifier si des articles au tarif d'achat sont dans le panier ──
         const _costItems = cart.filter(function(item){ return item.costPriceApplied; });
@@ -21192,11 +21217,8 @@ logout = function(skipConfirmation = false) {
 
     function _doValidateSale() {
         if (cart.length === 0) { showScanToast('⚠️ Panier vide'); return; }
-        // Filet : garantir le tarif HT si un client « tarif prix d'achat » est actif
-        if (typeof window._costPriceClientActive === 'function' && window._costPriceClientActive()
-            && typeof window._repriceCartForCostClient === 'function') {
-            window._repriceCartForCostClient();
-        }
+        // Filet infaillible : forcer le tarif « prix d'achat » avant l'enregistrement
+        if (typeof window._ensureCostPriceForSale === 'function') window._ensureCostPriceForSale();
         const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         const method = document.getElementById('payment-method').value;
         // Remise points fidélité : la caisse encaisse le NET (montant après déduction des points)
@@ -21207,8 +21229,12 @@ logout = function(skipConfirmation = false) {
         let receivedCB = 0;
         let receivedTicket = 0;
         let change = 0;
+        // Payé intégralement par les points fidélité (net = 0) → validation directe
+        let _paidByPoints = (netDue <= 0.001 && window._ltyRed && window._ltyRed.euros > 0);
 
-        if (method === 'cash') {
+        if (_paidByPoints) {
+            received = 0; receivedCash = 0; receivedCB = 0; receivedTicket = 0; change = 0;
+        } else if (method === 'cash') {
             received = parseFloat(document.getElementById('amount-received').value);
             if (!received || received < netDue) { showScanToast('❌ Montant reçu insuffisant'); return; }
             receivedCash = received;
@@ -21238,7 +21264,7 @@ logout = function(skipConfirmation = false) {
             total: total,
             cashier: currentUser.username,
             cashierId: currentUser.id || null,
-            method: method,
+            method: _paidByPoints ? 'points' : method,
             received: received,
             receivedCash: receivedCash,
             receivedCB: receivedCB,
@@ -51445,6 +51471,7 @@ function injectWidget(){
     +    '<input type="number" id="lrz-inp" placeholder="Montant à régler en points (€)" min="0.01" step="0.01" style="flex:1;" oninput="window._ltyCalcRed()" onkeydown="if(event.key===\'Enter\'){event.preventDefault();window._ltyApplyRed();}">'
     +    '<button onclick="window._ltyApplyRed()" style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:white;border:none;border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:800;font-size:.78rem;white-space:nowrap;">Appliquer</button>'
     +  '</div>'
+    +  '<button onclick="window._ltyPayWithPoints()" title="Régler le panier avec les points fidélité et valider" style="width:100%;margin-top:6px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;border:none;border-radius:8px;padding:9px 14px;cursor:pointer;font-weight:900;font-size:.82rem;">💜 Payer avec les points</button>'
     +  '<div id="lrz-info" style="font-size:.68rem;color:var(--text-muted);margin-top:4px;"></div>'
     +  '<div id="lty-discount-applied" style="display:none;margin-top:7px;padding:6px 10px;background:rgba(5,150,105,.08);border-radius:8px;border-left:3px solid #059669;flex-direction:row;align-items:center;justify-content:space-between;">'
     +    '<span style="font-size:.78rem;font-weight:800;color:#059669;" id="lty-disc-lbl">—</span>'
@@ -51602,6 +51629,27 @@ window._ltyApplyRed=function(){
   if(typeof showScanToast==='function')showScanToast('✅ Remise de '+euros.toFixed(2)+'€ appliquée');
 };
 window._ltyCancelRed=function(){window._ltyRed=null;_renderRedState();};
+
+/* Payer (tout ou partie) avec les points fidélité, puis valider si le panier est couvert */
+window._ltyPayWithPoints=function(){
+  var cu=window._ltyCu;
+  if(!cu){ if(typeof showScanToast==='function') showScanToast('⚠️ Sélectionnez d\'abord un client fidélité','info'); return; }
+  var tel=document.getElementById('cart-total');
+  var gross=parseFloat((tel?tel.innerText:'0').replace(',','.'))||0;
+  if(gross<=0){ if(typeof showScanToast==='function') showScanToast('⚠️ Panier vide','info'); return; }
+  var avail=ptsToEuros(cu.points||0);
+  if(avail<=0){ if(typeof showScanToast==='function') showScanToast('⚠️ Ce client n\'a pas de points à utiliser','info'); return; }
+  var use=+Math.min(avail, gross).toFixed(2);
+  window._ltyRed={euros:use, points:eurosToPts(use)};
+  _renderRedState();
+  var net=+(gross-use).toFixed(2);
+  if(net<=0.001){
+    if(typeof showScanToast==='function') showScanToast('💜 Réglé par '+eurosToPts(use)+' pts — validation…','success');
+    setTimeout(function(){ if(typeof window.validateSale==='function') window.validateSale(); else if(typeof validateSale==='function') validateSale(); }, 60);
+  } else {
+    if(typeof showScanToast==='function') showScanToast('💜 '+use.toFixed(2)+'€ en points appliqués · reste '+net.toFixed(2)+'€ à régler','info');
+  }
+};
 
 /* ────────── HOOK updateCartUI ────────── */
 var _prevUCUI=window.updateCartUI;
