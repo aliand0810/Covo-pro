@@ -24701,6 +24701,7 @@ logout = function(skipConfirmation = false) {
         if (_pemProductId == null) return;
         const p = products.find(x => x.id == _pemProductId);
         if (!p) return;
+        var _pemSnap = (typeof window._pemSnapshot === 'function') ? window._pemSnapshot(p) : null;
         // ⛔ Interdiction de DIMINUER le stock depuis la fiche produit (réduction = via Inventaire)
         var _pemIsKg = document.getElementById('pem-unit-type')?.value === 'kg';
         var _pemStEl = document.getElementById('pem-stock');
@@ -24772,6 +24773,7 @@ logout = function(skipConfirmation = false) {
             } else { p.packSize = 0; p.packPrice = 0; }
         }
 
+        if (typeof window._pemLogInfoDiff === 'function') window._pemLogInfoDiff(p, _pemSnap);
         saveAll();
         renderProducts();
         document.getElementById('product-edit-modal').style.display = 'none';
@@ -32900,6 +32902,48 @@ window._logStockChange = function(product, before, after, type, reason, meta) {
     } catch(e) {}
 };
 
+// Journalise une MODIFICATION D'INFO produit (prix, coût, promo, nom…) dans l'historique
+window._logInfoChange = function(product, label, oldDisp, newDisp) {
+    if (!product) return;
+    if (!Array.isArray(product.stockHistory)) product.stockHistory = [];
+    var userName = 'system';
+    try { if (typeof currentUser !== 'undefined' && currentUser && currentUser.username) userName = currentUser.username; } catch(e) {}
+    product.stockHistory.push({
+        date: new Date().toISOString(), type: 'info', before: null, after: null, delta: 0,
+        reason: label + ' : ' + oldDisp + ' → ' + newDisp,
+        user: userName, meta: { info: true, field: label, old: String(oldDisp), 'new': String(newDisp) }
+    });
+    if (product.stockHistory.length > 500) product.stockHistory = product.stockHistory.slice(-500);
+    try {
+        var allP = (typeof products !== 'undefined' && Array.isArray(products)) ? products : JSON.parse(localStorage.getItem('covo_products') || '[]');
+        var idx = allP.findIndex(function(p) { return p.id === product.id; });
+        if (idx >= 0) { allP[idx].stockHistory = product.stockHistory; localStorage.setItem('covo_products', JSON.stringify(allP)); }
+    } catch(e) {}
+};
+
+// Compare un instantané (avant édition) à l'état actuel du produit et journalise chaque changement d'info
+window._pemLogInfoDiff = function(p, snap) {
+    if (!p || !snap) return;
+    function m(v){ return (v == null || v === '') ? '—' : (parseFloat(v).toFixed(2) + '€'); }
+    var oldPrice = (snap.price != null) ? snap.price : snap.pricePerKg;
+    var newPrice = (p.price != null) ? p.price : p.pricePerKg;
+    if (+parseFloat(oldPrice || 0).toFixed(2) !== +parseFloat(newPrice || 0).toFixed(2)) window._logInfoChange(p, 'Prix de vente', m(oldPrice), m(newPrice));
+    if (+parseFloat(snap.costPrice || 0).toFixed(2) !== +parseFloat(p.costPrice || 0).toFixed(2)) window._logInfoChange(p, "Prix d'achat", m(snap.costPrice), m(p.costPrice));
+    if (+(snap.promo || 0) !== +(p.promo || 0)) window._logInfoChange(p, 'Promotion', (snap.promo || 0) + '%', (p.promo || 0) + '%');
+    if ((snap.name || '') !== (p.name || '')) window._logInfoChange(p, 'Nom', snap.name || '—', p.name || '—');
+    if ((snap.category || '') !== (p.category || '')) window._logInfoChange(p, 'Catégorie', snap.category || '—', p.category || '—');
+    if ((snap.barcode || '') !== (p.barcode || '')) window._logInfoChange(p, 'Code-barres', snap.barcode || '—', p.barcode || '—');
+    if ((snap.expiryDate || '') !== (p.expiryDate || '')) window._logInfoChange(p, 'DLC', snap.expiryDate || '—', p.expiryDate || '—');
+    if (String(snap.tvaRate) !== String(p.tvaRate)) window._logInfoChange(p, 'TVA', (snap.tvaRate != null ? snap.tvaRate + '%' : '—'), (p.tvaRate != null ? p.tvaRate + '%' : '—'));
+    var oPack = snap.packSize ? (snap.packSize + 'u / ' + (snap.packPrice || 0) + '€') : '—';
+    var nPack = p.packSize ? (p.packSize + 'u / ' + (p.packPrice || 0) + '€') : '—';
+    if (oPack !== nPack) window._logInfoChange(p, 'Tarif pack', oPack, nPack);
+};
+window._pemSnapshot = function(p) {
+    if (!p) return null;
+    return { name:p.name, category:p.category, barcode:p.barcode, price:p.price, pricePerKg:p.pricePerKg, costPrice:p.costPrice, promo:p.promo, expiryDate:p.expiryDate, tvaRate:p.tvaRate, packSize:p.packSize, packPrice:p.packPrice };
+};
+
 window._rebuildStockHistory = function(product) {
     if (!product) return 0;
     var existing = Array.isArray(product.stockHistory) ? product.stockHistory : [];
@@ -33287,7 +33331,7 @@ window._renderStockHistory = function() {
         if (tab === 'all')     return true;
         if (tab === 'sale')    return e.type === 'sale' || e.type === 'retour';
         if (tab === 'loss')    return e.type === 'defect';
-        if (tab === 'manual')  return e.type === 'manual' || e.type === 'inventaire';
+        if (tab === 'manual')  return e.type === 'manual' || e.type === 'inventaire' || e.type === 'info';
         if (tab === 'restock') return e.type === 'restock' || e.type === 'creation' || e.type === 'import';
         return true;
     };
@@ -33399,9 +33443,9 @@ window._renderStockHistory = function() {
         return;
     }
 
-    var typeIcons  = { sale:'🛒', manual:'✏️', defect:'⚠️', restock:'📦', retour:'↩️', creation:'✨', import:'📥', inventaire:'📋' };
-    var typeLabels = { sale:'Vente', manual:'Rectification', defect:'Perte / Défaut', restock:'Réappro.', retour:'Retour client', creation:'Création', import:'Import', inventaire:'Inventaire' };
-    var typeAccent = { sale:'#e74c3c', manual:'#3498db', defect:'#e67e22', restock:'#27ae60', retour:'#9b59b6', creation:'#f39c12', inventaire:'#8e44ad', import:'#95a5a6' };
+    var typeIcons  = { sale:'🛒', manual:'✏️', defect:'⚠️', restock:'📦', retour:'↩️', creation:'✨', import:'📥', inventaire:'📋', info:'🏷️' };
+    var typeLabels = { sale:'Vente', manual:'Rectification', defect:'Perte / Défaut', restock:'Réappro.', retour:'Retour client', creation:'Création', import:'Import', inventaire:'Inventaire', info:'Modification d\'info' };
+    var typeAccent = { sale:'#e74c3c', manual:'#3498db', defect:'#e67e22', restock:'#27ae60', retour:'#9b59b6', creation:'#f39c12', inventaire:'#8e44ad', import:'#95a5a6', info:'#2563eb' };
 
     var html = hist.map(function(e) {
         var icon   = typeIcons[e.type]  || '📝';
@@ -33409,6 +33453,20 @@ window._renderStockHistory = function() {
         var accent = typeAccent[e.type] || '#8e44ad';
         var d = new Date(e.date);
         var dateStr = d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short'}) + ' ' + d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+
+        // Entrée « modification d'info » (prix, coût, promo, nom…) : rendu dédié, sans delta de stock
+        if (e.type === 'info') {
+            return '<div style="display:flex;gap:10px;padding:10px 11px;border-radius:11px;border-left:3.5px solid '+accent+';background:var(--bg-body,#f8f9fa);margin-bottom:6px;">'
+                + '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:36px;"><div style="font-size:1.3rem;line-height:1;">'+icon+'</div><div style="font-size:0.58rem;color:var(--gray,#aaa);white-space:nowrap;">'+d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+'</div></div>'
+                + '<div style="flex:1;min-width:0;">'
+                +   '<div style="font-size:0.82rem;font-weight:800;color:'+accent+';">'+label+'</div>'
+                +   '<div style="font-size:0.78rem;color:var(--text-main,#2c3e50);font-weight:700;margin-top:2px;">'+(e.reason||'—')+'</div>'
+                +   '<div style="display:flex;gap:8px;margin-top:3px;flex-wrap:wrap;">'
+                +     (e.user && e.user!=='system' ? '<span style="font-size:0.62rem;color:var(--gray,#aaa);">par <strong>'+e.user+'</strong></span>' : '')
+                +     '<span style="font-size:0.62rem;color:var(--gray,#aaa);">'+d.toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'numeric'})+'</span>'
+                +   '</div>'
+                + '</div></div>';
+        }
 
         var delta = e.delta != null ? parseFloat(e.delta) : (e.after != null && e.before != null ? parseFloat(e.after) - parseFloat(e.before) : 0);
         var deltaAbs  = Math.abs(delta);
