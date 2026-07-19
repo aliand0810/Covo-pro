@@ -29156,8 +29156,9 @@ logout = function(skipConfirmation = false) {
             } catch(_e) {}
             return; // Ne pas chercher dans les produits
         }
-        if (!val || val.length < 4) return;
-        const product = products.find(p => p.barcode && p.barcode.toLowerCase() === val.trim().toLowerCase());
+        if (!val || val.length < 4) { _ssmScanReady = null; return; }
+        const _bcv = val.trim().toLowerCase();
+        const product = products.find(p => p.barcode && p.barcode.toLowerCase() === _bcv);
         if (product) {
             _ssmScanReady = product; // mémoriser pour confirmSingleScan
             playBeep();
@@ -29165,6 +29166,8 @@ logout = function(skipConfirmation = false) {
             if (!document.getElementById('cart-modal').classList.contains('active')) toggleCart();
             // Auto-confirm immédiat : le scanner va envoyer Enter dans ~20ms,
             // mais si ce n'est pas le cas (saisie clavier lente), on laisse l'utilisateur valider
+        } else {
+            _ssmScanReady = null; // aucune correspondance exacte : ne pas garder un article obsolète
         }
     }
 
@@ -29180,14 +29183,17 @@ logout = function(skipConfirmation = false) {
         }
 
         // Cas 1 : ssmLiveSearch a déjà identifié le produit (scanner rapide)
-        //         → un seul addToCart ici, pas de double ajout
-        if (_ssmScanReady) {
+        //         → n'ajouter QUE si le code-barres mémorisé correspond au code saisi
+        //           (évite d'ajouter un article obsolète d'un scan précédent).
+        if (_ssmScanReady && _ssmScanReady.barcode && barcode
+            && _ssmScanReady.barcode.toLowerCase() === barcode.toLowerCase()) {
             const product = _ssmScanReady;
             _ssmScanReady = null;
             addToCart(product.id);
             // Le panier et le preview sont déjà ouverts par ssmLiveSearch
             return;
         }
+        _ssmScanReady = null; // référence obsolète : on repart d'une correspondance fraîche
 
         // Cas 2 : saisie manuelle (ssmLiveSearch n'a pas trouvé de match exact)
         if (!barcode) { input.style.borderColor = 'var(--danger)'; input.focus(); return; }
