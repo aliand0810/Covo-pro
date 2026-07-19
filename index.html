@@ -29061,6 +29061,12 @@ logout = function(skipConfirmation = false) {
             localStorage.setItem('covo_hist', JSON.stringify(hist));
         } catch(e) {}
 
+        // 3b. Vente à crédit → déduire le montant retourné de la dette du client
+        var _creditDeducted = false;
+        if (sale.method === 'credit' && typeof window._creditReturnDeduct === 'function') {
+            _creditDeducted = window._creditReturnDeduct(sale.id, lineTotal, item.name);
+        }
+
         // 4. Sauvegarder produits + rafraîchir UI
         saveAll();
         renderStatistics();
@@ -29071,7 +29077,7 @@ logout = function(skipConfirmation = false) {
         document.getElementById('rc-step-articles').style.display = 'none';
         document.getElementById('rc-step-done').style.display = 'block';
         document.getElementById('rc-done-msg').textContent = condInfo.badge + ' ' + condInfo.label + ' : -' + lineTotal.toFixed(2) + ' €';
-        document.getElementById('rc-done-sub').textContent = item.name + ' (ticket #' + sale.id + ') · Motif : ' + condInfo.motif + ' · Stock remis à jour';
+        document.getElementById('rc-done-sub').textContent = item.name + ' (ticket #' + sale.id + ') · Motif : ' + condInfo.motif + ' · Stock remis à jour' + (_creditDeducted ? ' · 📒 Dette client réduite de ' + lineTotal.toFixed(2) + '€' : '');
         playBeep();
         showScanToast(condInfo.badge + ' Retour ' + condInfo.label.toLowerCase() + ' : -' + lineTotal.toFixed(2) + '€', 'success');
     }
@@ -53160,7 +53166,7 @@ function injectDetailCredit(id){
   var due=creditOf(c), lim=limitOf(c);
   var card=document.createElement('div'); card.id='credit-detail-card';
   card.style.cssText='margin-bottom:14px;border-radius:12px;padding:13px 15px;border:1.5px solid '+(due>0?'rgba(217,119,6,.4)':'rgba(16,185,129,.3)')+';background:'+(due>0?'rgba(217,119,6,.07)':'rgba(16,185,129,.06)')+';';
-  var ledger=(c.history||[]).filter(function(h){return h.type==='credit_purchase'||h.type==='credit_repay';});
+  var ledger=(c.history||[]).filter(function(h){return h.type==='credit_purchase'||h.type==='credit_repay'||h.type==='credit_adjust'||h.type==='credit_return';});
   var inner='<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
     +'<div><div style="font-size:.64rem;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.6px;">📒 Compte crédit</div>'
     +'<div style="font-size:1.4rem;font-weight:900;color:'+(due>0?'#b45309':'#059669')+';margin-top:2px;">'+due.toFixed(2)+'€ <span style="font-size:.7rem;font-weight:600;color:var(--text-muted);">'+(due>0?'dû':'à jour')+'</span></div>'
@@ -53169,6 +53175,7 @@ function injectDetailCredit(id){
     +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">'
     +'<button onclick="window._creditAddManual(\''+id+'\')" style="background:linear-gradient(135deg,#e74c3c,#c0392b);color:white;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">➕ Dette manuelle</button>'
     +(due>0?'<button onclick="window._creditOpenRepay(\''+id+'\')" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:10px;padding:9px 15px;font-weight:800;font-size:.82rem;cursor:pointer;white-space:nowrap;">💵 Régler le crédit</button>':'')
+    +(due>0?'<button onclick="window._creditAdjust(\''+id+'\')" style="background:rgba(148,163,184,.16);color:#475569;border:none;border-radius:10px;padding:7px 15px;font-weight:700;font-size:.76rem;cursor:pointer;white-space:nowrap;">✏️ Ajuster la dette</button>':'')
     +'</div>'
     +'</div>';
   if(ledger.length){
@@ -53177,10 +53184,15 @@ function injectDetailCredit(id){
       +ledger.slice(0,15).map(function(h){
         var dt=new Date(h.date).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'});
         var isP=h.type==='credit_purchase';
-        var sign=isP?'+':'−';
-        var col=isP?'#b45309':'#059669';
-        var lbl=isP?(h.manual?'Dette manuelle':'Achat à crédit'):('Règlement'+(h.method?' ('+(h.method==='cb'?'CB':'espèces')+')':''));
-        var pts=(!isP&&h.points)?' · +'+h.points+' pts':'';
+        var isAdj=h.type==='credit_adjust';
+        var isRet=h.type==='credit_return';
+        var sign=isP?'+':(isAdj?'✎':'−');
+        var col=isP?'#b45309':(isAdj?'#6366f1':'#059669');
+        var lbl=isP?(h.manual?'Dette manuelle':'Achat à crédit')
+                :(isAdj?(h.note||'Ajustement dette')
+                :(isRet?'Retour marchandise'
+                :('Règlement'+(h.method?' ('+(h.method==='cb'?'CB':'espèces')+')':''))));
+        var pts=(!isP&&!isAdj&&!isRet&&h.points)?' · +'+h.points+' pts':'';
         return '<div style="display:flex;justify-content:space-between;font-size:.74rem;padding:2px 0;"><span style="color:var(--text-main);">'+dt+' · '+lbl+pts+'</span><span style="font-weight:800;color:'+col+';">'+sign+(h.amount||0).toFixed(2)+'€</span></div>';
       }).join('')
       +'</div>';
@@ -53399,6 +53411,54 @@ window._creditAddManual=function(id){
   if(typeof window._ltyRefresh==='function')window._ltyRefresh(); else injectDetailCredit(id);
   if(typeof window._ltyCreditBadgeRefresh==='function')window._ltyCreditBadgeRefresh();
   toast('📒 Dette de '+amt.toFixed(2)+'€ ajoutée · Solde dû '+cu.credit.toFixed(2)+'€','success');
+};
+/* Modifier / ajuster directement le montant de la dette */
+window._creditAdjust=function(id){
+  var c=find(id); if(!c){toast('⚠️ Client introuvable');return;}
+  var cur=+creditOf(c);
+  var raw=prompt('✏️ Nouveau montant de la dette (€) pour '+c.name+' — 0 pour solder :', cur.toFixed(2));
+  if(raw===null)return;
+  var val=parseFloat(String(raw).replace(',','.'));
+  if(isNaN(val)||val<0){toast('⚠️ Valeur invalide');return;}
+  val=+val.toFixed(2);
+  var d=lg(); var idx=d.customers.findIndex(function(x){return x.id===id;}); if(idx===-1)return;
+  var cu=d.customers[idx];
+  var delta=+(val-(cu.credit||0)).toFixed(2);
+  cu.credit=val;
+  if(!cu.history)cu.history=[];
+  cu.history.unshift({date:new Date().toISOString(),saleId:null,amount:Math.abs(delta),method:null,points:0,type:'credit_adjust',cashier:(typeof currentUser!=='undefined'&&currentUser?currentUser.username:'')||'',note:'Ajustement dette → '+val.toFixed(2)+'€'});
+  cu.history=cu.history.slice(0,300);
+  ls(d);
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh(); else injectDetailCredit(id);
+  if(typeof window._ltyCreditBadgeRefresh==='function')window._ltyCreditBadgeRefresh();
+  toast('✏️ Dette ajustée : '+val.toFixed(2)+'€','success');
+};
+/* Déduire un retour de marchandise de la dette du client (vente à crédit) */
+window._creditReturnDeduct=function(saleId, amount, itemName){
+  if(saleId==null||!(amount>0))return false;
+  var d=lg(); if(!d||!d.customers)return false;
+  var idx=-1;
+  for(var i=0;i<d.customers.length;i++){
+    var h=(d.customers[i].history||[]).find(function(x){
+      return String(x.saleId)===String(saleId) && (x.type==='credit_purchase'||x.type==='credit'||x.type==='echel_purchase');
+    });
+    if(h){idx=i;break;}
+  }
+  if(idx===-1)return false;
+  var cu=d.customers[idx];
+  var cur=+(cu.credit||0);
+  if(cur<=0){toast('ℹ️ Dette déjà soldée pour '+cu.name+' — aucun montant à déduire');return false;}
+  var ded=+(Math.min(cur, +amount)).toFixed(2);
+  if(ded<=0)return false;
+  cu.credit=+((cur-ded)).toFixed(2);
+  if(!cu.history)cu.history=[];
+  cu.history.unshift({date:new Date().toISOString(),saleId:saleId,amount:ded,method:null,points:0,type:'credit_return',cashier:(typeof currentUser!=='undefined'&&currentUser?currentUser.username:'')||'',note:'Retour marchandise'+(itemName?' · '+itemName:'')});
+  cu.history=cu.history.slice(0,300);
+  ls(d);
+  if(typeof window._ltyRefresh==='function')window._ltyRefresh();
+  if(typeof window._ltyCreditBadgeRefresh==='function')window._ltyCreditBadgeRefresh();
+  toast('↩️ Retour '+ded.toFixed(2)+'€ déduit de la dette de '+cu.name+' · Solde dû '+cu.credit.toFixed(2)+'€','success');
+  return true;
 };
 (function(){var m=document.getElementById('credit-repay-modal');if(m)m.addEventListener('click',function(e){if(e.target===this)window._creditCloseRepay();});})();
 
@@ -56888,7 +56948,7 @@ window._rachatRender=function(filter){
     var m=document.getElementById('pdsales-modal');
     if(!m){
       m=document.createElement('div'); m.id='pdsales-modal';
-      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24800;justify-content:center;align-items:center;padding:14px;';
+      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:100000;justify-content:center;align-items:center;padding:14px;';
       m.addEventListener('click',function(e){ if(e.target===m) m.style.display='none'; });
       document.body.appendChild(m);
     }
@@ -56927,6 +56987,7 @@ window._rachatRender=function(filter){
       +'<div style="font-size:.7rem;color:rgba(255,255,255,.9);margin-top:2px;">Total vendu : '+(isKg?totQty.toFixed(3)+' kg':totQty)+' · CA : '+totCA.toFixed(2)+'€ · '+rows.length+' vente'+(rows.length>1?'s':'')+'</div></div>'
       +'<button onclick="document.getElementById(\'pdsales-modal\').style.display=\'none\'" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
       +'<div style="overflow:auto;flex:1;padding:14px 18px;">'+body+'</div></div>';
+    m.style.zIndex='100000';
     m.style.display='flex';
   };
 })();
