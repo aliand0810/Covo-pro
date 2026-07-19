@@ -29746,8 +29746,8 @@ logout = function(skipConfirmation = false) {
                         <div style="font-size:0.6rem;color:#7f8c8d;">&#x1f4e6; Valeur stock</div>
                     </div>
                     <div style="grid-column:1 / -1;background:rgba(22,160,133,0.10);border-radius:8px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                        <div style="min-width:0;flex:1;">
-                            <div style="font-size:0.6rem;color:#7f8c8d;">&#x1f4b0; Capacit&eacute; de rachat</div>
+                        <div onclick="window._pdRachatSales&&window._pdRachatSales()" title="Cliquer pour voir le détail des ventes de cet article (avec les dates)" style="min-width:0;flex:1;cursor:pointer;">
+                            <div style="font-size:0.6rem;color:#7f8c8d;">&#x1f4b0; Capacit&eacute; de rachat <span style="color:#0e6b58;font-weight:800;">&middot; &#128065; voir les ventes</span></div>
                             <div style="font-size:0.92rem;font-weight:800;color:#0e6b58;" id="pd-benef-rachat">&#8212;</div>
                             <div style="font-size:0.64rem;color:#5b6b7a;font-weight:600;margin-top:2px;" id="pd-benef-rachat-detail"></div>
                         </div>
@@ -56853,5 +56853,81 @@ window._rachatRender=function(filter){
   if(typeof _prevSD==='function'){
     window._ltyShowDetail=function(id){ var r=_prevSD.apply(this,arguments); setTimeout(function(){ try{ _injectAvoirCard(id); }catch(e){} }, 80); return r; };
   }
+})();
+</script>
+<script>
+/* ===== Détail des ventes d'un article (depuis la fiche produit → Capacité de rachat) ===== */
+(function(){
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function _prods(){ return (typeof products!=='undefined'&&Array.isArray(products))?products:[]; }
+
+  window._pdRachatSales=function(){
+    var id=(window._pdCurrentProductId!=null)?window._pdCurrentProductId:(typeof _pdCurrentId!=='undefined'?_pdCurrentId:null);
+    if(id==null) return;
+    var p=_prods().filter(function(x){ return String(x.id)===String(id); })[0];
+    if(!p){ if(typeof showScanToast==='function') showScanToast('Produit introuvable','info'); return; }
+    var isKg=p.unitType==='kg';
+    var pname=((p.name||'')+'').toLowerCase().trim();
+    var sales=[]; try{ sales=JSON.parse(localStorage.getItem('covo_sales_history')||'[]'); }catch(e){}
+    var rows=[], totQty=0, totCA=0;
+    (sales||[]).forEach(function(s){
+      if(!s||s.cancelled) return;
+      (s.items||[]).forEach(function(it){
+        if(!it||it.retourne) return;
+        var nm=((it.name||'').replace(' 🏷️','').replace(' 🌙','')+'').toLowerCase().trim();
+        var match=(it.id!=null && String(it.id)===String(p.id)) || (nm && nm===pname);
+        if(!match) return;
+        var q=parseFloat(it.quantity)||0; if(q<=0) return;
+        var line=(typeof window._cartLineTotal==='function')?window._cartLineTotal(it):+((it.price||0)*q).toFixed(2);
+        totQty+=q; totCA+=line;
+        rows.push({date:s.date, qty:q, price:it.price||0, line:line, ticket:s.ticketNum||s.id, method:s.method, cost:!!it.costPriceApplied});
+      });
+    });
+    rows.sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+
+    var m=document.getElementById('pdsales-modal');
+    if(!m){
+      m=document.createElement('div'); m.id='pdsales-modal';
+      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24800;justify-content:center;align-items:center;padding:14px;';
+      m.addEventListener('click',function(e){ if(e.target===m) m.style.display='none'; });
+      document.body.appendChild(m);
+    }
+    var ml={cb:'💳 CB',cash:'💶 Esp.',mixed:'💳💶 Mixte',ticket:'🎟️ TR',credit:'📒 Crédit',echel:'📅 Échel.',points:'💜 Points',avoir:'🧾 Avoir'};
+    var body;
+    if(!rows.length){
+      body='<div style="text-align:center;padding:40px 10px;color:var(--text-muted,#8a94a6);"><div style="font-size:2rem;">🧾</div><div style="margin-top:6px;font-size:.85rem;font-weight:700;">Aucune vente enregistrée pour cet article</div></div>';
+    } else {
+      body='<div style="border:1px solid var(--border-color,#eef1f6);border-radius:12px;overflow:hidden;">'
+        +'<table style="width:100%;border-collapse:collapse;font-size:.8rem;">'
+        +'<thead><tr style="background:var(--bg-body,#f4f7fb);color:var(--text-muted,#7a8699);font-size:.6rem;text-transform:uppercase;letter-spacing:.5px;">'
+        +'<th style="padding:8px 10px;text-align:left;">Date de vente</th>'
+        +'<th style="padding:8px 8px;text-align:right;">Qté</th>'
+        +'<th style="padding:8px 8px;text-align:right;">Prix u.</th>'
+        +'<th style="padding:8px 8px;text-align:right;">Total</th>'
+        +'<th style="padding:8px 10px;text-align:left;">Ticket · mode</th>'
+        +'</tr></thead><tbody>';
+      rows.forEach(function(r){
+        var d=new Date(r.date);
+        var jour=d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+        var heure=d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+        body+='<tr style="border-top:1px solid var(--border-color,#f0f2f5);">'
+          +'<td style="padding:8px 10px;"><div style="font-weight:700;color:var(--text-main);text-transform:capitalize;">'+esc(jour)+'</div><div style="font-size:.66rem;color:var(--text-muted,#9aa4b2);">🕒 '+heure+'</div></td>'
+          +'<td style="padding:8px 8px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-main);">'+(isKg?r.qty.toFixed(3)+' kg':r.qty)+'</td>'
+          +'<td style="padding:8px 8px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-main);">'+(r.price).toFixed(2)+'€'+(r.cost?' <span style="font-size:.58rem;color:#b45309;font-weight:800;">P.A.</span>':'')+'</td>'
+          +'<td style="padding:8px 8px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums;color:#16a085;">'+r.line.toFixed(2)+'€</td>'
+          +'<td style="padding:8px 10px;"><div style="font-family:monospace;font-size:.66rem;color:var(--text-muted,#9aa4b2);">#'+esc(String(r.ticket))+'</div><div style="font-size:.66rem;color:var(--text-muted,#8a94a6);">'+(ml[r.method]||esc(r.method||''))+'</div></td>'
+          +'</tr>';
+      });
+      body+='</tbody></table></div>';
+    }
+
+    m.innerHTML='<div style="background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:720px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.5);overflow:hidden;">'
+      +'<div style="background:linear-gradient(135deg,#16a085,#1abc9c);padding:15px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">'
+      +'<div><div style="font-size:1rem;font-weight:900;">🧾 Ventes — '+esc(p.name||'')+'</div>'
+      +'<div style="font-size:.7rem;color:rgba(255,255,255,.9);margin-top:2px;">Total vendu : '+(isKg?totQty.toFixed(3)+' kg':totQty)+' · CA : '+totCA.toFixed(2)+'€ · '+rows.length+' vente'+(rows.length>1?'s':'')+'</div></div>'
+      +'<button onclick="document.getElementById(\'pdsales-modal\').style.display=\'none\'" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:8px;font-size:1rem;cursor:pointer;">✕</button></div>'
+      +'<div style="overflow:auto;flex:1;padding:14px 18px;">'+body+'</div></div>';
+    m.style.display='flex';
+  };
 })();
 </script>
