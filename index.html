@@ -27045,14 +27045,10 @@ logout = function(skipConfirmation = false) {
     }
 
     // ===== EXPORT / IMPORT =====
-    async function exportData() {
-        const now = new Date();
-        const date = now.toISOString().split('T')[0];
-        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-        const filename = `covo_backup_${date}_${time}.json`;
-
+    // ── Construit l'objet de sauvegarde complet (source unique — export ET point de restauration) ──
+    function _buildBackupPayload() {
         // FIX : inclure TOUTES les données (nightTariffSettings, cashierPermissions, pendingSync, deliveryGoal manquaient)
-        const content = JSON.stringify({
+        return {
             products,
             categories,
             promoTypes,
@@ -27094,7 +27090,17 @@ logout = function(skipConfirmation = false) {
             covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
             _version: 20,
             _savedAt: new Date().toISOString()
-        }, null, 2);
+        };
+    }
+    window._buildBackupPayload = _buildBackupPayload;
+
+    async function exportData() {
+        const now = new Date();
+        const date = now.toISOString().split('T')[0];
+        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+        const filename = `covo_backup_${date}_${time}.json`;
+
+        const content = JSON.stringify(_buildBackupPayload(), null, 2);
 
         const saved = await saveFileToSelectedFolder(filename, content, 'application/json');
 
@@ -27133,7 +27139,37 @@ logout = function(skipConfirmation = false) {
     function _doRestoreFromData(data, label) {
         try {
             const nbProduits = (data.products     || []).length;
-            const nbVentes   = (data.salesHistory || []).length;
+            const nbVentes   = (data.salesHistory || (data.covo_sales_history) || []).length;
+
+            // ── GARDE-FOU anti-perte : bloquer une restauration « vide » qui écraserait des données existantes ──
+            // (sauf si l'on restaure volontairement le point de restauration interne)
+            const _isUndo = (label === '↩︎ Point de restauration');
+            if (!_isUndo) {
+                const _curProd = (typeof products !== 'undefined' ? products.length : 0);
+                const _curSales = (typeof salesHistory !== 'undefined' ? salesHistory.length : 0);
+                if ((_curProd > 0 || _curSales > 0) && nbProduits === 0 && nbVentes === 0) {
+                    if (!confirm('⚠️ ATTENTION — perte de données possible\n\nCette sauvegarde ne contient AUCUN produit ni aucune vente, alors que votre caisse contient actuellement '
+                        + _curProd + ' produit(s) et ' + _curSales + ' vente(s).\n\nLa restauration va EFFACER vos données actuelles.\n\nContinuer quand même ?')) {
+                        showScanToast('🛡️ Restauration annulée — données actuelles préservées', 'info');
+                        return;
+                    }
+                }
+            }
+
+            // ── POINT DE RESTAURATION : sauvegarde de sécurité de l'état ACTUEL avant tout écrasement ──
+            if (!_isUndo) {
+                try {
+                    if (typeof _buildBackupPayload === 'function') {
+                        localStorage.setItem('covo_restore_undo', JSON.stringify({
+                            _at: new Date().toISOString(),
+                            _fromLabel: label || '',
+                            _prevProducts: (typeof products !== 'undefined' ? products.length : 0),
+                            _prevSales: (typeof salesHistory !== 'undefined' ? salesHistory.length : 0),
+                            data: _buildBackupPayload()
+                        }));
+                    }
+                } catch(_snapErr) { console.warn('Snapshot pré-restauration impossible', _snapErr); }
+            }
 
             products     = (data.products || []).map(p => ({ unitType:'unit', pricePerKg:null, ...p }));
             categories   = data.categories  || ["Général"];
@@ -27185,12 +27221,51 @@ logout = function(skipConfirmation = false) {
             if (typeof _updateExpiryMarquee === 'function')   _updateExpiryMarquee();
             if (typeof renderCloturesTab === 'function')      renderCloturesTab();
             showScanToast('✅ Restauration réussie — '+nbProduits+' produit(s), '+nbVentes+' vente(s) chargée(s)' + (label?' depuis "'+label+'"':''), 'success');
+            // Proposer d'annuler (revenir à l'état d'avant la restauration) — sauf si c'est déjà un undo
+            if (!_isUndo && typeof _showRestoreUndoBar === 'function') _showRestoreUndoBar();
         } catch(err) {
             showScanToast('❌ Erreur lors de la restauration', 'error');
             console.error(err);
         }
     }
     window._doRestoreFromData = _doRestoreFromData;
+
+    // ── Annuler la dernière restauration : recharge le point de restauration sauvegardé ──
+    function _undoLastRestore() {
+        let snap;
+        try { snap = JSON.parse(localStorage.getItem('covo_restore_undo') || 'null'); } catch(e) { snap = null; }
+        if (!snap || !snap.data) { showScanToast('ℹ️ Aucun point de restauration disponible', 'info'); return; }
+        const when = snap._at ? new Date(snap._at).toLocaleString('fr-FR') : '';
+        if (!confirm('↩︎ Annuler la dernière restauration ?\n\nVos données seront ramenées à l\'état d\'avant la restauration'
+            + (when ? ' (capturé le ' + when + ')' : '') + ' :\n'
+            + '• ' + (snap._prevProducts != null ? snap._prevProducts : '?') + ' produit(s)\n'
+            + '• ' + (snap._prevSales != null ? snap._prevSales : '?') + ' vente(s)')) return;
+        _doRestoreFromData(snap.data, '↩︎ Point de restauration');
+        const bar = document.getElementById('restore-undo-bar'); if (bar) bar.remove();
+        showScanToast('↩︎ Données restaurées à l\'état précédent', 'success');
+    }
+    window._undoLastRestore = _undoLastRestore;
+
+    // ── Barre flottante « Annuler la restauration » affichée ~60s après une restauration ──
+    function _showRestoreUndoBar() {
+        try {
+            const old = document.getElementById('restore-undo-bar'); if (old) old.remove();
+            const bar = document.createElement('div');
+            bar.id = 'restore-undo-bar';
+            bar.style.cssText = 'position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483000;'
+                + 'background:#1f2937;color:#fff;border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:12px;'
+                + 'box-shadow:0 8px 30px rgba(0,0,0,.35);font-size:.84rem;max-width:92vw;';
+            bar.innerHTML = '<span style="font-weight:700;white-space:nowrap;">🛡️ Restauration effectuée</span>'
+                + '<span style="opacity:.8;">Une erreur ? Vous pouvez revenir en arrière.</span>'
+                + '<button id="restore-undo-btn" style="background:#f59e0b;color:#111;border:none;border-radius:8px;padding:7px 13px;font-weight:800;cursor:pointer;white-space:nowrap;">↩︎ Annuler</button>'
+                + '<button id="restore-undo-close" style="background:transparent;color:#9ca3af;border:none;font-size:1.1rem;cursor:pointer;line-height:1;">✕</button>';
+            document.body.appendChild(bar);
+            document.getElementById('restore-undo-btn').onclick = function(){ _undoLastRestore(); };
+            document.getElementById('restore-undo-close').onclick = function(){ bar.remove(); };
+            setTimeout(function(){ const b = document.getElementById('restore-undo-bar'); if (b) b.remove(); }, 60000);
+        } catch(e) { console.warn(e); }
+    }
+    window._showRestoreUndoBar = _showRestoreUndoBar;
 
     // ===== GESTION DOSSIER DE TÉLÉCHARGEMENT =====
     // Variable globale pour stocker le dossier sélectionné
