@@ -20766,12 +20766,76 @@ logout = function(skipConfirmation = false) {
     }
     // Retourne le total d'une ligne panier (avec gestion pack)
     function _cartLineTotal(item) {
+        // Palier dégressif prioritaire : le prix unitaire du palier s'applique à toute la ligne
+        if (item && item._tierActive) {
+            return parseFloat(((item.price || 0) * (item.quantity || 0)).toFixed(2));
+        }
         if (item.packSize && item.packSize >= 2 && item.packPrice && item.unitType !== 'kg') {
             return _packCalc(item.quantity, item.unitPrice || item.price, item.packSize, item.packPrice).total;
         }
         return parseFloat((item.price * item.quantity).toFixed(2));
     }
     // ===== FIN SYSTÈME TARIF PACK =====
+
+    // ===== TARIFICATION DÉGRESSIVE PAR PALIERS =====
+    // product.priceTiers = [{ q: seuil de quantité, total: prix global à ce palier }]
+    // À partir de q articles, le prix unitaire devient total/q et s'applique à toute la ligne.
+    function _normTiers(arr) {
+        if (!Array.isArray(arr)) return [];
+        return arr
+            .map(function(t){ return { q: parseFloat(t.q), total: parseFloat(t.total) }; })
+            .filter(function(t){ return t.q > 0 && !isNaN(t.total) && t.total >= 0; })
+            .sort(function(a, b){ return a.q - b.q; });
+    }
+    // Renvoie {unit, tier} pour la quantité, ou null si aucun palier atteint
+    function _tierPickFor(tiers, qty) {
+        var picked = null;
+        for (var i = 0; i < tiers.length; i++) {
+            if (qty + 1e-9 >= tiers[i].q) picked = tiers[i]; else break;
+        }
+        if (!picked || picked.q <= 0) return null;
+        return { unit: picked.total / picked.q, tier: picked };
+    }
+    // Recalcule le prix unitaire de chaque ligne du panier selon les paliers du produit
+    function _applyTiersToCart() {
+        if (typeof cart === 'undefined' || !Array.isArray(cart)) return;
+        cart.forEach(function(item){
+            // Mémoriser le prix unitaire de base (avant palier) une seule fois
+            if (item._tierBase === undefined) item._tierBase = item.price;
+            // Ne pas écraser le tarif « prix d'achat » d'un client spécial
+            if (item.costPriceApplied) {
+                if (item._tierActive) { item.price = item._tierBase; item._tierActive = false; item._tierInfo = null; item._tierKey = null; }
+                return;
+            }
+            var prod = products.find(function(p){ return p.id === item.id; })
+                    || products.find(function(p){ return String(p.id) === String(item.id); });
+            var tiers = prod ? _normTiers(prod.priceTiers) : [];
+            if (!tiers.length) {
+                if (item._tierActive) { item.price = item._tierBase; item._tierActive = false; item._tierInfo = null; item._tierKey = null; }
+                return;
+            }
+            var pick = _tierPickFor(tiers, item.quantity);
+            if (pick) {
+                item.price = parseFloat(pick.unit.toFixed(4));
+                item._tierActive = true;
+                item._tierInfo = { q: pick.tier.q, total: pick.tier.total, unit: pick.unit };
+                // Annonce une seule fois lorsqu'un nouveau palier est atteint
+                if (item._tierKey !== pick.tier.q) {
+                    item._tierKey = pick.tier.q;
+                    if (typeof showScanToast === 'function') {
+                        showScanToast('📉 Palier atteint : ' + (item.name || '') + ' → ' + pick.unit.toFixed(2) + '€/u (tarif ' + pick.tier.total.toFixed(2) + '€ les ' + pick.tier.q + ')', 'success');
+                    }
+                }
+            } else {
+                if (item._tierActive || item._tierKey) { item.price = item._tierBase; }
+                item._tierActive = false;
+                item._tierInfo = null;
+                item._tierKey = null;
+            }
+        });
+    }
+    window._applyTiersToCart = _applyTiersToCart;
+    // ===== FIN TARIFICATION DÉGRESSIVE =====
 
     // ── Prix promotionnel : interpolation entre prix de vente (0%) et prix d'achat (100%) ──
     // La promotion ne fait jamais descendre le prix sous le prix d'achat.
@@ -21104,6 +21168,7 @@ logout = function(skipConfirmation = false) {
 
     function updateCartUI() {
         const cartItems = document.getElementById('cart-items');
+        _applyTiersToCart();
         const total = cart.reduce((sum, item) => sum + _cartLineTotal(item), 0);
         
         if (cart.length === 0) {
@@ -21117,7 +21182,13 @@ logout = function(skipConfirmation = false) {
                 const unitLabel = isKg ? `${item.originalPrice.toFixed(2)}€/kg` : '';
                 // Décomposition pack pour affichage
                 let packLabel = '';
-                if (!isKg && item.packSize >= 2 && item.packPrice > 0 && item.quantity >= item.packSize) {
+                if (item._tierActive && item._tierInfo) {
+                    // Palier dégressif actif → afficher le tarif du palier (remplace l'affichage pack)
+                    const _ti = item._tierInfo;
+                    const _eco = (item._tierBase != null) ? ((item._tierBase - _ti.unit) * item.quantity) : 0;
+                    packLabel = `<div style="font-size:0.72rem;color:#16a085;margin-top:3px;font-weight:800;">📉 Palier ${_ti.q}+ : ${_ti.unit.toFixed(2)}€/u`
+                        + (_eco > 0.004 ? ` <span style="color:#27ae60;font-size:0.65rem;">(économie ${_eco.toFixed(2)}€)</span>` : '') + `</div>`;
+                } else if (!isKg && item.packSize >= 2 && item.packPrice > 0 && item.quantity >= item.packSize) {
                     const pc = _packCalc(item.quantity, item.unitPrice || item.price, item.packSize, item.packPrice);
                     if (pc.packs > 0 && pc.remainder > 0) {
                         packLabel = `<div style="font-size:0.72rem;color:#8e44ad;margin-top:3px;font-weight:700;">📦 ${pc.packs} pack × ${item.packPrice.toFixed(2)}€ + ${pc.remainder} u × ${(item.unitPrice||item.price).toFixed(2)}€</div>`;
@@ -23217,6 +23288,7 @@ logout = function(skipConfirmation = false) {
                         ${isNew ? `<div class="new-badge">🆕 Nouveau</div>` : ''}
                         ${hasNight ? `<div class="night-badge">🌙 +${nightPct}%</div>` : (p.nightTariff && !nightActive ? `<div class="night-badge" style="background:#555;border-color:#888;opacity:0.7;">🌙 Nuit</div>` : '')}
                         ${isKg ? `<div style="background:#1565c0;color:white;padding:2px 6px;border-radius:10px;font-size:0.7rem;font-weight:bold;">⚖️ /kg</div>` : ''}
+                        ${(Array.isArray(p.priceTiers) && p.priceTiers.some(t => t && parseFloat(t.q) > 0 && parseFloat(t.total) >= 0)) ? `<div title="Tarification dégressive par paliers active" style="background:#16a085;color:white;padding:2px 6px;border-radius:10px;font-size:0.7rem;font-weight:bold;">📉 Paliers</div>` : ''}
                         ${isLowStock && !isOut ? `<div class="low-stock-badge">⚠️ Stock bas</div>` : ''}
                         ${isExpiringSoon && !isExpired ? `<div class="low-stock-badge">⏰ Expire dans ${daysUntilExpiry}j</div>` : ''}
                     </div>
@@ -24570,12 +24642,14 @@ logout = function(skipConfirmation = false) {
             }
         }
 
+        if (typeof window._pemPopulateTiers === 'function') window._pemPopulateTiers(p);
         document.getElementById('product-edit-modal').style.display = 'flex';
     };
 
     // ── Ouvrir le modal en mode CRÉATION (aucun produit existant) ─────────────
     window.openNewProductModal = function(prefillBarcode) {
         _pemProductId = null; // null = création
+        if (typeof window._pemPopulateTiers === 'function') window._pemPopulateTiers(null);
 
         // Header
         const hImg = document.getElementById('pem-header-img');
@@ -24700,6 +24774,10 @@ logout = function(skipConfirmation = false) {
                 newProduct.nightTariff = true;
                 newProduct.nightPct = parseInt(document.getElementById('pem-night-pct')?.value) || 20;
             }
+            if (typeof window._pemReadTiers === 'function') {
+                const _nt = window._pemReadTiers();
+                if (_nt && _nt.length) newProduct.priceTiers = _nt;
+            }
             products.push(newProduct);
             saveAll();
             renderAll();
@@ -24781,6 +24859,12 @@ logout = function(skipConfirmation = false) {
                 p.packSize  = ps >= 2 ? ps : 0;
                 p.packPrice = pp > 0  ? pp : 0;
             } else { p.packSize = 0; p.packPrice = 0; }
+        }
+
+        // Paliers dégressifs
+        if (typeof window._pemReadTiers === 'function') {
+            const _pt = window._pemReadTiers();
+            if (_pt && _pt.length) p.priceTiers = _pt; else delete p.priceTiers;
         }
 
         if (typeof window._pemLogInfoDiff === 'function') window._pemLogInfoDiff(p, _pemSnap);
@@ -31553,6 +31637,16 @@ logout = function(skipConfirmation = false) {
           </div>
           <div id="pem-pack-prev" style="font-size:0.78rem;color:#8e44ad;font-weight:700;min-height:18px;"></div>
         </div>
+      </div>
+
+      <!-- ── TARIFICATION DÉGRESSIVE (PALIERS) ── -->
+      <div id="pem-tiers-section" style="background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <div style="font-size:0.68rem;font-weight:800;color:#16a085;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">📉 Tarification dégressive (paliers)</div>
+        <div style="font-size:0.72rem;color:var(--gray,#7f8c8d);margin-bottom:10px;">À partir d'une quantité, le prix passe automatiquement au tarif du palier (ex : à partir de 15 → 15 € les 15).</div>
+        <div id="pem-tiers-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+        <button type="button" onclick="window._pemAddTierRow&&window._pemAddTierRow()"
+          style="margin-top:10px;padding:8px 14px;border:1.5px dashed #16a085;background:none;color:#16a085;border-radius:9px;font-size:0.8rem;font-weight:800;cursor:pointer;">➕ Ajouter un palier</button>
+        <div id="pem-tiers-prev" style="font-size:0.76rem;color:#16a085;font-weight:700;margin-top:8px;min-height:16px;"></div>
       </div>
 
       <!-- Actions -->
@@ -57162,5 +57256,66 @@ window._rachatRender=function(filter){
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _ensureSaveBtnVisible);
   else _ensureSaveBtnVisible();
+})();
+</script>
+<script>
+/* ── Éditeur de paliers (tarification dégressive) sur la fiche produit ── */
+(function(){
+  'use strict';
+  function _rows(){ return document.getElementById('pem-tiers-rows'); }
+  function _rowHtml(q, total){
+    var qv = (q!=null && q!=='') ? q : '';
+    var tv = (total!=null && total!=='') ? total : '';
+    return '<div class="pem-tier-row" style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;">'
+      + '<div><label style="font-size:0.7rem;font-weight:700;color:#16a085;display:block;margin-bottom:4px;">À partir de (qté)</label>'
+      + '<input class="pem-tier-q" type="number" min="1" step="1" placeholder="ex: 15" value="'+qv+'" oninput="window._pemTiersPreview&&window._pemTiersPreview()" '
+      + 'style="width:100%;padding:9px 12px;border:1.5px solid #a7e8d8;border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);"></div>'
+      + '<div><label style="font-size:0.7rem;font-weight:700;color:#16a085;display:block;margin-bottom:4px;">Prix total (€)</label>'
+      + '<input class="pem-tier-total" type="number" min="0" step="0.01" placeholder="ex: 15.00" value="'+tv+'" oninput="window._pemTiersPreview&&window._pemTiersPreview()" '
+      + 'style="width:100%;padding:9px 12px;border:1.5px solid #a7e8d8;border-radius:9px;font-size:0.95rem;font-weight:700;box-sizing:border-box;background:var(--input-bg,#f8f9fa);"></div>'
+      + '<button type="button" onclick="window._pemRemoveTierRow&&window._pemRemoveTierRow(this)" title="Supprimer ce palier" '
+      + 'style="padding:9px 11px;border:1.5px solid #e74c3c;background:none;color:#e74c3c;border-radius:9px;font-size:0.9rem;font-weight:800;cursor:pointer;">🗑️</button>'
+      + '</div>';
+  }
+  window._pemAddTierRow = function(q, total){
+    var box = _rows(); if (!box) return;
+    box.insertAdjacentHTML('beforeend', _rowHtml(q, total));
+    window._pemTiersPreview();
+  };
+  window._pemRemoveTierRow = function(btn){
+    var row = btn && btn.closest ? btn.closest('.pem-tier-row') : null;
+    if (row) row.remove();
+    window._pemTiersPreview();
+  };
+  window._pemReadTiers = function(){
+    var box = _rows(); if (!box) return [];
+    var out = [];
+    box.querySelectorAll('.pem-tier-row').forEach(function(r){
+      var q = parseFloat((r.querySelector('.pem-tier-q')||{}).value);
+      var t = parseFloat((r.querySelector('.pem-tier-total')||{}).value);
+      if (!isNaN(q) && q > 0 && !isNaN(t) && t >= 0) out.push({ q: q, total: t });
+    });
+    // dédoublonnage par seuil (dernier gagne) + tri croissant
+    var map = {};
+    out.forEach(function(t){ map[t.q] = t; });
+    return Object.keys(map).map(function(k){ return map[k]; }).sort(function(a,b){ return a.q - b.q; });
+  };
+  window._pemPopulateTiers = function(product){
+    var box = _rows(); if (!box) return;
+    box.innerHTML = '';
+    var tiers = (product && Array.isArray(product.priceTiers)) ? product.priceTiers.slice() : [];
+    tiers.sort(function(a,b){ return (a.q||0) - (b.q||0); });
+    tiers.forEach(function(t){ box.insertAdjacentHTML('beforeend', _rowHtml(t.q, t.total)); });
+    window._pemTiersPreview();
+  };
+  window._pemTiersPreview = function(){
+    var prev = document.getElementById('pem-tiers-prev'); if (!prev) return;
+    var tiers = window._pemReadTiers();
+    if (!tiers.length) { prev.innerHTML = ''; return; }
+    prev.innerHTML = tiers.map(function(t){
+      var unit = t.total / t.q;
+      return '≥ ' + t.q + ' → ' + unit.toFixed(2) + '€/u (' + t.total.toFixed(2) + '€ les ' + t.q + ')';
+    }).join(' · ');
+  };
 })();
 </script>
