@@ -3820,6 +3820,12 @@ button, .btn, .retours-btn {
                 onmouseover="this.style.filter='brightness(1.15)'" onmouseout="this.style.filter=''">
                 💾 <span id="master-save-bar-count">0</span>
             </span>
+            <!-- Bouton SAUVEGARDE MANUELLE — visible pour TOUS les utilisateurs, en permanence -->
+            <span id="all-users-save-btn" onclick="window._quickManualSave&&window._quickManualSave()" title="Sauvegarder maintenant toutes vos données (produits, ventes, approvisionnements…)"
+                style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;border-radius:10px;padding:4px 12px;cursor:pointer;transition:all 0.15s;user-select:none;font-weight:800;font-size:0.72rem;white-space:nowrap;box-shadow:0 2px 6px rgba(39,174,96,0.35);"
+                onmouseover="this.style.filter='brightness(1.12)'" onmouseout="this.style.filter=''">
+                💾 <span>Sauvegarder</span>
+            </span>
         </div>
     </div>
 
@@ -17604,7 +17610,7 @@ function toggleInfoSection(headerElement) {
             _splashLaunchApp(_splashUser);
             await _splashDelay(300);
             if (typeof window._doRestoreFromData === 'function') {
-                window._doRestoreFromData(data, file.name);
+                window._doRestoreFromData(data, file.name, { auto: true, backupTime: (data._savedAt || data.savedAt || (file.lastModified ? new Date(file.lastModified).toISOString() : null)) });
             }
             _splashStep('restore-data', '✅', 'Synchronisation', 'À jour', 'done');
         } catch(err) {
@@ -17830,7 +17836,7 @@ function toggleInfoSection(headerElement) {
 
                     if (data && (data.products || data.salesHistory)) {
                         if (typeof window._doRestoreFromData === 'function') {
-                            window._doRestoreFromData(data, latestFile.name);
+                            window._doRestoreFromData(data, latestFile.name, { auto: true, backupTime: (data._savedAt || latestFile.modifiedTime || null) });
                         }
 
                         // Si un fichier VENTES scindé est plus récent → l'appliquer par-dessus
@@ -18361,7 +18367,7 @@ function toggleInfoSection(headerElement) {
         if (_restoreData && (_restoreData.products || _restoreData.salesHistory)) {
             try {
                 if (typeof window._doRestoreFromData === 'function') {
-                    window._doRestoreFromData(_restoreData, _latestFile.name);
+                    window._doRestoreFromData(_restoreData, _latestFile.name, { auto: true, backupTime: (_restoreData._savedAt || _latestFile.modifiedTime || null) });
                 }
                 _nbProd  = (_restoreData.products    || []).length;
                 _nbVente = (_restoreData.salesHistory || []).length;
@@ -27136,18 +27142,50 @@ logout = function(skipConfirmation = false) {
     }
 
     // ── Restauration pure depuis un objet JSON déjà parsé ─────────────────────
-    function _doRestoreFromData(data, label) {
+    function _doRestoreFromData(data, label, opts) {
         try {
+            opts = opts || {};
+            const _auto = !!opts.auto;   // restauration AUTOMATIQUE (au démarrage / sync Drive)
             const nbProduits = (data.products     || []).length;
             const nbVentes   = (data.salesHistory || (data.covo_sales_history) || []).length;
+            const _isUndo = (label === '↩︎ Point de restauration');
+
+            const _curProd  = (typeof products !== 'undefined' ? products.length : 0);
+            const _curSales = (typeof salesHistory !== 'undefined' ? salesHistory.length : 0);
+            let _curAppro = 0;
+            try { _curAppro = (JSON.parse(localStorage.getItem('covo_approvisionnements') || '[]') || []).length; } catch(e) {}
+            const _bkAppro = (data.covo_approvisionnements || []).length;
+
+            // ── GARDE ANTI-ÉCRASEMENT au démarrage : ne JAMAIS écraser des données locales plus récentes ──
+            // Cause de la perte : au login, la sauvegarde Drive (plus ancienne) écrasait les produits /
+            // approvisionnements ajoutés localement mais pas encore synchronisés.
+            if (_auto && !_isUndo) {
+                const _backupTime = opts.backupTime || data._savedAt || null;
+                const _localChange = localStorage.getItem('covo_last_local_change');
+                const _timeAhead = (_localChange && _backupTime)
+                    ? (new Date(_localChange).getTime() > new Date(_backupTime).getTime() + 1000)
+                    : false;
+                const _countAhead = (_curProd > nbProduits) || (_curSales > nbVentes) || (_curAppro > _bkAppro);
+                const _hasLocalData = (_curProd > 0 || _curSales > 0 || _curAppro > 0);
+                if (_hasLocalData && (_timeAhead || _countAhead)) {
+                    console.warn('[restore] Données locales plus récentes — restauration auto ignorée', {
+                        _curProd, nbProduits, _curSales, nbVentes, _curAppro, _bkAppro, _localChange, _backupTime });
+                    try { localStorage.setItem('covo_last_local_change', new Date().toISOString()); } catch(e) {}
+                    if (typeof showScanToast === 'function')
+                        showScanToast('🛡️ Vos données locales (plus récentes) ont été conservées — sauvegarde Drive non appliquée', 'info');
+                    return false;
+                }
+            }
 
             // ── GARDE-FOU anti-perte : bloquer une restauration « vide » qui écraserait des données existantes ──
-            // (sauf si l'on restaure volontairement le point de restauration interne)
-            const _isUndo = (label === '↩︎ Point de restauration');
+            // (restaurations manuelles : demande de confirmation ; automatiques : refus silencieux)
             if (!_isUndo) {
-                const _curProd = (typeof products !== 'undefined' ? products.length : 0);
-                const _curSales = (typeof salesHistory !== 'undefined' ? salesHistory.length : 0);
                 if ((_curProd > 0 || _curSales > 0) && nbProduits === 0 && nbVentes === 0) {
+                    if (_auto) {
+                        if (typeof showScanToast === 'function')
+                            showScanToast('🛡️ Sauvegarde vide ignorée — données actuelles préservées', 'info');
+                        return false;
+                    }
                     if (!confirm('⚠️ ATTENTION — perte de données possible\n\nCette sauvegarde ne contient AUCUN produit ni aucune vente, alors que votre caisse contient actuellement '
                         + _curProd + ' produit(s) et ' + _curSales + ' vente(s).\n\nLa restauration va EFFACER vos données actuelles.\n\nContinuer quand même ?')) {
                         showScanToast('🛡️ Restauration annulée — données actuelles préservées', 'info');
@@ -27155,6 +27193,9 @@ logout = function(skipConfirmation = false) {
                     }
                 }
             }
+
+            // marquer la restauration en cours pour que saveAll ne bouscule pas l'horodatage local
+            window._restoreInProgress = true;
 
             // ── POINT DE RESTAURATION : sauvegarde de sécurité de l'état ACTUEL avant tout écrasement ──
             if (!_isUndo) {
@@ -27220,10 +27261,17 @@ logout = function(skipConfirmation = false) {
             if (typeof refreshRetours === 'function')         refreshRetours();
             if (typeof _updateExpiryMarquee === 'function')   _updateExpiryMarquee();
             if (typeof renderCloturesTab === 'function')      renderCloturesTab();
+            // Recaler l'horodatage local sur la date de la sauvegarde appliquée (les données locales = ce backup)
+            try {
+                const _appliedAt = opts.backupTime || data._savedAt || new Date().toISOString();
+                localStorage.setItem('covo_last_local_change', _appliedAt);
+            } catch(e) {}
+            window._restoreInProgress = false;
             showScanToast('✅ Restauration réussie — '+nbProduits+' produit(s), '+nbVentes+' vente(s) chargée(s)' + (label?' depuis "'+label+'"':''), 'success');
-            // Proposer d'annuler (revenir à l'état d'avant la restauration) — sauf si c'est déjà un undo
-            if (!_isUndo && typeof _showRestoreUndoBar === 'function') _showRestoreUndoBar();
+            // Proposer d'annuler (revenir à l'état d'avant la restauration) — sauf si c'est déjà un undo / auto
+            if (!_isUndo && !_auto && typeof _showRestoreUndoBar === 'function') _showRestoreUndoBar();
         } catch(err) {
+            window._restoreInProgress = false;
             showScanToast('❌ Erreur lors de la restauration', 'error');
             console.error(err);
         }
@@ -27520,6 +27568,11 @@ logout = function(skipConfirmation = false) {
 
     // ===== UTILITAIRES & INIT =====
     function saveAll() {
+        // Horodatage de la dernière modification LOCALE — sert de garde anti-écrasement au démarrage
+        // (sauf pendant une restauration : celui-ci est recalé ensuite sur la date de la sauvegarde appliquée)
+        if (!window._restoreInProgress) {
+            try { localStorage.setItem('covo_last_local_change', new Date().toISOString()); } catch(e) {}
+        }
         // isMaster : l'auto-save Drive est désactivé, mais on écrit quand même les données
         // critiques en localStorage pour ne pas perdre les tickets de caisse et autres données
         if (currentUser && currentUser.isMaster) {
@@ -57065,5 +57118,49 @@ window._rachatRender=function(filter){
     m.style.zIndex='100000';
     m.style.display='flex';
   };
+})();
+</script>
+<script>
+/* ── Sauvegarde manuelle universelle — bouton « 💾 Sauvegarder » visible pour TOUS ── */
+(function(){
+  'use strict';
+  window._quickManualSave = async function(){
+    var btn = document.getElementById('all-users-save-btn');
+    var lbl = btn ? btn.querySelector('span') : null;
+    var origTxt = lbl ? lbl.textContent : '';
+    if (btn) { btn.style.pointerEvents='none'; btn.style.opacity='0.7'; }
+    if (lbl) lbl.textContent = 'Sauvegarde…';
+    var okLocal=false, okBackup=false;
+    try {
+      // 1) Persister l'état courant en local + synchro Drive si dispo (sauvegarde rapide)
+      if (typeof window._masterManualSave === 'function') {
+        try { await window._masterManualSave(); okLocal=true; } catch(e){ console.warn('quickSave/local',e); }
+      }
+      // 2) Créer un vrai fichier de sauvegarde covo_backup_*.json (dossier sélectionné / Drive / téléchargement)
+      if (typeof window.exportData === 'function') {
+        try { await window.exportData(); okBackup=true; } catch(e){ console.warn('quickSave/export',e); }
+      } else if (typeof exportData === 'function') {
+        try { await exportData(); okBackup=true; } catch(e){ console.warn('quickSave/export2',e); }
+      }
+      if (typeof showScanToast === 'function') {
+        if (okBackup)      showScanToast('✅ Sauvegarde manuelle effectuée — ' + new Date().toLocaleTimeString('fr-FR'), 'success');
+        else if (okLocal)  showScanToast('✅ Données enregistrées localement — ' + new Date().toLocaleTimeString('fr-FR'), 'success');
+        else               showScanToast('⚠️ Sauvegarde indisponible pour le moment', 'error');
+      }
+    } catch(err) {
+      console.error('_quickManualSave', err);
+      if (typeof showScanToast === 'function') showScanToast('❌ Erreur de sauvegarde', 'error');
+    } finally {
+      if (btn) { btn.style.pointerEvents=''; btn.style.opacity='1'; }
+      if (lbl) lbl.textContent = origTxt || 'Sauvegarder';
+    }
+  };
+  // Garantir la visibilité du bouton pour tous (au cas où un thème/état le masquerait)
+  function _ensureSaveBtnVisible(){
+    var b = document.getElementById('all-users-save-btn');
+    if (b && b.style.display === 'none') b.style.display = 'inline-flex';
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _ensureSaveBtnVisible);
+  else _ensureSaveBtnVisible();
 })();
 </script>
