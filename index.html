@@ -3826,6 +3826,12 @@ button, .btn, .retours-btn {
                 onmouseover="this.style.filter='brightness(1.12)'" onmouseout="this.style.filter=''">
                 💾 <span>Sauvegarder</span>
             </span>
+            <!-- Bouton SYNCHRONISATION GOOGLE DRIVE — visible pour TOUS, en permanence -->
+            <span id="all-users-drive-btn" onclick="window._quickDriveSync&&window._quickDriveSync()" title="Synchroniser maintenant avec Google Drive"
+                style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,#4285F4,#1a73e8);color:white;border-radius:10px;padding:4px 12px;cursor:pointer;transition:all 0.15s;user-select:none;font-weight:800;font-size:0.72rem;white-space:nowrap;box-shadow:0 2px 6px rgba(26,115,232,0.35);"
+                onmouseover="this.style.filter='brightness(1.12)'" onmouseout="this.style.filter=''">
+                ☁️ <span>Sync Drive</span>
+            </span>
         </div>
     </div>
 
@@ -41873,46 +41879,63 @@ function initAdminSections() {
                 ? salesHistory
                 : JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
 
-            const exportPayload = JSON.stringify({
-                products, categories, promoTypes, users,
-                salesHistory: _exportSalesHistory,
-                appSettings, nightTariffSettings, cashierPermissions,
-                pendingSync, deliveryGoal,
-                // Clé explicite pour garantir la restauration des tickets de caisse
-                covo_sales_history: _exportSalesHistory,
-                covo_dark_mode: localStorage.getItem('covo_dark_mode'),
-                covo_retours:     JSON.parse(localStorage.getItem('covo_retours')     || '[]'),
-                covo_marchandise: JSON.parse(localStorage.getItem('covo_marchandise') || '[]'),
-                covo_echeances:   JSON.parse(localStorage.getItem('covo_echeances')   || '[]'),
-                covo_rhist:       JSON.parse(localStorage.getItem('covo_rhist')       || '[]'),
-                covo_hist:        JSON.parse(localStorage.getItem('covo_hist')        || '[]'),
-                covo_sales:       JSON.parse(localStorage.getItem('covo_sales')       || '[]'),
-                covo_approvisionnements: JSON.parse(localStorage.getItem('covo_approvisionnements') || '[]'),
-                covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
-                covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
-                covo_messages:       JSON.parse(localStorage.getItem('covo_messages')       || '[]'),
-                covo_login_history:  JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
-                covo_settings:       JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
-                covo_aw_panels:      localStorage.getItem('covo_aw_panels') || null,
-                covo_modules_config:  localStorage.getItem('covo_modules_config')  || null,
-                covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
-                covo_presence:        localStorage.getItem('covo_presence')        || null,
-                covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
-                covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
-                covo_charges_fixes:  JSON.parse(localStorage.getItem('covo_charges_fixes')  || '[]'),
-                covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
-                covo_paiements:         JSON.parse(localStorage.getItem('covo_paiements')         || '[]'),
-                covo_dettes:            JSON.parse(localStorage.getItem('covo_dettes')            || '[]'),
-                covo_loyalty:           JSON.parse(localStorage.getItem('covo_loyalty')           || '{"customers":[],"settings":{}}'),
-                covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
-                covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
-                covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]'),
-                _version: 20,
-                _savedAt: ts,
-                _source: 'google_drive_auto',
-                _folderName: _gdFolderName,
-                _fileName: fileName
-            }, null, 2);
+            // ── SOURCE UNIQUE : données LIVE du scope principal (évite tout décalage de scope) ──
+            // Correctif « données récentes absentes » : ce module possède ses propres variables
+            // (products, etc.) qui peuvent être décalées ; _buildBackupPayload() lit l'état réel en cours.
+            let _gdPayloadObj;
+            if (typeof window._buildBackupPayload === 'function') {
+                _gdPayloadObj = window._buildBackupPayload();
+                // Filet de sécurité tickets de caisse
+                if (!_gdPayloadObj.salesHistory || !_gdPayloadObj.salesHistory.length) {
+                    _gdPayloadObj.salesHistory = _exportSalesHistory;
+                }
+                _gdPayloadObj.covo_sales_history = _gdPayloadObj.salesHistory;
+                if (_gdPayloadObj.covo_inventaires === undefined) {
+                    _gdPayloadObj.covo_inventaires = JSON.parse(localStorage.getItem('covo_inventaires') || '[]');
+                }
+            } else {
+                // Repli : ancien assemblage inline (au cas où _buildBackupPayload serait indisponible)
+                _gdPayloadObj = {
+                    products, categories, promoTypes, users,
+                    salesHistory: _exportSalesHistory,
+                    appSettings, nightTariffSettings, cashierPermissions,
+                    pendingSync, deliveryGoal,
+                    covo_sales_history: _exportSalesHistory,
+                    covo_dark_mode: localStorage.getItem('covo_dark_mode'),
+                    covo_retours:     JSON.parse(localStorage.getItem('covo_retours')     || '[]'),
+                    covo_marchandise: JSON.parse(localStorage.getItem('covo_marchandise') || '[]'),
+                    covo_echeances:   JSON.parse(localStorage.getItem('covo_echeances')   || '[]'),
+                    covo_rhist:       JSON.parse(localStorage.getItem('covo_rhist')       || '[]'),
+                    covo_hist:        JSON.parse(localStorage.getItem('covo_hist')        || '[]'),
+                    covo_sales:       JSON.parse(localStorage.getItem('covo_sales')       || '[]'),
+                    covo_approvisionnements: JSON.parse(localStorage.getItem('covo_approvisionnements') || '[]'),
+                    covo_inv_categories:  JSON.parse(localStorage.getItem('covo_inv_categories')  || '[]'),
+                    covo_ech_categories:  JSON.parse(localStorage.getItem('covo_ech_categories')  || '[]'),
+                    covo_messages:       JSON.parse(localStorage.getItem('covo_messages')       || '[]'),
+                    covo_login_history:  JSON.parse(localStorage.getItem('covo_login_history')  || '[]'),
+                    covo_settings:       JSON.parse(localStorage.getItem('covo_settings')       || '{}'),
+                    covo_aw_panels:      localStorage.getItem('covo_aw_panels') || null,
+                    covo_modules_config:  localStorage.getItem('covo_modules_config')  || null,
+                    covo_night_tariff:    localStorage.getItem('covo_night_tariff')    || null,
+                    covo_presence:        localStorage.getItem('covo_presence')        || null,
+                    covo_inv_questions:   localStorage.getItem('covo_inv_questions')   || null,
+                    covo_quick_links:    JSON.parse(localStorage.getItem('covo_quick_links') || '[]'),
+                    covo_charges_fixes:  JSON.parse(localStorage.getItem('covo_charges_fixes')  || '[]'),
+                    covo_caisse_historique: JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'),
+                    covo_paiements:         JSON.parse(localStorage.getItem('covo_paiements')         || '[]'),
+                    covo_dettes:            JSON.parse(localStorage.getItem('covo_dettes')            || '[]'),
+                    covo_loyalty:           JSON.parse(localStorage.getItem('covo_loyalty')           || '{"customers":[],"settings":{}}'),
+                    covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
+                    covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
+                    covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]')
+                };
+            }
+            _gdPayloadObj._version = 20;
+            _gdPayloadObj._savedAt = ts;
+            _gdPayloadObj._source = 'google_drive_auto';
+            _gdPayloadObj._folderName = _gdFolderName;
+            _gdPayloadObj._fileName = fileName;
+            const exportPayload = JSON.stringify(_gdPayloadObj, null, 2);
 
             // ── GARDE ANTI-PERTE : vérifier que le nouveau payload n'est pas anormalement petit ──
             const newSize  = new Blob([exportPayload]).size;
@@ -57249,10 +57272,35 @@ window._rachatRender=function(filter){
       if (lbl) lbl.textContent = origTxt || 'Sauvegarder';
     }
   };
-  // Garantir la visibilité du bouton pour tous (au cas où un thème/état le masquerait)
+  // Synchronisation manuelle avec Google Drive — bouton « ☁️ Sync Drive »
+  window._quickDriveSync = async function(){
+    var btn = document.getElementById('all-users-drive-btn');
+    var lbl = btn ? btn.querySelector('span') : null;
+    var orig = lbl ? lbl.textContent : '';
+    if (btn) { btn.style.pointerEvents='none'; btn.style.opacity='0.7'; }
+    if (lbl) lbl.textContent = 'Sync…';
+    try {
+      if (typeof window.gdriveSaveNow === 'function') {
+        // gdriveSaveNow envoie l'état LIVE vers Drive (via _buildBackupPayload) et gère
+        // lui-même les cas « non connecté » / « aucun dossier » avec un message clair.
+        await window.gdriveSaveNow();
+      } else if (typeof showScanToast === 'function') {
+        showScanToast('⚠️ Module Google Drive indisponible', 'error');
+      }
+    } catch(err) {
+      console.error('_quickDriveSync', err);
+      if (typeof showScanToast === 'function') showScanToast('❌ Erreur de synchronisation Drive', 'error');
+    } finally {
+      if (btn) { btn.style.pointerEvents=''; btn.style.opacity='1'; }
+      if (lbl) lbl.textContent = orig || 'Sync Drive';
+    }
+  };
+  // Garantir la visibilité des boutons pour tous (au cas où un thème/état les masquerait)
   function _ensureSaveBtnVisible(){
     var b = document.getElementById('all-users-save-btn');
     if (b && b.style.display === 'none') b.style.display = 'inline-flex';
+    var d = document.getElementById('all-users-drive-btn');
+    if (d && d.style.display === 'none') d.style.display = 'inline-flex';
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _ensureSaveBtnVisible);
   else _ensureSaveBtnVisible();
