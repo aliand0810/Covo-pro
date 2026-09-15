@@ -8698,6 +8698,8 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
     // --- Écriture auto dans le fichier FSA ---
     async function writeToCovoFile() {
         if (!covoFileHandle || _fsaSaving) return;
+        // Lecture seule (readOnly) : aucune sauvegarde fichier autorisée, jamais (pas de bouton manuel pour ce mode)
+        if (typeof currentUser !== 'undefined' && currentUser && currentUser.readOnly === true) return;
         // isMaster : auto-save FSA désactivé — uniquement via bouton manuel (_masterSavingNow)
         if (!window._masterSavingNow && typeof currentUser !== 'undefined' && currentUser && currentUser.isMaster) return;
         _fsaSaving = true;
@@ -25965,6 +25967,13 @@ logout = function(skipConfirmation = false) {
 
     // Sauvegarde manuelle depuis le FAB
     window._masterManualSave = async function() {
+        // Lecture seule (readOnly) : aucune sauvegarde autorisée, même via ce bouton (utilisé par TOUS les
+        // comptes via le bouton universel « 💾 Sauvegarder »), même si l'écriture localStorage sous-jacente
+        // est de toute façon bloquée par le verrou global — on l'arrête ici pour éviter tout traitement inutile.
+        if (typeof currentUser !== 'undefined' && currentUser && currentUser.readOnly === true) {
+            if (typeof showScanToast === 'function') showScanToast('👁️ Mode consultation seule — sauvegarde désactivée par l\'Admin-Développeur', 'info');
+            return;
+        }
         window._masterSavingNow = true;
         // Feedback visuel immédiat sur le bouton
         var bar = document.getElementById('master-save-bar');
@@ -40079,6 +40088,8 @@ function initAdminSections() {
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
     async function _gdDoSave() {
         if (!_gdConnected || !_gdAccessToken || _gdSaving) return;
+        // Lecture seule (readOnly) : aucune sauvegarde Drive autorisée, jamais (pas de bouton manuel pour ce mode)
+        if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().readOnly === true) return;
         // isMaster : auto-save Drive désactivé — uniquement via bouton manuel (_masterSavingNow)
         if (!window._masterSavingNow && typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster) {
             _gdMarkDriveDirty();
@@ -40568,6 +40579,11 @@ function initAdminSections() {
 
     // ---- Save now (manual) ----
     window.gdriveSaveNow = async function() {
+        // Lecture seule (readOnly) : aucune sauvegarde autorisée, même via ce bouton manuel
+        if (typeof currentUser !== 'undefined' && currentUser && currentUser.readOnly === true) {
+            showScanToast('👁️ Mode consultation seule — sauvegarde désactivée par l\'Admin-Développeur', 'info');
+            return;
+        }
         if (!_gdConnected) {
             showScanToast('⚠️ Google Drive n\'est pas connecté', 'info');
             return;
