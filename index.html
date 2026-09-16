@@ -50343,6 +50343,19 @@ window.showReceipt=function(sale){
       data2.customers[idx2].history=data2.customers[idx2].history.slice(0,300);
       ls(data2);
       sale._ltyCuName=cu.name;sale._ltyEarned=earned;sale._ltyTotal=data2.customers[idx2].points;
+      /* Persister le lien fidélité SUR LE TICKET LUI-MÊME dans covo_sales_history (sans ça, ce lien
+         n'existe qu'en mémoire pour le reçu du moment et disparaît au rechargement — Historique Pro
+         a besoin de le retrouver plus tard pour la traçabilité des paiements par fidélité). */
+      try{
+        var _histLty=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');
+        var _hiLty=_histLty.findIndex(function(s){return s.id===sale.id;});
+        if(_hiLty!==-1){
+          _histLty[_hiLty].loyaltyCustomerId=cu.id;
+          _histLty[_hiLty].loyaltyCustomerName=cu.name;
+          _histLty[_hiLty].loyaltyPointsEarned=earned;
+          localStorage.setItem('covo_sales_history',JSON.stringify(_histLty));
+        }
+      }catch(e){}
       /* Toast */
       if(typeof showScanToast==='function')showScanToast('🎁 '+cu.name+' : +'+earned+' pts · Solde '+data2.customers[idx2].points+' pts','success');
     }
@@ -51561,6 +51574,19 @@ window.showReceipt=function(sale){
       c.history=c.history.slice(0,300);
       ls(d);
       sale._creditName=c.name; sale._creditDue=c.credit;
+      /* Persister le lien crédit SUR LE TICKET LUI-MÊME dans covo_sales_history (comme pour la
+         fidélité ci-dessus) : sinon ce lien n'existe qu'en mémoire pour ce reçu et Historique Pro
+         ne peut plus retrouver ni le client ni le solde dû lors de la consultation ultérieure. */
+      try{
+        var _histCr=JSON.parse(localStorage.getItem('covo_sales_history')||'[]');
+        var _hiCr=_histCr.findIndex(function(s){return s.id===sale.id;});
+        if(_hiCr!==-1){
+          _histCr[_hiCr].creditCustomerId=c.id;
+          _histCr[_hiCr].creditCustomerName=c.name;
+          _histCr[_hiCr].creditBalanceAfter=c.credit;
+          localStorage.setItem('covo_sales_history',JSON.stringify(_histCr));
+        }
+      }catch(e){}
       toast("📒 "+c.name+" : crédit "+(sale.total||0).toFixed(2)+"€ · Solde dû "+c.credit.toFixed(2)+"€");
       if(typeof window._ltyRefresh==='function')window._ltyRefresh();
     }
