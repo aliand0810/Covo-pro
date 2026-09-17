@@ -3372,6 +3372,11 @@ window.cpMaybeShowInstallBanner = function(){
         .retours-table tbody tr:hover { background:rgba(52,152,219,0.04); }
         .retours-table tbody tr:last-child { border-bottom:none; }
         .retours-table td { padding:10px 12px; vertical-align:middle; }
+        /* Tri par clic sur les en-têtes (voir _covoSortClick) — appliqué à retours/marchandise/clôtures */
+        .covo-th-sort { cursor:pointer; user-select:none; transition:background 0.15s; }
+        .covo-th-sort:hover { background:rgba(52,152,219,0.1); }
+        .covo-th-sort.active { color:#2980b9; }
+        .covo-sort-arrow { font-size:0.85em; margin-left:2px; opacity:0.85; }
         .retours-badge-st { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:20px; font-size:0.71rem; font-weight:600; white-space:nowrap; }
         .rbadge-pending { background:rgba(241,196,15,0.15); color:#c49a00; border:1px solid rgba(241,196,15,0.3); }
         .rbadge-processing { background:rgba(52,152,219,0.15); color:#3498db; border:1px solid rgba(52,152,219,0.3); }
@@ -3998,6 +4003,10 @@ button, .btn, .retours-btn {
             <button id="admin-btn" onclick="handleAdminOrEditButton()" style="background:var(--promo); color:white; padding:8px 15px; font-size:0.9rem; display:none;">
                 ⚙️ Admin
             </button>
+            <button id="admin-shortcuts-btn" onclick="openAdminPro()" title="Ouvrir Admin Pro (application satellite de gestion administrative)"
+                style="background:linear-gradient(135deg,#3b82f6,#6366f1); color:white; padding:8px 15px; font-size:0.9rem; display:none; border:none; border-radius:4px; cursor:pointer; font-weight:700;">
+                🛠️ Admin Pro
+            </button>
             <button id="switch-cashier-btn" onclick="switchToCashierMode()" title="Basculer en mode caissier" style="background:linear-gradient(135deg,#27ae60,#229954); color:white; padding:8px 15px; font-size:0.9rem; display:none; border:none; cursor:pointer; border-radius:4px;">
                 💼 Caissier
             </button>
@@ -4088,18 +4097,14 @@ button, .btn, .retours-btn {
         <!-- ===== BARRE LIENS RAPIDES ===== -->
         <div id="quick-links-bar" style="display:none;margin-bottom:0;"></div>
         
+        <!-- ══ ORDRE DES ONGLETS (réorganisé) : cœur métier d'abord (Produits, Statistiques,
+             Prédictions), puis Gestion locale, puis les rapports satellites (Historique, Clôtures),
+             puis le pôle admin/finances (Paiements — l'onglet Fidélité s'insère automatiquement
+             juste après lui via injectTab() — puis Gestion Pro en dernier). ══ -->
         <div class="tabs">
             <button class="tab active" onclick="switchTab('products')">📦 Produits</button>
             <button class="tab" onclick="switchTab('stats')" id="tab-btn-stats">📊 Statistiques</button>
-            <button class="tab" onclick="switchTab('paiements')" id="tab-btn-paiements" style="display:none;">💸 Paiements</button>
             <button class="tab" onclick="switchTab('predictions')" id="tab-btn-predictions">☂ Prédictions</button>
-            <!-- Onglet fusionné : Heures de travail + Inventaire + Historique du stock pointaient tous
-                 les trois vers la même application Gestion Pro (simples cartes de renvoi) ; regroupés
-                 ici en un seul onglet qui les nomme tous et ouvre Gestion Pro directement en un clic. -->
-            <button class="tab tab-gestion" onclick="switchTab('gestionhub')" id="tab-btn-gestionhub">
-                <span class="tab-gestion-main">⚙️ Gestion Pro</span>
-                <span class="tab-gestion-sub">Heures · Inventaire · Stock</span>
-            </button>
             <button class="tab tab-gestion" onclick="switchTab('retours')" id="tab-btn-retours">
                 <span class="tab-gestion-main">🗂️ Gestion</span>
                 <span class="tab-gestion-sub">Retours · Stocks · Achats</span>
@@ -4107,6 +4112,14 @@ button, .btn, .retours-btn {
             </button>
             <button class="tab" onclick="switchTab('historique')" id="tab-btn-historique">🧾 Historique</button>
             <button class="tab" onclick="switchTab('clotures')" id="tab-btn-clotures">🗓️ Clôtures</button>
+            <button class="tab" onclick="switchTab('paiements')" id="tab-btn-paiements" style="display:none;">💸 Paiements</button>
+            <!-- Onglet fusionné : Heures de travail + Inventaire + Historique du stock pointaient tous
+                 les trois vers la même application Gestion Pro (simples cartes de renvoi) ; regroupés
+                 ici en un seul onglet qui les nomme tous et ouvre Gestion Pro directement en un clic. -->
+            <button class="tab tab-gestion" onclick="switchTab('gestionhub')" id="tab-btn-gestionhub">
+                <span class="tab-gestion-main">⚙️ Gestion Pro</span>
+                <span class="tab-gestion-sub">Heures · Inventaire · Stock</span>
+            </button>
         </div>
         
         <div class="tab-content active" id="tab-products" style="padding:0;background:var(--bg-body,#f4f7f6);">
@@ -4650,7 +4663,16 @@ button, .btn, .retours-btn {
                         </div>
                     </div>
                     <div class="retours-table-wrap"><table class="retours-table">
-                        <thead><tr><th>N°</th><th>Date</th><th>Client</th><th>Article</th><th>Ticket</th><th>Montant</th><th>Motif</th><th>Remboursement</th><th>Statut</th><th>Actions</th></tr></thead>
+                        <thead><tr>
+                            <th class="covo-th-sort" data-sort-key="id" onclick="_covoSortClick('retours-tbody','id',applyRetourFilter)" title="Trier par N°">N°<span class="covo-sort-arrow"></span></th>
+                            <th class="covo-th-sort" data-sort-key="date" onclick="_covoSortClick('retours-tbody','date',applyRetourFilter)" title="Trier par date">Date<span class="covo-sort-arrow"></span></th>
+                            <th class="covo-th-sort" data-sort-key="client" onclick="_covoSortClick('retours-tbody','client',applyRetourFilter)" title="Trier par client">Client<span class="covo-sort-arrow"></span></th>
+                            <th>Article</th><th>Ticket</th>
+                            <th class="covo-th-sort" data-sort-key="montant" onclick="_covoSortClick('retours-tbody','montant',applyRetourFilter)" title="Trier par montant">Montant<span class="covo-sort-arrow"></span></th>
+                            <th>Motif</th><th>Remboursement</th>
+                            <th class="covo-th-sort" data-sort-key="statut" onclick="_covoSortClick('retours-tbody','statut',applyRetourFilter)" title="Trier par statut">Statut<span class="covo-sort-arrow"></span></th>
+                            <th>Actions</th>
+                        </tr></thead>
                         <tbody id="retours-tbody"></tbody>
                     </table></div>
                 </div>
@@ -4715,7 +4737,14 @@ button, .btn, .retours-btn {
                     <div class="retours-table-wrap"><table class="retours-table">
                         <thead><tr>
                             <th style="width:32px;"><input type="checkbox" id="marc-select-all" title="Tout sélectionner" onchange="marcToggleSelectAll(this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:#e67e22;"></th>
-                            <th>N°</th><th>Date</th><th>Fournisseur</th><th>Article</th><th>Qté</th><th>Montant</th><th>Motif</th><th>BL</th><th>Statut</th>
+                            <th class="covo-th-sort" data-sort-key="id" onclick="_covoSortClick('marchandise-tbody','id',applyMarcFilter)" title="Trier par N°">N°<span class="covo-sort-arrow"></span></th>
+                            <th class="covo-th-sort" data-sort-key="date" onclick="_covoSortClick('marchandise-tbody','date',applyMarcFilter)" title="Trier par date">Date<span class="covo-sort-arrow"></span></th>
+                            <th class="covo-th-sort" data-sort-key="fournisseur" onclick="_covoSortClick('marchandise-tbody','fournisseur',applyMarcFilter)" title="Trier par fournisseur">Fournisseur<span class="covo-sort-arrow"></span></th>
+                            <th>Article</th>
+                            <th class="covo-th-sort" data-sort-key="qty" onclick="_covoSortClick('marchandise-tbody','qty',applyMarcFilter)" title="Trier par quantité">Qté<span class="covo-sort-arrow"></span></th>
+                            <th class="covo-th-sort" data-sort-key="montant" onclick="_covoSortClick('marchandise-tbody','montant',applyMarcFilter)" title="Trier par montant">Montant<span class="covo-sort-arrow"></span></th>
+                            <th>Motif</th><th>BL</th>
+                            <th class="covo-th-sort" data-sort-key="statut" onclick="_covoSortClick('marchandise-tbody','statut',applyMarcFilter)" title="Trier par statut">Statut<span class="covo-sort-arrow"></span></th>
                         </tr></thead>
                         <tbody id="marchandise-tbody"></tbody>
                     </table></div>
@@ -4844,7 +4873,7 @@ button, .btn, .retours-btn {
                         style="padding:5px 10px;background:rgba(217,119,6,0.5);color:#fcd34d;border:1px solid rgba(245,158,11,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
                         onmouseover="this.style.background='rgba(217,119,6,0.8)';this.style.color='white'"
                         onmouseout="this.style.background='rgba(217,119,6,0.5)';this.style.color='#fcd34d'">🔓 Tarif achat</button>
-                    <button onclick="toggleAdminSection('admin-sec-9-body');document.getElementById('admin-sec-9-body').scrollIntoView({behavior:'smooth',block:'start'})"
+                    <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                         style="padding:5px 10px;background:rgba(243,156,18,0.5);color:#fde68a;border:1px solid rgba(243,156,18,0.5);border-radius:8px;cursor:pointer;font-size:0.72rem;font-weight:700;transition:all 0.15s;"
                         onmouseover="this.style.background='rgba(243,156,18,0.8)';this.style.color='white'"
                         onmouseout="this.style.background='rgba(243,156,18,0.5)';this.style.color='#fde68a'">🏷️ Étiquettes</button>
@@ -4853,42 +4882,42 @@ button, .btn, .retours-btn {
 
             <!-- Grille de navigation rapide -->
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;padding-bottom:16px;position:relative;">
-                <button onclick="toggleAdminSection('admin-sec-0');this.closest('[id=admin-panel]').querySelector('#admin-sec-0').scrollIntoView({behavior:'smooth',block:'start'})"
+                <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                     style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(52,152,219,0.15);
                            border:1px solid rgba(52,152,219,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
                     onmouseover="this.style.background='rgba(52,152,219,0.3)'" onmouseout="this.style.background='rgba(52,152,219,0.15)'">
                     <span style="font-size:1.1rem;">🎨</span>
                     <span style="font-size:0.66rem;font-weight:700;color:rgba(147,210,255,0.9);">Config</span>
                 </button>
-                <button onclick="toggleAdminSection('admin-sec-1');document.getElementById('admin-sec-1').scrollIntoView({behavior:'smooth',block:'start'})"
+                <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                     style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(39,174,96,0.15);
                            border:1px solid rgba(39,174,96,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
                     onmouseover="this.style.background='rgba(39,174,96,0.3)'" onmouseout="this.style.background='rgba(39,174,96,0.15)'">
                     <span style="font-size:1.1rem;">➕</span>
                     <span style="font-size:0.66rem;font-weight:700;color:rgba(134,239,172,0.9);">Produit</span>
                 </button>
-                <button onclick="toggleAdminSection('admin-sec-2');document.getElementById('admin-sec-2').scrollIntoView({behavior:'smooth',block:'start'})"
+                <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                     style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(230,126,34,0.15);
                            border:1px solid rgba(230,126,34,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
                     onmouseover="this.style.background='rgba(230,126,34,0.3)'" onmouseout="this.style.background='rgba(230,126,34,0.15)'">
                     <span style="font-size:1.1rem;">🏷️</span>
                     <span style="font-size:0.66rem;font-weight:700;color:rgba(253,186,116,0.9);">Promos</span>
                 </button>
-                <button onclick="toggleAdminSection('admin-sec-3');document.getElementById('admin-sec-3').scrollIntoView({behavior:'smooth',block:'start'})"
+                <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                     style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(142,68,173,0.15);
                            border:1px solid rgba(142,68,173,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
                     onmouseover="this.style.background='rgba(142,68,173,0.3)'" onmouseout="this.style.background='rgba(142,68,173,0.15)'">
                     <span style="font-size:1.1rem;">👥</span>
                     <span style="font-size:0.66rem;font-weight:700;color:rgba(216,180,254,0.9);">Utilisateurs</span>
                 </button>
-                <button onclick="toggleAdminSection('admin-sec-4');document.getElementById('admin-sec-4').scrollIntoView({behavior:'smooth',block:'start'})"
+                <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                     style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(231,76,60,0.15);
                            border:1px solid rgba(231,76,60,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
                     onmouseover="this.style.background='rgba(231,76,60,0.3)'" onmouseout="this.style.background='rgba(231,76,60,0.15)'">
                     <span style="font-size:1.1rem;">🔐</span>
                     <span style="font-size:0.66rem;font-weight:700;color:rgba(252,165,165,0.9);">Permissions</span>
                 </button>
-                <button onclick="toggleAdminSection('admin-sec-5');document.getElementById('admin-sec-5').scrollIntoView({behavior:'smooth',block:'start'})"
+                <button onclick="switchTab('gestionhub')" title="Déplacé vers Gestion Pro"
                     style="display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;background:rgba(22,160,133,0.15);
                            border:1px solid rgba(22,160,133,0.3);border-radius:11px;cursor:pointer;transition:all 0.18s;"
                     onmouseover="this.style.background='rgba(22,160,133,0.3)'" onmouseout="this.style.background='rgba(22,160,133,0.15)'">
@@ -12012,9 +12041,11 @@ function toggleInfoSection(headerElement) {
         const sel = document.getElementById('aw-msg-to');
         if (!sel) return;
         sel.innerHTML = '<option value="all" style="background:#1e2d3d;color:white;">👥 Tous les caissiers</option>';
-        users.filter(u => u.role === 'caissier').forEach(u => {
-            sel.innerHTML += `<option value="${u.id}" style="background:#1e2d3d;color:white;">💼 ${u.username}</option>`;
-        });
+        users.filter(u => u.role === 'caissier')
+            .sort((a, b) => String(a.username||'').localeCompare(String(b.username||''), 'fr', {sensitivity:'base'}))
+            .forEach(u => {
+                sel.innerHTML += `<option value="${u.id}" style="background:#1e2d3d;color:white;">💼 ${u.username}</option>`;
+            });
     }
 
     // ── Ouvrir la modale caissier si messages non lus à la connexion ──────
@@ -12164,15 +12195,16 @@ function toggleInfoSection(headerElement) {
 
         sel.innerHTML = '';
 
+        const _byUsername = (a, b) => String(a.username||'').localeCompare(String(b.username||''), 'fr', {sensitivity:'base'});
         if (isMaster) {
             sel.innerHTML = '<option value="all">📢 Tous</option><option value="admin">👑 Admin</option>';
-            users.filter(u => u.role === 'caissier').forEach(u => {
+            users.filter(u => u.role === 'caissier').sort(_byUsername).forEach(u => {
                 sel.innerHTML += `<option value="${u.id}">${presenceIcon(u.id)} ${u.username}</option>`;
             });
         } else if (_isAdmin) {
             sel.innerHTML = '<option value="all">👥 Tous les caissiers</option>'
                 + '<option value="USR-MASTER">🛠️ Admin-Développeur</option>';
-            users.filter(u => u.role === 'caissier').forEach(u => {
+            users.filter(u => u.role === 'caissier').sort(_byUsername).forEach(u => {
                 sel.innerHTML += `<option value="${u.id}">${presenceIcon(u.id)} ${u.username}</option>`;
             });
         } else {
@@ -15130,7 +15162,7 @@ function toggleInfoSection(headerElement) {
         if (mode === 'select') {
             wrap.style.display = '';
             var html = '';
-            users.forEach(function(u) {
+            users.slice().sort(function(a, b) { return String(a.username||'').localeCompare(String(b.username||''), 'fr', {sensitivity:'base'}); }).forEach(function(u) {
                 var checked = '';
                 html += '<label style="display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:0.78rem;">' +
                     '<input type="checkbox" class="mod-link-user-cb" value="' + u.id + '" ' + checked + ' style="accent-color:#3b82f6;">' +
@@ -17367,21 +17399,42 @@ function toggleInfoSection(headerElement) {
     function updateAdminButton() {
         const btn = document.getElementById('admin-btn');
         const switchBtn = document.getElementById('switch-cashier-btn');
+        const shortcutsBtn = document.getElementById('admin-shortcuts-btn');
         if (!currentUser) {
             btn.style.display = 'none';
             if (switchBtn) switchBtn.style.display = 'none';
+            if (shortcutsBtn) shortcutsBtn.style.display = 'none';
             return;
         }
-        
+
         if (isAdmin) {
             btn.innerHTML = '⚙️ Admin';
             btn.style.background = 'var(--promo)';
             btn.style.display = 'block';
             if (switchBtn) switchBtn.style.display = 'block';
+            if (shortcutsBtn) shortcutsBtn.style.display = 'block';
             const ezBtn = document.getElementById('ez-toggle-all-btn');
             if (ezBtn) ezBtn.style.display = '';
+            // Le bouton "⚙️ Admin" ouvre désormais directement Admin Pro (satellite). L'ancien
+            // panneau d'administration local reste nécessaire pour 2 sections non répliquées
+            // (Sauvegarde & Restaurer / Sauvegarde Drive auto, moteur avancé File System Access) :
+            // Admin Pro y renvoie via un lien ouvrant COVO Pro avec #admin-local, ouvert ici une
+            // seule fois par arrivée sur la page.
+            if (!window._adminLocalHashHandled && location.hash === '#admin-local') {
+                window._adminLocalHashHandled = true;
+                history.replaceState(null, '', location.pathname + location.search);
+                setTimeout(function() {
+                    toggleAdminModal();
+                    setTimeout(function() {
+                        var sec = document.getElementById('admin-sec-8');
+                        if (sec && !sec.classList.contains('open')) toggleAdminSection('admin-sec-8');
+                        if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 320);
+                }, 200);
+            }
         } else if (currentUser.role === 'caissier' && cashierPermissions.editEnabled) {
             if (switchBtn) switchBtn.style.display = 'none';
+            if (shortcutsBtn) shortcutsBtn.style.display = 'none';
             if (cashierEditModeActive) {
                 // Edit mode is ON - Green/Success color
                 btn.innerHTML = '✅ Mode Édition ON';
@@ -17397,6 +17450,7 @@ function toggleInfoSection(headerElement) {
         } else {
             btn.style.display = 'none';
             if (switchBtn) switchBtn.style.display = 'none';
+            if (shortcutsBtn) shortcutsBtn.style.display = 'none';
         }
     }
 
@@ -17460,7 +17514,7 @@ function toggleInfoSection(headerElement) {
 
     function handleAdminOrEditButton() {
         if (isAdmin) {
-            toggleAdminModal();
+            openAdminPro();
         } else if (currentUser.role === 'caissier' && cashierPermissions.editEnabled) {
             toggleCashierEditMode();
         }
@@ -25026,6 +25080,17 @@ logout = function(skipConfirmation = false) {
         toggleAdminModal();
     }
 
+    // ===== OUVERTURE DE L'APPLICATION SATELLITE "ADMIN PRO" (bouton "🛠️ Admin Pro") =====
+    // Regroupe désormais dans une application satellite dédiée (à l'image de Gestion Pro,
+    // Finances Pro, Fidélité Pro, Historique Pro) tous les réglages administratifs : tarif de
+    // nuit, ticket de caisse, notifications, sauvegardes Drive et outils Admin-Développeur.
+    // Un simple clic ouvre Admin Pro dans un nouvel onglet, comme switchTab('historique').
+    function openAdminPro() {
+        if (!isAdmin) { showScanToast('⛔ Accès réservé aux administrateurs'); return; }
+        window.open('https://aliand0810.github.io/Admin-Pro/', 'adminpro');
+        if (typeof showScanToast === 'function') showScanToast('↗️ Ouverture de Admin Pro…', 'info');
+    }
+
     function loadHoverPreviewSettings() {
         const size  = appSettings.hoverPreviewSize  || 320;
         const delay = appSettings.hoverPreviewDelay || 3;
@@ -25116,7 +25181,9 @@ logout = function(skipConfirmation = false) {
 
     function renderCategoryManager() {
         // Source unique : catégories ECH
-        const echCats = (typeof getEchCategories === 'function') ? getEchCategories() : categories;
+        const echCatsRaw = (typeof getEchCategories === 'function') ? getEchCategories() : categories;
+        // Tri alphabétique (FR) pour un affichage plus lisible dans tous les menus déroulants
+        const echCats = echCatsRaw.slice().sort((a, b) => String(a).localeCompare(String(b), 'fr', { sensitivity: 'base' }));
         // Sync variable categories
         categories = [...echCats];
 
@@ -32407,24 +32474,41 @@ function renderCloturesTab() {
 
     var isAdm = currentUser && (currentUser.role === 'admin' || currentUser.isMaster || currentUser.id === 'USR-MASTER');
 
-    // Sort newest first
-    var sorted = filtered.slice().sort(function(a, b) { var db=_clotDay(b)-_clotDay(a); return db!==0 ? db : (new Date(b.datetime||0) - new Date(a.datetime||0)); });
+    // Tri : par défaut le plus récent d'abord, sauf si l'utilisateur a cliqué un en-tête triable
+    // (voir _covoSortClick — état partagé stocké sous la clé 'cloture-hist-list').
+    var clotSortSt = window._covoTableSort['cloture-hist-list'];
+    var sorted;
+    if (clotSortSt && clotSortSt.key) {
+        sorted = _covoApplySort('cloture-hist-list', filtered, function(h, k) {
+            if (k === 'date') return _clotDay(h).getTime();
+            if (k === 'ca') return h.totalJour || 0;
+            if (k === 'ventes') return h.nbVentes || 0;
+            return h[k];
+        });
+    } else {
+        sorted = filtered.slice().sort(function(a, b) { var db=_clotDay(b)-_clotDay(a); return db!==0 ? db : (new Date(b.datetime||0) - new Date(a.datetime||0)); });
+    }
 
     var thStyle  = 'padding:9px 10px;text-align:left;font-size:0.63rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;';
     var thStyleR = thStyle + 'text-align:right;';
     var thStyleC = thStyle + 'text-align:center;';
+    function clotThSort(key, label, styleBase) {
+        var active = clotSortSt && clotSortSt.key === key;
+        var arrow = active ? (clotSortSt.dir === 1 ? ' ▲' : ' ▼') : '';
+        return '<th class="covo-th-sort'+(active?' active':'')+'" style="'+styleBase+'cursor:pointer;" title="Trier par '+label+'" onclick="_covoSortClick(\'cloture-hist-list\',\''+key+'\',renderCloturesTab)">'+label+'<span class="covo-sort-arrow">'+arrow+'</span></th>';
+    }
 
     var t = '<table style="width:100%;border-collapse:collapse;min-width:820px;">';
     t += '<thead><tr style="background:var(--bg-body,#f4f7f6);border-bottom:2px solid var(--border-color,#e0e0e0);">';
-    t += '<th style="'+thStyle+'">📅 Date & Poste</th>';
-    t += '<th style="'+thStyle+'">👤 Caissier</th>';
+    t += clotThSort('date', '📅 Date & Poste', thStyle);
+    t += clotThSort('caissier', '👤 Caissier', thStyle);
     t += '<th style="'+thStyleC+'">Type</th>';
-    t += '<th style="'+thStyleR+'">💰 CA Jour</th>';
+    t += clotThSort('ca', '💰 CA Jour', thStyleR);
     t += '<th style="'+thStyleR+'">💵 Espèces</th>';
     t += '<th style="'+thStyleR+'">💳 CB</th>';
     t += '<th style="'+thStyleR+'">🏦 Total reçu</th>';
     t += '<th style="'+thStyleC+'">⚖️ Écarts</th>';
-    t += '<th style="'+thStyleC+'">🛒 Ventes</th>';
+    t += clotThSort('ventes', '🛒 Ventes', thStyleC);
     t += '<th style="'+thStyleC+'">🖨️</th>';
     if (isAdm) t += '<th style="'+thStyleC+'">Actions</th>';
     t += '</tr></thead><tbody>';
@@ -36838,11 +36922,61 @@ const RSL = {
 };
 
 // ===== RENDER RETOURS =====
+// ===== TRI GÉNÉRIQUE PAR CLIC SUR LES EN-TÊTES DE TABLEAU =====
+// Petit système de tri réutilisable pour les tableaux qui n'avaient encore aucun tri (retours,
+// marchandise, clôtures...) : chaque tableau garde son état {key, dir} dans window._covoTableSort
+// (clé = id du <tbody>) ; un clic sur un en-tête bascule asc/desc et relance le rendu du tableau.
+window._covoTableSort = window._covoTableSort || {};
+
+function _covoSortCompare(a, b) {
+    var sa = (a === null || a === undefined) ? '' : String(a).trim();
+    var sb = (b === null || b === undefined) ? '' : String(b).trim();
+    var na = parseFloat(sa.replace(/\s/g, '').replace(',', '.').replace(/[^0-9.\-]/g, ''));
+    var nb = parseFloat(sb.replace(/\s/g, '').replace(',', '.').replace(/[^0-9.\-]/g, ''));
+    var numLikeA = sa !== '' && /^-?[\d\s.,]+\s*€?$/.test(sa);
+    var numLikeB = sb !== '' && /^-?[\d\s.,]+\s*€?$/.test(sb);
+    if (numLikeA && numLikeB && !isNaN(na) && !isNaN(nb)) return na - nb;
+    return sa.localeCompare(sb, 'fr', { numeric: true, sensitivity: 'base' });
+}
+
+function _covoApplySort(tableId, rows, extractFn) {
+    var st = window._covoTableSort[tableId];
+    if (!st || !st.key) return rows;
+    return rows.slice().sort(function(a, b) {
+        return _covoSortCompare(extractFn(a, st.key), extractFn(b, st.key)) * st.dir;
+    });
+}
+
+function _covoSortClick(tableId, key, refreshFn) {
+    var st = window._covoTableSort[tableId] || { key: null, dir: 1 };
+    st.dir = (st.key === key) ? (st.dir * -1) : 1;
+    st.key = key;
+    window._covoTableSort[tableId] = st;
+    if (typeof refreshFn === 'function') refreshFn();
+}
+
+// Met à jour les flèches ▲▼ dans les en-têtes après un rendu (le tbody est déjà dans le DOM,
+// on remonte à son <table> pour retrouver les <th> à rafraîchir).
+function _covoUpdateSortArrows(tableId) {
+    var st = window._covoTableSort[tableId];
+    var tbody = document.getElementById(tableId);
+    var table = tbody && tbody.closest('table');
+    var thead = table && table.querySelector('thead');
+    if (!thead) return;
+    thead.querySelectorAll('.covo-th-sort').forEach(function(th) {
+        var key = th.getAttribute('data-sort-key');
+        var arrowEl = th.querySelector('.covo-sort-arrow');
+        var active = !!(st && st.key === key);
+        th.classList.toggle('active', active);
+        if (arrowEl) arrowEl.textContent = active ? (st.dir === 1 ? ' ▲' : ' ▼') : '';
+    });
+}
+
 function renderRetours(data) {
     const tb = document.getElementById('retours-tbody');
     // Filtrer les archivés selon le filtre actif
     const showArchived = window._retourShowArchived || false;
-    const filtered = (data || []).filter(r => showArchived ? r.statut === 'archived' : r.statut !== 'archived');
+    let filtered = (data || []).filter(r => showArchived ? r.statut === 'archived' : r.statut !== 'archived');
 
     if (!filtered.length) {
         tb.innerHTML = `<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;">
@@ -36850,8 +36984,10 @@ function renderRetours(data) {
             <h3 style="margin:8px 0 4px;">${showArchived ? 'Aucun retour archivé' : 'Aucun retour client'}</h3>
             <p style="font-size:0.82rem;">${showArchived ? '' : 'Cliquez sur "Nouveau retour" pour en créer un.'}</p>
         </div></td></tr>`;
+        _covoUpdateSortArrows('retours-tbody');
         return;
     }
+    filtered = _covoApplySort('retours-tbody', filtered, function(r, k) { return r[k]; });
     tb.innerHTML = filtered.map(r => {
         const s = RSL.retour[r.statut] || RSL.retour.pending;
         const isAutoCancel = r.motif === 'Annulation ticket caisse';
@@ -36886,6 +37022,7 @@ function renderRetours(data) {
             </div></td>
         </tr>`;
     }).join('');
+    _covoUpdateSortArrows('retours-tbody');
 }
 
 // ===== RENDER MARCHANDISE =====
@@ -36893,8 +37030,10 @@ function renderMarchandise(data) {
     const tb = document.getElementById('marchandise-tbody');
     if (!data || !data.length) {
         tb.innerHTML=`<tr><td colspan="10"><div style="text-align:center;padding:40px;color:#7f8c8d;"><div style="font-size:2.5rem;">📦</div><h3 style="margin:8px 0 4px;">Aucun retour fournisseur</h3><p style="font-size:0.82rem;">Cliquez sur "Déclarer retour" pour commencer.</p></div></td></tr>`;
+        _covoUpdateSortArrows('marchandise-tbody');
         return;
     }
+    data = _covoApplySort('marchandise-tbody', data, function(m, k) { return m[k]; });
     tb.innerHTML = data.map(m => {
         const s = RSL.marc[m.statut] || RSL.marc.pending;
         const sid = m.id.replace(/'/g,"\\'");
@@ -36915,6 +37054,7 @@ function renderMarchandise(data) {
             <td style="cursor:pointer;" onclick="openMarcDetail('${sid}')"><span class="retours-badge-st ${s.c}">${s.i} ${s.l}</span></td>
         </tr>`;
     }).join('');
+    _covoUpdateSortArrows('marchandise-tbody');
     // Reset sélection
     marcClearSelection();
 }
