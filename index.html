@@ -4092,10 +4092,14 @@ button, .btn, .retours-btn {
             <button class="tab active" onclick="switchTab('products')">📦 Produits</button>
             <button class="tab" onclick="switchTab('stats')" id="tab-btn-stats">📊 Statistiques</button>
             <button class="tab" onclick="switchTab('paiements')" id="tab-btn-paiements" style="display:none;">💸 Paiements</button>
-            <button class="tab" onclick="switchTab('workhours')" id="tab-btn-workhours">⏱️ Heures travail</button>
             <button class="tab" onclick="switchTab('predictions')" id="tab-btn-predictions">☂ Prédictions</button>
-            <button class="tab" onclick="switchTab('inventaire')" id="tab-btn-inventaire">📋 Inventaire</button>
-            <button class="tab" onclick="switchTab('stockhist')" id="tab-btn-stockhist">📦 Historique stock</button>
+            <!-- Onglet fusionné : Heures de travail + Inventaire + Historique du stock pointaient tous
+                 les trois vers la même application Gestion Pro (simples cartes de renvoi) ; regroupés
+                 ici en un seul onglet qui les nomme tous et ouvre Gestion Pro directement en un clic. -->
+            <button class="tab tab-gestion" onclick="switchTab('gestionhub')" id="tab-btn-gestionhub">
+                <span class="tab-gestion-main">⚙️ Gestion Pro</span>
+                <span class="tab-gestion-sub">Heures · Inventaire · Stock</span>
+            </button>
             <button class="tab tab-gestion" onclick="switchTab('retours')" id="tab-btn-retours">
                 <span class="tab-gestion-main">🗂️ Gestion</span>
                 <span class="tab-gestion-sub">Retours · Stocks · Achats</span>
@@ -15021,7 +15025,7 @@ function toggleInfoSection(headerElement) {
 
     const MOD_TABS = [
         { key:'stats',       icon:'📊', label:'Statistiques' },
-        { key:'workhours',   icon:'⏱️', label:'Heures de travail' },
+        { key:'gestionhub',  icon:'⚙️', label:'Gestion Pro (Heures · Inventaire · Stock)' },
         { key:'predictions', icon:'☂️', label:'Prédictions' },
         { key:'retours',     icon:'🗂️', label:'Gestion (onglet)' },
         { key:'historique',  icon:'🧾', label:'Historique caisse' },
@@ -18579,7 +18583,31 @@ function toggleInfoSection(headerElement) {
         }
     };
 
+    // Onglets qui ne sont plus qu'un renvoi vers une application satellite (carte "Cette section a
+    // été déplacée vers…" + bouton "Ouvrir X Pro →") : un simple clic sur l'onglet ouvre désormais
+    // directement l'application dans sa fenêtre dédiée (même nom de fenêtre que les liens existants,
+    // donc réutilisée si déjà ouverte), sans passer par un second clic sur la carte intermédiaire.
+    // Ne concerne QUE les onglets purement redirigés — "retours" (Gestion, sous-onglets mixtes avec
+    // du contenu réellement local) et "predictions" (feature encore entièrement locale) en sont
+    // volontairement exclus et continuent de s'afficher normalement dans COVO Pro.
+    var _cpSatelliteTabs = {
+        historique: { url: 'https://aliand0810.github.io/Historique-Pro/', target: 'historiquepro', label: 'Historique Pro' },
+        clotures:   { url: 'https://aliand0810.github.io/Cloture-COVO/',   target: 'cloturespro',   label: 'Clôtures Pro' },
+        paiements:  { url: 'https://aliand0810.github.io/Finances-Pro/',   target: 'financespro',   label: 'Finances Pro' },
+        workhours:  { url: 'https://aliand0810.github.io/Gestion-Pro/',    target: 'gestionpro',    label: 'Gestion Pro' },
+        inventaire: { url: 'https://aliand0810.github.io/Gestion-Pro/',    target: 'gestionpro',    label: 'Gestion Pro' },
+        stockhist:  { url: 'https://aliand0810.github.io/Gestion-Pro/',    target: 'gestionpro',    label: 'Gestion Pro' },
+        gestionhub: { url: 'https://aliand0810.github.io/Gestion-Pro/',    target: 'gestionpro',    label: 'Gestion Pro' },
+        fidelite:   { url: 'https://aliand0810.github.io/Fid-lit-Pro/',    target: 'fidelitepro',   label: 'Fidélité Pro' }
+    };
+
     function switchTab(tabName) {
+        if (_cpSatelliteTabs[tabName]) {
+            var _sat = _cpSatelliteTabs[tabName];
+            window.open(_sat.url, _sat.target);
+            if (typeof showScanToast === 'function') showScanToast('↗️ Ouverture de ' + _sat.label + '…', 'info');
+            return;
+        }
         // Réinitialiser l'interface approvisionnements quand on quitte l'onglet retours
         if (tabName !== 'retours') {
             window._invChartsVisible = false;
@@ -38645,13 +38673,30 @@ function getTabVisibility() {
 
 function applyTabsVisibility() {
     const admin = currentUser && currentUser.role === 'admin';
-    const tabs = ['stats','predictions','retours','historique','clotures','workhours','inventaire','stockhist'];
+    const tabs = ['stats','predictions','retours','historique','clotures'];
 
     // Paiements tab: admin-only + module config
     const payBtn = document.getElementById('tab-btn-paiements');
     if (payBtn) {
         const payModEnabled = typeof _modulesIsEnabled === 'function' ? _modulesIsEnabled('paiements') : true;
         payBtn.style.display = (admin && payModEnabled) ? '' : 'none';
+    }
+
+    // Onglet fusionné "⚙️ Gestion Pro" (ex-Heures de travail + Inventaire + Historique du stock,
+    // trois anciens onglets qui n'étaient plus que de simples renvois vers la même application
+    // satellite). Visible pour l'admin ; pour un caissier, visible tant qu'au moins une des 3
+    // anciennes permissions n'est pas explicitement désactivée (rétrocompatible avec d'éventuels
+    // réglages de tabVisibility déjà enregistrés).
+    const gestionHubBtn = document.getElementById('tab-btn-gestionhub');
+    if (gestionHubBtn) {
+        if (admin) {
+            gestionHubBtn.style.display = '';
+        } else {
+            const hubPerms = (currentUser && currentUser.permissions) || DEFAULT_USER_PERMS();
+            const hubVis = hubPerms.tabVisibility || {};
+            const anyAllowed = hubVis.workhours !== false || hubVis.inventaire !== false || hubVis.stockhist !== false;
+            gestionHubBtn.style.display = anyAllowed ? '' : 'none';
+        }
     }
 
     if (admin) {
@@ -38664,7 +38709,7 @@ function applyTabsVisibility() {
 
     // Use per-user tab visibility
     const userPerms = (currentUser && currentUser.permissions) || DEFAULT_USER_PERMS();
-    const vis = userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true, clotures:true, workhours:true, inventaire:true };
+    const vis = userPerms.tabVisibility || { stats:true, predictions:true, retours:true, historique:true, clotures:true };
 
     tabs.forEach(t => {
         const btn = document.getElementById('tab-btn-'+t);
