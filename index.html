@@ -8691,6 +8691,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
                 covo_loyalty:           JSON.parse(localStorage.getItem('covo_loyalty')           || '{"customers":[],"settings":{}}'),
                 covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
                 covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
+                covo_real_balance:      JSON.parse(localStorage.getItem('covo_real_balance')      || '{"especes":0,"cb":0,"log":[]}'),
                 covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]'),
                 covo_admin_notifications: JSON.parse(localStorage.getItem('covo_admin_notifications') || '[]'),
                 gdrive_backup_config:    localStorage.getItem('gdrive_backup_config') || null,
@@ -8761,6 +8762,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_loyalty)           localStorage.setItem('covo_loyalty',           JSON.stringify(data.covo_loyalty));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             if (data.covo_admin_notifications) {
                 localStorage.setItem('covo_admin_notifications', JSON.stringify(data.covo_admin_notifications));
                 // Déclencher le poll pour afficher les notifications restaurées
@@ -19615,7 +19617,11 @@ logout = function(skipConfirmation = false) {
             pendingSync.push(sale);
             localStorage.setItem('covo_pending_sync', JSON.stringify(pendingSync));
         }
-        
+
+        // Solde réel espèces/CB : une vente AJOUTE (contrairement à un achat qui déduit)
+        if (sale.receivedCash) _covoRealBalanceAdjust('especes', sale.receivedCash, 'Vente #' + sale.ticketNum);
+        if (sale.receivedCB) _covoRealBalanceAdjust('cb', sale.receivedCB, 'Vente #' + sale.ticketNum);
+
         saveAll();
         // Sauvegarde VENTES séparée sur Drive
         if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
@@ -25417,6 +25423,7 @@ logout = function(skipConfirmation = false) {
             covo_loyalty:           JSON.parse(localStorage.getItem('covo_loyalty')           || '{"customers":[],"settings":{}}'),
             covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
             covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
+            covo_real_balance:      JSON.parse(localStorage.getItem('covo_real_balance')      || '{"especes":0,"cb":0,"log":[]}'),
             _version: 20,
             _savedAt: new Date().toISOString()
         };
@@ -25578,6 +25585,7 @@ logout = function(skipConfirmation = false) {
             if (data.covo_loyalty)           localStorage.setItem('covo_loyalty',           JSON.stringify(data.covo_loyalty));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             saveAll(); renderAll();
             if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
             if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
@@ -25839,6 +25847,7 @@ logout = function(skipConfirmation = false) {
             if (data.covo_loyalty)           localStorage.setItem('covo_loyalty',           JSON.stringify(data.covo_loyalty));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
             if (data.gdrive_backup_config)   localStorage.setItem('gdrive_backup_config',   data.gdrive_backup_config);
                 saveAll();
@@ -26111,6 +26120,11 @@ logout = function(skipConfirmation = false) {
         // ⚠️ PAS de remise en stock — le stock sera restauré uniquement lors de l'approbation du retour client
         localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory));
 
+        // Solde réel espèces/CB : une annulation retire ce que la vente avait ajouté
+        if (sale.receivedCash) _covoRealBalanceAdjust('especes', -sale.receivedCash, 'Annulation vente #' + (sale.ticketNum || sale.id));
+        if (sale.receivedCB) _covoRealBalanceAdjust('cb', -sale.receivedCB, 'Annulation vente #' + (sale.ticketNum || sale.id));
+        if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
+
         // ===== PUSH VERS COVO_RETOURS (avec items détaillés pour restauration future) =====
         try {
             const retoursList = JSON.parse(localStorage.getItem('covo_retours')) || [];
@@ -26258,12 +26272,30 @@ logout = function(skipConfirmation = false) {
     
     function showScanToast(message, type = 'success') {
         window.showScanToast = showScanToast; // exposer globalement
-        const toast = document.createElement('div'); 
-        toast.className = `scan-toast ${type}`; 
+        const toast = document.createElement('div');
+        toast.className = `scan-toast ${type}`;
         toast.innerText = message;
-        document.body.appendChild(toast); 
+        document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 2500);
     }
+
+    // ===== SOLDE RÉEL ESPÈCES / CB (partagé avec Finances Pro, clé covo_real_balance) =====
+    // Chaque vente payée (en tout ou partie) en espèces ou par CB ajoute automatiquement le
+    // montant correspondant au solde réel disponible ; une annulation de ticket le retire symétriquement.
+    var REAL_BALANCE_KEY = 'covo_real_balance';
+    function _covoRealBalanceAdjust(bucket, delta, desc) {
+        if ((bucket !== 'especes' && bucket !== 'cb') || !delta) return;
+        var data;
+        try { data = JSON.parse(localStorage.getItem(REAL_BALANCE_KEY)) || {}; } catch(e) { data = {}; }
+        if (typeof data.especes !== 'number') data.especes = 0;
+        if (typeof data.cb !== 'number') data.cb = 0;
+        if (!Array.isArray(data.log)) data.log = [];
+        data[bucket] = parseFloat((data[bucket] + delta).toFixed(2));
+        data.log.unshift({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 8), ts: new Date().toISOString(), bucket: bucket, delta: parseFloat(delta.toFixed(2)), after: data[bucket], desc: desc || '' });
+        if (data.log.length > 300) data.log = data.log.slice(0, 300);
+        localStorage.setItem(REAL_BALANCE_KEY, JSON.stringify(data));
+    }
+    window._covoRealBalanceAdjust = _covoRealBalanceAdjust;
 
     // Bouton fin de poste : visible si connecté (non-master)
     function _updateFinPosteBtn() {
@@ -40268,6 +40300,7 @@ function initAdminSections() {
                     covo_loyalty:           JSON.parse(localStorage.getItem('covo_loyalty')           || '{"customers":[],"settings":{}}'),
                     covo_paie:              JSON.parse(localStorage.getItem('covo_paie')              || '[]'),
                     covo_cagnotte:          JSON.parse(localStorage.getItem('covo_cagnotte')          || '{"solde":0,"mouvements":[]}'),
+                    covo_real_balance:      JSON.parse(localStorage.getItem('covo_real_balance')      || '{"especes":0,"cb":0,"log":[]}'),
                     covo_inventaires:        JSON.parse(localStorage.getItem('covo_inventaires')        || '[]')
                 };
             }
@@ -40591,6 +40624,7 @@ function initAdminSections() {
             if (data.covo_loyalty)           localStorage.setItem('covo_loyalty',           JSON.stringify(data.covo_loyalty));
             if (data.covo_paie)              localStorage.setItem('covo_paie',              JSON.stringify(data.covo_paie));
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
+            if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
 
             const modal = document.getElementById('gdrive-restore-modal');
@@ -41815,6 +41849,7 @@ function initAdminSections() {
                 if (data.covo_paiements) localStorage.setItem('covo_paiements', JSON.stringify(data.covo_paiements));
                 if (data.covo_paie)      localStorage.setItem('covo_paie',      JSON.stringify(data.covo_paie));
                 if (data.covo_cagnotte)  localStorage.setItem('covo_cagnotte',  JSON.stringify(data.covo_cagnotte));
+                if (data.covo_real_balance)  localStorage.setItem('covo_real_balance',  JSON.stringify(data.covo_real_balance));
             }
             if (selected.has('dettes')) {
                 if (data.covo_dettes)    localStorage.setItem('covo_dettes',    JSON.stringify(data.covo_dettes));
