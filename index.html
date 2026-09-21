@@ -5611,6 +5611,13 @@ button, .btn, .retours-btn {
                     if(cfg.weeks) return cfg.weeks * 7;
                     return 7;
                 },
+                // ── GARDE ANTI-PERTE : nombre minimum de sauvegardes TOUJOURS conservées,
+                // quelle que soit leur ancienneté (protège contre une rétention trop courte,
+                // une horloge fausse, ou une longue période sans nouvelle sauvegarde).
+                _minKeep: function() {
+                    var cfg = this.get();
+                    return (typeof cfg.minKeep === 'number' && cfg.minKeep >= 1) ? cfg.minKeep : 10;
+                },
                 _label: function() {
                     var d = this._days();
                     if(d % 7 === 0) { var w = d / 7; return w + (w > 1 ? ' semaines' : ' semaine'); }
@@ -5694,12 +5701,14 @@ button, .btn, .retours-btn {
                         return;
                     }
                     files.sort(function(a,b){ return (b.date||0) - (a.date||0); });
-                    var oldCount = files.filter(function(f){ return f.old; }).length;
-                    var html = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
-                        + files.length + ' fichier(s) — <span style="color:#dc2626;">' + oldCount + ' à supprimer</span></div>';
-                    files.forEach(function(f) {
-                        var col  = f.old ? '#dc2626' : '#16a34a';
-                        var icon = f.old ? '🗑' : '✅';
+                    var MIN_KEEP = this._minKeep();
+                    var toDeleteCount = 0;
+                    var html = '';
+                    files.forEach(function(f, idx) {
+                        var willDelete = idx >= MIN_KEEP && f.old;
+                        if (willDelete) toDeleteCount++;
+                        var col  = willDelete ? '#dc2626' : '#16a34a';
+                        var icon = willDelete ? '🗑' : (idx < MIN_KEEP ? '🔒' : '✅');
                         html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
                             + '<span>' + icon + '</span>'
                             + '<span style="flex:1;font-family:monospace;font-size:0.74rem;color:' + col + ';">' + f.name + '</span>'
@@ -5707,8 +5716,11 @@ button, .btn, .retours-btn {
                             + (f.date ? f.date.toLocaleDateString('fr-FR') : '?') + '</span>'
                             + '</div>';
                     });
+                    var header = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
+                        + files.length + ' fichier(s) — <span style="color:#dc2626;">' + toDeleteCount + ' à supprimer</span>'
+                        + ' — <span style="color:#16a34a;">🔒 ' + Math.min(MIN_KEEP, files.length) + ' plus récents toujours conservés</span></div>';
                     resEl.style.display = 'block';
-                    resEl.innerHTML = html;
+                    resEl.innerHTML = header + html;
                 },
 
                 run: async function(silent) {
@@ -5720,25 +5732,31 @@ button, .btn, .retours-btn {
                     var cfg    = this.get();
                     var days   = this._days();
                     var cutoff = Date.now() - days * 24 * 3600 * 1000;
-                    var deleted = 0, names = [];
+                    var deleted = 0;
+                    var files = [];
                     try {
                         for await (var entry of window.selectedDirectoryHandle.values()) {
                             if(entry.kind !== 'file') continue;
                             if(!/^covo_backup_.*\.json$/.test(entry.name)) continue;
-                            names.push(entry.name);
-                        }
-                        for(var i = 0; i < names.length; i++) {
-                            var nm = names[i];
-                            var fd = this._parseDate(nm);
+                            var fd = this._parseDate(entry.name);
                             if(!fd) {
                                 try {
-                                    var fh = await window.selectedDirectoryHandle.getFileHandle(nm);
+                                    var fh = await window.selectedDirectoryHandle.getFileHandle(entry.name);
                                     var fi = await fh.getFile();
                                     fd = new Date(fi.lastModified);
-                                } catch(e) { continue; }
+                                } catch(e) { fd = new Date(0); }
                             }
-                            if(fd.getTime() < cutoff) {
-                                try { await window.selectedDirectoryHandle.removeEntry(nm); deleted++; }
+                            files.push({ name: entry.name, date: fd });
+                        }
+                        // ── GARDE ANTI-PERTE : on ne touche JAMAIS aux MIN_KEEP sauvegardes les
+                        // plus récentes, quelle que soit leur ancienneté.
+                        files.sort(function(a,b){ return (b.date||0) - (a.date||0); });
+                        var MIN_KEEP = this._minKeep();
+                        var candidates = files.slice(MIN_KEEP);
+                        for(var i = 0; i < candidates.length; i++) {
+                            var f = candidates[i];
+                            if(f.date && f.date.getTime() < cutoff) {
+                                try { await window.selectedDirectoryHandle.removeEntry(f.name); deleted++; }
                                 catch(e) {}
                             }
                         }
@@ -5819,6 +5837,13 @@ button, .btn, .retours-btn {
                     if (cfg.days) return cfg.days;
                     if (cfg.weeks) return cfg.weeks * 7;
                     return 7;
+                },
+                // ── GARDE ANTI-PERTE : nombre minimum de sauvegardes TOUJOURS conservées,
+                // quelle que soit leur ancienneté (protège contre une rétention trop courte,
+                // une horloge fausse, ou une longue période sans nouvelle sauvegarde).
+                _minKeep: function() {
+                    var cfg = this.get();
+                    return (typeof cfg.minKeep === 'number' && cfg.minKeep >= 1) ? cfg.minKeep : 10;
                 },
                 _label: function() {
                     var d = this._days();
@@ -5905,19 +5930,24 @@ button, .btn, .retours-btn {
                             resEl.innerHTML = '<em style="color:#888;">Aucun fichier covo_backup_*.json trouvé sur Drive.</em>';
                             return;
                         }
-                        var oldCount = files.filter(function(f){ return f._old; }).length;
-                        var html = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
-                            + files.length + ' fichier(s) — <span style="color:#dc2626;">' + oldCount + ' à supprimer</span></div>';
-                        files.forEach(function(f) {
-                            var col  = f._old ? '#dc2626' : '#16a34a';
-                            var icon = f._old ? '🗑' : '✅';
+                        var MIN_KEEP = this._minKeep();
+                        var toDeleteCount = 0;
+                        var html = '';
+                        files.forEach(function(f, idx) {
+                            var willDelete = idx >= MIN_KEEP && f._old;
+                            if (willDelete) toDeleteCount++;
+                            var col  = willDelete ? '#dc2626' : '#16a34a';
+                            var icon = willDelete ? '🗑' : (idx < MIN_KEEP ? '🔒' : '✅');
                             html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
                                 + '<span>' + icon + '</span>'
                                 + '<span style="flex:1;font-family:monospace;font-size:0.74rem;color:' + col + ';">' + f.name + '</span>'
                                 + '<span style="font-size:0.7rem;color:#888;">' + (f._date ? f._date.toLocaleDateString('fr-FR') : '?') + '</span>'
                                 + '</div>';
                         });
-                        resEl.innerHTML = html;
+                        var header = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
+                            + files.length + ' fichier(s) — <span style="color:#dc2626;">' + toDeleteCount + ' à mettre à la corbeille</span>'
+                            + ' — <span style="color:#16a34a;">🔒 ' + Math.min(MIN_KEEP, files.length) + ' plus récents toujours conservés</span></div>';
+                        resEl.innerHTML = header + html;
                     } catch(e) {
                         resEl.innerHTML = '<span style="color:#e74c3c;">Erreur : ' + e.message + '</span>';
                     }
@@ -5935,15 +5965,23 @@ button, .btn, .retours-btn {
                     try {
                         var files = await this._listOldFiles();
                         if (!files) return 0;
-                        var oldFiles = files.filter(function(f){ return f._old; });
+                        // ── GARDE ANTI-PERTE : on ne touche JAMAIS aux MIN_KEEP sauvegardes les plus
+                        // récentes (déjà triées du plus récent au plus ancien), quelle que soit leur
+                        // ancienneté — protège contre une longue coupure Drive qui rendrait tous les
+                        // fichiers "vieux", ou une rétention réglée trop court par erreur.
+                        var MIN_KEEP = this._minKeep();
+                        var candidates = files.slice(MIN_KEEP);
+                        var oldFiles = candidates.filter(function(f){ return f._old; });
                         for (var i = 0; i < oldFiles.length; i++) {
                             try {
+                                // Mise à la corbeille (récupérable ~30 jours) plutôt qu'une suppression
+                                // définitive — au cas où la rotation se tromperait malgré tout.
                                 var delResp = await fetchFn(
                                     'https://www.googleapis.com/drive/v3/files/' + oldFiles[i].id,
-                                    { method: 'DELETE' }
+                                    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) }
                                 );
-                                if (delResp.status === 204 || delResp.ok) deleted++;
-                            } catch(e) { console.warn('GD rotation delete:', e); }
+                                if (delResp.ok) deleted++;
+                            } catch(e) { console.warn('GD rotation trash:', e); }
                         }
                     } catch(e) { console.error('GD backup rotation:', e); }
                     this.save({ lastRun: new Date().toISOString(), lastCount: deleted });
@@ -5951,7 +5989,7 @@ button, .btn, .retours-btn {
                     if (scanEl && scanEl.style.display !== 'none') this.scan();
                     if (!silent && typeof showScanToast === 'function') {
                         var cfg = this.get();
-                        showScanToast('🧹 ' + deleted + ' fichier(s) Drive supprimé(s) — rétention : ' + this._label(), 'success');
+                        showScanToast('🧹 ' + deleted + ' fichier(s) Drive mis à la corbeille — rétention : ' + this._label(), 'success');
                     }
                     return deleted;
                 },
@@ -11752,6 +11790,36 @@ function toggleInfoSection(headerElement) {
         // Achats approvisionnements
         const rpInvEl = document.getElementById('rp-approvisionnements');
         if (rpInvEl) rpInvEl.textContent = nbInv + ' achat(s)';
+
+        // ── Comparaison avec les données ACTUELLEMENT présentes sur cet appareil ──
+        // Objectif : que la personne voie clairement si la restauration va faire DIMINUER
+        // ses données (cas à risque) avant de confirmer, plutôt que de le découvrir après coup.
+        const _curProdsRP  = (typeof products !== 'undefined' ? products.length : 0);
+        const _curSalesRP  = (typeof salesHistory !== 'undefined' ? salesHistory.length : 0);
+        let _curApproRP = 0;
+        try { _curApproRP = (JSON.parse(localStorage.getItem('covo_approvisionnements') || '[]') || []).length; } catch(e) {}
+        const rpCompareEl = document.getElementById('rp-compare');
+        if (rpCompareEl) {
+            const _willReduce = (prods < _curProdsRP) || (total < _curSalesRP) || (nbInv < _curApproRP);
+            const _rows = [
+                { label: 'Produits', cur: _curProdsRP, inc: prods },
+                { label: 'Tickets',  cur: _curSalesRP, inc: total },
+                { label: 'Approvisionnements', cur: _curApproRP, inc: nbInv }
+            ];
+            rpCompareEl.style.display = 'block';
+            if (_willReduce) {
+                rpCompareEl.style.background = 'rgba(231,76,60,0.1)';
+                rpCompareEl.style.border = '1.5px solid rgba(231,76,60,0.4)';
+                rpCompareEl.innerHTML = '<div style="font-weight:800;color:#c0392b;margin-bottom:6px;">⚠️ Cette sauvegarde contient MOINS de données que ce qui est actuellement sur cet appareil :</div>'
+                    + _rows.filter(r => r.inc < r.cur).map(r =>
+                        '<div>' + r.label + ' : <strong style="color:#27ae60;">' + r.cur + '</strong> actuellement → <strong style="color:#e74c3c;">' + r.inc + '</strong> dans cette sauvegarde</div>'
+                    ).join('');
+            } else {
+                rpCompareEl.style.background = 'rgba(46,204,113,0.1)';
+                rpCompareEl.style.border = '1.5px solid rgba(46,204,113,0.3)';
+                rpCompareEl.innerHTML = '<div style="font-weight:700;color:#1e8449;">✅ Cette sauvegarde contient au moins autant de données que ce qui est actuellement sur cet appareil.</div>';
+            }
+        }
 
         // Messages et historique connexion dans le récap
         const nbMsgs = (data.covo_messages || []).length;
@@ -28876,6 +28944,7 @@ logout = function(skipConfirmation = false) {
                     <div class="rp-lbl">📋 Historique connexions</div>
                 </div>
             </div>
+            <div id="rp-compare" style="font-size:0.8rem;margin:10px 0;padding:10px 12px;border-radius:8px;display:none;"></div>
             <div class="rp-warn">⚠️ Cette action remplacera <strong>toutes les données locales</strong> de façon irréversible.</div>
             <div class="rp-actions">
                 <button class="rp-btn-cancel" onclick="closeRestorePreview()">✖ Annuler</button>
@@ -40118,6 +40187,80 @@ function initAdminSections() {
         document.body.insertAdjacentHTML('beforeend', html);
     }
 
+    // ── GARDE ANTI-PERTE MULTI-APPAREILS : lit les compteurs (produits/ventes/appros) stockés
+    // dans les "properties" Drive de la DERNIÈRE sauvegarde réellement présente sur Drive (pas
+    // seulement le dernier repère local de CET appareil) — protège contre le scénario où un
+    // appareil avec des données locales en retard (ex: tablette pas encore synchronisée avec ce
+    // qu'un autre appareil a déjà sauvegardé) écraserait la sauvegarde la plus récente par une
+    // version plus petite lors de sa propre sauvegarde automatique.
+    async function _gdFetchLatestBackupCounts() {
+        try {
+            if (!_gdFolderId) return null;
+            const q = encodeURIComponent("'" + _gdFolderId + "' in parents and trashed=false and name contains 'covo_backup'");
+            const resp = await _gdFetch('https://www.googleapis.com/drive/v3/files?q=' + q
+                + '&fields=files(id,name,modifiedTime,properties)&orderBy=modifiedTime+desc&pageSize=1');
+            if (!resp.ok) return null;
+            const data = await resp.json();
+            const f = (data.files && data.files[0]) || null;
+            if (!f || !f.properties) return null;
+            return {
+                nProducts: parseInt(f.properties.nProducts || '0', 10) || 0,
+                nSales:    parseInt(f.properties.nSales    || '0', 10) || 0,
+                nAppro:    parseInt(f.properties.nAppro    || '0', 10) || 0,
+                fileName:  f.name
+            };
+        } catch(e) { return null; }
+    }
+
+    // ── Modale alerte perte de données (nombre d'enregistrements) ────
+    function _gdShowCountAlert(newCounts, remoteCounts, payload, fileName, ts) {
+        const old = document.getElementById('gd-size-alert-modal');
+        if (old) old.remove();
+        const rows = [
+            { label: '🧾 Tickets de vente', a: remoteCounts.nSales,    b: newCounts.nSales },
+            { label: '📦 Produits',         a: remoteCounts.nProducts, b: newCounts.nProducts },
+            { label: '🚚 Approvisionnements', a: remoteCounts.nAppro,  b: newCounts.nAppro }
+        ].filter(r => r.b < r.a);
+        const rowsHtml = rows.map(r => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #f0d5d3;font-size:0.82rem;">
+                <span>${r.label}</span>
+                <span><strong style="color:#27ae60;">${r.a}</strong> → <strong style="color:#e74c3c;">${r.b}</strong></span>
+            </div>`).join('');
+        const html = `
+        <div role="dialog" aria-modal="true" id="gd-size-alert-modal" style="position:fixed;inset:0;background:rgba(0,0,0,0.80);backdrop-filter:blur(10px);z-index:21000;display:flex;justify-content:center;align-items:center;">
+          <div style="background:var(--bg-card,#fff);border-radius:16px;width:92%;max-width:480px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.5);">
+            <div style="background:linear-gradient(135deg,#c0392b,#922b21);padding:16px 20px;display:flex;align-items:center;gap:12px;">
+              <span style="font-size:1.8rem;">🚨</span>
+              <div>
+                <div style="color:white;font-weight:900;font-size:1rem;">Sauvegarde bloquée — Perte de données détectée</div>
+                <div style="color:rgba(255,255,255,0.8);font-size:0.75rem;margin-top:2px;">Protection anti-perte de données COVO Pro (multi-appareils)</div>
+              </div>
+            </div>
+            <div style="padding:20px;">
+              <div style="background:#fef3f2;border:1.5px solid #fca5a5;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+                <div style="font-weight:800;color:#c0392b;font-size:0.88rem;margin-bottom:8px;">📊 Comparaison avec la dernière sauvegarde Drive</div>
+                ${rowsHtml}
+              </div>
+              <p style="font-size:0.82rem;color:var(--text-main);line-height:1.6;margin:0 0 16px;">
+                Cet appareil s'apprête à enregistrer <strong>moins</strong> de données que la dernière sauvegarde déjà présente sur Drive — probablement parce que cet appareil n'a pas encore reçu les dernières données saisies ailleurs. La sauvegarde a été <strong>annulée</strong> pour ne pas effacer ces informations.
+              </p>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <button onclick="document.getElementById('gd-size-alert-modal').remove()"
+                    style="padding:11px;background:linear-gradient(135deg,#27ae60,#1e8449);color:white;border:none;border-radius:9px;cursor:pointer;font-weight:700;font-size:0.88rem;">
+                    ✅ OK — Ne pas sauvegarder (données protégées)
+                </button>
+                <button onclick="_gdForceSaveAnyway('${fileName}','${ts}',document.getElementById('gd-size-alert-modal'))"
+                    style="padding:11px;background:none;border:1.5px solid #e74c3c;color:#e74c3c;border-radius:9px;cursor:pointer;font-weight:600;font-size:0.82rem;">
+                    ⚠️ Forcer la sauvegarde quand même (risqué)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+        window._gdForcedPayload = { payload, fileName, ts };
+    }
+
     // ── Modale alerte taille critique ────────────────────────────────
     function _gdShowSizeAlert(newSize, lastSize, pctPerte, payload, fileName, ts, isBlocked) {
         const fmtSz = bytes => bytes >= 1048576 ? (bytes/1048576).toFixed(2)+' Mo' : (bytes/1024).toFixed(1)+' Ko';
@@ -40186,9 +40329,26 @@ function initAdminSections() {
         if (!window._gdForcedPayload) return;
         const { payload } = window._gdForcedPayload;
         const newSize = new Blob([payload]).size;
+        let _forcedCounts = { nProducts: 0, nSales: 0, nAppro: 0 };
+        try {
+            const _pd = JSON.parse(payload);
+            _forcedCounts = {
+                nProducts: (_pd.products || []).length,
+                nSales:    (_pd.salesHistory || []).length,
+                nAppro:    (_pd.covo_approvisionnements || []).length
+            };
+        } catch(e) {}
         try {
             _gdSaving = true; _gdShowSaving(true);
-            const metadata = JSON.stringify({ name: fileName, parents: [_gdFolderId] });
+            const metadata = JSON.stringify({
+                name: fileName,
+                parents: [_gdFolderId],
+                properties: {
+                    nProducts: String(_forcedCounts.nProducts),
+                    nSales:    String(_forcedCounts.nSales),
+                    nAppro:    String(_forcedCounts.nAppro)
+                }
+            });
             const boundary = '----CovoGDriveForceBoundary' + Date.now();
             const body = '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+metadata+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
             const cr = await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
@@ -40311,6 +40471,25 @@ function initAdminSections() {
             _gdPayloadObj._fileName = fileName;
             const exportPayload = JSON.stringify(_gdPayloadObj, null, 2);
 
+            // ── GARDE ANTI-PERTE MULTI-APPAREILS : comparer aux compteurs de la dernière
+            // sauvegarde RÉELLEMENT présente sur Drive (pas seulement le repère local de cet
+            // appareil), pour bloquer un appareil dont les données locales sont en retard.
+            const _newCounts = {
+                nProducts: (_gdPayloadObj.products || []).length,
+                nSales:    (_gdPayloadObj.salesHistory || []).length,
+                nAppro:    (_gdPayloadObj.covo_approvisionnements || []).length
+            };
+            const _remoteCounts = await _gdFetchLatestBackupCounts();
+            if (_remoteCounts && (
+                _newCounts.nSales    < _remoteCounts.nSales ||
+                _newCounts.nProducts < _remoteCounts.nProducts ||
+                _newCounts.nAppro    < _remoteCounts.nAppro
+            )) {
+                _gdSaving = false; _gdShowSaving(false);
+                _gdShowCountAlert(_newCounts, _remoteCounts, exportPayload, fileName, ts);
+                return;
+            }
+
             // ── GARDE ANTI-PERTE : vérifier que le nouveau payload n'est pas anormalement petit ──
             const newSize  = new Blob([exportPayload]).size;
             const lastSize = parseInt(localStorage.getItem('gdrive_last_payload_size') || '0');
@@ -40331,7 +40510,17 @@ function initAdminSections() {
                 showScanToast(`⚠️ Sauvegarde réduite de ${perte}% — vérifiez vos données`, 'info');
             }
             // Toujours créer un NOUVEAU fichier (multipart)
-            const metadata = JSON.stringify({ name: fileName, parents: [_gdFolderId] });
+            // "properties" mémorise les compteurs clés pour permettre à N'IMPORTE QUEL appareil
+            // de détecter une régression avant sa PROCHAINE sauvegarde (voir _gdFetchLatestBackupCounts).
+            const metadata = JSON.stringify({
+                name: fileName,
+                parents: [_gdFolderId],
+                properties: {
+                    nProducts: String(_newCounts.nProducts),
+                    nSales:    String(_newCounts.nSales),
+                    nAppro:    String(_newCounts.nAppro)
+                }
+            });
             const boundary = '----CovoGDriveBoundary' + Date.now();
             const body = 
                 '--' + boundary + '\r\n' +
