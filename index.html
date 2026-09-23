@@ -24994,10 +24994,38 @@ logout = function(skipConfirmation = false) {
     }
 
     // ===== OBJECTIF & PROGRÈS =====
+    // Un devis réglé (Gestion Pro) peut être rattaché à un ticket ANCIEN (pas forcément d'aujourd'hui) :
+    // le montant réglé est alors déjà ajouté au total de ce ticket, mais ce ticket ne serait pas compté
+    // dans le chiffre d'affaires "du jour" ci-dessous puisque sa date n'est pas aujourd'hui. Cette fonction
+    // retrouve ces règlements encaissés aujourd'hui sur un ticket d'une autre date, pour que l'objectif
+    // reflète bien l'argent réellement encaissé aujourd'hui (jamais compté deux fois si le ticket
+    // rattaché est lui-même d'aujourd'hui, puisqu'il est alors déjà inclus dans todaySales ci-dessous).
+    function _devisTodayRegleHorsTicketDuJour() {
+        try {
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const devisList = JSON.parse(localStorage.getItem('covo_devis') || '[]');
+            const sales = (typeof salesHistory !== 'undefined' && salesHistory) ? salesHistory : JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
+            let extra = 0;
+            devisList.forEach(function(d) {
+                (d.paiements || []).forEach(function(p) {
+                    const pDate = new Date(p.date); pDate.setHours(0, 0, 0, 0);
+                    if (pDate.getTime() !== today.getTime()) return;
+                    const ticket = sales.find(function(s) { return String(s.id) === String(p.ticketId); });
+                    let ticketIsToday = false;
+                    if (ticket && ticket.date) {
+                        const td = new Date(ticket.date); td.setHours(0, 0, 0, 0);
+                        ticketIsToday = (td.getTime() === today.getTime());
+                    }
+                    if (!ticketIsToday) extra += (parseFloat(p.montant) || 0);
+                });
+            });
+            return extra;
+        } catch(e) { return 0; }
+    }
     function updateProgress() {
         const today = new Date(); today.setHours(0, 0, 0, 0);
         const todaySales = salesHistory.filter(s => { if (s.cancelled) return false; const saleDate = new Date(s.date); saleDate.setHours(0, 0, 0, 0); return saleDate.getTime() === today.getTime(); });
-        const total = todaySales.reduce((sum, s) => sum + s.total, 0);
+        const total = todaySales.reduce((sum, s) => sum + s.total, 0) + _devisTodayRegleHorsTicketDuJour();
         const percent = Math.min((total / deliveryGoal) * 100, 100);
         document.getElementById('progress-current').innerText = total.toFixed(2) + '€';
         document.getElementById('progress-percent').innerText = percent.toFixed(0) + '%';
@@ -47056,15 +47084,19 @@ body.dark-mode ._qahub-stat { border-color: rgba(255,255,255,0.08); }
   /* ── LIVE STATS ───────────────────────────────── */
   function _refreshQAStats() {
     try {
-      /* CA du jour */
+      /* CA du jour — harmonisé avec updateProgress()/_injectGoalBar() : la clé 'covo_history' n'était
+         jamais alimentée nulle part dans l'app (ce CA restait donc toujours à 0) ; on lit désormais
+         la même source que les deux autres barres d'objectif, 'covo_sales_history'. */
       var today = new Date().toDateString();
-      var hist  = JSON.parse(localStorage.getItem('covo_history') || '[]');
+      var hist  = (typeof salesHistory !== 'undefined' && salesHistory) ? salesHistory : JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
       var todaySales = hist.filter(function (h) {
-        return new Date(h.date || h.timestamp).toDateString() === today;
+        return !h.cancelled && new Date(h.date || h.timestamp).toDateString() === today;
       });
       var caToday = todaySales.reduce(function (s, h) {
         return s + (parseFloat(h.total) || 0);
       }, 0);
+      // + règlements de devis encaissés aujourd'hui sur un ticket d'une autre date (voir Gestion Pro)
+      caToday += (typeof _devisTodayRegleHorsTicketDuJour === 'function') ? _devisTodayRegleHorsTicketDuJour() : 0;
 
       /* objectif */
       var goal = parseFloat(localStorage.getItem('covo_delivery_goal')) || 150;
@@ -49115,13 +49147,18 @@ function _injectGoalBar(){
   goalEl.parentNode.appendChild(pct);
   /* Calculer la progression */
   try{
+    // Harmonisé avec updateProgress()/_refreshQAStats() : 'covo_settings.dailyGoal' n'est jamais écrit
+    // nulle part dans l'app (l'admin enregistre l'objectif dans 'covo_delivery_goal' via
+    // updateDeliveryGoal()) — on retombe donc sur cette même clé si dailyGoal est absent.
     var s=JSON.parse(localStorage.getItem('covo_settings')||'{}');
-    var goal=parseFloat(s.dailyGoal)||0;
+    var goal=parseFloat(s.dailyGoal)||parseFloat(localStorage.getItem('covo_delivery_goal'))||0;
     if(!goal) return;
     var allSales=typeof salesHistory!=='undefined'?salesHistory:JSON.parse(localStorage.getItem('covo_sales_history')||'[]');
     var today=new Date().toDateString();
     var rev=allSales.filter(function(x){ return x.date&&new Date(x.date).toDateString()===today&&!x.cancelled; })
       .reduce(function(s,x){ return s+(x.total||0); },0);
+    // + règlements de devis encaissés aujourd'hui sur un ticket d'une autre date (voir Gestion Pro)
+    rev += (typeof _devisTodayRegleHorsTicketDuJour==='function') ? _devisTodayRegleHorsTicketDuJour() : 0;
     var p=Math.min((rev/goal)*100,100);
     setTimeout(function(){
       var fill=document.getElementById('_awGoalBarFill');
