@@ -6990,6 +6990,10 @@ button, .btn, .retours-btn {
                     title="Afficher / masquer"
                     style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1.2rem;padding:4px;color:#7f8c8d;line-height:1;">👁️</button>
             </div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:0.82rem;color:var(--gray,#7a8fa3);margin:2px 0 12px;cursor:pointer;user-select:none;">
+                <input type="checkbox" id="login-remember" style="width:16px;height:16px;cursor:pointer;flex-shrink:0;">
+                🔒 Se souvenir de mon code sur cet appareil
+            </label>
             <div id="login-error" style="display:none;background:#fde8e8;color:#c0392b;border:1.5px solid #e74c3c;border-radius:8px;padding:9px 14px;font-size:0.88rem;font-weight:700;margin-bottom:12px;text-align:center;">❌ Code PIN incorrect</div>
             <button onclick="attemptLogin()" style="background:var(--success); color:white; width:100%; padding:12px; font-size:1.1rem;">
                 🔓 SE CONNECTER
@@ -11404,6 +11408,17 @@ function toggleInfoSection(headerElement) {
         // ─────────────────────────────────────────────────────────────────
 
         if (user) {
+            // ── Mémorisation locale du code (case "Se souvenir de mon code") ────────────
+            // Stockage 100% local (localStorage), clé dédiée jamais référencée dans
+            // _buildBackupPayload()/writeToCovoFile() : ce code ne part donc jamais vers
+            // Google Drive, même lors d'une sauvegarde complète — voir demande explicite.
+            const rememberEl = document.getElementById('login-remember');
+            if (rememberEl && rememberEl.checked) {
+                localStorage.setItem('covo_remembered_login_pin', pin);
+            } else {
+                localStorage.removeItem('covo_remembered_login_pin');
+            }
+
             currentUser = user;
             isAdmin = user.role === 'admin';
             localStorage.setItem('covo_current_user', JSON.stringify(currentUser));
@@ -26566,6 +26581,15 @@ logout = function(skipConfirmation = false) {
             }
             if (nameEl) nameEl.textContent = (lastRole === 'admin' ? '👑 ' : '💼 ') + lastName;
             if (roleEl) roleEl.textContent = lastRole === 'admin' ? 'Administrateur' : 'Caissier';
+        }
+        // Pré-remplir le code si "Se souvenir de mon code" avait été coché lors d'une connexion
+        // précédente (stockage purement local, voir attemptLogin() pour l'écriture/suppression).
+        const rememberedPin = localStorage.getItem('covo_remembered_login_pin');
+        if (rememberedPin) {
+            const pinEl = document.getElementById('login-pin');
+            const rememberEl = document.getElementById('login-remember');
+            if (pinEl) pinEl.value = rememberedPin;
+            if (rememberEl) rememberEl.checked = true;
         }
     } else {
         // Session active (refresh) → barre de progression déjà lancée ci-dessus
