@@ -22960,6 +22960,11 @@ logout = function(skipConfirmation = false) {
         }
 
         if (typeof window._pemPopulateTiers === 'function') window._pemPopulateTiers(p);
+
+        // Approvisionnement initial : ne concerne que la création, jamais l'édition d'un article existant
+        const approSecEdit = document.getElementById('pem-appro-section');
+        if (approSecEdit) approSecEdit.style.display = 'none';
+
         document.getElementById('product-edit-modal').style.display = 'flex';
     };
 
@@ -23052,6 +23057,24 @@ logout = function(skipConfirmation = false) {
         const togBtn = document.getElementById('pem-toggle-active-btn');
         if (togBtn) { togBtn.textContent = '✅ Activer l\'article'; togBtn.style.borderColor = '#27ae60'; togBtn.style.color = '#27ae60'; }
 
+        // Approvisionnement initial : visible et réinitialisé uniquement en création
+        const approSecNew = document.getElementById('pem-appro-section');
+        if (approSecNew) approSecNew.style.display = '';
+        const approFNew = document.getElementById('pem-appro-fournisseur');
+        if (approFNew) approFNew.value = '';
+        const approPayValNew = document.getElementById('pem-appro-pay-value');
+        if (approPayValNew) approPayValNew.value = '';
+        document.querySelectorAll('#pem-appro-section [data-pay]').forEach(function(b) {
+            b.style.border = '2px solid var(--border-color,#ddd)';
+            b.style.background = 'var(--bg-card,#fff)';
+            b.style.color = 'var(--text-main,#2c3e50)';
+        });
+        const approCrNew = document.getElementById('pem-appro-credit-row');
+        if (approCrNew) approCrNew.style.display = 'none';
+        const approAcNew = document.getElementById('pem-appro-acompte'); if (approAcNew) approAcNew.value = '';
+        const approEchNew = document.getElementById('pem-appro-echeance'); if (approEchNew) approEchNew.value = '';
+        const approErrNew = document.getElementById('pem-appro-error'); if (approErrNew) approErrNew.textContent = '';
+
         document.getElementById('product-edit-modal').style.display = 'flex';
 
         // Focus sur le nom
@@ -23059,6 +23082,27 @@ logout = function(skipConfirmation = false) {
             var nameEl = document.getElementById('pem-name');
             if (nameEl) nameEl.focus();
         }, 150);
+    };
+
+    // ── Sélection du mode de paiement pour l'approvisionnement initial ────────
+    window.pemApproSelectPay = function(btn) {
+        var pay = btn.dataset.pay;
+        var valEl = document.getElementById('pem-appro-pay-value');
+        if (valEl) valEl.value = pay;
+        document.querySelectorAll('#pem-appro-section [data-pay]').forEach(function(b) {
+            b.style.border = '2px solid var(--border-color,#ddd)';
+            b.style.background = 'var(--bg-card,#fff)';
+            b.style.color = 'var(--text-main,#2c3e50)';
+        });
+        var colors = { comptant:'#27ae60', cb:'#2980b9', cheque:'#8e44ad', credit:'#e67e22' };
+        var clr = colors[pay] || '#27ae60';
+        btn.style.border = '2px solid ' + clr;
+        btn.style.background = clr;
+        btn.style.color = '#fff';
+        var crRow = document.getElementById('pem-appro-credit-row');
+        if (crRow) crRow.style.display = (pay === 'credit') ? 'grid' : 'none';
+        var errEl = document.getElementById('pem-appro-error');
+        if (errEl) errEl.textContent = '';
     };
 
     window.saveProductEditModal = function() {
@@ -23095,12 +23139,54 @@ logout = function(skipConfirmation = false) {
                 const _nt = window._pemReadTiers();
                 if (_nt && _nt.length) newProduct.priceTiers = _nt;
             }
+
+            // Approvisionnement initial : si un stock de départ est saisi, le mode de
+            // paiement est obligatoire (il détermine si le solde caisse réel doit être
+            // débité) — voir #pem-appro-section, affichée uniquement en création.
+            const _apQty  = newProduct.stock || 0;
+            const _apPay  = (document.getElementById('pem-appro-pay-value')?.value || '');
+            if (_apQty > 0 && !_apPay) {
+                const _apErrEl = document.getElementById('pem-appro-error');
+                if (_apErrEl) _apErrEl.textContent = '❌ Sélectionnez le mode de paiement de l\'approvisionnement initial.';
+                showScanToast('❌ Mode de paiement de l\'approvisionnement requis (stock initial > 0)', 'error');
+                return;
+            }
+
             products.push(newProduct);
             saveAll();
+
+            // Ravitaillement automatique : le stock de départ devient un achat dans
+            // Investissement Pro (covo_approvisionnements), avec le produit déjà lié.
+            if (_apQty > 0 && _apPay) {
+                const _apFourn    = (document.getElementById('pem-appro-fournisseur')?.value || '').trim();
+                const _apAcompte  = _apPay === 'credit' ? (parseFloat(document.getElementById('pem-appro-acompte')?.value || 0) || null) : null;
+                const _apEcheance = _apPay === 'credit' ? (document.getElementById('pem-appro-echeance')?.value || null) : null;
+                const _apCost     = newProduct.costPrice || 0;
+                const _apMontant  = parseFloat((_apQty * _apCost).toFixed(2));
+                const _apList     = (typeof invLoad === 'function') ? invLoad() : [];
+                const _apNumero   = (typeof invNextNumero === 'function') ? invNextNumero() : String(Date.now());
+                _apList.unshift({
+                    id: 'INV-' + Date.now(), numero: _apNumero, date: new Date().toISOString().split('T')[0], datetime: new Date().toISOString(),
+                    desc: name, montant: _apMontant, cat: 'marchandise',
+                    fournisseur: _apFourn || null, qte: _apQty, unitType: isKg ? 'kg' : 'unit', prixUnit: _apCost || null,
+                    paiement: _apPay, acompte: _apAcompte, echeance: _apEcheance,
+                    resteADoit: _apPay === 'credit' ? parseFloat((_apMontant - (_apAcompte || 0)).toFixed(2)) : null,
+                    note: 'Stock initial à la création du produit',
+                    produitId: newId, produitNom: name, produitBarcode: newProduct.barcode || null
+                });
+                if (typeof invSave === 'function') invSave(_apList);
+                if ((_apPay === 'comptant' || _apPay === 'cb') && _apMontant > 0 && typeof _covoRealBalanceAdjust === 'function') {
+                    _covoRealBalanceAdjust(_apPay === 'comptant' ? 'especes' : 'cb', -_apMontant, 'Approvisionnement initial — ' + name);
+                }
+                if (typeof window._logStockChange === 'function') {
+                    window._logStockChange(newProduct, 0, _apQty, 'appro', 'Approvisionnement initial (création produit) — ' + (_apFourn || 'fournisseur non renseigné'), { qty: _apQty, fournisseur: _apFourn, prixAchat: _apCost, prixVente: newProduct.price || newProduct.pricePerKg || null });
+                }
+            }
+
             renderAll();
             if (typeof renderCatalogueTab === 'function') renderCatalogueTab();
             document.getElementById('product-edit-modal').style.display = 'none';
-            showScanToast('✅ Produit "' + name + '" créé avec succès !', 'success');
+            showScanToast('✅ Produit "' + name + '" créé avec succès !' + (_apQty > 0 && _apPay ? ' · Approvisionnement enregistré' : ''), 'success');
             return;
         }
         if (_pemProductId == null) return;
@@ -29991,6 +30077,40 @@ logout = function(skipConfirmation = false) {
         </div>
         <div id="pem-stock-alert" style="margin-top:8px;"></div>
         <div id="pem-benef-preview" style="display:none;margin-top:8px;background:rgba(39,174,96,0.08);border:1.5px solid #27ae60;border-radius:9px;padding:10px 12px;font-size:0.8rem;"></div>
+      </div>
+
+      <!-- Approvisionnement initial (uniquement en création, si un stock de départ est saisi) -->
+      <div id="pem-appro-section" style="display:none;background:var(--bg-card,#fff);border-radius:14px;padding:14px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.06);border:1.5px solid rgba(52,152,219,0.3);">
+        <div style="font-size:0.68rem;font-weight:800;color:#2980b9;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;">📦 Approvisionnement initial</div>
+        <div style="font-size:0.74rem;color:var(--gray,#7f8c8d);margin-bottom:10px;line-height:1.4;">Si vous saisissez un stock de départ ci-dessus, il sera automatiquement enregistré comme un achat dans Investissement Pro.</div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Fournisseur</label>
+          <input type="text" id="pem-appro-fournisseur" placeholder="Optionnel"
+            style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.85rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+        </div>
+        <div>
+          <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Mode de paiement (requis si stock &gt; 0)</label>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+            <button type="button" data-pay="comptant" onclick="pemApproSelectPay(this)" style="padding:8px 4px;border:2px solid var(--border-color,#ddd);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.72rem;font-weight:800;cursor:pointer;">💵 Comptant</button>
+            <button type="button" data-pay="cb" onclick="pemApproSelectPay(this)" style="padding:8px 4px;border:2px solid var(--border-color,#ddd);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.72rem;font-weight:800;cursor:pointer;">💳 CB</button>
+            <button type="button" data-pay="cheque" onclick="pemApproSelectPay(this)" style="padding:8px 4px;border:2px solid var(--border-color,#ddd);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.72rem;font-weight:800;cursor:pointer;">📄 Chèque</button>
+            <button type="button" data-pay="credit" onclick="pemApproSelectPay(this)" style="padding:8px 4px;border:2px solid var(--border-color,#ddd);border-radius:8px;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);font-size:0.72rem;font-weight:800;cursor:pointer;">🔄 Crédit</button>
+          </div>
+          <input type="hidden" id="pem-appro-pay-value" value="">
+        </div>
+        <div id="pem-appro-credit-row" style="display:none;margin-top:10px;grid-template-columns:1fr 1fr;gap:8px;">
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Acompte (€)</label>
+            <input type="number" id="pem-appro-acompte" min="0" step="0.01" placeholder="0.00"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.85rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+          <div>
+            <label style="font-size:0.72rem;font-weight:700;color:var(--text-main,#2c3e50);display:block;margin-bottom:4px;">Échéance</label>
+            <input type="date" id="pem-appro-echeance"
+              style="width:100%;padding:9px 12px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;font-size:0.85rem;box-sizing:border-box;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);">
+          </div>
+        </div>
+        <div id="pem-appro-error" style="font-size:0.74rem;color:#e74c3c;margin-top:8px;min-height:14px;"></div>
       </div>
 
       <!-- DLC -->
