@@ -52781,6 +52781,218 @@ setTimeout(function(){var m=document.getElementById('wa-modal');if(m)m.addEventL
 </script>
 
 <!-- ════════════════════════════════════════════════════════════
+     MODULE SÉCURITÉ VENTE FIDÉLITÉ : confirmation WhatsApp du
+     récapitulatif + vérification d'identité si l'acheteur n'est
+     pas le titulaire de la carte — COVO Pro
+     ════════════════════════════════════════════════════════════ -->
+<style>
+#lty-owner-modal,#lty-idcheck-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(8px);z-index:24200;justify-content:center;align-items:center;padding:16px;}
+#lty-owner-box,#lty-idcheck-box{background:var(--bg-card,#fff);border-radius:18px;width:100%;max-width:420px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+body.dark-mode #lty-owner-box, body.dark-mode #lty-idcheck-box{background:var(--bg-card,#1e293b);}
+.lty-sec-fld{width:100%;box-sizing:border-box;padding:12px 14px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;font-size:1.1rem;letter-spacing:4px;text-align:center;font-weight:900;background:var(--input-bg,#fff);color:var(--text-main);font-family:inherit;}
+.lty-sec-fld:focus{outline:none;border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.15);}
+</style>
+<div id="lty-owner-modal">
+  <div id="lty-owner-box">
+    <div style="background:linear-gradient(135deg,#8b5cf6,#6d28d9);padding:18px 20px;color:#fff;">
+      <div style="font-size:1.05rem;font-weight:900;">🎁 Vérification titulaire</div>
+    </div>
+    <div style="padding:20px;">
+      <div style="font-size:.88rem;color:var(--text-main);margin-bottom:4px;">Carte fidélité : <strong id="lty-owner-name"></strong></div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:18px;">Confirmez l'identité de l'acheteur avant de valider la vente.</div>
+      <button type="button" onclick="window._ltyOwnerAnswer(true)" style="width:100%;padding:13px;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:none;border-radius:10px;font-weight:900;font-size:.92rem;cursor:pointer;margin-bottom:10px;">✅ Oui, c'est le/la titulaire</button>
+      <button type="button" onclick="window._ltyOwnerAnswer(false)" style="width:100%;padding:13px;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;border:none;border-radius:10px;font-weight:900;font-size:.92rem;cursor:pointer;">🚫 Non, ce n'est pas le/la titulaire</button>
+    </div>
+  </div>
+</div>
+<div id="lty-idcheck-modal">
+  <div id="lty-idcheck-box">
+    <div style="background:linear-gradient(135deg,#f59e0b,#d97706);padding:18px 20px;color:#fff;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:1.02rem;font-weight:900;">🔐 Code de confirmation</div>
+      <button type="button" onclick="window._ltyIdCheckCancel()" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:1.1rem;width:30px;height:30px;border-radius:8px;cursor:pointer;">✕</button>
+    </div>
+    <div style="padding:20px;">
+      <div id="lty-idcheck-intro" style="font-size:.82rem;color:var(--text-main);margin-bottom:14px;line-height:1.5;"></div>
+      <div id="lty-idcheck-nophone" style="display:none;font-size:.82rem;color:#dc2626;font-weight:700;margin-bottom:14px;"></div>
+      <button type="button" id="lty-idcheck-sendbtn" onclick="window._ltyIdCheckSend()" style="width:100%;padding:12px;background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;border:none;border-radius:10px;font-weight:900;font-size:.88rem;cursor:pointer;margin-bottom:14px;">📲 Envoyer le code par WhatsApp</button>
+      <div id="lty-idcheck-entry" style="display:none;">
+        <label style="font-size:.74rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">Code communiqué par le titulaire</label>
+        <input id="lty-idcheck-code" class="lty-sec-fld" maxlength="4" inputmode="numeric" placeholder="••••" style="margin-top:6px;margin-bottom:10px;">
+        <div id="lty-idcheck-err" style="display:none;color:#dc2626;font-size:.78rem;font-weight:700;margin-bottom:10px;"></div>
+        <button type="button" onclick="window._ltyIdCheckVerify()" style="width:100%;padding:12px;background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff;border:none;border-radius:10px;font-weight:900;font-size:.88rem;cursor:pointer;margin-bottom:8px;">✔ Valider le code</button>
+        <button type="button" onclick="window._ltyIdCheckSend()" style="width:100%;padding:8px;background:transparent;color:var(--text-muted);border:none;font-size:.76rem;cursor:pointer;text-decoration:underline;">🔁 Renvoyer un nouveau code</button>
+      </div>
+      <div id="lty-idcheck-admin" style="display:none;margin-top:12px;border-top:1px solid var(--border-color,#eee);padding-top:12px;">
+        <button type="button" onclick="window._ltyIdCheckAdminOverride()" style="width:100%;padding:10px;background:rgba(0,0,0,.06);color:var(--text-main);border:none;border-radius:9px;font-weight:700;font-size:.78rem;cursor:pointer;">🔓 Forcer la validation (admin)</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function toast(m,t){if(typeof showScanToast==='function')showScanToast(m,t||'');}
+function _isAdminUser(){
+  try{return !!(typeof currentUser!=='undefined' && currentUser && (currentUser.role==='admin'||currentUser.isMaster||currentUser.id==='USR-MASTER'));}catch(e){return false;}
+}
+
+/* ── Callback en attente après confirmation titulaire / code ── */
+var _pendingProceed=null;
+var _ltyVerifyCode=null; // {code, customerId, expiresAt}
+
+window._ltyOwnerAnswer=function(isOwner){
+  var m=document.getElementById('lty-owner-modal'); if(m)m.style.display='none';
+  if(isOwner){
+    var cb=_pendingProceed; _pendingProceed=null;
+    if(typeof cb==='function')cb();
+  } else {
+    window._ltyIdCheckOpen();
+  }
+};
+
+/* ── Vérification par code WhatsApp ── */
+window._ltyIdCheckOpen=function(){
+  var cu=window._ltyIdCheckClient;
+  document.getElementById('lty-idcheck-entry').style.display='none';
+  document.getElementById('lty-idcheck-err').style.display='none';
+  document.getElementById('lty-idcheck-code').value='';
+  var hasPhone=!!(cu && cu.phone && String(cu.phone).replace(/\D/g,'').length>=6);
+  var nophoneEl=document.getElementById('lty-idcheck-nophone');
+  var sendBtn=document.getElementById('lty-idcheck-sendbtn');
+  var adminBox=document.getElementById('lty-idcheck-admin');
+  if(hasPhone){
+    nophoneEl.style.display='none';
+    sendBtn.style.display='';
+    document.getElementById('lty-idcheck-intro').textContent='Un code de confirmation va être envoyé par WhatsApp au titulaire ('+(cu.name||'')+') pour autoriser cet achat par un tiers.';
+    adminBox.style.display='none';
+  } else {
+    nophoneEl.textContent="⚠️ Ce client n'a aucun numéro de téléphone enregistré — impossible d'envoyer un code de vérification.";
+    nophoneEl.style.display='';
+    sendBtn.style.display='none';
+    document.getElementById('lty-idcheck-intro').textContent='';
+    adminBox.style.display=_isAdminUser()?'':'none';
+  }
+  var m=document.getElementById('lty-idcheck-modal'); if(m)m.style.display='flex';
+};
+
+window._ltyIdCheckCancel=function(){
+  var m=document.getElementById('lty-idcheck-modal'); if(m)m.style.display='none';
+  _ltyVerifyCode=null;
+  _pendingProceed=null; // achat annulé, on ne valide rien
+  toast('🚫 Vente non validée — identité non confirmée');
+};
+
+window._ltyIdCheckSend=function(){
+  var cu=window._ltyIdCheckClient; if(!cu)return;
+  var ph=(typeof window._waNormPhone==='function')?window._waNormPhone(cu.phone,'33'):String(cu.phone||'').replace(/\D/g,'');
+  if(!ph){toast('⚠️ Numéro invalide');return;}
+  var code=String(Math.floor(1000+Math.random()*9000));
+  _ltyVerifyCode={code:code,customerId:cu.id,expiresAt:Date.now()+10*60*1000};
+  var msg="Bonjour "+(cu.name||'')+", une personne tente d'effectuer un achat avec votre carte fidélité COVO en votre absence. Code de confirmation : "+code+" (valable 10 minutes). Si vous n'êtes pas à l'origine de cette demande, ignorez ce message et prévenez le magasin.";
+  try{ window.open('https://wa.me/'+ph+'?text='+encodeURIComponent(msg),'_blank'); }catch(e){}
+  document.getElementById('lty-idcheck-entry').style.display='';
+  document.getElementById('lty-idcheck-err').style.display='none';
+  document.getElementById('lty-idcheck-code').value='';
+  setTimeout(function(){var i=document.getElementById('lty-idcheck-code');if(i)i.focus();},60);
+  toast('📲 Code envoyé — demandez-le au titulaire');
+};
+
+window._ltyIdCheckVerify=function(){
+  var v=_ltyVerifyCode;
+  var entered=(document.getElementById('lty-idcheck-code').value||'').trim();
+  var errEl=document.getElementById('lty-idcheck-err');
+  if(!v){errEl.textContent='Aucun code envoyé — cliquez sur "Envoyer le code".';errEl.style.display='';return;}
+  if(Date.now()>v.expiresAt){errEl.textContent='⏱️ Code expiré — renvoyez un nouveau code.';errEl.style.display='';return;}
+  if(!entered||entered!==v.code){errEl.textContent='❌ Code incorrect.';errEl.style.display='';return;}
+  /* Succès */
+  _ltyVerifyCode=null;
+  var m=document.getElementById('lty-idcheck-modal'); if(m)m.style.display='none';
+  toast('✅ Identité confirmée','success');
+  var cb=_pendingProceed; _pendingProceed=null;
+  if(typeof cb==='function')cb();
+};
+
+window._ltyIdCheckAdminOverride=function(){
+  if(!_isAdminUser()){toast('🚫 Réservé aux administrateurs');return;}
+  _ltyVerifyCode=null;
+  var m=document.getElementById('lty-idcheck-modal'); if(m)m.style.display='none';
+  toast('🔓 Validation forcée par un administrateur','info');
+  var cb=_pendingProceed; _pendingProceed=null;
+  if(typeof cb==='function')cb();
+};
+
+/* ── Garde-fou principal : demande systématique « Est-ce le titulaire ? »
+     dès qu'une carte fidélité est attachée à la vente (points non neutralisés,
+     donc hors ventes crédit/échéancier qui neutralisent déjà _ltyCu plus haut).
+     Le plafond de dépenses du client (s'il est configuré) est vérifié EN PREMIER,
+     avant même d'afficher la modale titulaire : inutile de faire vérifier une
+     identité si la vente sera de toute façon bloquée par le plafond.
+     Note : `window._ltySpendCheck` est défini plus bas dans le fichier (module
+     plafond de dépenses) mais l'appel ci-dessous n'a lieu qu'au moment du clic
+     du caissier — à ce moment-là tous les scripts sont déjà chargés, donc la
+     fonction existe bien malgré l'ordre d'apparition dans le fichier. ── */
+var _prevVSGuard=window.validateSale;
+window.validateSale=function(){
+  var cu=window._ltyCu;
+  if(cu){
+    if(typeof window._ltySpendCheck==='function'){
+      var b=window._ltySpendCheck();
+      if(b){
+        toast('⛔ Plafond de dépenses atteint ('+b.cap.toFixed(2)+'€/'+(b.period==='month'?'mois':'semaine')+') · déjà dépensé '+b.spent.toFixed(2)+'€ — reste '+b.remaining.toFixed(2)+'€ · retirez la carte pour vendre sans fidélité');
+        return;
+      }
+    }
+    var args=arguments,self=this;
+    _pendingProceed=function(){ if(typeof _prevVSGuard==='function')_prevVSGuard.apply(self,args); };
+    window._ltyIdCheckClient=cu;
+    var nmEl=document.getElementById('lty-owner-name'); if(nmEl)nmEl.textContent=cu.name||'';
+    var m=document.getElementById('lty-owner-modal'); if(m)m.style.display='flex';
+    return;
+  }
+  return (typeof _prevVSGuard==='function')?_prevVSGuard.apply(this,arguments):undefined;
+};
+
+/* ── Envoi automatique du récapitulatif WhatsApp après une vente fidélité réussie ── */
+function _waSaleRecapMsg(cu,sale){
+  var lignes=(sale.items||[]).map(function(it){
+    var qte=it.unitType==='kg'?(parseFloat(it.quantity).toFixed(3)+' kg'):('x'+it.quantity);
+    var lt=(it.unitType==='kg'?parseFloat(it.quantity):it.quantity)*(it.price||0);
+    return '• '+(it.name||'')+' ('+qte+') — '+lt.toFixed(2)+'€';
+  }).join('\n');
+  var pts=(sale._ltyTotal!=null)?sale._ltyTotal:(cu.points||0);
+  var gagnes=sale._ltyEarned!=null?sale._ltyEarned:0;
+  return 'Bonjour '+(cu.name||'')+", merci pour votre achat chez COVO !\n\n"
+    +'🧾 Ticket #'+(sale.ticketNum||sale.id)+'\n'+lignes+'\n\n'
+    +'💰 Total : '+(sale.total||0).toFixed(2)+'€'
+    +(sale._ltyDiscount?(' (dont −'+sale._ltyDiscount.toFixed(2)+'€ en points)'):'')+'\n'
+    +'⭐ Points gagnés : +'+gagnes+' pts · Solde disponible : '+pts+' pts';
+}
+
+var _prevSRRecap=window.showReceipt;
+window.showReceipt=function(sale){
+  var cuSnap=window._ltySnap||window._ltyCu||null;
+  if(typeof _prevSRRecap==='function')_prevSRRecap.apply(this,arguments);
+  if(!cuSnap || cuSnap.noWhatsapp)return;
+  if(!cuSnap.phone || !String(cuSnap.phone).replace(/\D/g,'').length)return;
+  var ph=(typeof window._waNormPhone==='function')?window._waNormPhone(cuSnap.phone,'33'):String(cuSnap.phone).replace(/\D/g,'');
+  if(!ph)return;
+  try{
+    window.open('https://wa.me/'+ph+'?text='+encodeURIComponent(_waSaleRecapMsg(cuSnap,sale)),'_blank');
+    toast('📲 Récapitulatif envoyé par WhatsApp à '+(cuSnap.name||'le client'),'success');
+  }catch(e){}
+};
+
+/* Fermer la fenêtre de vérification de code en cliquant sur le fond (pas celle du titulaire, qui exige une réponse explicite) */
+setTimeout(function(){
+  var m=document.getElementById('lty-idcheck-modal');
+  if(m)m.addEventListener('click',function(e){if(e.target===this)window._ltyIdCheckCancel();});
+},500);
+
+})();
+</script>
+
+<!-- ════════════════════════════════════════════════════════════
      MODULE RÉSERVATION D'ARTICLE + NOTES CLIENT — COVO Pro
      ════════════════════════════════════════════════════════════ -->
 <style>
