@@ -18694,6 +18694,7 @@ function toggleInfoSection(headerElement) {
     var _catMode = 'category'; // 'category' | 'price'
     var _catSearch = '';
     var _catCollapsed = {};
+    var _catHideOutOfStock = false; // filtre d'affichage : masquer les produits en rupture (1 clic)
 
     function _catEsc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
@@ -18793,6 +18794,10 @@ function toggleInfoSection(headerElement) {
 
     window._catSetMode = function(mode) {
         _catMode = mode;
+        renderCatalogue();
+    };
+    window._catToggleOutOfStock = function() {
+        _catHideOutOfStock = !_catHideOutOfStock;
         renderCatalogue();
     };
     window._catOnSearch = function(val) {
@@ -18895,10 +18900,17 @@ function toggleInfoSection(headerElement) {
             var active = _catMode === mode;
             return '<button onclick="window._catSetMode(\'' + mode + '\')" style="padding:8px 16px;border-radius:9px;border:1.5px solid ' + (active ? '#fff' : 'rgba(255,255,255,0.35)') + ';background:' + (active ? 'rgba(255,255,255,0.22)' : 'transparent') + ';color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;transition:background .15s;">' + icon + ' ' + label + '</button>';
         };
+        var outBtn = '<button onclick="window._catToggleOutOfStock()" title="'
+            + (_catHideOutOfStock ? 'Afficher à nouveau les produits en rupture' : 'Masquer en 1 clic les produits en rupture de stock') + '"'
+            + ' style="padding:8px 14px;border-radius:9px;border:1.5px solid ' + (_catHideOutOfStock ? '#fff' : 'rgba(255,255,255,0.35)') + ';'
+            + 'background:' + (_catHideOutOfStock ? 'rgba(255,255,255,0.22)' : 'transparent') + ';color:#fff;font-size:0.82rem;font-weight:800;'
+            + 'cursor:pointer;white-space:nowrap;transition:background .15s;">'
+            + (_catHideOutOfStock ? '✅ Ruptures masquées' : '🚫 Masquer ruptures') + '</button>';
         return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
             '<div style="display:flex;gap:6px;background:rgba(0,0,0,0.15);padding:4px;border-radius:11px;">' +
                 btn('category', 'Par catégorie', '🏷️') + btn('price', 'Par prix', '💶') +
             '</div>' +
+            outBtn +
             '<input id="catv-search" type="text" value="' + _catEsc(_catSearch) + '" oninput="window._catOnSearch(this.value)" placeholder="🔎 Rechercher un produit…" ' +
                 'style="flex:1;min-width:160px;padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:600;outline:none;">' +
         '</div>';
@@ -18917,6 +18929,9 @@ function toggleInfoSection(headerElement) {
                        (p.category || '').toLowerCase().indexOf(_catSearch) !== -1;
               })
             : all;
+        if (_catHideOutOfStock) {
+            list = list.filter(function(p) { return !(p.stock <= 0); });
+        }
 
         // Toolbar (mode + recherche) — rendue dans le header, une seule fois
         var toolbarHost = document.getElementById('catalogue-toolbar');
@@ -18930,10 +18945,14 @@ function toggleInfoSection(headerElement) {
             '</div>';
             return;
         }
-        if (_catSearch && !list.length) {
+        if ((_catSearch || _catHideOutOfStock) && !list.length) {
+            var _catEmptyReasons = [];
+            if (_catSearch) _catEmptyReasons.push('la recherche « ' + _catEsc(_catSearch) + ' »');
+            if (_catHideOutOfStock) _catEmptyReasons.push('le filtre « ruptures masquées »');
             host.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text-muted,#888);">' +
                 '<div style="font-size:2.4rem;margin-bottom:8px;">🔍</div>' +
-                '<div style="font-weight:800;">Aucun résultat pour « ' + _catEsc(_catSearch) + ' »</div>' +
+                '<div style="font-weight:800;">Aucun produit ne correspond à ' + _catEmptyReasons.join(' + ') + '</div>' +
+                (_catHideOutOfStock ? '<div style="font-size:0.8rem;margin-top:6px;"><button onclick="window._catToggleOutOfStock()" style="padding:7px 14px;border-radius:8px;border:1.5px solid var(--border-color,#ccc);background:none;color:var(--text-main,#333);font-weight:700;cursor:pointer;">🚫 Réafficher les ruptures</button></div>' : '') +
             '</div>';
             return;
         }
@@ -26548,8 +26567,8 @@ logout = function(skipConfirmation = false) {
         var bar = document.getElementById('master-save-bar');
         var fab = document.getElementById('master-save-fab');
         var origBarBg = bar ? bar.style.background : '';
-        if (bar) { bar.style.background = 'linear-gradient(135deg,#2c6fad,#1a5276)'; bar.style.opacity = '0.75'; }
-        if (fab) { fab.style.opacity = '0.75'; }
+        if (bar) { bar.style.background = 'linear-gradient(135deg,#2c6fad,#1a5276)'; bar.style.opacity = '0.75'; bar.style.pointerEvents = 'none'; }
+        if (fab) { fab.style.opacity = '0.75'; fab.style.pointerEvents = 'none'; }
         try {
             _doSaveAll();
             _doSaveAllFull();
@@ -26565,8 +26584,8 @@ logout = function(skipConfirmation = false) {
             showScanToast('❌ Erreur de sauvegarde — ' + (err.message || err), 'error');
         } finally {
             window._masterSavingNow = false;
-            if (bar) { bar.style.opacity = '1'; }
-            if (fab) { fab.style.opacity = '1'; }
+            if (bar) { bar.style.opacity = '1'; bar.style.pointerEvents = ''; }
+            if (fab) { fab.style.opacity = '1'; fab.style.pointerEvents = ''; }
         }
     };
 
@@ -39465,6 +39484,8 @@ function initAdminSections() {
     let _gdFolderName = '';            // Nom du dossier choisi
     let _gdConnected = false;
     let _gdSaving = false;
+    let _gdLastSaveCompletedAt = 0;   // horodatage (ms) de la dernière sauvegarde Drive RÉUSSIE
+    let _gdLastSavedCounts = null;    // {nProducts,nSales,nAppro,size} de cette dernière sauvegarde
     let _gdUserEmail = '';
     let _gdAllFolders = [];            // Cache de la liste des dossiers
     const GD_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
@@ -39948,6 +39969,7 @@ function initAdminSections() {
         showScanToast('📁 Dossier « ' + _gdFolderName + ' » sélectionné', 'success');
 
         // Sauvegarder immédiatement dans le nouveau dossier
+        window._gdForceNextSave = true;
         await _gdDoSave();
     };
 
@@ -39995,6 +40017,7 @@ function initAdminSections() {
             showScanToast('✅ Dossier « ' + _gdFolderName + ' » créé et sélectionné', 'success');
 
             // Sauvegarder immédiatement
+            window._gdForceNextSave = true;
             await _gdDoSave();
         } catch(err) {
             console.error('GDrive create folder error:', err);
@@ -40196,7 +40219,7 @@ function initAdminSections() {
         var q = encodeURIComponent("'" + folderId + "' in parents and trashed=false and name contains 'covo_backup'");
         var baseUrl = 'https://www.googleapis.com/drive/v3/files?q=' + q
             + '&orderBy=modifiedTime+desc&pageSize=1000'
-            + '&fields=nextPageToken,files(id,name,modifiedTime,size)';
+            + '&fields=nextPageToken,files(id,name,modifiedTime,size,properties)';
         do {
             var url = baseUrl + (pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : '');
             var resp = await Promise.race([
@@ -40251,6 +40274,56 @@ function initAdminSections() {
     var _gdPickerAllFiles    = [];
     var _gdPickerCurrentPage = 0;
     var _gdPickerPageSize    = 15;
+
+    // ── Calcule un badge compact d'écart entre une sauvegarde et la précédente
+    // (produits / ventes / approvisionnements / taille), à partir des "properties"
+    // déjà stockées sur le fichier Drive à l'enregistrement — aucun téléchargement
+    // de contenu nécessaire pour l'afficher dans la liste.
+    function _gdPickerDeltaHtml(f, prevFile, isDark) {
+        if (!prevFile) return '';
+        var curSize  = parseInt(f.size) || 0, prevSize = parseInt(prevFile.size) || 0;
+        var sizeDiff = curSize - prevSize;
+        var sameSize = Math.abs(sizeDiff) < Math.max(50, prevSize * 0.002);
+        var gapMs    = new Date(f.modifiedTime).getTime() - new Date(prevFile.modifiedTime).getTime();
+        var gapMin   = gapMs / 60000;
+        var textSub  = isDark ? '#7a8aa0' : '#8291a3';
+        var warnBg   = isDark ? 'rgba(255,183,77,0.14)' : '#fff3e0';
+        var warnClr  = isDark ? '#ffb74d' : '#b45309';
+        var badClr   = isDark ? '#ff7070' : '#c0392b';
+        var goodClr  = isDark ? '#6fcf8a' : '#1b5e20';
+
+        var fp = f.properties, pp = prevFile.properties;
+        if (!fp || !pp || typeof fp.nProducts === 'undefined' || typeof pp.nProducts === 'undefined') {
+            // Sauvegardes plus anciennes, sans compteurs enregistrés — comparaison par taille uniquement
+            if (sameSize && gapMin < 3) {
+                return '<div style="font-size:0.66rem;margin-top:3px;padding:2px 6px;border-radius:6px;display:inline-block;background:' + warnBg + ';color:' + warnClr + ';font-weight:700;">⚠️ Taille identique à la précédente</div>';
+            }
+            return '';
+        }
+
+        var dProd  = (parseInt(fp.nProducts) || 0) - (parseInt(pp.nProducts) || 0);
+        var dSale  = (parseInt(fp.nSales)    || 0) - (parseInt(pp.nSales)    || 0);
+        var dAppro = (parseInt(fp.nAppro)    || 0) - (parseInt(pp.nAppro)    || 0);
+        var noChange = (dProd === 0 && dSale === 0 && dAppro === 0 && sameSize);
+
+        if (noChange && gapMin < 3) {
+            var gapTxt = gapMs < 60000 ? (Math.max(1, Math.round(gapMs / 1000)) + 's') : (Math.round(gapMin) + 'min');
+            return '<div style="font-size:0.66rem;margin-top:3px;padding:2px 6px;border-radius:6px;display:inline-block;background:' + warnBg + ';color:' + warnClr + ';font-weight:700;">⚠️ Quasi identique à la précédente (' + gapTxt + ' d’écart)</div>';
+        }
+
+        var fmtDelta = function(n, label) {
+            if (n === 0) return '';
+            var clr  = n < 0 ? badClr : goodClr;
+            var sign = n > 0 ? '+' : '';
+            return '<span style="color:' + clr + ';font-weight:700;">' + sign + n + ' ' + label + '</span>';
+        };
+        var parts = [fmtDelta(dProd, 'produits'), fmtDelta(dSale, 'ventes'), fmtDelta(dAppro, 'appro.')].filter(Boolean);
+        if (sizeDiff !== 0) {
+            parts.push('<span style="color:' + textSub + ';">' + (sizeDiff > 0 ? '+' : '−') + _gdFmtFileSize(Math.abs(sizeDiff)) + '</span>');
+        }
+        if (!parts.length) return '';
+        return '<div style="font-size:0.66rem;margin-top:3px;color:' + textSub + ';">📊 ' + parts.join(' · ') + '</div>';
+    }
 
     function _gdShowPickerModal(files) {
         _gdPickerAllFiles    = files;
@@ -40323,6 +40396,7 @@ function initAdminSections() {
                     +     '\u2601\ufe0f ' + _gdFmtFileDate(f.modifiedTime) + badge
                     +   '</div>'
                     +   '<div style="font-size:0.72rem;color:' + textSub + ';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (f.name||'') + '</div>'
+                    +   _gdPickerDeltaHtml(f, files[globalIdx + 1], isDark)
                     + '</div>'
                     + '<div style="text-align:right;flex-shrink:0;margin-left:12px;">'
                     +   '<div style="font-size:0.73rem;color:' + textSub + ';">' + _gdFmtFileSize(f.size) + '</div>'
@@ -40905,6 +40979,8 @@ function initAdminSections() {
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
     async function _gdDoSave() {
         if (!_gdConnected || !_gdAccessToken || _gdSaving) return;
+        const _gdForced = !!window._gdForceNextSave;
+        window._gdForceNextSave = false;
         // Lecture seule (readOnly) : aucune sauvegarde Drive autorisée, jamais (pas de bouton manuel pour ce mode)
         if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().readOnly === true) return;
         // isMaster : auto-save Drive désactivé — uniquement via bouton manuel (_masterSavingNow)
@@ -40991,6 +41067,31 @@ function initAdminSections() {
             _gdPayloadObj._fileName = fileName;
             const exportPayload = JSON.stringify(_gdPayloadObj, null, 2);
 
+            // ── GARDE ANTI-DOUBLONS : éviter de créer plusieurs sauvegardes quasi
+            // identiques en quelques secondes (double-clic sur « 💾 Sauvegarder »,
+            // plusieurs déclencheurs qui s'enchaînent, etc.). On ignore cette
+            // sauvegarde SEULEMENT si les compteurs ET la taille sont identiques à
+            // la dernière sauvegarde réussie, ET que celle-ci date de < 20s —
+            // toute vraie nouvelle donnée (vente, produit…) est toujours sauvegardée
+            // immédiatement, forçage explicite (changement de dossier) toujours respecté.
+            const _gdDupSize = new Blob([exportPayload]).size;
+            const _gdDupCounts = {
+                nProducts: (_gdPayloadObj.products || []).length,
+                nSales:    (_gdPayloadObj.salesHistory || []).length,
+                nAppro:    (_gdPayloadObj.covo_approvisionnements || []).length
+            };
+            if (!_gdForced && _gdLastSavedCounts && _gdLastSaveCompletedAt &&
+                (Date.now() - _gdLastSaveCompletedAt) < 20000 &&
+                _gdDupCounts.nProducts === _gdLastSavedCounts.nProducts &&
+                _gdDupCounts.nSales    === _gdLastSavedCounts.nSales &&
+                _gdDupCounts.nAppro    === _gdLastSavedCounts.nAppro &&
+                Math.abs(_gdDupSize - _gdLastSavedCounts.size) < Math.max(50, _gdLastSavedCounts.size * 0.002)) {
+                console.warn('[GDrive] Sauvegarde ignorée — données identiques à la sauvegarde d\'il y a ' +
+                    Math.round((Date.now() - _gdLastSaveCompletedAt) / 1000) + 's (évite un doublon)');
+                _gdSaving = false; _gdShowSaving(false);
+                return;
+            }
+
             // ── GARDE ANTI-PERTE MULTI-APPAREILS : comparer aux compteurs de la dernière
             // sauvegarde RÉELLEMENT présente sur Drive (pas seulement le repère local de cet
             // appareil), pour bloquer un appareil dont les données locales sont en retard.
@@ -41063,6 +41164,8 @@ function initAdminSections() {
             localStorage.setItem('gdrive_last_payload_size', String(newSize));
             localStorage.setItem('gdrive_last_save', ts);
             localStorage.setItem('gdrive_last_file', fileName);
+            _gdLastSaveCompletedAt = Date.now();
+            _gdLastSavedCounts = { nProducts: _newCounts.nProducts, nSales: _newCounts.nSales, nAppro: _newCounts.nAppro, size: newSize };
             _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + (_gdFolderName ? ' · 📁 ' + _gdFolderName : ''), ts);
 
             // Copier aussi dans la hiérarchie Paramètres/YYYY/MM-Mois/DD/
