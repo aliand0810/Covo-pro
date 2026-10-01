@@ -18695,6 +18695,17 @@ function toggleInfoSection(headerElement) {
     var _catSearch = '';
     var _catCollapsed = {};
     var _catHideOutOfStock = false; // filtre d'affichage : masquer les produits en rupture (1 clic)
+    // Masquage AUTOMATIQUE des ruptures côté Portail fidélité : une fois coché, un produit qui
+    // tombe en rupture est automatiquement masqué aux clients, et redevient automatiquement
+    // visible dès qu'il est de nouveau en stock — sans toucher au masquage manuel (👁️/🚫) que le
+    // staff peut avoir choisi pour d'autres raisons. Option persistée (reste cochée d'une session
+    // à l'autre sur cet appareil).
+    var _catAutoHideOOS = false;
+    try { _catAutoHideOOS = localStorage.getItem('covo_cat_auto_hide_oos') === '1'; } catch (e) {}
+    // Masqué effectivement du portail = masqué manuellement OU (auto activé ET en rupture)
+    function _catEffectiveHidden(p) {
+        return !!(p && (p.hiddenFromPortal || (_catAutoHideOOS && (+(p.stock || 0)) <= 0)));
+    }
 
     function _catEsc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
@@ -18800,6 +18811,16 @@ function toggleInfoSection(headerElement) {
         _catHideOutOfStock = !_catHideOutOfStock;
         renderCatalogue();
     };
+    window._catToggleAutoHideOOS = function() {
+        _catAutoHideOOS = !_catAutoHideOOS;
+        try { localStorage.setItem('covo_cat_auto_hide_oos', _catAutoHideOOS ? '1' : '0'); } catch (e) {}
+        if (typeof toast === 'function') {
+            toast(_catAutoHideOOS
+                ? '🤖 Masquage automatique des ruptures activé — pensez à cliquer sur « 🛒 Sync catalogue » dans Fidélité Pro pour l\'appliquer'
+                : '🤖 Masquage automatique des ruptures désactivé', 'success');
+        }
+        renderCatalogue();
+    };
     window._catOnSearch = function(val) {
         _catSearch = (val || '').trim().toLowerCase();
         var active = document.activeElement;
@@ -18861,7 +18882,17 @@ function toggleInfoSection(headerElement) {
         var price = _catEffectivePrice(p);
         var disc = p.promo || 0;
         var color = _catColorFor(p.category || 'Général');
-        var hidden = !!p.hiddenFromPortal;
+        var manualHidden = !!p.hiddenFromPortal;
+        var autoForced = _catAutoHideOOS && isOut && !manualHidden; // masqué par la règle auto, pas par choix manuel
+        var hidden = manualHidden || autoForced;
+        var hiddenLabel = manualHidden
+            ? ' · <span style="color:#9333ea;font-weight:800;">🚫 Masqué du portail</span>'
+            : (autoForced ? ' · <span style="color:#b45309;font-weight:800;">🤖 Masqué auto (rupture)</span>' : '');
+        var toggleCtrl = autoForced
+            ? '<span title="Masqué automatiquement car en rupture — redevient visible dès le réapprovisionnement (ou décochez le masquage auto. des ruptures)" ' +
+                'style="flex-shrink:0;border:1.5px solid rgba(180,83,9,0.3);background:rgba(180,83,9,0.1);color:#b45309;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.95rem;">🤖</span>'
+            : '<button onclick="event.stopPropagation();window._catToggleHidden(' + p.id + ')" title="' + (hidden ? 'Réafficher ce produit aux clients (Portail fidélité)' : 'Masquer ce produit aux clients (Portail fidélité)') + '" ' +
+                'style="flex-shrink:0;border:1.5px solid ' + (hidden ? 'rgba(147,51,234,0.35)' : 'var(--border-color,#e0e0e0)') + ';background:' + (hidden ? 'rgba(147,51,234,0.1)' : 'transparent') + ';color:' + (hidden ? '#9333ea' : 'var(--text-muted,#999)') + ';width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:0.95rem;">' + (hidden ? '🚫' : '👁️') + '</button>';
         return '<div onclick="window.openProductDetail(' + p.id + ')" title="Voir le détail" ' +
             'style="cursor:pointer;background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-left:4px solid ' + color + ';border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;opacity:' + (isOut ? 0.55 : 1) + ';transition:transform .12s,box-shadow .12s;" ' +
             'onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'var(--shadow-md,0 4px 16px rgba(0,0,0,.15))\'" ' +
@@ -18871,14 +18902,13 @@ function toggleInfoSection(headerElement) {
                 'onerror="this.src=\'https://placehold.co/60x60?text=•\'">' +
             '<div style="flex:1;min-width:0;">' +
                 '<div style="font-size:0.84rem;font-weight:800;color:var(--text-main,#0a0a0a);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _catEsc(p.name) + '</div>' +
-                '<div style="font-size:0.68rem;color:var(--text-muted,#777);margin-top:1px;">' + _catEsc(p.category || 'Général') + (isOut ? ' · <span style="color:var(--danger,#dc2626);font-weight:800;">Rupture</span>' : '') + (hidden ? ' · <span style="color:#9333ea;font-weight:800;">🚫 Masqué du portail</span>' : '') + '</div>' +
+                '<div style="font-size:0.68rem;color:var(--text-muted,#777);margin-top:1px;">' + _catEsc(p.category || 'Général') + (isOut ? ' · <span style="color:var(--danger,#dc2626);font-weight:800;">Rupture</span>' : '') + hiddenLabel + '</div>' +
             '</div>' +
             '<div style="text-align:right;flex-shrink:0;">' +
                 (disc > 0 ? '<div style="font-size:0.66rem;color:var(--text-muted,#999);text-decoration:line-through;">' + (p.unitType === 'kg' ? (p.pricePerKg||0).toFixed(2) : (p.price||0).toFixed(2)) + '€</div>' : '') +
                 '<div style="font-size:0.92rem;font-weight:900;color:' + (disc > 0 ? 'var(--promo,#dc2626)' : 'var(--success,#16a34a)') + ';">' + _catFmtPrice(p, price) + '</div>' +
             '</div>' +
-            '<button onclick="event.stopPropagation();window._catToggleHidden(' + p.id + ')" title="' + (hidden ? 'Réafficher ce produit aux clients (Portail fidélité)' : 'Masquer ce produit aux clients (Portail fidélité)') + '" ' +
-                'style="flex-shrink:0;border:1.5px solid ' + (hidden ? 'rgba(147,51,234,0.35)' : 'var(--border-color,#e0e0e0)') + ';background:' + (hidden ? 'rgba(147,51,234,0.1)' : 'transparent') + ';color:' + (hidden ? '#9333ea' : 'var(--text-muted,#999)') + ';width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:0.95rem;">' + (hidden ? '🚫' : '👁️') + '</button>' +
+            toggleCtrl +
         '</div>';
     }
 
@@ -18906,11 +18936,16 @@ function toggleInfoSection(headerElement) {
             + 'background:' + (_catHideOutOfStock ? 'rgba(255,255,255,0.22)' : 'transparent') + ';color:#fff;font-size:0.82rem;font-weight:800;'
             + 'cursor:pointer;white-space:nowrap;transition:background .15s;">'
             + (_catHideOutOfStock ? '✅ Ruptures masquées' : '🚫 Masquer ruptures') + '</button>';
+        var autoLabel = '<label title="Une fois coché : un produit qui tombe en rupture est automatiquement masqué du Portail fidélité, et redevient automatiquement visible dès qu\'il est de nouveau en stock. N\'affecte pas le masquage manuel (👁️/🚫)." ' +
+            'style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:' + (_catAutoHideOOS ? 'rgba(255,255,255,0.22)' : 'transparent') + ';color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;">' +
+            '<input type="checkbox" onchange="window._catToggleAutoHideOOS()" ' + (_catAutoHideOOS ? 'checked' : '') + ' style="width:15px;height:15px;cursor:pointer;margin:0;">' +
+            '🤖 Masquage auto. des ruptures</label>';
         return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
             '<div style="display:flex;gap:6px;background:rgba(0,0,0,0.15);padding:4px;border-radius:11px;">' +
                 btn('category', 'Par catégorie', '🏷️') + btn('price', 'Par prix', '💶') +
             '</div>' +
             outBtn +
+            autoLabel +
             '<input id="catv-search" type="text" value="' + _catEsc(_catSearch) + '" oninput="window._catOnSearch(this.value)" placeholder="🔎 Rechercher un produit…" ' +
                 'style="flex:1;min-width:160px;padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:600;outline:none;">' +
         '</div>';
@@ -18972,13 +19007,14 @@ function toggleInfoSection(headerElement) {
             var orderedKeys = cats.filter(function(c) { return byCat[c] && byCat[c].length; });
             Object.keys(byCat).forEach(function(c) { if (orderedKeys.indexOf(c) === -1) orderedKeys.push(c); });
 
-            var hiddenCount = all.filter(function(p) { return p.hiddenFromPortal; }).length;
+            var hiddenCount = all.filter(_catEffectiveHidden).length;
             html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
                 _catStatTile('Produits actifs', all.length) +
                 _catStatTile('Catégories', orderedKeys.length) +
                 _catStatTile('Prix moyen', avgPrice.toFixed(2) + '€') +
                 _catStatTile('Ruptures', outCount, outCount > 0 ? 'var(--danger,#dc2626)' : null) +
                 _catStatTile('🚫 Masqués du portail', hiddenCount, hiddenCount > 0 ? '#9333ea' : null) +
+                (_catAutoHideOOS ? _catStatTile('🤖 Auto. (ruptures)', all.filter(function(p){ return p.stock <= 0 && !p.hiddenFromPortal; }).length, '#b45309') : '') +
             '</div>';
 
             var chartRows = orderedKeys.map(function(c) {
@@ -19000,12 +19036,13 @@ function toggleInfoSection(headerElement) {
             });
             var pricedCount = buckets.reduce(function(s, x) { return s + x.items.length; }, 0);
 
-            var hiddenCount2 = all.filter(function(p) { return p.hiddenFromPortal; }).length;
+            var hiddenCount2 = all.filter(_catEffectiveHidden).length;
             html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
                 _catStatTile('Produits actifs', all.length) +
                 _catStatTile('Tranches de prix', CAT_PRICE_BUCKETS.length) +
                 _catStatTile('Prix moyen', avgPrice.toFixed(2) + '€') +
                 _catStatTile('🚫 Masqués du portail', hiddenCount2, hiddenCount2 > 0 ? '#9333ea' : null) +
+                (_catAutoHideOOS ? _catStatTile('🤖 Auto. (ruptures)', all.filter(function(p){ return p.stock <= 0 && !p.hiddenFromPortal; }).length, '#b45309') : '') +
                 _catStatTile('Ruptures', outCount, outCount > 0 ? 'var(--danger,#dc2626)' : null) +
             '</div>';
 
