@@ -4099,6 +4099,7 @@ button, .btn, .retours-btn {
              juste après lui via injectTab() — puis Gestion Pro en dernier). ══ -->
         <div class="tabs">
             <button class="tab active" onclick="switchTab('products')">📦 Produits</button>
+            <button class="tab" onclick="switchTab('catalogue')" id="tab-btn-catalogue">🗂️ Catalogue</button>
             <button class="tab" onclick="switchTab('stats')" id="tab-btn-stats">📊 Statistiques</button>
             <button class="tab" onclick="switchTab('predictions')" id="tab-btn-predictions">☂ Prédictions</button>
             <button class="tab tab-gestion" onclick="switchTab('retours')" id="tab-btn-retours">
@@ -4297,6 +4298,20 @@ button, .btn, .retours-btn {
         <button onclick="window._tvaToggleMode()" style="margin-left:auto;padding:5px 13px;border:1.5px solid rgba(255,255,255,0.4);border-radius:7px;background:rgba(255,255,255,0.15);color:white;font-size:0.76rem;font-weight:700;cursor:pointer;white-space:nowrap;">✕ Terminer</button>
     </div>
 </div>
+
+
+        <div class="tab-content" id="tab-catalogue" style="padding:0;background:var(--bg-body,#f4f7f6);">
+            <!-- ══ HEADER BANNER CATALOGUE ══ -->
+            <div style="background:linear-gradient(135deg,#1c3a5c 0%,#2c3e50 50%,#2980b9 100%);padding:16px 20px 18px;position:relative;overflow:hidden;border-radius:0 0 16px 16px;">
+                <div style="position:absolute;top:8px;left:-20px;width:70px;height:70px;border-radius:50%;background:rgba(255,255,255,0.06);pointer-events:none;"></div>
+                <div style="position:absolute;bottom:-15px;right:30px;width:90px;height:90px;border-radius:50%;background:rgba(255,255,255,0.05);pointer-events:none;"></div>
+                <div style="position:relative;">
+                    <div style="font-size:1.2rem;font-weight:900;color:#fff;letter-spacing:0.3px;margin-bottom:12px;">🗂️ Catalogue</div>
+                    <div id="catalogue-toolbar"></div>
+                </div>
+            </div>
+            <div id="catalogue-body" style="padding:14px 16px 24px;"></div>
+        </div>
 
         <div class="tab-content" id="tab-stats" style="padding:0;background:var(--bg-body,#f4f7f6);">
 
@@ -18669,6 +18684,326 @@ function toggleInfoSection(headerElement) {
         fidelite:   { url: 'https://aliand0810.github.io/Fid-lit-Pro/',    target: 'fidelitepro',   label: 'Fidélité Pro' }
     };
 
+
+    // ══════════════════════════════════════════════════════════════════════
+    // ===== ONGLET CATALOGUE — Regroupement par Catégorie / par Prix =====
+    // ══════════════════════════════════════════════════════════════════════
+    // Palette catégorielle fixe et validée (ordre jamais changé — voir skill dataviz) :
+    var CAT_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
+    var _catColorCache = {};
+    var _catMode = 'category'; // 'category' | 'price'
+    var _catSearch = '';
+    var _catCollapsed = {};
+
+    function _catEsc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+
+    // Accès défensif aux données (si jamais hors-scope, repli localStorage direct)
+    function _catProducts() {
+        try {
+            if (typeof products !== 'undefined' && Array.isArray(products)) return products;
+        } catch (e) {}
+        try { return JSON.parse(localStorage.getItem('covo_products')) || []; } catch (e) { return []; }
+    }
+    function _catCategories() {
+        // Source la plus fraîche en priorité : getEchCategories() (toujours à jour au moment du
+        // clic sur l'onglet, même si la variable `categories` a été figée tôt au chargement de
+        // la page, avant que ce bloc de script ne soit exécuté).
+        var base = null;
+        try {
+            var echCats = (typeof getEchCategories === 'function') ? getEchCategories() : null;
+            if (echCats && echCats.length) base = echCats;
+        } catch (e) {}
+        if (!base) {
+            try {
+                if (typeof categories !== 'undefined' && Array.isArray(categories) && categories.length) base = categories;
+            } catch (e) {}
+        }
+        if (!base) {
+            try {
+                var legacy = JSON.parse(localStorage.getItem('covo_categories'));
+                if (Array.isArray(legacy) && legacy.length) base = legacy;
+            } catch (e) {}
+        }
+        if (!base) base = ['Général'];
+        // Compléter avec toute catégorie présente sur un produit réel mais absente de la liste
+        // connue (évite qu'un produit « orphelin » retombe systématiquement sur la même couleur).
+        var cats = base.slice();
+        try {
+            _catProducts().forEach(function(p) {
+                var c = (p && p.category) || 'Général';
+                if (cats.indexOf(c) === -1) cats.push(c);
+            });
+        } catch (e) {}
+        return cats;
+    }
+
+    function _catColorFor(cat) {
+        var cats = _catCategories();
+        if (_catColorCache[cat] !== undefined) return _catColorCache[cat];
+        var idx = cats.indexOf(cat);
+        var color = idx >= 0 ? CAT_PALETTE[idx % CAT_PALETTE.length] : CAT_PALETTE[CAT_PALETTE.length - 1];
+        _catColorCache[cat] = color;
+        return color;
+    }
+
+    // Prix effectif affiché (promo + nuit appliqués, identique à la logique de renderProducts)
+    function _catEffectivePrice(p) {
+        var disc = p.promo || 0;
+        var isKg = p.unitType === 'kg';
+        var basePrice = isKg ? (p.pricePerKg || 0) : (p.price || 0);
+        var promoPrice = (typeof window._promoPrice === 'function') ? window._promoPrice(basePrice, disc, p.costPrice) : basePrice * (1 - disc / 100);
+        var nightActive = (typeof isNightTariffCurrentlyActive === 'function') ? isNightTariffCurrentlyActive() : false;
+        var hasNight = p.nightTariff && nightActive;
+        if (hasNight) {
+            var nightPct = (p.nightTariffPercent !== undefined && p.nightTariffPercent !== '' && p.nightTariffPercent !== null)
+                ? parseFloat(p.nightTariffPercent)
+                : ((typeof nightTariffSettings !== 'undefined' && nightTariffSettings.defaultPercent) || 0);
+            return promoPrice * (1 + nightPct / 100);
+        }
+        return promoPrice;
+    }
+    function _catFmtPrice(p, price) {
+        return p.unitType === 'kg' ? (price.toFixed(2) + '€/kg') : (price.toFixed(2) + '€');
+    }
+
+    // 5 tranches de prix fixes (bornes en euros)
+    var CAT_PRICE_BUCKETS = [
+        { key: 'b0', label: '0 – 2 €',   min: 0,    max: 2 },
+        { key: 'b1', label: '2 – 5 €',   min: 2,    max: 5 },
+        { key: 'b2', label: '5 – 10 €',  min: 5,    max: 10 },
+        { key: 'b3', label: '10 – 20 €', min: 10,   max: 20 },
+        { key: 'b4', label: '20 € et +', min: 20,   max: Infinity }
+    ];
+    function _catBucketFor(price) {
+        for (var i = 0; i < CAT_PRICE_BUCKETS.length; i++) {
+            var b = CAT_PRICE_BUCKETS[i];
+            if (price >= b.min && price < b.max) return b;
+        }
+        return CAT_PRICE_BUCKETS[CAT_PRICE_BUCKETS.length - 1];
+    }
+
+    function _catToggleGroup(key) {
+        _catCollapsed[key] = !_catCollapsed[key];
+        renderCatalogue();
+    }
+
+    window._catSetMode = function(mode) {
+        _catMode = mode;
+        renderCatalogue();
+    };
+    window._catOnSearch = function(val) {
+        _catSearch = (val || '').trim().toLowerCase();
+        var active = document.activeElement;
+        var hadFocus = active && active.id === 'catv-search';
+        var caret = hadFocus ? active.selectionStart : null;
+        clearTimeout(window._catSearchTimer);
+        window._catSearchTimer = setTimeout(function() {
+            renderCatalogue();
+            if (hadFocus) {
+                var el = document.getElementById('catv-search');
+                if (el) { el.focus(); try { el.setSelectionRange(caret, caret); } catch (e) {} }
+            }
+        }, 180);
+    };
+
+    function _catStatTile(label, value, color) {
+        return '<div style="background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-radius:12px;padding:12px 14px;flex:1;min-width:110px;">' +
+            '<div style="font-size:0.68rem;font-weight:800;color:var(--text-muted,#777);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">' + _catEsc(label) + '</div>' +
+            '<div style="font-size:1.35rem;font-weight:900;color:' + (color || 'var(--text-main,#0a0a0a)') + ';">' + value + '</div>' +
+            '</div>';
+    }
+
+    // Mini barre de répartition horizontale (une ligne par groupe, triée décroissant)
+    function _catBarChart(rows, totalForPct) {
+        if (!rows.length) return '';
+        var maxCount = Math.max.apply(null, rows.map(function(r) { return r.count; }));
+        return '<div style="background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-radius:12px;padding:14px 16px;margin-bottom:16px;">' +
+            '<div style="font-size:0.78rem;font-weight:800;color:var(--text-muted,#777);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;">📊 Répartition</div>' +
+            rows.map(function(r) {
+                var pct = maxCount > 0 ? Math.round((r.count / maxCount) * 100) : 0;
+                var sharePct = totalForPct > 0 ? ((r.count / totalForPct) * 100).toFixed(0) : 0;
+                return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+                    '<div style="width:10px;height:10px;border-radius:3px;background:' + r.color + ';flex-shrink:0;"></div>' +
+                    '<div style="width:108px;flex-shrink:0;font-size:0.76rem;font-weight:700;color:var(--text-main,#0a0a0a);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + _catEsc(r.label) + '">' + _catEsc(r.label) + '</div>' +
+                    '<div style="flex:1;background:var(--bg-card-2,#eee);border-radius:6px;height:16px;position:relative;overflow:hidden;min-width:40px;">' +
+                        '<div style="position:absolute;left:0;top:0;bottom:0;width:' + pct + '%;background:' + r.color + ';border-radius:6px;transition:width .4s ease;"></div>' +
+                    '</div>' +
+                    '<div style="width:70px;flex-shrink:0;text-align:right;font-size:0.76rem;font-weight:800;color:var(--text-muted,#555);">' + r.count + ' <span style="font-weight:600;opacity:0.7;">(' + sharePct + '%)</span></div>' +
+                '</div>';
+            }).join('') +
+            '</div>';
+    }
+
+    function _catToggleHidden(id) {
+        var list = _catProducts();
+        var p = null;
+        for (var i = 0; i < list.length; i++) { if (list[i].id == id) { p = list[i]; break; } }
+        if (!p) return;
+        p.hiddenFromPortal = !p.hiddenFromPortal;
+        try { localStorage.setItem('covo_products', JSON.stringify(list)); } catch (e) {}
+        if (typeof autoSave === 'function') autoSave();
+        if (typeof toast === 'function') toast(p.hiddenFromPortal ? '🚫 Masqué du Portail fidélité' : '👁️ Visible dans le Portail fidélité', 'success');
+        renderCatalogue();
+    }
+    window._catToggleHidden = _catToggleHidden;
+
+    function _catCard(p) {
+        var isOut = p.stock <= 0;
+        var price = _catEffectivePrice(p);
+        var disc = p.promo || 0;
+        var color = _catColorFor(p.category || 'Général');
+        var hidden = !!p.hiddenFromPortal;
+        return '<div onclick="window.openProductDetail(' + p.id + ')" title="Voir le détail" ' +
+            'style="cursor:pointer;background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-left:4px solid ' + color + ';border-radius:10px;padding:10px 12px;display:flex;align-items:center;gap:10px;opacity:' + (isOut ? 0.55 : 1) + ';transition:transform .12s,box-shadow .12s;" ' +
+            'onmouseover="this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'var(--shadow-md,0 4px 16px rgba(0,0,0,.15))\'" ' +
+            'onmouseout="this.style.transform=\'\';this.style.boxShadow=\'\'">' +
+            '<img src="' + (p.img || 'https://placehold.co/60x60?text=•') + '" loading="lazy" alt="" ' +
+                'style="width:44px;height:44px;object-fit:contain;border-radius:8px;background:#fff;border:1px solid var(--border-color,#eee);flex-shrink:0;' + (hidden ? 'filter:grayscale(1);opacity:.6;' : '') + '" ' +
+                'onerror="this.src=\'https://placehold.co/60x60?text=•\'">' +
+            '<div style="flex:1;min-width:0;">' +
+                '<div style="font-size:0.84rem;font-weight:800;color:var(--text-main,#0a0a0a);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _catEsc(p.name) + '</div>' +
+                '<div style="font-size:0.68rem;color:var(--text-muted,#777);margin-top:1px;">' + _catEsc(p.category || 'Général') + (isOut ? ' · <span style="color:var(--danger,#dc2626);font-weight:800;">Rupture</span>' : '') + (hidden ? ' · <span style="color:#9333ea;font-weight:800;">🚫 Masqué du portail</span>' : '') + '</div>' +
+            '</div>' +
+            '<div style="text-align:right;flex-shrink:0;">' +
+                (disc > 0 ? '<div style="font-size:0.66rem;color:var(--text-muted,#999);text-decoration:line-through;">' + (p.unitType === 'kg' ? (p.pricePerKg||0).toFixed(2) : (p.price||0).toFixed(2)) + '€</div>' : '') +
+                '<div style="font-size:0.92rem;font-weight:900;color:' + (disc > 0 ? 'var(--promo,#dc2626)' : 'var(--success,#16a34a)') + ';">' + _catFmtPrice(p, price) + '</div>' +
+            '</div>' +
+            '<button onclick="event.stopPropagation();window._catToggleHidden(' + p.id + ')" title="' + (hidden ? 'Réafficher ce produit aux clients (Portail fidélité)' : 'Masquer ce produit aux clients (Portail fidélité)') + '" ' +
+                'style="flex-shrink:0;border:1.5px solid ' + (hidden ? 'rgba(147,51,234,0.35)' : 'var(--border-color,#e0e0e0)') + ';background:' + (hidden ? 'rgba(147,51,234,0.1)' : 'transparent') + ';color:' + (hidden ? '#9333ea' : 'var(--text-muted,#999)') + ';width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:0.95rem;">' + (hidden ? '🚫' : '👁️') + '</button>' +
+        '</div>';
+    }
+
+    function _catGroupHtml(key, label, color, items, badge) {
+        var collapsed = !!_catCollapsed[key];
+        return '<div style="margin-bottom:14px;">' +
+            '<div onclick="_catToggleGroup(\'' + key + '\')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-card,#fff);border:1px solid var(--border-color,#e0e0e0);border-left:5px solid ' + color + ';border-radius:10px;user-select:none;">' +
+                '<span style="font-size:0.9rem;transition:transform .15s;display:inline-block;transform:rotate(' + (collapsed ? '-90deg' : '0deg') + ');">▾</span>' +
+                '<span style="font-weight:900;font-size:0.92rem;color:var(--text-main,#0a0a0a);flex:1;">' + _catEsc(label) + '</span>' +
+                (badge || '') +
+                '<span style="background:' + color + ';color:#fff;font-size:0.72rem;font-weight:800;padding:2px 10px;border-radius:12px;">' + items.length + '</span>' +
+            '</div>' +
+            (collapsed ? '' : '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px;margin-top:8px;padding-left:4px;">' + items.map(_catCard).join('') + '</div>') +
+        '</div>';
+    }
+
+    function _catToolbarHtml() {
+        var btn = function(mode, label, icon) {
+            var active = _catMode === mode;
+            return '<button onclick="window._catSetMode(\'' + mode + '\')" style="padding:8px 16px;border-radius:9px;border:1.5px solid ' + (active ? '#fff' : 'rgba(255,255,255,0.35)') + ';background:' + (active ? 'rgba(255,255,255,0.22)' : 'transparent') + ';color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;transition:background .15s;">' + icon + ' ' + label + '</button>';
+        };
+        return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+            '<div style="display:flex;gap:6px;background:rgba(0,0,0,0.15);padding:4px;border-radius:11px;">' +
+                btn('category', 'Par catégorie', '🏷️') + btn('price', 'Par prix', '💶') +
+            '</div>' +
+            '<input id="catv-search" type="text" value="' + _catEsc(_catSearch) + '" oninput="window._catOnSearch(this.value)" placeholder="🔎 Rechercher un produit…" ' +
+                'style="flex:1;min-width:160px;padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:600;outline:none;">' +
+        '</div>';
+    }
+
+    function renderCatalogue() {
+        var host = document.getElementById('catalogue-body');
+        if (!host) return;
+        // S'assure que le clic sur une carte (→ window.openProductDetail) trouve bien le produit,
+        // même si l'onglet Produits n'a pas encore été rendu dans cette session.
+        try { window._covoProducts = _catProducts(); } catch (e) {}
+        var all = _catProducts().filter(function(p) { return p && p.active !== false; });
+        var list = _catSearch
+            ? all.filter(function(p) {
+                return (p.name || '').toLowerCase().indexOf(_catSearch) !== -1 ||
+                       (p.category || '').toLowerCase().indexOf(_catSearch) !== -1;
+              })
+            : all;
+
+        // Toolbar (mode + recherche) — rendue dans le header, une seule fois
+        var toolbarHost = document.getElementById('catalogue-toolbar');
+        if (toolbarHost) toolbarHost.innerHTML = _catToolbarHtml();
+
+        if (!all.length) {
+            host.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text-muted,#888);">' +
+                '<div style="font-size:3rem;margin-bottom:10px;">📭</div>' +
+                '<div style="font-weight:800;font-size:1rem;">Aucun produit disponible</div>' +
+                '<div style="font-size:0.85rem;margin-top:4px;">Ajoutez des produits depuis l\'onglet Produits.</div>' +
+            '</div>';
+            return;
+        }
+        if (_catSearch && !list.length) {
+            host.innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text-muted,#888);">' +
+                '<div style="font-size:2.4rem;margin-bottom:8px;">🔍</div>' +
+                '<div style="font-weight:800;">Aucun résultat pour « ' + _catEsc(_catSearch) + ' »</div>' +
+            '</div>';
+            return;
+        }
+
+        var html = '';
+        var totalValue = all.reduce(function(s, p) { return s + _catEffectivePrice(p) * (p.unitType === 'kg' ? 1 : 1); }, 0);
+        var avgPrice = all.length ? totalValue / all.length : 0;
+        var outCount = all.filter(function(p) { return p.stock <= 0; }).length;
+
+        if (_catMode === 'category') {
+            var cats = _catCategories();
+            var byCat = {};
+            list.forEach(function(p) {
+                var c = p.category || 'Général';
+                (byCat[c] = byCat[c] || []).push(p);
+            });
+            var orderedKeys = cats.filter(function(c) { return byCat[c] && byCat[c].length; });
+            Object.keys(byCat).forEach(function(c) { if (orderedKeys.indexOf(c) === -1) orderedKeys.push(c); });
+
+            var hiddenCount = all.filter(function(p) { return p.hiddenFromPortal; }).length;
+            html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
+                _catStatTile('Produits actifs', all.length) +
+                _catStatTile('Catégories', orderedKeys.length) +
+                _catStatTile('Prix moyen', avgPrice.toFixed(2) + '€') +
+                _catStatTile('Ruptures', outCount, outCount > 0 ? 'var(--danger,#dc2626)' : null) +
+                _catStatTile('🚫 Masqués du portail', hiddenCount, hiddenCount > 0 ? '#9333ea' : null) +
+            '</div>';
+
+            var chartRows = orderedKeys.map(function(c) {
+                return { label: c, count: byCat[c].length, color: _catColorFor(c) };
+            }).sort(function(a, b) { return b.count - a.count; });
+            html += _catBarChart(chartRows, list.length);
+
+            orderedKeys.sort(function(a, b) { return byCat[b].length - byCat[a].length; });
+            orderedKeys.forEach(function(c) {
+                html += _catGroupHtml('cat-' + c, c, _catColorFor(c), byCat[c]);
+            });
+        } else {
+            var buckets = CAT_PRICE_BUCKETS.map(function(b) { return { b: b, items: [] }; });
+            list.forEach(function(p) {
+                var price = _catEffectivePrice(p);
+                var bucket = _catBucketFor(price);
+                var slot = buckets.filter(function(x) { return x.b.key === bucket.key; })[0];
+                slot.items.push(p);
+            });
+            var pricedCount = buckets.reduce(function(s, x) { return s + x.items.length; }, 0);
+
+            var hiddenCount2 = all.filter(function(p) { return p.hiddenFromPortal; }).length;
+            html = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">' +
+                _catStatTile('Produits actifs', all.length) +
+                _catStatTile('Tranches de prix', CAT_PRICE_BUCKETS.length) +
+                _catStatTile('Prix moyen', avgPrice.toFixed(2) + '€') +
+                _catStatTile('🚫 Masqués du portail', hiddenCount2, hiddenCount2 > 0 ? '#9333ea' : null) +
+                _catStatTile('Ruptures', outCount, outCount > 0 ? 'var(--danger,#dc2626)' : null) +
+            '</div>';
+
+            var chartRows2 = buckets.map(function(x, i) {
+                return { label: x.b.label, count: x.items.length, color: CAT_PALETTE[i % CAT_PALETTE.length] };
+            });
+            html += _catBarChart(chartRows2, pricedCount);
+
+            buckets.forEach(function(x, i) {
+                if (!x.items.length) return;
+                x.items.sort(function(a, b) { return _catEffectivePrice(a) - _catEffectivePrice(b); });
+                html += _catGroupHtml('price-' + x.b.key, x.b.label, CAT_PALETTE[i % CAT_PALETTE.length], x.items);
+            });
+        }
+        host.innerHTML = html;
+    }
+
     function switchTab(tabName) {
         if (_cpSatelliteTabs[tabName]) {
             var _sat = _cpSatelliteTabs[tabName];
@@ -18704,6 +19039,7 @@ function toggleInfoSection(headerElement) {
         if (tabName === 'produits' || tabName === 'products') { if (typeof _restoreFilters === 'function') _restoreFilters(); renderProducts(); }
         if (tabName === 'stats') renderStatistics();
         if (tabName === 'predictions') renderPredictions();
+        if (tabName === 'catalogue') renderCatalogue();
         if (tabName === 'retours') refreshRetours();
         if (tabName === 'historique') { window._histTimeFilter = 'all'; renderCashierHistory(); }
         if (tabName !== 'historique') { window._histChartsVisible = false; var _hw = document.getElementById('hist-charts-wrap'); var _hb = document.getElementById('hist-toggle-charts'); if (_hw) _hw.style.display = 'none'; if (_hb) { _hb.style.background = 'var(--bg-card,#fff)'; _hb.style.color = 'var(--text-main,#2c3e50)'; _hb.style.borderColor = 'var(--border-color,#e0e0e0)'; } }
