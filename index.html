@@ -23,6 +23,247 @@
 })();
 </script>
     <meta charset="UTF-8">
+<script id="covo-sync-core">
+/* ==========================================================================
+   COVO SYNC - noyau partage par COVO Pro et TOUTES les apps satellites
+   (meme fichier, meme code, meme origine => meme localStorage).
+   1) Detecte CHAQUE modification reelle d'une donnee metier (interception de
+      localStorage.setItem/removeItem, uniquement si la valeur change vraiment).
+   2) Pose un drapeau "covo_drive_pending" : tant qu'il existe, au moins une
+      modification n'est pas encore sur Google Drive (survit a la fermeture
+      de l'app ; n'importe quelle app connectee a Drive la sauvegardera).
+   3) Fournit les outils communs : empreinte de contenu (anti-doublon),
+      resume chiffre de la sauvegarde (proprietes Drive), garde anti-perte
+      multi-appareils, verrou inter-onglets, relais entre apps.
+   ========================================================================== */
+(function(){
+    if (window.CovoSync) return;
+    var LS;
+    try { LS = window.localStorage; } catch(e) { return; }
+    var SP = Storage.prototype;
+    var _get = SP.getItem, _set = SP.setItem, _rem = SP.removeItem;
+
+    var DATA_KEYS = ['covo_products','covo_categories','covo_promos','covo_users','covo_sales_history',
+        'covo_settings','covo_night_tariff','covo_cashier_permissions','covo_pending_sync','covo_delivery_goal',
+        'covo_retours','covo_marchandise','covo_echeances','covo_rhist','covo_hist','covo_sales',
+        'covo_approvisionnements','covo_inv_categories','covo_ech_categories','covo_messages','covo_quick_links',
+        'covo_caisse_historique','covo_charges_fixes','covo_paiements','covo_dettes','covo_loyalty','covo_paie',
+        'covo_cagnotte','covo_devis','covo_real_balance','covo_inventaires','covo_aw_panels','covo_modules_config',
+        'covo_inv_questions','covo_perm_admin_costprice','covo_admin_notifications'];
+    var KEYSET = {};
+    DATA_KEYS.forEach(function(k){ KEYSET[k] = 1; });
+
+    var PENDING = 'covo_drive_pending', LOCK = 'covo_drive_lock', FPK = 'gdrive_last_fp', DEVK = 'covo_device_id';
+    var APP_NAMES = { covo:'COVO Pro', gestion:'Gestion Pro', caisse:'Caisse Pro', fidelite:'Fid\u00e9lit\u00e9 Pro',
+        finances:'Finances Pro', investissement:'Approvisionnement Pro', historique:'Historique Pro',
+        clotures:'Cl\u00f4tures Pro', admin:'Admin Pro' };
+
+    var S = { muted: 0, app: 'covo', tab: 'T' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+              onDirty: null, onRelay: null, relayT: null, hb: null };
+
+    function rget(k) { try { return _get.call(LS, k); } catch(e) { return null; } }
+    function rset(k, v) { try { _set.call(LS, k, v); } catch(e) {} }
+    function rdel(k) { try { _rem.call(LS, k); } catch(e) {} }
+
+    function deviceId() {
+        var d = rget(DEVK);
+        if (!d) { d = 'D' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); rset(DEVK, d); }
+        return d;
+    }
+    function isMuted() { return S.muted > 0 || window._restoreInProgress === true || window._covoSyncMute === true; }
+
+    function markDirty(key) {
+        var now = new Date().toISOString();
+        rset(PENDING, now);
+        rset('covo_last_local_change', now);
+        if (typeof S.onDirty === 'function') { try { S.onDirty(key); } catch(e) {} }
+    }
+
+    // ---- Interception : toute ecriture qui CHANGE une donnee metier = modification ----
+    SP.setItem = function(k, v) {
+        var watch = (this === LS) && KEYSET[k] === 1 && !isMuted();
+        var before = watch ? rget(k) : null;
+        var r = _set.apply(this, arguments);
+        if (watch) { try { if (rget(k) !== before) markDirty(k); } catch(e) {} }
+        return r;
+    };
+    SP.removeItem = function(k) {
+        var watch = (this === LS) && KEYSET[k] === 1 && !isMuted();
+        var before = watch ? rget(k) : null;
+        var r = _rem.apply(this, arguments);
+        if (watch && before !== null) { try { markDirty(k); } catch(e) {} }
+        return r;
+    };
+
+    // ---- Empreinte du contenu (independante de l'heure) : evite les sauvegardes identiques ----
+    function fnv(str) {
+        var h1 = 0x811c9dc5, h2 = 0x01000193 ^ str.length;
+        for (var i = 0; i < str.length; i++) {
+            var c = str.charCodeAt(i);
+            h1 = Math.imul(h1 ^ c, 16777619);
+            h2 = Math.imul(h2 ^ c, 2246822519);
+        }
+        return ('0000000' + (h1 >>> 0).toString(16)).slice(-8) + ('0000000' + (h2 >>> 0).toString(16)).slice(-8);
+    }
+    function fingerprint(str) {
+        try {
+            if (window.crypto && window.crypto.subtle && window.TextEncoder) {
+                return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function(buf) {
+                    var a = new Uint8Array(buf), s = '';
+                    for (var i = 0; i < 10; i++) s += ('0' + a[i].toString(16)).slice(-2);
+                    return s;
+                }).catch(function() { return fnv(str); });
+            }
+        } catch(e) {}
+        return Promise.resolve(fnv(str));
+    }
+    // Serialise avec des marqueurs a la place de la date/du nom => l'empreinte ne depend que des donnees
+    function serialize(obj) {
+        obj._savedAt = '__COVO_TS__';
+        obj._fileName = '__COVO_FN__';
+        return JSON.stringify(obj, null, 2);
+    }
+    function finalize(tpl, ts, fileName) {
+        return tpl.replace('"__COVO_TS__"', function() { return JSON.stringify(ts); })
+                  .replace('"__COVO_FN__"', function() { return JSON.stringify(fileName); });
+    }
+
+    // ---- Resume chiffre stocke dans les "properties" du fichier Drive (lisible sans le telecharger) ----
+    function num(x) { var n = parseFloat(x); return isFinite(n) ? n : 0; }
+    function r2(n) { return String(Math.round(n * 100) / 100); }
+    function arr(x) { return Array.isArray(x) ? x : []; }
+    function trimBytes(s, max) {
+        s = String(s == null ? '' : s);
+        try {
+            var enc = new TextEncoder();
+            if (enc.encode(s).length <= max) return s;
+            while (s.length && enc.encode(s + '\u2026').length > max) s = s.slice(0, -1);
+            return s + '\u2026';
+        } catch(e) { return s.length > Math.floor(max / 4) ? s.slice(0, Math.floor(max / 4)) : s; }
+    }
+    function lastAppro(list) {
+        var best = null, bt = -1;
+        list.forEach(function(a) {
+            if (!a) return;
+            var t = Date.parse(a.datetime || a.date || '') || 0;
+            if (!t && a.id != null) { var m = String(a.id).match(/(\d{12,})/); if (m) t = +m[1]; }
+            if (t > bt) { bt = t; best = a; }
+        });
+        return best;
+    }
+    function approLabel(a) {
+        if (!a) return '';
+        var nm = a.produitNom || a.desc || a.description || a.produit || a.name || 'Achat';
+        var q = num(a.qte != null ? a.qte : (a.quantite != null ? a.quantite : a.qty));
+        var s = String(nm);
+        if (q) s += ' \u00d7' + (Math.round(q * 1000) / 1000) + (a.unitType === 'kg' ? ' kg' : '');
+        var m = num(a.montant);
+        if (m) s += ' \u00b7 ' + m.toFixed(2) + ' \u20ac';
+        return s;
+    }
+    function summary(p, meta) {
+        p = p || {}; meta = meta || {};
+        var sh = (Array.isArray(p.salesHistory) && p.salesHistory.length) ? p.salesHistory : p.covo_sales_history;
+        var prods = arr(p.products), sales = arr(sh), appro = arr(p.covo_approvisionnements);
+        var stockU = 0, stockV = 0, ca = 0, apT = 0;
+        prods.forEach(function(x) { if (!x) return; var s = num(x.stock); stockU += s; stockV += s * num(x.costPrice); });
+        sales.forEach(function(x) { if (x && !x.cancelled) ca += num(x.total); });
+        appro.forEach(function(a) { if (a) apT += num(a.montant); });
+        var loy = p.covo_loyalty || {}, rb = p.covo_real_balance || {};
+        return {
+            nProducts: String(prods.length), nSales: String(sales.length), nAppro: String(appro.length),
+            stockU: r2(stockU), stockV: r2(stockV), caT: r2(ca), apT: r2(apT),
+            apL: trimBytes(approLabel(lastAppro(appro)), 115),
+            nCli: String(arr(loy.customers).length), nDet: String(arr(p.covo_dettes).length),
+            nPay: String(arr(p.covo_paiements).length), nRet: String(arr(p.covo_retours).length),
+            nDev: String(arr(p.covo_devis).length), nInv: String(arr(p.covo_inventaires).length),
+            nChg: String(arr(p.covo_charges_fixes).length), nEch: String(arr(p.covo_echeances).length),
+            bal: r2(num(rb.especes) + num(rb.cb)),
+            app: trimBytes(meta.app || S.app, 40), who: trimBytes(meta.who || '', 60), dev: deviceId(),
+            trg: trimBytes(meta.trg || 'auto', 30), fp: String(meta.fp || ''), sv: '2'
+        };
+    }
+
+    // ---- Garde anti-perte : bloque seulement une BAISSE suspecte des compteurs ----
+    // Baisse toleree si la derniere sauvegarde Drive vient de CET appareil (= vraie suppression
+    // faite ici) ET qu'elle est faible (<= 5 elements ou <= 2 %). Sinon : blocage + alerte.
+    function guard(newP, remoteProps, remoteName) {
+        if (!remoteProps || remoteProps.nProducts === undefined) return { block: false, drops: [] };
+        var drops = [];
+        [['nSales', 'Tickets de vente'], ['nProducts', 'Produits'], ['nAppro', 'Approvisionnements']].forEach(function(d) {
+            var a = parseInt(remoteProps[d[0]], 10) || 0, b = parseInt(newP[d[0]], 10) || 0;
+            if (b < a) drops.push({ key: d[0], label: d[1], from: a, to: b, diff: a - b });
+        });
+        if (!drops.length) return { block: false, drops: drops };
+        var mine = (remoteProps.dev && remoteProps.dev === deviceId()) || (!!remoteName && remoteName === rget('gdrive_last_file'));
+        var small = drops.every(function(d) { return d.diff <= Math.max(5, Math.ceil(d.from * 0.02)); });
+        return { block: !(mine && small), drops: drops, mine: !!mine };
+    }
+
+    // ---- Drapeau "modifications en attente" + verrou inter-onglets ----
+    function pending() { return rget(PENDING); }
+    function clearPending(buildIso) { var p = rget(PENDING); if (!p || !buildIso || p <= buildIso) rdel(PENDING); }
+    function tryLock() {
+        try {
+            var l = JSON.parse(rget(LOCK) || 'null');
+            if (l && l.tab !== S.tab && (Date.now() - l.ts) < 120000) return false;
+        } catch(e) {}
+        rset(LOCK, JSON.stringify({ tab: S.tab, app: S.app, ts: Date.now() }));
+        return true;
+    }
+    function unlock() {
+        try { var l = JSON.parse(rget(LOCK) || 'null'); if (!l || l.tab === S.tab) rdel(LOCK); } catch(e) { rdel(LOCK); }
+    }
+    function recordSaved(fileName, fp, size, buildIso) {
+        if (fp) rset(FPK, fp);
+        rset('gdrive_last_file', fileName);
+        rset('gdrive_last_save', new Date().toISOString());
+        if (size) rset('gdrive_last_payload_size', String(size));
+        clearPending(buildIso);
+    }
+
+    // ---- Relais : si une app n'a pas pu envoyer ses modifications, une autre app connectee le fait ----
+    function scheduleRelay() {
+        clearTimeout(S.relayT);
+        S.relayT = setTimeout(function() {
+            var p = rget(PENDING);
+            if (!p || typeof S.onRelay !== 'function') return;
+            if (Date.now() - Date.parse(p) < 15000) { scheduleRelay(); return; }
+            try { S.onRelay('relais'); } catch(e) {}
+        }, 20000 + Math.floor(Math.random() * 10000));
+    }
+    window.addEventListener('storage', function(e) {
+        if (e.key === PENDING && e.newValue) scheduleRelay();
+    });
+
+    function init(opts) {
+        opts = opts || {};
+        if (opts.app) S.app = opts.app;
+        if (typeof opts.onDirty === 'function') S.onDirty = opts.onDirty;
+        if (typeof opts.onRelay === 'function') S.onRelay = opts.onRelay;
+        if (!S.hb) {
+            // Filet de securite : toute modification restee en attente > 90 s est renvoyee
+            S.hb = setInterval(function() {
+                var p = rget(PENDING);
+                if (p && typeof S.onRelay === 'function' && (Date.now() - Date.parse(p)) > 90000) {
+                    try { S.onRelay('reprise'); } catch(e) {}
+                }
+            }, 60000);
+        }
+        if (rget(PENDING)) scheduleRelay();
+    }
+    function muteOn() { S.muted++; }
+    function muteOff() { S.muted = Math.max(0, S.muted - 1); }
+
+    window.CovoSync = {
+        DATA_KEYS: DATA_KEYS, APP_NAMES: APP_NAMES, deviceId: deviceId, markDirty: markDirty,
+        fingerprint: fingerprint, serialize: serialize, finalize: finalize, summary: summary, guard: guard,
+        pending: pending, clearPending: clearPending, tryLock: tryLock, unlock: unlock, recordSaved: recordSaved,
+        lastFp: function() { return rget(FPK); }, init: init, muteOn: muteOn, muteOff: muteOff,
+        appName: function(code) { return APP_NAMES[code] || code || ''; }
+    };
+})();
+</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="COVO Pro — Logiciel de caisse et gestion commerciale avancée">
     <title>COVO Pro - Caisse & Gestion Avancée</title>
@@ -8822,6 +9063,7 @@ const WARNING_DURATION = 30; // 30 secondes d'alerte
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
             if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             if (data.covo_devis)             localStorage.setItem('covo_devis',             JSON.stringify(data.covo_devis));
+            if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
             if (data.covo_admin_notifications) {
                 localStorage.setItem('covo_admin_notifications', JSON.stringify(data.covo_admin_notifications));
                 // Déclencher le poll pour afficher les notifications restaurées
@@ -16745,14 +16987,18 @@ function toggleInfoSection(headerElement) {
                 `'${folderId}' in parents and trashed=false and name contains 'covo_backup'`
             );
             window._gdFetchPublic(
-                `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime)`
+                `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime+desc&pageSize=1&fields=files(id,name,modifiedTime,properties)`
             ).then(r => r.json()).then(data => {
                 const files = data.files || [];
                 if (!files.length) return;
                 const latest = files[0];
                 if (latest.id !== _splashPollKnownId) {
-                    // Nouvelle sauvegarde détectée !
                     _splashPollKnownId = latest.id;
+                    // Sauvegarde écrite par CET appareil (COVO Pro ou une app satellite) : ce sont déjà
+                    // nos propres données — ne pas proposer de « restaurer » (source de confusion/pertes).
+                    const _ownBk = latest.properties && window.CovoSync && latest.properties.dev === window.CovoSync.deviceId();
+                    if (_ownBk) return;
+                    // Nouvelle sauvegarde détectée !
                     const newDate = new Date(latest.modifiedTime);
                     const newLabel = newDate.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})
                         + ' ' + newDate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
@@ -26096,8 +26342,12 @@ logout = function(skipConfirmation = false) {
                     ? (new Date(_localChange).getTime() > new Date(_backupTime).getTime() + 1000)
                     : false;
                 const _countAhead = (_curProd > nbProduits) || (_curSales > nbVentes) || (_curAppro > _bkAppro);
+                // Modifications locales pas encore envoyées sur Drive (ici ou dans une app satellite) et
+                // postérieures à cette sauvegarde : ne jamais les écraser automatiquement.
+                const _pendingTs = localStorage.getItem('covo_drive_pending');
+                const _pendingAhead = !!(_pendingTs && (!_backupTime || new Date(_pendingTs).getTime() > new Date(_backupTime).getTime() + 1000));
                 const _hasLocalData = (_curProd > 0 || _curSales > 0 || _curAppro > 0);
-                if (_hasLocalData && (_timeAhead || _countAhead)) {
+                if (_hasLocalData && (_timeAhead || _countAhead || _pendingAhead)) {
                     console.warn('[restore] Données locales plus récentes — restauration auto ignorée', {
                         _curProd, nbProduits, _curSales, nbVentes, _curAppro, _bkAppro, _localChange, _backupTime });
                     try { localStorage.setItem('covo_last_local_change', new Date().toISOString()); } catch(e) {}
@@ -26187,6 +26437,7 @@ logout = function(skipConfirmation = false) {
             if (data.covo_cagnotte)          localStorage.setItem('covo_cagnotte',          JSON.stringify(data.covo_cagnotte));
             if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             if (data.covo_devis)             localStorage.setItem('covo_devis',             JSON.stringify(data.covo_devis));
+            if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
             saveAll(); renderAll();
             if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
             if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
@@ -26507,20 +26758,9 @@ logout = function(skipConfirmation = false) {
         if (!window._restoreInProgress) {
             try { localStorage.setItem('covo_last_local_change', new Date().toISOString()); } catch(e) {}
         }
-        // isMaster : l'auto-save Drive est désactivé, mais on écrit quand même les données
-        // critiques en localStorage pour ne pas perdre les tickets de caisse et autres données
-        if (currentUser && currentUser.isMaster) {
-            window._masterDirtyCount = (window._masterDirtyCount || 0) + 1;
-            _updateMasterFab();
-            // Persister salesHistory et les données critiques même pour isMaster
-            try {
-                localStorage.setItem('covo_sales_history',  JSON.stringify(salesHistory));
-                localStorage.setItem('covo_products',       JSON.stringify(products));
-                localStorage.setItem('covo_categories',     JSON.stringify(categories));
-                localStorage.setItem('covo_users',          JSON.stringify(users));
-            } catch(e) {}
-            return;
-        }
+        // Tous les comptes, y compris l'Admin-Développeur (isMaster) : enregistrement local COMPLET
+        // immédiat + sauvegarde Drive automatique (avant : isMaster ne gardait que 4 clés et
+        // n'envoyait rien sur Drive tant qu'il n'avait pas cliqué « Sauvegarder »).
         _doSaveAllFull();
     }
 
@@ -26583,14 +26823,108 @@ logout = function(skipConfirmation = false) {
         if (!window._restoreInProgress) {
             try { localStorage.setItem('covo_last_local_change', new Date().toISOString()); } catch(e) {}
         }
-        // isMaster : ne pas sauvegarder auto, juste marquer comme modifié
-        if (currentUser && currentUser.isMaster) {
-            window._masterDirtyCount = (window._masterDirtyCount || 0) + 1;
-            _updateMasterFab();
-            return;
-        }
+        // Tous les comptes (y compris isMaster) : les données sont écrites tout de suite en local
+        // (avant : chez l'Admin-Développeur elles restaient UNIQUEMENT en mémoire jusqu'au clic sur
+        // « Sauvegarder » — fermer l'onglet faisait tout perdre) puis envoyées sur Drive automatiquement.
         _doSaveAll();
     }
+
+    // ===== SYNCHRO INTER-APPS (COVO Sync) ===========================================
+    // Les apps satellites (Gestion, Caisse, Approvisionnement, Fidélité…) écrivent dans le MÊME
+    // localStorage. Sans ce rechargement, COVO Pro gardait en mémoire une copie PÉRIMÉE (produits,
+    // ventes, utilisateurs…) et la réécrivait PAR-DESSUS les modifications des satellites au
+    // prochain saveAll() — ex. le stock ajouté par un approvisionnement fait ailleurs disparaissait.
+    (function() {
+        function _rd(k) { try { const v = localStorage.getItem(k); return v != null ? JSON.parse(v) : null; } catch(e) { return null; } }
+        function _replaceArr(target, src) {
+            if (!Array.isArray(target) || !Array.isArray(src)) return false;
+            target.length = 0;
+            for (let i = 0; i < src.length; i += 5000) Array.prototype.push.apply(target, src.slice(i, i + 5000));
+            return true;
+        }
+        function _replaceObj(target, src) {
+            if (!target || typeof target !== 'object' || !src || typeof src !== 'object') return false;
+            const merged = Object.assign({}, target, src);
+            Object.keys(target).forEach(k => { delete target[k]; });
+            Object.assign(target, merged);
+            return true;
+        }
+        let _rrTimer = null;
+        function _rerender() {
+            clearTimeout(_rrTimer);
+            _rrTimer = setTimeout(() => {
+                try { if (typeof renderProducts === 'function') renderProducts(); } catch(e) {}
+                try { if (typeof updateProgress === 'function') updateProgress(); } catch(e) {}
+            }, 400);
+        }
+        window.addEventListener('storage', function(e) {
+            if (!e.key || window._restoreInProgress) return;
+            try { if (e.storageArea && e.storageArea !== localStorage) return; } catch(err) {}
+            try {
+                switch (e.key) {
+                    case 'covo_products': {
+                        const np = _rd('covo_products');
+                        if (Array.isArray(np)) {
+                            const norm = np.map(p => ({ unitType: 'unit', pricePerKg: null, ...p }));
+                            if (!_replaceArr(products, norm)) products = norm;
+                            _rerender();
+                        }
+                        break;
+                    }
+                    case 'covo_sales_history': {
+                        const ns = _rd('covo_sales_history');
+                        if (Array.isArray(ns)) { if (!_replaceArr(salesHistory, ns)) salesHistory = ns; _rerender(); }
+                        break;
+                    }
+                    case 'covo_users': {
+                        const nu = _rd('covo_users');
+                        if (Array.isArray(nu)) {
+                            const normU = nu.map((u, i) => u.id ? u : { ...u, id: 'USR-' + String(i + 1).padStart(4, '0') });
+                            if (!_replaceArr(users, normU)) users = normU;
+                        }
+                        break;
+                    }
+                    case 'covo_promos': {
+                        const pr = _rd('covo_promos');
+                        if (Array.isArray(pr)) { if (!_replaceArr(promoTypes, pr)) promoTypes = pr; }
+                        break;
+                    }
+                    case 'covo_categories':
+                    case 'covo_ech_categories': {
+                        const ech = (typeof getEchCategories === 'function') ? getEchCategories() : null;
+                        const src = (ech && ech.length) ? ech : _rd('covo_categories');
+                        if (Array.isArray(src) && src.length) { if (!_replaceArr(categories, [...src])) categories = [...src]; _rerender(); }
+                        break;
+                    }
+                    case 'covo_settings': {
+                        const st = _rd('covo_settings');
+                        if (st && typeof st === 'object') { _replaceObj(appSettings, st); window._appSettings = appSettings; }
+                        break;
+                    }
+                    case 'covo_night_tariff': {
+                        const nt = _rd('covo_night_tariff');
+                        if (nt && typeof nt === 'object') _replaceObj(nightTariffSettings, nt);
+                        break;
+                    }
+                    case 'covo_cashier_permissions': {
+                        const cp = _rd('covo_cashier_permissions');
+                        if (cp && typeof cp === 'object') _replaceObj(cashierPermissions, cp);
+                        break;
+                    }
+                    case 'covo_pending_sync': {
+                        const ps = _rd('covo_pending_sync');
+                        if (Array.isArray(ps)) { if (!_replaceArr(pendingSync, ps)) pendingSync = ps; }
+                        break;
+                    }
+                    case 'covo_delivery_goal': {
+                        const g = parseFloat(e.newValue);
+                        if (isFinite(g) && g > 0) { deliveryGoal = g; _rerender(); }
+                        break;
+                    }
+                }
+            } catch(err) { console.warn('[COVO Sync] rechargement ' + e.key, err); }
+        });
+    })();
 
     // Sauvegarde manuelle depuis le FAB
     window._masterManualSave = async function() {
@@ -26611,7 +26945,10 @@ logout = function(skipConfirmation = false) {
         try {
             _doSaveAll();
             _doSaveAllFull();
-            if (typeof window.gdriveSaveNow === 'function' && window._gdConnected) {
+            // Correctif : « window._gdConnected » n'a jamais existé (variable interne du module Drive) —
+            // ce bouton n'envoyait donc JAMAIS sur Drive, seulement en local. On lit l'état réel.
+            const _gdOn = (typeof window._gdGetState === 'function') && !!window._gdGetState().connected;
+            if (typeof window.gdriveSaveNow === 'function' && _gdOn) {
                 await window.gdriveSaveNow();
             } else {
                 showScanToast('💾 Sauvegarde locale effectuée (' + new Date().toLocaleTimeString('fr-FR') + ')', 'success');
@@ -39525,6 +39862,8 @@ function initAdminSections() {
     let _gdSaving = false;
     let _gdLastSaveCompletedAt = 0;   // horodatage (ms) de la dernière sauvegarde Drive RÉUSSIE
     let _gdLastSavedCounts = null;    // {nProducts,nSales,nAppro,size} de cette dernière sauvegarde
+    let _gdResaveQueued = false;      // une modification est arrivée PENDANT un envoi : on renvoie juste après
+    let _gdGuardSnoozeUntil = 0;      // après un blocage anti-perte : pas de nouvel essai AUTO pendant 10 min
     let _gdUserEmail = '';
     let _gdAllFolders = [];            // Cache de la liste des dossiers
     const GD_SCOPE = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email';
@@ -40319,49 +40658,111 @@ function initAdminSections() {
     // déjà stockées sur le fichier Drive à l'enregistrement — aucun téléchargement
     // de contenu nécessaire pour l'afficher dans la liste.
     function _gdPickerDeltaHtml(f, prevFile, isDark) {
-        if (!prevFile) return '';
-        var curSize  = parseInt(f.size) || 0, prevSize = parseInt(prevFile.size) || 0;
-        var sizeDiff = curSize - prevSize;
-        var sameSize = Math.abs(sizeDiff) < Math.max(50, prevSize * 0.002);
-        var gapMs    = new Date(f.modifiedTime).getTime() - new Date(prevFile.modifiedTime).getTime();
-        var gapMin   = gapMs / 60000;
-        var textSub  = isDark ? '#7a8aa0' : '#8291a3';
-        var warnBg   = isDark ? 'rgba(255,183,77,0.14)' : '#fff3e0';
-        var warnClr  = isDark ? '#ffb74d' : '#b45309';
-        var badClr   = isDark ? '#ff7070' : '#c0392b';
-        var goodClr  = isDark ? '#6fcf8a' : '#1b5e20';
-
-        var fp = f.properties, pp = prevFile.properties;
-        if (!fp || !pp || typeof fp.nProducts === 'undefined' || typeof pp.nProducts === 'undefined') {
-            // Sauvegardes plus anciennes, sans compteurs enregistrés — comparaison par taille uniquement
-            if (sameSize && gapMin < 3) {
-                return '<div style="font-size:0.66rem;margin-top:3px;padding:2px 6px;border-radius:6px;display:inline-block;background:' + warnBg + ';color:' + warnClr + ';font-weight:700;">⚠️ Taille identique à la précédente</div>';
-            }
-            return '';
-        }
-
-        var dProd  = (parseInt(fp.nProducts) || 0) - (parseInt(pp.nProducts) || 0);
-        var dSale  = (parseInt(fp.nSales)    || 0) - (parseInt(pp.nSales)    || 0);
-        var dAppro = (parseInt(fp.nAppro)    || 0) - (parseInt(pp.nAppro)    || 0);
-        var noChange = (dProd === 0 && dSale === 0 && dAppro === 0 && sameSize);
-
-        if (noChange && gapMin < 3) {
-            var gapTxt = gapMs < 60000 ? (Math.max(1, Math.round(gapMs / 1000)) + 's') : (Math.round(gapMin) + 'min');
-            return '<div style="font-size:0.66rem;margin-top:3px;padding:2px 6px;border-radius:6px;display:inline-block;background:' + warnBg + ';color:' + warnClr + ';font-weight:700;">⚠️ Quasi identique à la précédente (' + gapTxt + ' d’écart)</div>';
-        }
-
-        var fmtDelta = function(n, label) {
-            if (n === 0) return '';
-            var clr  = n < 0 ? badClr : goodClr;
-            var sign = n > 0 ? '+' : '';
-            return '<span style="color:' + clr + ';font-weight:700;">' + sign + n + ' ' + label + '</span>';
+        var textSub = isDark ? '#9fafc0' : '#5d6d7e';
+        var muted   = isDark ? '#7a8aa0' : '#8291a3';
+        var warnBg  = isDark ? 'rgba(255,183,77,0.14)' : '#fff3e0';
+        var warnClr = isDark ? '#ffb74d' : '#b45309';
+        var badClr  = isDark ? '#ff8a80' : '#c0392b';
+        var goodClr = isDark ? '#7ee2a0' : '#1b7a3a';
+        var chipBg  = isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9';
+        var fp = f.properties || null;
+        var pp = prevFile ? (prevFile.properties || null) : null;
+        var esc = function(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
         };
-        var parts = [fmtDelta(dProd, 'produits'), fmtDelta(dSale, 'ventes'), fmtDelta(dAppro, 'appro.')].filter(Boolean);
-        if (sizeDiff !== 0) {
-            parts.push('<span style="color:' + textSub + ';">' + (sizeDiff > 0 ? '+' : '−') + _gdFmtFileSize(Math.abs(sizeDiff)) + '</span>');
+        var I = function(o, k) { return (o && o[k] !== undefined && o[k] !== '') ? (parseInt(o[k], 10) || 0) : null; };
+        var F = function(o, k) { return (o && o[k] !== undefined && o[k] !== '') ? (parseFloat(o[k]) || 0) : null; };
+        var eur = function(n) { return (Math.round(n * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; };
+        var nfmt = function(n) { return (Math.round(n * 1000) / 1000).toLocaleString('fr-FR'); };
+        var sgn = function(n) { return n > 0 ? '+' : '−'; };
+        var html = '';
+
+        // 1) Origine : quelle app, quel appareil, quel utilisateur, quel déclencheur
+        if (fp && (fp.app || fp.dev)) {
+            var mine = !!(fp.dev && window.CovoSync && fp.dev === window.CovoSync.deviceId());
+            var appN = window.CovoSync ? window.CovoSync.appName(fp.app) : (fp.app || '');
+            var trgMap = { auto: 'auto', manuel: 'manuelle', relais: 'relais', reprise: 'reprise', 'forcé': 'forcée', 'périodique': 'périodique', users: 'droits utilisateurs' };
+            html += '<div style="font-size:0.64rem;margin-top:3px;color:' + muted + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                + (mine ? '📱 Cet appareil' : '🌐 Autre appareil')
+                + (appN ? ' · ' + esc(appN) : '')
+                + (fp.who ? ' · 👤 ' + esc(fp.who) : '')
+                + (fp.trg ? ' · ' + esc(trgMap[fp.trg] || fp.trg) : '')
+                + '</div>';
         }
-        if (!parts.length) return '';
-        return '<div style="font-size:0.66rem;margin-top:3px;color:' + textSub + ';">📊 ' + parts.join(' · ') + '</div>';
+
+        // 2) Ce qui a changé par rapport à la sauvegarde précédente (sans ouvrir le fichier)
+        var curSize = parseInt(f.size) || 0;
+        var prevSize = prevFile ? (parseInt(prevFile.size) || 0) : 0;
+        var sizeDiff = curSize - prevSize;
+        if (!fp || I(fp, 'nProducts') === null) {
+            html += '<div style="font-size:0.64rem;margin-top:3px;color:' + muted + ';">ℹ️ Ancienne sauvegarde — aucun résumé enregistré'
+                + (prevFile && sizeDiff ? ' · ' + (sizeDiff > 0 ? '+' : '−') + _gdFmtFileSize(Math.abs(sizeDiff)) : '') + '</div>';
+        } else if (prevFile && pp && I(pp, 'nProducts') !== null) {
+            var chips = [];
+            var chip = function(icon, txt, clr) {
+                chips.push('<span style="display:inline-block;margin:2px 4px 0 0;padding:1px 6px;border-radius:6px;background:' + chipBg + ';color:' + clr + ';font-weight:700;white-space:nowrap;">' + icon + ' ' + txt + '</span>');
+            };
+            var dlt = function(k) { var a = F(fp, k), b = F(pp, k); return (a === null || b === null) ? 0 : a - b; };
+
+            // Approvisionnements (nombre + montant)
+            var dA = I(fp, 'nAppro') - I(pp, 'nAppro');
+            var dAT = dlt('apT');
+            if (dA !== 0) chip('🚚', sgn(dA) + Math.abs(dA) + ' appro.' + (Math.abs(dAT) >= 0.01 ? ' (' + sgn(dAT) + eur(Math.abs(dAT)) + ')' : ''), dA > 0 ? goodClr : badClr);
+            else if (Math.abs(dAT) >= 0.01) chip('🚚', 'appro. modifié (' + sgn(dAT) + eur(Math.abs(dAT)) + ')', warnClr);
+            // Ventes (nombre + chiffre d'affaires)
+            var dS = I(fp, 'nSales') - I(pp, 'nSales');
+            var dCA = dlt('caT');
+            if (dS !== 0) chip('🧾', sgn(dS) + Math.abs(dS) + ' vente' + (Math.abs(dS) > 1 ? 's' : '') + (Math.abs(dCA) >= 0.01 ? ' (' + sgn(dCA) + eur(Math.abs(dCA)) + ')' : ''), dS > 0 ? goodClr : badClr);
+            else if (Math.abs(dCA) >= 0.01) chip('🧾', 'ventes modifiées (' + sgn(dCA) + eur(Math.abs(dCA)) + ')', warnClr);
+            // Produits + stock
+            var dP = I(fp, 'nProducts') - I(pp, 'nProducts');
+            if (dP !== 0) chip('📦', sgn(dP) + Math.abs(dP) + ' produit' + (Math.abs(dP) > 1 ? 's' : ''), dP > 0 ? goodClr : badClr);
+            var dSU = dlt('stockU');
+            if (Math.abs(dSU) >= 0.001) chip('📊', 'stock ' + sgn(dSU) + nfmt(Math.abs(dSU)) + ' u', dSU > 0 ? goodClr : warnClr);
+            // Autres modules
+            [['nCli', '👥', 'client', 'clients'], ['nDet', '💳', 'dette', 'dettes'], ['nPay', '💸', 'paiement', 'paiements'],
+             ['nRet', '↩️', 'retour', 'retours'], ['nDev', '📋', 'devis', 'devis'], ['nInv', '🔍', 'inventaire', 'inventaires'],
+             ['nChg', '🧮', 'charge fixe', 'charges fixes'], ['nEch', '⏳', 'échéance', 'échéances']].forEach(function(d) {
+                var a = I(fp, d[0]), b = I(pp, d[0]);
+                if (a === null || b === null || a === b) return;
+                var x = a - b;
+                chip(d[1], sgn(x) + Math.abs(x) + ' ' + (Math.abs(x) > 1 ? d[3] : d[2]), x > 0 ? goodClr : badClr);
+            });
+            var dB = dlt('bal');
+            if (Math.abs(dB) >= 0.01) chip('💰', 'solde caisse ' + sgn(dB) + eur(Math.abs(dB)), dB > 0 ? goodClr : warnClr);
+
+            if (!chips.length) {
+                var identical = !!(fp.fp && pp.fp && fp.fp === pp.fp);
+                if (identical) {
+                    html += '<div style="font-size:0.66rem;margin-top:3px;padding:2px 6px;border-radius:6px;display:inline-block;background:' + warnBg + ';color:' + warnClr + ';font-weight:700;">⚠️ Contenu identique à la précédente</div>';
+                } else {
+                    chip('✏️', 'modifications internes (prix, fiches, réglages…)', textSub);
+                }
+            }
+            if (chips.length) html += '<div style="font-size:0.66rem;margin-top:2px;line-height:1.45;white-space:normal;">' + chips.join('') + '</div>';
+            // Dernier approvisionnement enregistré dans cette sauvegarde
+            if (fp.apL && (dA > 0 || fp.apL !== pp.apL)) {
+                html += '<div style="font-size:0.64rem;margin-top:2px;color:' + textSub + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🚚 Dernier appro. : <strong>' + esc(fp.apL) + '</strong></div>';
+            }
+        } else if (prevFile) {
+            html += '<div style="font-size:0.64rem;margin-top:3px;color:' + muted + ';">ℹ️ Précédente sans résumé — comparaison chiffrée disponible à partir de la suivante'
+                + (sizeDiff ? ' · ' + (sizeDiff > 0 ? '+' : '−') + _gdFmtFileSize(Math.abs(sizeDiff)) : '') + '</div>';
+        }
+
+        // 3) Totaux contenus dans cette sauvegarde
+        if (fp && I(fp, 'nProducts') !== null) {
+            var pl = function(n, one, many) { return n.toLocaleString('fr-FR') + ' ' + (Math.abs(n) > 1 ? many : one); };
+            var t = [pl(I(fp, 'nProducts'), 'produit', 'produits'),
+                     pl(I(fp, 'nSales'), 'vente', 'ventes'),
+                     I(fp, 'nAppro').toLocaleString('fr-FR') + ' appro.'];
+            if (F(fp, 'stockU') !== null) t.push('stock ' + nfmt(F(fp, 'stockU')) + ' u');
+            if (F(fp, 'apT') !== null) t.push('achats ' + eur(F(fp, 'apT')));
+            if (F(fp, 'caT') !== null) t.push('CA ' + eur(F(fp, 'caT')));
+            html += '<div style="font-size:0.62rem;margin-top:2px;color:' + muted + ';white-space:normal;">Σ ' + t.join(' · ') + '</div>';
+        }
+        return html;
     }
 
     function _gdShowPickerModal(files) {
@@ -40839,7 +41240,8 @@ function initAdminSections() {
                 nProducts: parseInt(f.properties.nProducts || '0', 10) || 0,
                 nSales:    parseInt(f.properties.nSales    || '0', 10) || 0,
                 nAppro:    parseInt(f.properties.nAppro    || '0', 10) || 0,
-                fileName:  f.name
+                fileName:  f.name,
+                props:     f.properties   // résumé complet (appareil d'origine, app, etc.) pour la garde anti-perte
             };
         } catch(e) { return null; }
     }
@@ -40958,45 +41360,15 @@ function initAdminSections() {
 
     window._gdForceSaveAnyway = async function(fileName, ts, modal) {
         if (modal) modal.remove();
-        if (!window._gdForcedPayload) return;
-        const { payload } = window._gdForcedPayload;
-        const newSize = new Blob([payload]).size;
-        let _forcedCounts = { nProducts: 0, nSales: 0, nAppro: 0 };
-        try {
-            const _pd = JSON.parse(payload);
-            _forcedCounts = {
-                nProducts: (_pd.products || []).length,
-                nSales:    (_pd.salesHistory || []).length,
-                nAppro:    (_pd.covo_approvisionnements || []).length
-            };
-        } catch(e) {}
-        try {
-            _gdSaving = true; _gdShowSaving(true);
-            const metadata = JSON.stringify({
-                name: fileName,
-                parents: [_gdFolderId],
-                properties: {
-                    nProducts: String(_forcedCounts.nProducts),
-                    nSales:    String(_forcedCounts.nSales),
-                    nAppro:    String(_forcedCounts.nAppro)
-                }
-            });
-            const boundary = '----CovoGDriveForceBoundary' + Date.now();
-            const body = '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+metadata+'\r\n--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+payload+'\r\n--'+boundary+'--';
-            const cr = await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                method:'POST', headers:{'Content-Type':'multipart/related; boundary='+boundary}, body
-            });
-            const result = await cr.json();
-            if (result.id) {
-                localStorage.setItem('gdrive_last_payload_size', String(newSize));
-                localStorage.setItem('gdrive_last_save', ts);
-                _gdUpdateStatusBar(true, 'Google Drive — '+(_gdUserEmail||'Connecté')+' · 📁 '+_gdFolderName, ts);
-                // Copier aussi dans la hiérarchie Paramètres/
-                setTimeout(() => { try { window._gdUploadParametres(payload, ts); } catch(e) {} }, 500);
-                showScanToast('⚠️ Sauvegarde forcée effectuée', 'info');
-            }
-        } catch(e) { showScanToast('❌ Erreur lors de la sauvegarde forcée', 'error'); }
-        finally { _gdSaving = false; _gdShowSaving(false); window._gdForcedPayload = null; }
+        window._gdForcedPayload = null;
+        // Reconstruit la sauvegarde avec les données ACTUELLES (et le résumé complet) au lieu
+        // de renvoyer une copie figée : rien de ce qui a été saisi depuis l'alerte n'est perdu.
+        _gdGuardSnoozeUntil = 0;
+        window._gdForceNextSave = true;
+        const st = await _gdDoSave({ manual: true, trigger: 'forcé' });
+        if (st === 'saved') showScanToast('⚠️ Sauvegarde forcée effectuée', 'info');
+        else if (st === 'busy') showScanToast('⏳ Une sauvegarde est en cours — la sauvegarde forcée suivra automatiquement', 'info');
+        else showScanToast('❌ Erreur lors de la sauvegarde forcée — nouvel essai automatique', 'error');
     };
 
     window._gdConfirmRestoreFromChip = async function() {
@@ -41016,21 +41388,36 @@ function initAdminSections() {
     };
 
     // ---- SAVE — Crée un NOUVEAU fichier horodaté à chaque sauvegarde ----
-    async function _gdDoSave() {
-        if (!_gdConnected || !_gdAccessToken || _gdSaving) return;
-        const _gdForced = !!window._gdForceNextSave;
-        window._gdForceNextSave = false;
-        // Lecture seule (readOnly) : aucune sauvegarde Drive autorisée, jamais (pas de bouton manuel pour ce mode)
-        if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().readOnly === true) return;
-        // isMaster : auto-save Drive désactivé — uniquement via bouton manuel (_masterSavingNow)
-        if (!window._masterSavingNow && typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster) {
-            _gdMarkDriveDirty();
-            return;
-        }
+    // Retourne l'état RÉEL de la sauvegarde : 'saved' | 'same' (rien de nouveau) | 'busy' | 'blocked'
+    // | 'snoozed' | 'offline' | 'nofolder' | 'readonly' | 'error'. Toute modification non envoyée reste
+    // marquée « en attente » (COVO Sync) et sera renvoyée automatiquement — plus aucune perte silencieuse.
+    async function _gdDoSave(opts) {
+        opts = opts || {};
+        const _manual = !!opts.manual;
+        if (!_gdConnected || !_gdAccessToken) return 'offline';
+        // Correctif perte : avant, une modification arrivée PENDANT un envoi était abandonnée
+        // (return silencieux) — elle est désormais renvoyée juste après la fin de l'envoi en cours.
+        if (_gdSaving) { _gdResaveQueued = true; return 'busy'; }
+        // Lecture seule (readOnly) : aucune sauvegarde Drive autorisée, jamais
+        if (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().readOnly === true) return 'readonly';
+        // NB : l'Admin-Développeur (isMaster) est désormais sauvegardé automatiquement comme tous les comptes
+        // (demande : « sauvegarde automatique à chaque modification ») — le bouton manuel reste disponible.
         if (!_gdFolderId) {
             console.warn('GDrive save: aucun dossier sélectionné');
-            return;
+            return 'nofolder';
         }
+        const _gdForced = !!window._gdForceNextSave;
+        if (!_manual && !_gdForced && Date.now() < _gdGuardSnoozeUntil) { _gdMarkDriveDirty(); return 'snoozed'; }
+        const _CS = window.CovoSync || null;
+        if (_CS && !_CS.tryLock()) {
+            // Une autre app COVO de cet appareil envoie déjà une sauvegarde : on repasse juste après.
+            setTimeout(function() { _gdDebouncedSave(); }, 8000);
+            return 'busy';
+        }
+        window._gdForceNextSave = false;
+        const _trg = opts.trigger || (_manual ? 'manuel' : 'auto');
+        const _buildIso = new Date().toISOString();
+        let _status = 'error';
         _gdSaving = true;
         _gdShowSaving(true);
         try {
@@ -41047,8 +41434,6 @@ function initAdminSections() {
                 : JSON.parse(localStorage.getItem('covo_sales_history') || '[]');
 
             // ── SOURCE UNIQUE : données LIVE du scope principal (évite tout décalage de scope) ──
-            // Correctif « données récentes absentes » : ce module possède ses propres variables
-            // (products, etc.) qui peuvent être décalées ; _buildBackupPayload() lit l'état réel en cours.
             let _gdPayloadObj;
             if (typeof window._buildBackupPayload === 'function') {
                 _gdPayloadObj = window._buildBackupPayload();
@@ -41100,54 +41485,67 @@ function initAdminSections() {
                 };
             }
             _gdPayloadObj._version = 20;
-            _gdPayloadObj._savedAt = ts;
             _gdPayloadObj._source = 'google_drive_auto';
             _gdPayloadObj._folderName = _gdFolderName;
-            _gdPayloadObj._fileName = fileName;
-            const exportPayload = JSON.stringify(_gdPayloadObj, null, 2);
 
-            // ── GARDE ANTI-DOUBLONS : éviter de créer plusieurs sauvegardes quasi
-            // identiques en quelques secondes (double-clic sur « 💾 Sauvegarder »,
-            // plusieurs déclencheurs qui s'enchaînent, etc.). On ignore cette
-            // sauvegarde SEULEMENT si les compteurs ET la taille sont identiques à
-            // la dernière sauvegarde réussie, ET que celle-ci date de < 20s —
-            // toute vraie nouvelle donnée (vente, produit…) est toujours sauvegardée
-            // immédiatement, forçage explicite (changement de dossier) toujours respecté.
-            const _gdDupSize = new Blob([exportPayload]).size;
-            const _gdDupCounts = {
-                nProducts: (_gdPayloadObj.products || []).length,
-                nSales:    (_gdPayloadObj.salesHistory || []).length,
-                nAppro:    (_gdPayloadObj.covo_approvisionnements || []).length
-            };
-            if (!_gdForced && _gdLastSavedCounts && _gdLastSaveCompletedAt &&
-                (Date.now() - _gdLastSaveCompletedAt) < 20000 &&
-                _gdDupCounts.nProducts === _gdLastSavedCounts.nProducts &&
-                _gdDupCounts.nSales    === _gdLastSavedCounts.nSales &&
-                _gdDupCounts.nAppro    === _gdLastSavedCounts.nAppro &&
-                Math.abs(_gdDupSize - _gdLastSavedCounts.size) < Math.max(50, _gdLastSavedCounts.size * 0.002)) {
-                console.warn('[GDrive] Sauvegarde ignorée — données identiques à la sauvegarde d\'il y a ' +
-                    Math.round((Date.now() - _gdLastSaveCompletedAt) / 1000) + 's (évite un doublon)');
-                _gdSaving = false; _gdShowSaving(false);
-                return;
+            // ── EMPREINTE DU CONTENU : le fichier est sérialisé avec des marqueurs à la place de la
+            // date et du nom, donc deux sauvegardes au contenu identique ont la même empreinte.
+            let _tpl, _fp = '';
+            if (_CS) {
+                _tpl = _CS.serialize(_gdPayloadObj);
+                _fp = await _CS.fingerprint(_tpl);
+            } else {
+                _gdPayloadObj._savedAt = ts;
+                _gdPayloadObj._fileName = fileName;
+                _tpl = JSON.stringify(_gdPayloadObj, null, 2);
             }
 
-            // ── GARDE ANTI-PERTE MULTI-APPAREILS : comparer aux compteurs de la dernière
-            // sauvegarde RÉELLEMENT présente sur Drive (pas seulement le repère local de cet
-            // appareil), pour bloquer un appareil dont les données locales sont en retard.
+            // ── ANTI-DOUBLON PAR CONTENU (remplace l'ancien filtre « < 20 s + même taille », qui pouvait
+            // ignorer une vraie modification, ex. un changement de prix de même longueur) : on n'ignore
+            // une sauvegarde QUE si son contenu est strictement identique à la dernière envoyée.
+            if (_fp && !_gdForced && _fp === _CS.lastFp()) {
+                _CS.clearPending(_buildIso);
+                _gdClearDriveDirty();
+                _status = 'same';
+                return _status;
+            }
+            const exportPayload = _CS ? _CS.finalize(_tpl, ts, fileName) : _tpl;
+            const _cu = (typeof window._covoCurrentUser === 'function') ? (window._covoCurrentUser() || {}) : {};
+            const _props = _CS
+                ? _CS.summary(_gdPayloadObj, { app: 'covo', who: _cu.username || _cu.name || '', trg: _trg, fp: _fp })
+                : {
+                    nProducts: String((_gdPayloadObj.products || []).length),
+                    nSales:    String((_gdPayloadObj.salesHistory || []).length),
+                    nAppro:    String((_gdPayloadObj.covo_approvisionnements || []).length)
+                };
             const _newCounts = {
-                nProducts: (_gdPayloadObj.products || []).length,
-                nSales:    (_gdPayloadObj.salesHistory || []).length,
-                nAppro:    (_gdPayloadObj.covo_approvisionnements || []).length
+                nProducts: parseInt(_props.nProducts, 10) || 0,
+                nSales:    parseInt(_props.nSales, 10)    || 0,
+                nAppro:    parseInt(_props.nAppro, 10)    || 0
             };
-            const _remoteCounts = await _gdFetchLatestBackupCounts();
-            if (_remoteCounts && (
-                _newCounts.nSales    < _remoteCounts.nSales ||
-                _newCounts.nProducts < _remoteCounts.nProducts ||
-                _newCounts.nAppro    < _remoteCounts.nAppro
-            )) {
-                _gdSaving = false; _gdShowSaving(false);
-                _gdShowCountAlert(_newCounts, _remoteCounts, exportPayload, fileName, ts);
-                return;
+
+            // ── GARDE ANTI-PERTE MULTI-APPAREILS : comparaison avec la dernière sauvegarde RÉELLEMENT
+            // présente sur Drive. Une petite baisse venant de CET appareil (vraie suppression faite ici)
+            // n'est plus bloquée ; une baisse venant d'un autre appareil ou massive l'est toujours.
+            if (!_gdForced) {
+                const _remoteCounts = await _gdFetchLatestBackupCounts();
+                let _block = false;
+                if (_remoteCounts) {
+                    if (_CS) {
+                        _block = _CS.guard(_props, _remoteCounts.props, _remoteCounts.fileName).block;
+                    } else {
+                        _block = _newCounts.nSales < _remoteCounts.nSales
+                            || _newCounts.nProducts < _remoteCounts.nProducts
+                            || _newCounts.nAppro < _remoteCounts.nAppro;
+                    }
+                }
+                if (_block) {
+                    _gdGuardSnoozeUntil = Date.now() + 10 * 60 * 1000;
+                    _gdMarkDriveDirty();
+                    _gdShowCountAlert(_newCounts, _remoteCounts, exportPayload, fileName, ts);
+                    _status = 'blocked';
+                    return _status;
+                }
             }
 
             // ── GARDE ANTI-PERTE : vérifier que le nouveau payload n'est pas anormalement petit ──
@@ -41156,60 +41554,67 @@ function initAdminSections() {
             const SEUIL_ALERTE   = 0.85; // alerte si < 85% de la taille précédente
             const SEUIL_BLOCAGE  = 0.60; // blocage si < 60% (perte critique)
 
-            if (lastSize > 0 && newSize < lastSize * SEUIL_BLOCAGE) {
-                // Perte critique — bloquer la sauvegarde et alerter
+            if (!_gdForced && lastSize > 0 && newSize < lastSize * SEUIL_BLOCAGE) {
                 const perte = Math.round((1 - newSize / lastSize) * 100);
-                _gdSaving = false; _gdShowSaving(false);
+                _gdGuardSnoozeUntil = Date.now() + 10 * 60 * 1000;
+                _gdMarkDriveDirty();
                 _gdShowSizeAlert(newSize, lastSize, perte, exportPayload, fileName, ts, true);
-                return;
+                _status = 'blocked';
+                return _status;
             }
             if (lastSize > 0 && newSize < lastSize * SEUIL_ALERTE) {
-                // Alerte — sauvegarder quand même mais signaler
                 const perte = Math.round((1 - newSize / lastSize) * 100);
                 console.warn(`⚠️ GDrive save: taille réduite de ${perte}% (${_gdFmtFileSize(String(lastSize))} → ${_gdFmtFileSize(String(newSize))})`);
                 showScanToast(`⚠️ Sauvegarde réduite de ${perte}% — vérifiez vos données`, 'info');
             }
-            // Toujours créer un NOUVEAU fichier (multipart)
-            // "properties" mémorise les compteurs clés pour permettre à N'IMPORTE QUEL appareil
-            // de détecter une régression avant sa PROCHAINE sauvegarde (voir _gdFetchLatestBackupCounts).
-            const metadata = JSON.stringify({
-                name: fileName,
-                parents: [_gdFolderId],
-                properties: {
-                    nProducts: String(_newCounts.nProducts),
-                    nSales:    String(_newCounts.nSales),
-                    nAppro:    String(_newCounts.nAppro)
-                }
-            });
-            const boundary = '----CovoGDriveBoundary' + Date.now();
-            const body = 
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-                metadata + '\r\n' +
-                '--' + boundary + '\r\n' +
-                'Content-Type: application/json\r\n\r\n' +
-                exportPayload + '\r\n' +
-                '--' + boundary + '--';
 
-            const cr = await _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                method: 'POST',
-                headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
-                body: body
-            });
+            // Toujours créer un NOUVEAU fichier (multipart). Les "properties" contiennent le résumé
+            // chiffré (ventes, approvisionnements, stock, clients…) affiché dans la liste des sauvegardes
+            // sans avoir à ouvrir le fichier, et servent à la garde anti-perte des autres appareils.
+            const _upload = function(props) {
+                const metadata = JSON.stringify({ name: fileName, parents: [_gdFolderId], properties: props });
+                const boundary = '----CovoGDriveBoundary' + Date.now();
+                const body =
+                    '--' + boundary + '\r\n' +
+                    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+                    metadata + '\r\n' +
+                    '--' + boundary + '\r\n' +
+                    'Content-Type: application/json\r\n\r\n' +
+                    exportPayload + '\r\n' +
+                    '--' + boundary + '--';
+                return _gdFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+                    body: body
+                });
+            };
+            let cr = await _upload(_props);
+            if (!cr.ok && cr.status === 400) {
+                // Repli de sécurité : propriétés minimales si Drive refusait le résumé étendu
+                cr = await _upload({ nProducts: _props.nProducts, nSales: _props.nSales, nAppro: _props.nAppro,
+                                     dev: _props.dev || '', app: _props.app || 'covo', fp: _props.fp || '' });
+            }
+            // Correctif : avant, une erreur Drive (quota, 403, 500…) était traitée comme un succès.
+            if (!cr.ok) throw new Error('Drive HTTP ' + cr.status);
             const result = await cr.json();
+            if (!result || !result.id) throw new Error('Drive : réponse sans identifiant de fichier');
             _gdFileId = result.id;
 
+            if (_CS) _CS.recordSaved(fileName, _fp, newSize, _buildIso);
             // Mémoriser la taille du payload pour la prochaine vérification
             localStorage.setItem('gdrive_last_payload_size', String(newSize));
             localStorage.setItem('gdrive_last_save', ts);
             localStorage.setItem('gdrive_last_file', fileName);
             _gdLastSaveCompletedAt = Date.now();
             _gdLastSavedCounts = { nProducts: _newCounts.nProducts, nSales: _newCounts.nSales, nAppro: _newCounts.nAppro, size: newSize };
+            _gdGuardSnoozeUntil = 0;
+            _gdClearDriveDirty();
+            window._masterDirtyCount = 0;
             _gdUpdateStatusBar(true, 'Google Drive — ' + (_gdUserEmail || 'Connecté') + (_gdFolderName ? ' · 📁 ' + _gdFolderName : ''), ts);
 
             // Copier aussi dans la hiérarchie Paramètres/YYYY/MM-Mois/DD/
             setTimeout(() => { try { window._gdUploadParametres(exportPayload, ts); } catch(e) {} }, 500);
-            
+
             // Flash vert sur la status bar
             const bar = document.getElementById('gdrive-status-bar');
             if (bar) {
@@ -41220,11 +41625,15 @@ function initAdminSections() {
             // Mettre à jour le compteur + chip status bar
             _gdUpdateFileCount();
             setTimeout(_gdPollLatestFile, 1000); // mise à jour du chip après 1s
+            _status = 'saved';
 
         } catch(err) {
             console.error('GDrive save error:', err);
-            _gdUpdateStatusBar(true, 'Google Drive — Erreur sauvegarde ⚠️');
+            _gdMarkDriveDirty();
+            _gdUpdateStatusBar(true, 'Google Drive — Erreur sauvegarde ⚠️ (nouvel essai automatique)');
+            _status = 'error';
             if (err.message === 'Token expiré') {
+                _status = 'offline';
                 _gdConnected = false;
                 _gdUpdateUI(false);
                 _gdUpdateStatusBar(false, 'Google Drive — Déconnecté (session expirée)');
@@ -41232,7 +41641,13 @@ function initAdminSections() {
         } finally {
             _gdSaving = false;
             _gdShowSaving(false);
+            if (_CS) _CS.unlock();
+            if (_gdResaveQueued) {
+                _gdResaveQueued = false;
+                setTimeout(function() { _gdDebouncedSave(); }, 1500);
+            }
         }
+        return _status;
     }
 
     // ---- RESTORE — Modale avec liste de tous les fichiers ----
@@ -41571,28 +41986,46 @@ function initAdminSections() {
 
     // ---- Save now (manual) ----
     window.gdriveSaveNow = async function() {
+        window._gdLastManualStatus = null;
         // Lecture seule (readOnly) : aucune sauvegarde autorisée, même via ce bouton manuel
         if (typeof currentUser !== 'undefined' && currentUser && currentUser.readOnly === true) {
             showScanToast('👁️ Mode consultation seule — sauvegarde désactivée par l\'Admin-Développeur', 'info');
-            return;
+            window._gdLastManualStatus = 'readonly';
+            return 'readonly';
         }
         if (!_gdConnected) {
-            showScanToast('⚠️ Google Drive n\'est pas connecté', 'info');
-            return;
+            showScanToast('⚠️ Google Drive n\'est pas connecté — vos modifications restent en attente et partiront dès la connexion', 'info');
+            window._gdLastManualStatus = 'offline';
+            return 'offline';
         }
         if (!_gdFolderId) {
             showScanToast('⚠️ Aucun dossier sélectionné — choisissez un dossier de sauvegarde', 'info');
-            return;
+            window._gdLastManualStatus = 'nofolder';
+            return 'nofolder';
         }
-        // Lever le drapeau isMaster pour que _gdDoSave ne soit pas bloqué
         window._masterSavingNow = true;
+        let st = 'error';
         try {
-            await _gdDoSave();
+            st = await _gdDoSave({ manual: true, trigger: 'manuel' });
         } finally {
             window._masterSavingNow = false;
         }
-        _gdClearDriveDirty();
-        showScanToast('✅ Sauvegarde Google Drive effectuée · 📁 ' + _gdFolderName, 'success');
+        window._gdLastManualStatus = st;
+        // Message EXACT selon le résultat réel (avant : « effectuée » s'affichait même en cas d'échec)
+        if (st === 'saved') {
+            showScanToast('✅ Sauvegarde Google Drive effectuée · 📁 ' + _gdFolderName, 'success');
+        } else if (st === 'same') {
+            showScanToast('✅ Google Drive déjà à jour — aucune modification depuis la dernière sauvegarde', 'success');
+        } else if (st === 'busy') {
+            showScanToast('⏳ Une sauvegarde est déjà en cours — la vôtre suit automatiquement', 'info');
+        } else if (st === 'blocked') {
+            // l'alerte anti-perte détaillée est déjà affichée
+        } else if (st === 'offline') {
+            showScanToast('⚠️ Session Google expirée — reconnectez Drive ; vos modifications restent en attente', 'error');
+        } else {
+            showScanToast('❌ La sauvegarde Drive a échoué — vos modifications restent en attente et seront renvoyées automatiquement', 'error');
+        }
+        if (st !== 'saved' && st !== 'same') return st;
         // Mise à jour du panneau admin après sync
         setTimeout(function() {
             try {
@@ -41600,7 +42033,7 @@ function initAdminSections() {
                 var lastSaveEl = document.getElementById('aw-drive-last-save');
                 if (lastSaveEl) {
                     var ts = gdState.lastSave || new Date().toISOString();
-                    lastSaveEl.textContent = '⏱ Dernière sauvegarde : ' + new Date(ts).toLocaleString('fr-FR');
+                    lastSaveEl.textContent = '⏱ Dernière sauvegarde : ' + new Date(ts).toLocaleString('fr-FR');
                 }
                 if (typeof awLoadBackupList === 'function') {
                     awLoadBackupList(gdState.connected, gdState);
@@ -41611,23 +42044,29 @@ function initAdminSections() {
         setTimeout(function() {
             if (typeof window._gdBackupRotation !== 'undefined') window._gdBackupRotation.autoRun();
         }, 2500);
+        return st;
     };
 
     // ---- Sauvegarde périodique de secours toutes les 10 min (fallback si debounce raté) ----
     function _gdStartAutoSave() {
         if (window._gdAutoSaveInterval) clearInterval(window._gdAutoSaveInterval);
-        // isMaster : pas d'intervalle automatique Drive
-        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) {
-            _gdMarkDriveDirty();
-            return;
-        }
+        // Tous les comptes (y compris l'Admin-Développeur) : sauvegarde automatique à chaque modification
+        // + filet de sécurité périodique (ignoré automatiquement si rien n'a changé : empreinte de contenu).
         window._gdAutoSaveInterval = setInterval(() => {
-            if (_gdConnected && _gdFolderId && !_gdSaving && !_gdRestoring) {
-                // Re-vérifier au moment de l'exécution (login peut avoir changé)
-                if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) return;
-                _gdDoSave();
-            }
+            if (_gdConnected && _gdFolderId && !_gdSaving && !_gdRestoring) _gdDoSave({ trigger: 'périodique' });
         }, 10 * 60 * 1000);
+        // COVO Sync : chaque modification (ici OU dans une app satellite) déclenche/relaie la sauvegarde
+        if (window.CovoSync) {
+            window.CovoSync.init({
+                app: 'covo',
+                onDirty: function() { _gdDebouncedSave(); },
+                onRelay: function(trg) {
+                    if (_gdConnected && _gdFolderId && !_gdSaving && !_gdRestoring) _gdDoSave({ trigger: trg || 'relais' });
+                }
+            });
+            // Modifications restées en attente (app fermée avant l'envoi, session expirée, satellite hors ligne…)
+            if (window.CovoSync.pending()) _gdDebouncedSave();
+        }
     }
 
     // ---- UI update ----
@@ -41660,16 +42099,20 @@ function initAdminSections() {
     const _origAutoSave = window._covoAutoSave;
 
     let _gdDebounceTimer = null;
+    let _gdDirtySince = 0;
     function _gdDebouncedSave() {
-        if (!_gdConnected || !_gdFolderId || _gdRestoring) return;
-        // isMaster : auto-save Drive désactivé — uniquement via bouton manuel
-        if ((typeof window._covoCurrentUser === 'function' && window._covoCurrentUser() && window._covoCurrentUser().isMaster)) {
-            _gdMarkDriveDirty();
-            return;
-        }
+        if (!_gdConnected || !_gdFolderId || _gdRestoring) return; // reste « en attente » (covo_drive_pending)
+        if (!_gdDirtySince) _gdDirtySince = Date.now();
         if (_gdDebounceTimer) clearTimeout(_gdDebounceTimer);
-        _gdDebounceTimer = setTimeout(() => { _gdDoSave(); }, 5000);
+        // 5 s après la dernière modification — mais jamais plus de ~60 s d'attente en cas de saisie continue
+        const _wait = (Date.now() - _gdDirtySince > 55000) ? 0 : 5000;
+        _gdDebounceTimer = setTimeout(() => {
+            _gdDebounceTimer = null;
+            _gdDirtySince = 0;
+            _gdDoSave({ trigger: 'auto' });
+        }, _wait);
     }
+
     window._gdTriggerAutoSave = _gdDebouncedSave;
 
     // ── NOTIFICATION FLOTTANTE : SAUVEGARDE DRIVE DISPONIBLE ──────────
@@ -42703,6 +43146,7 @@ function initAdminSections() {
                 if (data.covo_cagnotte)  localStorage.setItem('covo_cagnotte',  JSON.stringify(data.covo_cagnotte));
                 if (data.covo_real_balance)  localStorage.setItem('covo_real_balance',  JSON.stringify(data.covo_real_balance));
                 if (data.covo_devis)             localStorage.setItem('covo_devis',             JSON.stringify(data.covo_devis));
+                if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
             }
             if (selected.has('dettes')) {
                 if (data.covo_dettes)    localStorage.setItem('covo_dettes',    JSON.stringify(data.covo_dettes));
@@ -56678,6 +57122,7 @@ window._rachatRender=function(filter){
     if (btn) { btn.style.pointerEvents='none'; btn.style.opacity='0.7'; }
     if (lbl) lbl.textContent = 'Sauvegarde…';
     var okLocal=false, okBackup=false;
+    window._gdLastManualStatus = null;
     try {
       // 1) Persister l'état courant en local + synchro Drive si dispo (sauvegarde rapide)
       if (typeof window._masterManualSave === 'function') {
@@ -56690,7 +57135,10 @@ window._rachatRender=function(filter){
         try { await exportData(); okBackup=true; } catch(e){ console.warn('quickSave/export2',e); }
       }
       if (typeof showScanToast === 'function') {
-        if (okBackup)      showScanToast('✅ Sauvegarde manuelle effectuée — ' + new Date().toLocaleTimeString('fr-FR'), 'success');
+        var _ds = window._gdLastManualStatus;
+        var _dsMsg = { error:'échec d\'envoi, nouvel essai automatique', blocked:'bloquée par la protection anti-perte (voir l\'alerte)', offline:'session Google expirée — reconnectez Drive', nofolder:'aucun dossier choisi', busy:'envoi en cours, la vôtre suit' };
+        if (_ds && _dsMsg[_ds]) showScanToast('⚠️ Enregistré sur l\'appareil — Google Drive : ' + _dsMsg[_ds], 'info');
+        else if (okBackup) showScanToast('✅ Sauvegarde manuelle effectuée — ' + new Date().toLocaleTimeString('fr-FR'), 'success');
         else if (okLocal)  showScanToast('✅ Données enregistrées localement — ' + new Date().toLocaleTimeString('fr-FR'), 'success');
         else               showScanToast('⚠️ Sauvegarde indisponible pour le moment', 'error');
       }
