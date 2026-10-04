@@ -35,6 +35,10 @@
    3) Fournit les outils communs : empreinte de contenu (anti-doublon),
       resume chiffre de la sauvegarde (proprietes Drive), garde anti-perte
       multi-appareils, verrou inter-onglets, relais entre apps.
+   4) Admin-Developpeur : sauvegarde Drive AUTOMATIQUE desactivee par defaut a
+      chaque connexion (cle "covo_dev_autosave"), activable a la demande. Les
+      donnees restent enregistrees tout de suite sur l'appareil et "en attente"
+      jusqu'a une sauvegarde manuelle ou la reactivation de l'automatique.
    ========================================================================== */
 (function(){
     if (window.CovoSync) return;
@@ -54,12 +58,13 @@
     DATA_KEYS.forEach(function(k){ KEYSET[k] = 1; });
 
     var PENDING = 'covo_drive_pending', LOCK = 'covo_drive_lock', FPK = 'gdrive_last_fp', DEVK = 'covo_device_id';
+    var AUTOK = 'covo_dev_autosave', CUK = 'covo_current_user';
     var APP_NAMES = { covo:'COVO Pro', gestion:'Gestion Pro', caisse:'Caisse Pro', fidelite:'Fid\u00e9lit\u00e9 Pro',
         finances:'Finances Pro', investissement:'Approvisionnement Pro', historique:'Historique Pro',
         clotures:'Cl\u00f4tures Pro', admin:'Admin Pro' };
 
     var S = { muted: 0, app: 'covo', tab: 'T' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-              onDirty: null, onRelay: null, relayT: null, hb: null };
+              onDirty: null, onRelay: null, onPaused: null, relayT: null, hb: null };
 
     function rget(k) { try { return _get.call(LS, k); } catch(e) { return null; } }
     function rset(k, v) { try { _set.call(LS, k, v); } catch(e) {} }
@@ -70,6 +75,24 @@
         if (!d) { d = 'D' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); rset(DEVK, d); }
         return d;
     }
+    // ---- Admin-Developpeur : sauvegarde automatique au choix (desactivee par defaut a la connexion) ----
+    function isDevUser(u) { return !!(u && (u.isMaster || u.id === 'USR-MASTER')); }
+    function curUser() { try { return JSON.parse(rget(CUK) || 'null'); } catch(e) { return null; } }
+    function devAutoOn() { return rget(AUTOK) === '1'; }
+    function autoAllowed() { return !isDevUser(curUser()) || devAutoOn(); }
+    function fire(name, detail) {
+        try { window.dispatchEvent(new CustomEvent(name, { detail: detail || {} })); } catch(e) {}
+    }
+    function notifyPaused() {
+        if (typeof S.onPaused === 'function') { try { S.onPaused(); } catch(e) {} }
+        fire('covo-autosave-paused');
+    }
+    function setDevAuto(on) {
+        rset(AUTOK, on ? '1' : '0');
+        fire('covo-autosave-change', { on: !!on });
+        // Reactivee : les modifications en attente partent tout de suite
+        if (on && rget(PENDING) && typeof S.onDirty === 'function') { try { S.onDirty('autosave-on'); } catch(e) {} }
+    }
     function isMuted() { return S.muted > 0 || window._restoreInProgress === true || window._covoSyncMute === true; }
 
     function markDirty(key) {
@@ -77,14 +100,26 @@
         rset(PENDING, now);
         rset('covo_last_local_change', now);
         if (typeof S.onDirty === 'function') { try { S.onDirty(key); } catch(e) {} }
+        if (!autoAllowed()) notifyPaused();
     }
 
     // ---- Interception : toute ecriture qui CHANGE une donnee metier = modification ----
     SP.setItem = function(k, v) {
         var watch = (this === LS) && KEYSET[k] === 1 && !isMuted();
         var before = watch ? rget(k) : null;
+        var cuBefore = (this === LS && k === CUK) ? rget(CUK) : null;
         var r = _set.apply(this, arguments);
         if (watch) { try { if (rget(k) !== before) markDirty(k); } catch(e) {} }
+        if (this === LS && k === CUK) {
+            // Nouvelle connexion en Admin-Developpeur => sauvegarde automatique Drive DESACTIVEE par defaut
+            // (une simple mise a jour de la session du meme compte, ex. rechargement de page, ne change rien)
+            try {
+                var prevU = null; try { prevU = JSON.parse(cuBefore || 'null'); } catch(e2) {}
+                var newU = curUser();
+                if (isDevUser(newU) && !isDevUser(prevU)) rset(AUTOK, '0');
+                if (rget(CUK) !== cuBefore) fire('covo-autosave-change', { on: devAutoOn() });
+            } catch(e) {}
+        }
         return r;
     };
     SP.removeItem = function(k) {
@@ -92,6 +127,7 @@
         var before = watch ? rget(k) : null;
         var r = _rem.apply(this, arguments);
         if (watch && before !== null) { try { markDirty(k); } catch(e) {} }
+        if (this === LS && k === CUK) fire('covo-autosave-change', { on: devAutoOn() }); // deconnexion
         return r;
     };
 
@@ -228,12 +264,18 @@
         S.relayT = setTimeout(function() {
             var p = rget(PENDING);
             if (!p || typeof S.onRelay !== 'function') return;
+            if (!autoAllowed()) { notifyPaused(); return; } // Admin-Developpeur : envoi manuel uniquement
             if (Date.now() - Date.parse(p) < 15000) { scheduleRelay(); return; }
             try { S.onRelay('relais'); } catch(e) {}
         }, 20000 + Math.floor(Math.random() * 10000));
     }
     window.addEventListener('storage', function(e) {
         if (e.key === PENDING && e.newValue) scheduleRelay();
+        if (e.key === AUTOK) {
+            fire('covo-autosave-change', { on: e.newValue === '1' });
+            if (e.newValue === '1' && rget(PENDING)) scheduleRelay();
+        }
+        if (e.key === CUK) fire('covo-autosave-change', { on: devAutoOn() });
     });
 
     function init(opts) {
@@ -241,11 +283,12 @@
         if (opts.app) S.app = opts.app;
         if (typeof opts.onDirty === 'function') S.onDirty = opts.onDirty;
         if (typeof opts.onRelay === 'function') S.onRelay = opts.onRelay;
+        if (typeof opts.onPaused === 'function') S.onPaused = opts.onPaused;
         if (!S.hb) {
             // Filet de securite : toute modification restee en attente > 90 s est renvoyee
             S.hb = setInterval(function() {
                 var p = rget(PENDING);
-                if (p && typeof S.onRelay === 'function' && (Date.now() - Date.parse(p)) > 90000) {
+                if (p && typeof S.onRelay === 'function' && (Date.now() - Date.parse(p)) > 90000 && autoAllowed()) {
                     try { S.onRelay('reprise'); } catch(e) {}
                 }
             }, 60000);
@@ -260,7 +303,9 @@
         fingerprint: fingerprint, serialize: serialize, finalize: finalize, summary: summary, guard: guard,
         pending: pending, clearPending: clearPending, tryLock: tryLock, unlock: unlock, recordSaved: recordSaved,
         lastFp: function() { return rget(FPK); }, init: init, muteOn: muteOn, muteOff: muteOff,
-        appName: function(code) { return APP_NAMES[code] || code || ''; }
+        appName: function(code) { return APP_NAMES[code] || code || ''; },
+        autoAllowed: autoAllowed, devAutoOn: devAutoOn, setDevAuto: setDevAuto,
+        isDevUser: function() { return isDevUser(curUser()); }
     };
 })();
 </script>
@@ -4153,7 +4198,14 @@ button, .btn, .retours-btn {
             <span id="gd-dev-dirty-badge" title="Drive non synchronisé" onclick="window.gdriveSaveNow && window.gdriveSaveNow()"
                 style="display:none;align-items:center;gap:5px;background:linear-gradient(135deg,#4285F4,#34A853);color:white;border-radius:10px;padding:3px 10px;cursor:pointer;font-weight:800;font-size:0.72rem;white-space:nowrap;"
                 onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter=''">
-                ☁️ <span>Sync Drive</span>
+                ☁️ <span>Drive pas à jour</span>
+            </span>
+            <!-- Interrupteur SAUVEGARDE AUTOMATIQUE Drive — Admin-Développeur uniquement (désactivée par défaut à la connexion) -->
+            <span id="dev-autosave-chip" onclick="window._devAutoSaveToggle && window._devAutoSaveToggle()" role="switch" aria-checked="false"
+                title="Sauvegarde automatique Google Drive"
+                style="display:none;align-items:center;gap:5px;background:linear-gradient(135deg,#7f8c8d,#5d6d7e);color:white;border-radius:10px;padding:3px 10px;cursor:pointer;transition:all 0.15s;user-select:none;font-weight:800;font-size:0.72rem;white-space:nowrap;"
+                onmouseover="this.style.filter='brightness(1.12)'" onmouseout="this.style.filter=''">
+                <span id="dev-autosave-chip-ico">⏸️</span> <span id="dev-autosave-chip-txt">Auto-save OFF</span>
             </span>
             <!-- Bouton sauvegarde master (barre du haut) -->
             <span id="master-save-bar" onclick="window._masterManualSave()" title="Sauvegarder toutes les modifications"
@@ -6531,6 +6583,24 @@ button, .btn, .retours-btn {
                 <button class="deploy-toggle-btn" id="btn-admin-sec-dev-body" onclick="event.stopPropagation();toggleAdminSection('admin-sec-dev-body')"><span class="arrow">&#9660;</span> <span class="btn-label">D&eacute;ployer</span></button>
             </div>
             <div class="admin-section-body" id="admin-sec-dev-body">
+
+                <!-- ── Sauvegarde automatique Google Drive (au choix) ───────────── -->
+                <div style="background:var(--bg-body,#f8fafc);border:1.5px solid rgba(66,133,244,0.4);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                        <div style="width:30px;height:30px;background:linear-gradient(135deg,#4285F4,#1a73e8);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.9rem;flex-shrink:0;">☁️</div>
+                        <div>
+                            <div style="font-size:0.72rem;font-weight:800;color:#1a73e8;text-transform:uppercase;letter-spacing:0.8px;">Sauvegarde automatique Google Drive</div>
+                            <div style="font-size:0.65rem;color:var(--text-muted,#888);margin-top:1px;">Désactivée par défaut à chaque connexion Admin-Développeur</div>
+                        </div>
+                    </div>
+                    <div id="dev-autosave-status" style="padding:10px 14px;border-radius:9px;margin-bottom:12px;font-size:0.8rem;font-weight:600;line-height:1.5;"></div>
+                    <button id="dev-autosave-btn" type="button" onclick="window._devAutoSaveToggle && window._devAutoSaveToggle()"
+                        style="padding:9px 16px;border:none;border-radius:9px;font-weight:800;font-size:0.82rem;cursor:pointer;color:white;background:linear-gradient(135deg,#27ae60,#1e8449);">▶️ Activer la sauvegarde automatique</button>
+                    <div style="font-size:0.7rem;color:var(--text-muted,#888);margin-top:10px;line-height:1.5;">
+                        Désactivée : vos modifications sont enregistrées tout de suite sur cet appareil, puis envoyées sur Drive uniquement quand vous cliquez sur « 💾 Sauvegarder » ou « ☁️ Sync Drive ».
+                        Ce choix vaut aussi pour les apps satellites (Gestion, Caisse, Fidélité…) ouvertes sur cet appareil.
+                    </div>
+                </div>
 
                 <!-- ── Droits spéciaux : tarif d'achat ───────────────────────── -->
                 <div style="background:var(--bg-body,#f8fafc);border:1.5px solid rgba(245,158,11,0.4);border-radius:12px;padding:18px 20px;margin-bottom:16px;">
@@ -11679,6 +11749,8 @@ function toggleInfoSection(headerElement) {
             currentUser = user;
             isAdmin = user.role === 'admin';
             localStorage.setItem('covo_current_user', JSON.stringify(currentUser));
+            // Admin-Développeur : sauvegarde automatique Drive désactivée par défaut à chaque connexion
+            if (user.isMaster && window.CovoSync && window.CovoSync.setDevAuto) window.CovoSync.setDevAuto(false);
             // Session active (refresh-proof, mais pas cross-onglet/fermeture)
             sessionStorage.setItem('covo_session', JSON.stringify(currentUser));
             // Mémoriser le dernier utilisateur identifié (sans mot de passe)
@@ -18385,13 +18457,25 @@ function toggleInfoSection(headerElement) {
     }
 
     // Bouton 🚪 Déconnexion du header — vérifie les sauvegardes isMaster
+    // La fenêtre d'avertissement n'existait que dans un modèle d'export (jamais dans la page) :
+    // elle est désormais créée à la demande, sinon l'avertissement ne s'affichait jamais.
+    function _masterEnsureLogoutModal() {
+        if (document.getElementById('master-logout-warning-modal')) return;
+        var w = document.createElement('div');
+        w.innerHTML = "<!-- ===== MODAL AVERTISSEMENT D\u00c9CONNEXION (isMaster) ===== -->\n<div id=\"master-logout-warning-modal\" style=\"display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:99999;align-items:center;justify-content:center;backdrop-filter:blur(4px);\">\n    <div id=\"master-logout-warning-inner\" style=\"background:var(--bg-card,#fff);border-radius:18px;padding:0;max-width:440px;width:calc(100% - 32px);box-shadow:0 24px 70px rgba(0,0,0,0.45);overflow:hidden;\">\n        <div style=\"background:linear-gradient(135deg,#c0392b 0%,#e74c3c 100%);padding:26px 24px 20px;text-align:center;position:relative;\">\n            <div style=\"position:absolute;top:-20px;right:-15px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,0.07);pointer-events:none;\"></div>\n            <div style=\"font-size:2.8rem;margin-bottom:8px;line-height:1;\">\u26a0\ufe0f</div>\n            <div style=\"font-size:1.1rem;font-weight:900;color:#fff;letter-spacing:-0.2px;\">Modifications non sauvegard\u00e9es</div>\n            <div style=\"font-size:0.78rem;color:rgba(255,255,255,0.82);margin-top:5px;\">\n                Vous avez <span id=\"logout-warn-count\" style=\"font-weight:900;font-size:0.9rem;background:rgba(255,255,255,0.2);padding:1px 7px;border-radius:10px;\">0</span> modification(s) en attente\n            </div>\n        </div>\n        <div style=\"padding:20px 24px 14px;\">\n            <p style=\"font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;\">\n                Vous \u00eates connect\u00e9 en tant qu'<strong>Administrateur D\u00e9veloppeur</strong>.<br>\n                Certaines modifications <span style=\"color:#e74c3c;font-weight:700;\">ne sont pas encore sur Google Drive</span> (elles restent sur cet appareil). Sauvegardez avant de partir.\n            </p>\n            <div id=\"logout-warn-lastsave\" style=\"font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;\"></div>\n        </div>\n        <div style=\"padding:8px 24px 24px;display:flex;flex-direction:column;gap:9px;\">\n            <button onclick=\"_masterSaveAndLogout()\" style=\"width:100%;padding:13px 16px;background:linear-gradient(135deg,#27ae60,#229954);color:white;border:none;border-radius:11px;font-weight:800;font-size:0.92rem;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(39,174,96,0.3);\">\n                \ud83d\udcbe Sauvegarder et se d\u00e9connecter\n            </button>\n            <button onclick=\"_masterForceLogout()\" style=\"width:100%;padding:11px 16px;background:var(--bg-body,#fff8f8);color:#c0392b;border:1.5px solid rgba(192,57,43,0.35);border-radius:11px;font-weight:700;font-size:0.88rem;cursor:pointer;\">\n                \ud83d\udeaa Quitter sans sauvegarder\n            </button>\n            <button onclick=\"document.getElementById('master-logout-warning-modal').style.display='none'\" style=\"width:100%;padding:10px 16px;background:none;color:var(--gray,#888);border:1.5px solid var(--border-color,#e0e0e0);border-radius:11px;font-size:0.85rem;cursor:pointer;\">\n                \u2715 Annuler \u2014 continuer \u00e0 travailler\n            </button>\n        </div>\n    </div>\n</div>";
+        var m = w.querySelector('#master-logout-warning-modal');
+        if (m) document.body.appendChild(m);
+    }
     function _masterCheckLogout() {
+        _masterEnsureLogoutModal();
         const dirty = window._masterDirtyCount || 0;
-        if (currentUser && currentUser.isMaster && dirty > 0) {
+        const _CSx = window.CovoSync;
+        const _unsentDrive = !!(_CSx && _CSx.autoAllowed && !_CSx.autoAllowed() && _CSx.pending());
+        if (currentUser && currentUser.isMaster && (dirty > 0 || _unsentDrive)) {
             const modal = document.getElementById('master-logout-warning-modal');
             if (modal) {
                 const countEl = document.getElementById('logout-warn-count');
-                if (countEl) countEl.textContent = dirty;
+                if (countEl) countEl.textContent = dirty > 0 ? dirty : 'des';
                 const lastSaveEl = document.getElementById('logout-warn-lastsave');
                 if (lastSaveEl) {
                     const lastSave = localStorage.getItem('covo_last_save');
@@ -18417,13 +18501,15 @@ function toggleInfoSection(headerElement) {
     }
 
     // Sauvegarder vers Drive puis se déconnecter
-    function _masterSaveAndLogout() {
+    async function _masterSaveAndLogout() {
         const modal = document.getElementById('master-logout-warning-modal');
         if (modal) modal.style.display = 'none';
+        // Sauvegarde MANUELLE (fonctionne même si la sauvegarde automatique est désactivée), puis déconnexion
         try {
-            if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
+            if (typeof window._masterManualSave === 'function') await window._masterManualSave();
+            else if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave();
         } catch(e) {}
-        setTimeout(function() { logout(true); }, 900);
+        setTimeout(function() { logout(true); }, 400);
     }
 
     // ===== MOT DE PASSE ADMIN-DÉVELOPPEUR (admin-sec-dev) =====
@@ -27008,6 +27094,12 @@ logout = function(skipConfirmation = false) {
             }
         }
     }
+    window._updateMasterFab = _updateMasterFab;
+    var _origUpdateMasterFab = _updateMasterFab;
+    _updateMasterFab = function() {
+        _origUpdateMasterFab.apply(this, arguments);
+        if (typeof window._devAutoSaveUI === 'function') window._devAutoSaveUI();
+    };
     window._updateMasterFab = _updateMasterFab;
 
     // Basculer entre FAB flottant et barre du haut
@@ -37494,7 +37586,7 @@ function _catBuildPrintHTML() {
         <div style="padding:20px 24px 14px;">
             <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
                 Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
-                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+                Certaines modifications <span style="color:#e74c3c;font-weight:700;">ne sont pas encore sur Google Drive</span> (elles restent sur cet appareil). Sauvegardez avant de partir.
             </p>
             <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
         </div>
@@ -38885,7 +38977,7 @@ function exportMarcPDF(type) {
         <div style="padding:20px 24px 14px;">
             <p style="font-size:0.87rem;color:var(--text-main,#2c3e50);margin:0 0 10px;line-height:1.6;">
                 Vous êtes connecté en tant qu'<strong>Administrateur Développeur</strong>.<br>
-                Si vous vous déconnectez maintenant, toutes les modifications <span style="color:#e74c3c;font-weight:700;">non sauvegardées seront perdues</span>.
+                Certaines modifications <span style="color:#e74c3c;font-weight:700;">ne sont pas encore sur Google Drive</span> (elles restent sur cet appareil). Sauvegardez avant de partir.
             </p>
             <div id="logout-warn-lastsave" style="font-size:0.75rem;color:var(--gray,#888);padding:8px 12px;background:var(--bg-body,#f8f9fa);border-radius:9px;border:1px solid var(--border-color,#e0e0e0);display:none;"></div>
         </div>
@@ -41407,6 +41499,7 @@ function initAdminSections() {
             return 'nofolder';
         }
         const _gdForced = !!window._gdForceNextSave;
+        if (!_manual && !_gdForced && _devAutoPaused()) { _devAutoSaveUI(); return 'paused'; }
         if (!_manual && !_gdForced && Date.now() < _gdGuardSnoozeUntil) { _gdMarkDriveDirty(); return 'snoozed'; }
         const _CS = window.CovoSync || null;
         if (_CS && !_CS.tryLock()) {
@@ -42062,7 +42155,8 @@ function initAdminSections() {
                 onDirty: function() { _gdDebouncedSave(); },
                 onRelay: function(trg) {
                     if (_gdConnected && _gdFolderId && !_gdSaving && !_gdRestoring) _gdDoSave({ trigger: trg || 'relais' });
-                }
+                },
+                onPaused: function() { _devAutoSaveUI(); }
             });
             // Modifications restées en attente (app fermée avant l'envoi, session expirée, satellite hors ligne…)
             if (window.CovoSync.pending()) _gdDebouncedSave();
@@ -42101,6 +42195,9 @@ function initAdminSections() {
     let _gdDebounceTimer = null;
     let _gdDirtySince = 0;
     function _gdDebouncedSave() {
+        // Admin-Développeur avec sauvegarde automatique désactivée : rien n'est envoyé tout seul,
+        // la modification reste « en attente » (enregistrée sur l'appareil) jusqu'au clic sur « Sauvegarder ».
+        if (_devAutoPaused()) { _devAutoSaveUI(); return; }
         if (!_gdConnected || !_gdFolderId || _gdRestoring) return; // reste « en attente » (covo_drive_pending)
         if (!_gdDirtySince) _gdDirtySince = Date.now();
         if (_gdDebounceTimer) clearTimeout(_gdDebounceTimer);
@@ -42114,6 +42211,69 @@ function initAdminSections() {
     }
 
     window._gdTriggerAutoSave = _gdDebouncedSave;
+
+    // ── ADMIN-DÉVELOPPEUR : SAUVEGARDE AUTOMATIQUE DRIVE AU CHOIX ─────────────────────
+    // Par défaut DÉSACTIVÉE à chaque connexion en Admin-Développeur (noyau COVO Sync, clé
+    // « covo_dev_autosave »). Les données sont toujours écrites immédiatement sur l'appareil ;
+    // seul l'envoi automatique vers Google Drive est suspendu (COVO Pro ET apps satellites).
+    function _devAutoPaused() {
+        return !!(window.CovoSync && window.CovoSync.autoAllowed && !window.CovoSync.autoAllowed());
+    }
+    function _devAutoSaveUI() {
+        var CS = window.CovoSync;
+        var isDev = !!(CS && CS.isDevUser && CS.isDevUser());
+        var on = !!(CS && CS.devAutoOn && CS.devAutoOn());
+        var pend = !!(CS && CS.pending && CS.pending());
+        var chip = document.getElementById('dev-autosave-chip');
+        if (chip) {
+            chip.style.display = isDev ? 'inline-flex' : 'none';
+            chip.style.background = on ? 'linear-gradient(135deg,#27ae60,#1e8449)' : 'linear-gradient(135deg,#7f8c8d,#5d6d7e)';
+            chip.setAttribute('aria-checked', on ? 'true' : 'false');
+            chip.title = on
+                ? 'Sauvegarde automatique Google Drive ACTIVÉE — cliquez pour la désactiver'
+                : 'Sauvegarde automatique Google Drive DÉSACTIVÉE — vos modifications restent sur cet appareil jusqu\'au clic sur « 💾 Sauvegarder ». Cliquez pour l\'activer.';
+            var ico = document.getElementById('dev-autosave-chip-ico');
+            var tx = document.getElementById('dev-autosave-chip-txt');
+            if (ico) ico.textContent = on ? '🔄' : '⏸️';
+            if (tx) tx.textContent = on ? 'Auto-save ON' : 'Auto-save OFF';
+        }
+        var st = document.getElementById('dev-autosave-status');
+        if (st) {
+            st.innerHTML = on
+                ? '🟢 <b>Activée</b> — chaque modification est envoyée automatiquement sur Google Drive.'
+                : '⏸️ <b>Désactivée</b> — rien n\'est envoyé automatiquement sur Google Drive.'
+                  + (pend ? '<br><span style="color:#c0392b;">☁️ Des modifications attendent d\'être envoyées — cliquez sur « 💾 Sauvegarder ».</span>' : '');
+            st.style.background = on ? 'rgba(39,174,96,0.1)' : 'rgba(127,140,141,0.12)';
+            st.style.color = on ? '#1e8449' : 'var(--text-main,#2c3e50)';
+        }
+        var btn = document.getElementById('dev-autosave-btn');
+        if (btn) {
+            btn.textContent = on ? '⏸️ Désactiver la sauvegarde automatique' : '▶️ Activer la sauvegarde automatique';
+            btn.style.background = on ? 'linear-gradient(135deg,#7f8c8d,#5d6d7e)' : 'linear-gradient(135deg,#27ae60,#1e8449)';
+        }
+        // Rappel visuel « ☁️ Sync Drive » tant que des modifications ne sont pas sur Drive
+        if (isDev && !on && pend) _gdMarkDriveDirty();
+    }
+    window._devAutoSaveUI = _devAutoSaveUI;
+    window._devAutoSaveToggle = function() {
+        var CS = window.CovoSync;
+        if (!CS || !CS.setDevAuto || !CS.isDevUser()) return;
+        var on = !CS.devAutoOn();
+        var pend = !!CS.pending();
+        CS.setDevAuto(on); // activée avec des modifications en attente → envoi automatique immédiat
+        if (on && pend && !_gdConnected) {
+            showScanToast('🔄 Sauvegarde automatique activée — connectez Google Drive pour envoyer les modifications en attente', 'info');
+        } else {
+            showScanToast(on
+                ? ('🔄 Sauvegarde automatique Drive activée' + (pend ? ' — envoi des modifications en attente…' : ''))
+                : '⏸️ Sauvegarde automatique Drive désactivée — utilisez « 💾 Sauvegarder » pour envoyer sur Drive',
+                on ? 'success' : 'info');
+        }
+        _devAutoSaveUI();
+    };
+    window.addEventListener('covo-autosave-change', function() { _devAutoSaveUI(); });
+    window.addEventListener('covo-autosave-paused', function() { _devAutoSaveUI(); });
+    setTimeout(_devAutoSaveUI, 600);
 
     // ── NOTIFICATION FLOTTANTE : SAUVEGARDE DRIVE DISPONIBLE ──────────
     let _gdCheckTimer = null;
