@@ -3120,6 +3120,9 @@ window.cpMaybeShowInstallBanner = function(){
         #fab-msg.has-urgent { animation: fabMsgUrgent 0.6s ease-in-out infinite !important; border-color: #f39c12 !important; }
         /* Bulle « 💬 Messages » flottante supprimée (demande) : masquée partout, quel que soit le compte */
         #fab-msg { display: none !important; }
+        /* Bulle « ☁️ Mise à jour Google Drive » (et sa carte dépliée) supprimées (demande) — la restauration
+           reste disponible depuis le panneau Google Drive / la liste des sauvegardes */
+        #gd-update-fab, #gd-update-notification { display: none !important; }
         @keyframes fabMsgPulse {
             0%,100% { box-shadow: 0 4px 20px rgba(21,101,192,0.5); transform: scale(1); }
             50% { box-shadow: 0 6px 28px rgba(231,76,60,0.7); transform: scale(1.05); }
@@ -46513,8 +46516,26 @@ function initAdminSections() {
         return _notifMemCache || [];
     };
 
+    // Partage instantané entre les onglets COVO Pro du même appareil (sans attendre Google Drive)
+    var _notifBC = null;
+    try {
+        if (window.BroadcastChannel) {
+            _notifBC = new BroadcastChannel('covo-admin-notifs');
+            _notifBC.onmessage = function(ev) {
+                var d = ev && ev.data;
+                if (!d || !Array.isArray(d.list)) return;
+                _notifMemCache = d.list;
+                try { _notifUpdateAdminBadge(); window._notifRenderAdmin(); } catch(e) {}
+                _notifRecount();
+                if (typeof window._awFeedRefresh === 'function') window._awFeedRefresh();
+                _notifPollCheck();
+            };
+        }
+    } catch(e) { _notifBC = null; }
     window._notifSave = function(list) {
         _notifMemCache = list;
+        try { if (_notifBC) _notifBC.postMessage({ list: list }); } catch(e) {}
+        setTimeout(_notifRecount, 0);
         // Upload Drive en arrière-plan
         setTimeout(function() { _notifDriveUpload(list); }, 200);
     };
@@ -47000,9 +47021,15 @@ function initAdminSections() {
         });
 
         if (changed) {
+            // Correctif : la liste fusionnée n'était écrite QUE dans localStorage, alors que l'app lit
+            // les notifications en mémoire (_notifLoad) — les nouveautés reçues par ce chemin
+            // n'apparaissaient donc jamais avant le prochain démarrage.
+            _notifMemCache = merged;
             localStorage.setItem(NOTIF_KEY, JSON.stringify(merged));
             if (typeof window._notifRenderAdmin === 'function') window._notifRenderAdmin();
             _notifUpdateAdminBadge();
+            _notifRecount();
+            if (typeof window._awFeedRefresh === 'function') window._awFeedRefresh();
         }
         return changed;
     };
@@ -47057,9 +47084,9 @@ function initAdminSections() {
                 await _notifDriveDownload(true);
                 _notifPollCheck();
             }, 3000);
-            // Puis toutes les 60 secondes
+            // Puis toutes les 30 secondes (+ immédiatement au retour sur l'app, voir module « COVO Live »)
             if (_notifPollTimer) clearInterval(_notifPollTimer);
-            _notifPollTimer = setInterval(_notifDrivePollCheck, 60000);
+            _notifPollTimer = setInterval(_notifDrivePollCheck, 30000);
         }
 
         if (document.readyState === 'loading') {
@@ -47204,6 +47231,20 @@ function initAdminSections() {
         return !_notifIsAckedBy(n, user);
     }
 
+    // ─── Recompte immédiat du voyant pour le compte connecté ──────────────────
+    // (avant : recalculé seulement après un échange avec Google Drive → valeur figée
+    //  après une connexion, une lecture ou une notification reçue d'un autre onglet)
+    function _notifRecount() {
+        var el = document.getElementById('notif-sync-indicator');
+        if (!el || /nsi-(syncing|error|pending)/.test(el.className || '')) return;
+        var user = _notifGetCurrentUser();
+        var p = (window._notifLoad() || []).filter(function(n) { return _notifIsPendingFor(n, user); }).length;
+        var lbl = document.getElementById('notif-sync-label');
+        if (lbl) lbl.textContent = p > 0 ? ('🔔 ' + p + ' en attente') : '✓ Synchronisé';
+    }
+    window._notifRecount = _notifRecount;
+    window._notifPollNow = function() { return _notifDrivePollCheck(); };
+
     // ─── API publique (fenêtre d'accueil) ────────────────────────────────────
     window._notifApi = {
         list: function() { return window._notifLoad(); },
@@ -47232,6 +47273,7 @@ function initAdminSections() {
             }
             _notifUpdateAdminBadge();
             window._notifRenderAdmin();
+            _notifRecount();
             return true;
         },
         // Nouvelle notification (mêmes champs que le formulaire du panneau Admin)
@@ -54524,6 +54566,7 @@ function _resvNotify(customer,r,currentStock){
     }
   }catch(e){}
 }
+window._resvCheckRestock=_resvCheckRestock; /* utilisé aussi pour un réapprovisionnement fait dans une autre app (module « COVO Live ») */
 /* Surveiller les hausses de stock (réapprovisionnement) */
 var _origLogStock=window._logStockChange;
 /* Synchronise l'échéance (DLC) d'un produit dans covo_echeances */
@@ -58149,6 +58192,218 @@ window._rachatRender=function(filter){
         // Réservations et stock modifiés dans COVO Pro même (vente, réception, fiche client…)
         setInterval(bubbleUpdate, 8000);
         setTimeout(bubbleUpdate, 2500);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   COVO LIVE — notifications et réservations à jour EN CONTINU
+   Avant : la bulle « clients ont réservé », le compteur de l'onglet Fidélité, la liste
+   des clients et le voyant « 🔔 x en attente » ne se recalculaient qu'à la connexion
+   (ou quand Fidélité Pro réécrivait les données en s'ouvrant).
+   Maintenant, tout est recalculé :
+   • dès qu'une autre app / un autre onglet modifie clients, réservations ou stock ;
+   • dès qu'une modification est faite dans COVO Pro même (contrôle toutes les 4 s) ;
+   • au retour sur l'application (onglet réaffiché, fenêtre réactivée) ;
+   • à chaque connexion / changement de compte.
+   Un réapprovisionnement fait dans une autre app (Gestion, Approvisionnement…) déclenche
+   aussi l'alerte « 🔔 Stock disponible — réservation client ».
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoLiveInstalled) return;
+    window._covoLiveInstalled = true;
+
+    var WATCH = ['covo_loyalty', 'covo_products'];
+    var last = {}, stockSnap = null, ltyPending = false;
+
+    function rd(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function stocksOf(json) {
+        var m = {};
+        try { (JSON.parse(json || '[]') || []).forEach(function (p) { if (p && p.id != null) m[String(p.id)] = parseFloat(p.stock) || 0; }); } catch (e) {}
+        return m;
+    }
+    function busy() {
+        var a = document.activeElement;
+        if (!a || a === document.body || a.id === 'lty-srch') return false;
+        return /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || !!a.isContentEditable;
+    }
+    function ltyVisible() { var s = document.getElementById('lty-list-inner') || document.getElementById('tab-fidelite'); return !!(s && s.offsetParent !== null); }
+
+    function refreshAll() {
+        try { if (window._awResvBubbleUpdate) window._awResvBubbleUpdate(); } catch (e) {}
+        try { if (window._awFeedRefresh) window._awFeedRefresh(); } catch (e) {}
+        try { if (window._ltyCreditBadgeRefresh) window._ltyCreditBadgeRefresh(); } catch (e) {}
+        try { if (window._notifRecount) window._notifRecount(); } catch (e) {}
+        if (ltyVisible()) {
+            if (busy()) ltyPending = true; // pas pendant une saisie : on reprend juste après
+            else { ltyPending = false; try { if (window._ltyRefresh) window._ltyRefresh(); } catch (e) {} }
+        }
+    }
+    window._covoLiveRefresh = refreshAll;
+
+    // Réapprovisionnement venu d'une autre app → alerte « Stock disponible » pour les réservations
+    function checkRestock(json) {
+        var now = stocksOf(json);
+        if (stockSnap && typeof window._resvCheckRestock === 'function') {
+            Object.keys(now).forEach(function (id) {
+                if (stockSnap[id] != null && now[id] > stockSnap[id] + 1e-9) {
+                    try { window._resvCheckRestock(id, now[id]); } catch (e) {}
+                }
+            });
+        }
+        stockSnap = now;
+    }
+
+    // 1) Modifications faites ailleurs (Fidélité Pro, Caisse Pro, Gestion Pro, autre onglet…)
+    window.addEventListener('storage', function (e) {
+        if (!e.key) return;
+        if (e.key === 'covo_products') checkRestock(e.newValue);
+        if (WATCH.indexOf(e.key) >= 0) { last[e.key] = e.newValue; setTimeout(refreshAll, 60); }
+        else if (e.key === 'covo_current_user') setTimeout(refreshAll, 60);
+    });
+
+    // 2) Modifications faites dans COVO Pro même (vente, réservation, réception de marchandise…)
+    function tick() {
+        var changed = false;
+        WATCH.forEach(function (k) {
+            var v = rd(k);
+            if (v !== last[k]) { last[k] = v; changed = true; if (k === 'covo_products') stockSnap = stocksOf(v); }
+        });
+        if (changed) refreshAll();
+        else if (ltyPending && !busy()) refreshAll();
+    }
+
+    // 3) Retour sur l'application : tout est revérifié tout de suite (dont les notifications Drive)
+    function onReturn() {
+        if (document.visibilityState === 'hidden') return;
+        refreshAll();
+        try { if (window._notifPollNow) window._notifPollNow(); } catch (e) {}
+    }
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+
+    // 4) Connexion / déconnexion / changement de compte
+    window.addEventListener('covo-autosave-change', function () { setTimeout(refreshAll, 150); });
+
+    function init() {
+        WATCH.forEach(function (k) { last[k] = rd(k); });
+        stockSnap = stocksOf(last.covo_products);
+        setInterval(tick, 4000);
+        setTimeout(refreshAll, 3000);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   RÉSERVATIONS DU PORTAIL CLIENT — RÉCUPÉRÉES EN CONTINU PENDANT QUE COVO PRO EST OUVERT
+   Cause du problème : les réservations faites par les clients dans « Mon espace fidélité »
+   ne sont importées que par Fidélité Pro (seule app autorisée à les lire), et seulement
+   pendant qu'il est ouvert. COVO Pro ne les voyait donc qu'après l'ouverture de Fidélité Pro.
+   Solution : COVO Pro ouvre Fidélité Pro en arrière-plan, invisible (même site = mêmes
+   données). Son import automatique (à l'ouverture puis toutes les 60 s) tourne donc dès
+   que COVO Pro est affiché ; les identifiants restent uniquement dans Fidélité Pro.
+   Chaque nouvelle réservation reçue crée une notification « 📥 Nouvelle réservation ».
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoPortalBgInstalled) return;
+    window._covoPortalBgInstalled = true;
+
+    var FRAME_ID = 'covo-fid-bg';
+    var NOTIFIED_KEY = 'covo_portal_resv_notified';
+
+    function cu() {
+        try { if (typeof currentUser !== 'undefined' && currentUser) return currentUser; } catch (e) {}
+        try { return JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) { return null; }
+    }
+    function fidUrl() {
+        if (window._covoFidBgUrl) return window._covoFidBgUrl;                 // (tests)
+        if (/\.github\.io$/.test(location.hostname)) return location.origin + '/Fid-lit-Pro/?bg=1';
+        return null;                                                              // autre hébergement : pas de données partagées
+    }
+    function bgEnabled() { try { return localStorage.getItem('covo_portal_bg_import') !== '0'; } catch (e) { return true; } }
+
+    function removeBg() { var f = document.getElementById(FRAME_ID); if (f) f.remove(); }
+    function ensureBg() {
+        var url = fidUrl();
+        if (!url || !bgEnabled() || !cu()) { removeBg(); return; }
+        if (document.visibilityState === 'hidden' || document.getElementById(FRAME_ID)) return;
+        var f = document.createElement('iframe');
+        f.id = FRAME_ID;
+        f.src = url;
+        f.title = 'Fidélité Pro — réservations du portail (arrière-plan)';
+        // Pas de fenêtres surgissantes ni de navigation : seul le travail de fond est autorisé
+        f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        f.setAttribute('aria-hidden', 'true');
+        f.setAttribute('tabindex', '-1');
+        f.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:2px;height:2px;border:0;opacity:0;pointer-events:none;';
+        document.body.appendChild(f);
+    }
+    window._covoPortalBgEnsure = ensureBg;
+
+    /* Notification à chaque nouvelle réservation arrivée du portail */
+    function portalResv(json) {
+        var m = {};
+        try {
+            ((JSON.parse(json || '{}') || {}).customers || []).forEach(function (c) {
+                (c.reservations || []).forEach(function (r) { if (r && r.source === 'portail' && r.portalKey) m[r.portalKey] = { c: c, r: r }; });
+            });
+        } catch (e) {}
+        return m;
+    }
+    var known = null;
+    function notified() { try { return JSON.parse(localStorage.getItem(NOTIFIED_KEY) || '[]') || []; } catch (e) { return []; } }
+    function onLoyalty(json) {
+        var now = portalResv(json);
+        if (known === null) { known = now; return; }
+        var done = notified(), fresh = [];
+        Object.keys(now).forEach(function (k) { if (!known[k] && done.indexOf(k) === -1) fresh.push(now[k]); });
+        known = now;
+        if (!fresh.length) return;
+        // une seule notification par lot, même si plusieurs onglets COVO Pro sont ouverts
+        done = done.concat(fresh.map(function (x) { return x.r.portalKey; })).slice(-500);
+        try { localStorage.setItem(NOTIFIED_KEY, JSON.stringify(done)); } catch (e) {}
+        var byClient = {};
+        fresh.forEach(function (x) { var n = x.c.name || 'Client'; (byClient[n] = byClient[n] || []).push(x.r); });
+        var names = Object.keys(byClient);
+        var lines = names.map(function (n) {
+            return '• ' + n + ' : ' + byClient[n].map(function (r) {
+                var q = r.unitType === 'kg' ? (r.qty + ' kg') : ('×' + (r.qty || 1));
+                var st = (r.decremented !== false) ? '✅ mis de côté' : '⏳ en attente de stock';
+                var want = r.pickupDate ? (' — retrait souhaité le ' + new Date(r.pickupDate).toLocaleDateString('fr-FR')) : '';
+                return (r.productName || 'Article') + ' ' + q + ' (' + st + ')' + want;
+            }).join(', ');
+        }).join('\n');
+        if (typeof showScanToast === 'function') {
+            showScanToast('📥 ' + fresh.length + ' nouvelle' + (fresh.length > 1 ? 's' : '') + ' réservation' + (fresh.length > 1 ? 's' : '') + ' du portail · ' + names.slice(0, 3).join(', '), 'success');
+        }
+        if (typeof window._notifLoad === 'function' && typeof window._notifSave === 'function') {
+            var list = (window._notifLoad() || []).slice();
+            list.unshift({
+                id: 'NOTIF-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+                createdAt: new Date().toISOString(),
+                createdBy: 'Portail client',
+                subject: '📥 ' + (fresh.length > 1 ? fresh.length + ' nouvelles réservations' : 'Nouvelle réservation') + ' — ' + names.slice(0, 2).join(', ') + (names.length > 2 ? '…' : ''),
+                message: 'Réservation' + (fresh.length > 1 ? 's' : '') + ' reçue' + (fresh.length > 1 ? 's' : '') + ' depuis « Mon espace fidélité » :\n' + lines,
+                priority: 'important', recipients: 'all', driveFiles: [], active: true, acks: {}
+            });
+            window._notifSave(list);
+            try { if (typeof window._notifRenderAdmin === 'function') window._notifRenderAdmin(); } catch (e) {}
+            try { if (typeof window._notifCheckForCashier === 'function') window._notifCheckForCashier(); } catch (e) {}
+        }
+        if (typeof window._covoLiveRefresh === 'function') window._covoLiveRefresh();
+    }
+    window.addEventListener('storage', function (e) { if (e.key === 'covo_loyalty') onLoyalty(e.newValue); });
+
+    function init() {
+        try { known = portalResv(localStorage.getItem('covo_loyalty')); } catch (e) { known = {}; }
+        setTimeout(ensureBg, 6000);              // après la connexion / la restauration Drive
+        setInterval(ensureBg, 20000);            // connexion, déconnexion, réglage
+        document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') ensureBg(); });
+        window.addEventListener('covo-autosave-change', function () { setTimeout(ensureBg, 500); });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
