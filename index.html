@@ -17370,6 +17370,10 @@ function toggleInfoSection(headerElement) {
                 if (typeof _qmsgUpdateHeaderDot === 'function') _qmsgUpdateHeaderDot();
             }, 600);
         }
+        // Fenêtre d'accueil pour TOUS les comptes (notifications + réservations clients) — l'admin l'a déjà ci-dessus
+        if (user.role !== 'admin') {
+            setTimeout(function() { if (typeof window._awOpenForUser === 'function') window._awOpenForUser(user); }, 900);
+        }
     }
 
     window._splashRetry = async function() {
@@ -46495,6 +46499,7 @@ function initAdminSections() {
         el.className = 'nsi-' + (state || 'pending');
         if (lbl) lbl.textContent = label || '';
         if (tip) tip.textContent = tooltip || '';
+        if (state !== 'syncing' && typeof window._awFeedRefresh === 'function') { try { window._awFeedRefresh(); } catch(e) {} }
     }
 
     function _nsiNow() {
@@ -46571,10 +46576,8 @@ function initAdminSections() {
             // Compter les notifs en attente pour l'utilisateur courant
             var user = _notifGetCurrentUser ? _notifGetCurrentUser() : null;
             var pending = list.filter(function(n) {
-                if (!n.active) return false;
-                if (user && n.acks && n.acks[user.id]) return false;
-                if (user && _notifIsAckedLocally(user.id, n.id)) return false;
-                return true;
+                // Uniquement les notifications destinées à ce compte, non lues, et dont il n'est pas l'auteur
+                return _notifIsPendingFor(n, user);
             }).length;
             if (pending > 0) {
                 _nsiSet('synced', '🔔 ' + pending + ' en attente', 'Dernière mise à jour : ' + _notifLastUpdate);
@@ -46627,10 +46630,8 @@ function initAdminSections() {
                     _notifLastUpdate = _nsiNow();
                     var user0 = _notifGetCurrentUser ? _notifGetCurrentUser() : null;
                     var p0 = (_notifMemCache || []).filter(function(n) {
-                        if (!n.active) return false;
-                        if (user0 && n.acks && n.acks[user0.id]) return false;
-                        if (user0 && _notifIsAckedLocally(user0.id, n.id)) return false;
-                        return true;
+                        // Uniquement les notifications destinées à ce compte, non lues, et dont il n'est pas l'auteur
+                        return _notifIsPendingFor(n, user0);
                     }).length;
                     _nsiSet('synced', p0 > 0 ? '🔔 ' + p0 + ' en attente' : '✓ Synchronisé', 'Dernière mise à jour : ' + _notifLastUpdate);
                     return false;
@@ -46657,10 +46658,8 @@ function initAdminSections() {
             _notifLastUpdate = _nsiNow();
             var user1 = _notifGetCurrentUser ? _notifGetCurrentUser() : null;
             var p1 = _notifMemCache.filter(function(n) {
-                if (!n.active) return false;
-                if (user1 && n.acks && n.acks[user1.id]) return false;
-                if (user1 && _notifIsAckedLocally(user1.id, n.id)) return false;
-                return true;
+                // Uniquement les notifications destinées à ce compte, non lues, et dont il n'est pas l'auteur
+                return _notifIsPendingFor(n, user1);
             }).length;
             _nsiSet('synced', p1 > 0 ? '🔔 ' + p1 + ' en attente' : '✓ Synchronisé', 'Dernière mise à jour : ' + _notifLastUpdate);
             return true; // des changements
@@ -47017,14 +47016,8 @@ function initAdminSections() {
         var list = window._notifLoad();
         // Trouver la première notification active destinée à cet utilisateur et non acquittée
         var pending = list.find(function(n) {
-            if (!n.active) return false;
-            // Filtre destinataires : 'all' = tout le monde, 'admin' / 'caissier' = rôle exact
-            var r = n.recipients || 'all';
-            if (r !== 'all' && r !== role) return false;
-            // Filtre acquittements
-            var ackedInList  = n.acks && n.acks[user.id];
-            var ackedLocally = _notifIsAckedLocally(user.id, n.id);
-            return !ackedInList && !ackedLocally;
+            // Destinataire (tous / admin / caissier), non acquittée — l'auteur n'accuse pas réception de son propre message
+            return _notifIsPendingFor(n, user);
         });
 
         if (pending) {
@@ -47187,6 +47180,96 @@ function initAdminSections() {
 
         // Vérifier s'il y a une autre notification en attente
         setTimeout(_notifPollCheck, 500);
+    };
+
+    // ─── Règle commune : cette notification attend-elle une lecture de CE compte ? ─────────
+    function _notifRoleOf(user) { return String((user && user.role) || '').toLowerCase(); }
+    function _notifIsForUser(n, user) {
+        var r = (n && n.recipients) || 'all';
+        return r === 'all' || r === _notifRoleOf(user);
+    }
+    function _notifIsAuthor(n, user) {
+        return !!(user && n && n.createdBy && user.username && n.createdBy === user.username);
+    }
+    function _notifIsAckedBy(n, user) {
+        return !!(user && n && ((n.acks && n.acks[user.id]) || _notifIsAckedLocally(user.id, n.id)));
+    }
+    function _notifIsPendingFor(n, user) {
+        if (!n || !n.active) return false;
+        if (!user) return true;
+        if (!_notifIsForUser(n, user)) return false;      // ex. message « aux caissiers » : pas pour l'Admin
+        if (_notifIsAuthor(n, user)) return false;        // l'auteur n'a pas à confirmer son propre message
+        return !_notifIsAckedBy(n, user);
+    }
+
+    // ─── API publique (fenêtre d'accueil) ────────────────────────────────────
+    window._notifApi = {
+        list: function() { return window._notifLoad(); },
+        currentUser: function() { return _notifGetCurrentUser(); },
+        isForUser: _notifIsForUser,
+        isAuthor: _notifIsAuthor,
+        isAckedBy: _notifIsAckedBy,
+        isPendingFor: _notifIsPendingFor,
+        lastSync: function() { return _notifLastUpdate; },
+        // Accusé de lecture d'une notification précise (même effet que « J'ai lu » de la fenêtre bloquante)
+        ackById: function(id) {
+            var user = _notifGetCurrentUser();
+            if (!user || !id) return false;
+            _notifMarkAckedLocally(user.id, id);
+            var list = window._notifLoad();
+            var n = list.find(function(x) { return x.id === id; });
+            if (n) {
+                if (!n.acks) n.acks = {};
+                n.acks[user.id] = { at: new Date().toISOString(), username: user.username || user.id };
+                window._notifSave(list);
+            }
+            var modal = document.getElementById('notif-block-modal');
+            if (modal && modal.style.display === 'flex' && _notifCurrent && _notifCurrent.id === id) {
+                modal.style.display = 'none';
+                _notifCurrent = null;
+            }
+            _notifUpdateAdminBadge();
+            window._notifRenderAdmin();
+            return true;
+        },
+        // Nouvelle notification (mêmes champs que le formulaire du panneau Admin)
+        add: function(o) {
+            var user = _notifGetCurrentUser();
+            var notif = {
+                id:         'NOTIF-' + Date.now(),
+                createdAt:  new Date().toISOString(),
+                createdBy:  (user && user.username) || 'Administrateur',
+                subject:    String(o.subject || '').trim(),
+                message:    String(o.message || '').trim(),
+                priority:   ({ info: 1, important: 1, urgent: 1 })[o.priority] ? o.priority : 'info',
+                recipients: ({ all: 1, admin: 1, caissier: 1 })[o.recipients] ? o.recipients : 'all',
+                driveFiles: [],
+                active:     true,
+                acks:       {}
+            };
+            var list = window._notifLoad().slice();
+            list.unshift(notif);
+            window._notifSave(list);
+            _notifUpdateAdminBadge();
+            window._notifRenderAdmin();
+            return notif;
+        },
+        setActive: function(id, on) {
+            var list = window._notifLoad();
+            var n = list.find(function(x) { return x.id === id; });
+            if (!n) return false;
+            n.active = !!on;
+            window._notifSave(list);
+            _notifUpdateAdminBadge();
+            window._notifRenderAdmin();
+            return true;
+        },
+        remove: function(id) {
+            window._notifSave(window._notifLoad().filter(function(x) { return x.id !== id; }));
+            _notifUpdateAdminBadge();
+            window._notifRenderAdmin();
+            return true;
+        }
     };
 
     // ─── Activer/désactiver une notification ────────────────────────────────
@@ -57403,5 +57486,560 @@ window._rachatRender=function(filter){
       return '≥ ' + t.q + ' → ' + unit.toFixed(2) + '€/u (' + t.total.toFixed(2) + '€ les ' + t.q + ')';
     }).join(' · ');
   };
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   FENÊTRE D'ACCUEIL — FIL « NOTIFICATIONS & RÉSERVATIONS CLIENTS »
+   Pour TOUS les comptes, à la connexion (chacun avec ses propres informations) :
+   • Notifications administratives : lire le message complet, « J'ai lu »,
+     effacer de son accueil ; l'Admin-Développeur voit qui a lu, peut désactiver,
+     supprimer et rédiger une nouvelle notification directement ici.
+   • Réservations des clients fidélité : clients ayant des articles disponibles
+     (« 📦 8 réservés · ✅ 5 disponibles »), détail article par article,
+     prévenir le client sur WhatsApp, ouvrir sa fiche.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._awFeedInstalled) return;
+    window._awFeedInstalled = true;
+
+    var MODAL_ID = 'admin-welcome-modal';
+    var NOTIFIED_KEY = 'covo_aw_resv_notified';
+    var ui = { open: {}, rvOpen: {}, showRead: false, showInactive: false, showWaiting: false, rvAll: false,
+               compose: false, cSubj: '', cMsg: '', cPrio: 'info', cRcpt: 'all', cErr: '', confirmDel: null };
+
+    function $(id) { return document.getElementById(id); }
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+    function cu() {
+        try { if (typeof currentUser !== 'undefined' && currentUser) return currentUser; } catch (e) {}
+        try { return JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) { return null; }
+    }
+    function isDev(u) { return !!(u && (u.isMaster || u.id === 'USR-MASTER')); }
+    function isOpen() { var m = $(MODAL_ID); return !!(m && m.classList.contains('active')); }
+    function toast(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); }
+    function driveOn() { try { return !!(window._gdGetState && window._gdGetState().connected); } catch (e) { return false; } }
+    function fmtWhen(iso) {
+        try {
+            var d = new Date(iso); if (isNaN(d)) return '';
+            var now = new Date(), hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            if (d.toDateString() === now.toDateString()) return "aujourd'hui " + hm;
+            var y = new Date(now); y.setDate(now.getDate() - 1);
+            if (d.toDateString() === y.toDateString()) return 'hier ' + hm;
+            return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + hm;
+        } catch (e) { return ''; }
+    }
+    function plural(n, s, p) { return n + ' ' + (n > 1 ? (p || s + 's') : s); }
+    function initials(name) {
+        var p = String(name || '?').trim().split(/\s+/);
+        return ((p[0] || '?').charAt(0) + (p.length > 1 ? p[p.length - 1].charAt(0) : '')).toUpperCase();
+    }
+    function hiddenKey(u) { return 'covo_notif_hidden_' + ((u && u.id) || 'anon'); }
+    function getHidden(u) { try { return JSON.parse(localStorage.getItem(hiddenKey(u)) || '{}') || {}; } catch (e) { return {}; } }
+    function setHidden(u, id) { var h = getHidden(u); h[id] = new Date().toISOString(); try { localStorage.setItem(hiddenKey(u), JSON.stringify(h)); } catch (e) {} }
+    function getNotified() { try { return JSON.parse(localStorage.getItem(NOTIFIED_KEY) || '{}') || {}; } catch (e) { return {}; } }
+    function setNotified(id) {
+        var m = getNotified(), lim = Date.now() - 7 * 86400000;
+        Object.keys(m).forEach(function (k) { if (Date.parse(m[k]) < lim) delete m[k]; });
+        m[id] = new Date().toISOString();
+        try { localStorage.setItem(NOTIFIED_KEY, JSON.stringify(m)); } catch (e) {}
+    }
+
+    /* ───────────────────────────── Styles ───────────────────────────── */
+    function injectCss() {
+        if ($('aw-feed-css')) return;
+        var s = document.createElement('style');
+        s.id = 'aw-feed-css';
+        s.textContent = [
+            '#admin-welcome-modal .admin-welcome-body > #aw-feed{display:flex!important;flex-direction:column;gap:12px;margin-top:14px;}',
+            '#admin-welcome-modal.aw-mode-user .admin-welcome-body > .admin-welcome-info-grid{display:none!important;}',
+            '#admin-welcome-modal.aw-mode-user .admin-welcome-body > #aw-feed{margin-top:0;}',
+            '.aw-fsec{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:12px 14px;}',
+            '.aw-fsec-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;}',
+            '.aw-fsec-title{font-weight:800;font-size:.92rem;color:#fff;letter-spacing:.2px;}',
+            '.aw-chip{font-size:.68rem;font-weight:800;padding:2px 9px;border-radius:20px;background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);white-space:nowrap;}',
+            '.aw-chip.red{background:#e74c3c;color:#fff;animation:awPulse 2s ease-in-out infinite;}',
+            '.aw-chip.green{background:rgba(46,204,113,.18);color:#2ecc71;}',
+            '.aw-chip.amber{background:rgba(245,158,11,.18);color:#fbbf24;}',
+            '.aw-fsec-sub{font-size:.66rem;color:rgba(255,255,255,.45);margin-left:auto;white-space:nowrap;}',
+            '.aw-fbtn{border:none;border-radius:8px;padding:6px 11px;font-size:.74rem;font-weight:800;cursor:pointer;font-family:inherit;transition:filter .15s,transform .1s;white-space:nowrap;}',
+            '.aw-fbtn:hover{filter:brightness(1.12);}.aw-fbtn:active{transform:scale(.97);}',
+            '.aw-fbtn:focus-visible,.aw-nt-row:focus-visible,.aw-rv-row:focus-visible{outline:2px solid #fff;outline-offset:2px;}',
+            '.aw-fbtn.ghost{background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.2);}',
+            '.aw-fbtn.ok{background:linear-gradient(135deg,#27ae60,#1e8449);color:#fff;}',
+            '.aw-fbtn.wa{background:#25D366;color:#fff;}',
+            '.aw-fbtn.danger{background:rgba(231,76,60,.18);color:#ff8a80;border:1px solid rgba(231,76,60,.4);}',
+            '.aw-fbtn.primary{background:linear-gradient(135deg,#e74c3c,#c0392b);color:#fff;padding:10px 20px;font-size:.86rem;}',
+            '.aw-nt{border-radius:11px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.08);border-left:4px solid var(--awp,#3498db);overflow:hidden;}',
+            '.aw-nt+.aw-nt{margin-top:7px;}',
+            '.aw-nt.p-info{--awp:#3498db;}.aw-nt.p-important{--awp:#e67e22;}.aw-nt.p-urgent{--awp:#e74c3c;}',
+            '.aw-nt.unread{background:rgba(255,255,255,.08);}',
+            '.aw-nt.off{opacity:.55;}',
+            '.aw-nt-row{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;cursor:pointer;}',
+            '.aw-nt-ico{font-size:1.15rem;line-height:1.3;flex-shrink:0;}',
+            '.aw-nt-main{flex:1;min-width:0;}',
+            '.aw-nt-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.64rem;color:rgba(255,255,255,.5);}',
+            '.aw-nt-tag{font-weight:900;letter-spacing:.8px;color:var(--awp);}',
+            '.aw-nt-new{background:var(--awp);color:#fff;padding:1px 7px;border-radius:10px;font-weight:800;}',
+            '.aw-nt-subj{font-weight:800;font-size:.87rem;color:#fff;margin-top:2px;}',
+            '.aw-nt-prev{font-size:.76rem;color:rgba(255,255,255,.6);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}',
+            '.aw-nt-chev{color:rgba(255,255,255,.5);transition:transform .2s;flex-shrink:0;font-size:.8rem;margin-top:3px;}',
+            '.aw-nt.open .aw-nt-chev{transform:rotate(180deg);}.aw-nt.open .aw-nt-prev{display:none;}',
+            '.aw-nt-body{display:none;padding:0 12px 12px 42px;}',
+            '.aw-nt.open .aw-nt-body{display:block;animation:awFadeIn .2s ease;}',
+            '.aw-nt-msg{font-size:.83rem;color:rgba(255,255,255,.9);white-space:pre-wrap;word-break:break-word;line-height:1.55;background:rgba(0,0,0,.22);border-radius:9px;padding:10px 12px;}',
+            '.aw-nt-files{margin-top:4px;}',
+            '.aw-nt-files a,.aw-nt-files span{display:inline-flex;gap:6px;align-items:center;margin:6px 6px 0 0;font-size:.74rem;color:#8ab4f8;text-decoration:none;background:rgba(66,133,244,.14);padding:4px 9px;border-radius:7px;}',
+            '.aw-nt-acks{font-size:.7rem;color:rgba(255,255,255,.55);margin-top:8px;line-height:1.5;}',
+            '.aw-nt-acks b{color:#2ecc71;}',
+            '.aw-nt-act{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px;}',
+            '.aw-nt-ask{font-size:.72rem;color:#ff8a80;font-weight:700;}',
+            '.aw-empty{font-size:.8rem;color:rgba(255,255,255,.55);text-align:center;padding:12px 6px;}',
+            '.aw-link{background:none;border:none;color:rgba(255,255,255,.6);font-size:.72rem;cursor:pointer;padding:8px 2px 0;font-family:inherit;text-decoration:underline;text-underline-offset:2px;}',
+            '.aw-cmp{background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.12);border-radius:11px;padding:11px;margin-bottom:10px;}',
+            '.aw-cmp input,.aw-cmp textarea{width:100%;box-sizing:border-box;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:8px;padding:8px 10px;font-size:.82rem;font-family:inherit;margin-bottom:7px;}',
+            '.aw-cmp textarea{resize:vertical;min-height:70px;}',
+            '.aw-cmp label{display:block;font-size:.62rem;font-weight:800;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.6px;margin:2px 0 4px;}',
+            '.aw-seg{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;}',
+            '.aw-seg button{flex:1;min-width:84px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.85);border-radius:8px;padding:6px;font-size:.72rem;font-weight:700;cursor:pointer;font-family:inherit;}',
+            '.aw-seg button.on{background:#fff;color:#1a1a2e;border-color:#fff;}',
+            '.aw-cmp-err{color:#ff8a80;font-size:.72rem;font-weight:700;margin-bottom:6px;}',
+            '.aw-rv{border-radius:11px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.08);}',
+            '.aw-rv+.aw-rv{margin-top:7px;}',
+            '.aw-rv-row{display:flex;align-items:center;gap:11px;padding:9px 12px;cursor:pointer;}',
+            '.aw-rv-av{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-weight:800;font-size:.8rem;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;}',
+            '.aw-rv-dot{position:absolute;top:-5px;right:-6px;min-width:19px;height:19px;padding:0 4px;border-radius:10px;background:#2ecc71;color:#063018;font-size:.66rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:2px solid #16213e;box-sizing:border-box;}',
+            '.aw-rv-main{flex:1;min-width:0;}',
+            '.aw-rv-name{font-weight:800;color:#fff;font-size:.87rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}',
+            '.aw-rv-multi{font-size:.58rem;font-weight:800;background:rgba(124,58,237,.32);color:#ddd6fe;padding:2px 7px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;}',
+            '.aw-rv-sub{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px;}',
+            '.aw-bub{font-size:.71rem;font-weight:800;padding:2px 9px;border-radius:20px;white-space:nowrap;}',
+            '.aw-bub.ok{background:rgba(46,204,113,.18);color:#2ecc71;}.aw-bub.wait{background:rgba(245,158,11,.18);color:#fbbf24;}',
+            '.aw-rv-note{font-size:.66rem;color:rgba(255,255,255,.5);}',
+            '.aw-rv-items{display:none;padding:0 12px 12px 61px;}',
+            '.aw-rv.open .aw-rv-items{display:block;animation:awFadeIn .2s ease;}',
+            '.aw-rv.open .aw-nt-chev{transform:rotate(180deg);}',
+            '.aw-rv-it{display:flex;align-items:center;gap:8px;font-size:.79rem;color:rgba(255,255,255,.88);padding:6px 0;border-top:1px dashed rgba(255,255,255,.1);}',
+            '.aw-rv-it .q{color:rgba(255,255,255,.5);font-weight:700;}',
+            '.aw-rv-it .dt{font-size:.64rem;color:rgba(255,255,255,.4);}',
+            '.aw-rv-st{margin-left:auto;font-size:.65rem;font-weight:800;padding:2px 8px;border-radius:10px;white-space:nowrap;}',
+            '.aw-rv-st.ready{background:rgba(46,204,113,.18);color:#2ecc71;}.aw-rv-st.stock{background:rgba(52,152,219,.2);color:#7cc4ff;}.aw-rv-st.wait{background:rgba(245,158,11,.16);color:#fbbf24;}',
+            '.aw-rv-act{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:9px;}',
+            '.aw-feed-foot{display:flex;justify-content:center;padding:2px 0 4px;}',
+            '#notif-sync-indicator{cursor:pointer;}',
+            '@keyframes awFadeIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}',
+            '@keyframes awPulse{0%,100%{box-shadow:0 0 0 0 rgba(231,76,60,.5);}50%{box-shadow:0 0 0 5px rgba(231,76,60,0);}}',
+            '@media (max-width:520px){.aw-nt-body{padding-left:12px;}.aw-rv-items{padding-left:12px;}.aw-fsec{padding:11px 11px;}}'
+        ].join('\n');
+        document.head.appendChild(s);
+    }
+
+    /* ─────────────────────────── Notifications ─────────────────────────── */
+    var PRIO = { info: ['ℹ️', 'INFO'], important: ['⚠️', 'IMPORTANT'], urgent: ['🚨', 'URGENT'] };
+    var RCPT = { all: '👥 Tous', admin: '👑 Admins', caissier: '💼 Caissiers' };
+
+    function notifModel(u, dev) {
+        var api = window._notifApi;
+        if (!api) return null;
+        var all = (api.list() || []).slice().sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
+        var hidden = getHidden(u);
+        var unread = [], read = [], inactive = [];
+        all.forEach(function (n) {
+            var mine = api.isForUser(n, u) || api.isAuthor(n, u);
+            if (!n.active) { if (dev) inactive.push(n); return; }
+            if (!dev && (!mine || hidden[n.id])) return;
+            if (api.isPendingFor(n, u)) unread.push(n); else read.push(n);
+        });
+        return { api: api, unread: unread, read: read, inactive: inactive };
+    }
+
+    function ntCard(n, u, dev, isUnread, api) {
+        var P = PRIO[n.priority] || PRIO.info;
+        var open = !!ui.open[n.id];
+        var author = api.isAuthor(n, u);
+        var id = esc(n.id);
+        var h = '<div class="aw-nt p-' + esc(n.priority || 'info') + (isUnread ? ' unread' : '') + (n.active ? '' : ' off') + (open ? ' open' : '') + '">'
+            + '<div class="aw-nt-row" data-aw="nt-toggle" data-id="' + id + '" role="button" tabindex="0" aria-expanded="' + open + '" title="' + (open ? 'Replier' : 'Lire le message') + '">'
+            + '<span class="aw-nt-ico">' + P[0] + '</span><div class="aw-nt-main"><div class="aw-nt-top">'
+            + '<span class="aw-nt-tag">' + P[1] + '</span>'
+            + (isUnread ? '<span class="aw-nt-new">Nouveau</span>' : '')
+            + (!n.active ? '<span>⏸️ Inactive</span>' : '')
+            + '<span>' + esc(n.createdBy || 'Administrateur') + ' · ' + esc(fmtWhen(n.createdAt)) + ' · ' + (RCPT[n.recipients || 'all'] || RCPT.all) + '</span></div>'
+            + '<div class="aw-nt-subj">' + esc(n.subject || '(sans objet)') + '</div>'
+            + '<div class="aw-nt-prev">' + esc(String(n.message || '').replace(/\s+/g, ' ').slice(0, 160)) + '</div>'
+            + '</div><span class="aw-nt-chev">▼</span></div>'
+            + '<div class="aw-nt-body"><div class="aw-nt-msg">' + esc(n.message || '') + '</div>';
+        if (n.driveFiles && n.driveFiles.length) {
+            h += '<div class="aw-nt-files">' + n.driveFiles.map(function (f) {
+                return f && f.url
+                    ? '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">📄 ' + esc(f.name || 'Pièce jointe') + ' ↗</a>'
+                    : '<span>📄 ' + esc((f && f.name) || 'Pièce jointe') + '</span>';
+            }).join('') + '</div>';
+        }
+        if (dev || author) {
+            var acks = n.acks || {};
+            var names = Object.keys(acks).map(function (k) { return acks[k] || {}; })
+                .sort(function (a, b) { return String(a.at || '').localeCompare(String(b.at || '')); })
+                .map(function (a) { return esc(a.username || '—') + ' <span style="opacity:.6;">(' + esc(fmtWhen(a.at)) + ')</span>'; });
+            h += '<div class="aw-nt-acks">' + (names.length
+                ? '💬 Lu par <b>' + names.length + '</b> : ' + names.join(', ')
+                : '💬 Personne ne l’a encore lu') + '</div>';
+        }
+        var a = '';
+        if (isUnread) a += '<button type="button" class="aw-fbtn ok" data-aw="nt-ack" data-id="' + id + '">✓ J’ai lu</button>';
+        if (!dev && !author) a += '<button type="button" class="aw-fbtn ghost" data-aw="nt-hide" data-id="' + id + '" title="La notification ne s’affichera plus dans votre accueil">🗑 Effacer</button>';
+        if (dev) {
+            a += n.active
+                ? '<button type="button" class="aw-fbtn ghost" data-aw="nt-off" data-id="' + id + '" title="Ne plus l’afficher aux destinataires">⏸️ Désactiver</button>'
+                : '<button type="button" class="aw-fbtn ghost" data-aw="nt-on" data-id="' + id + '">▶️ Réactiver</button>';
+            a += ui.confirmDel === n.id
+                ? '<span class="aw-nt-ask">Supprimer pour tout le monde ?</span>'
+                  + '<button type="button" class="aw-fbtn danger" data-aw="nt-del-ok" data-id="' + id + '">Oui, supprimer</button>'
+                  + '<button type="button" class="aw-fbtn ghost" data-aw="nt-del-cancel">Annuler</button>'
+                : '<button type="button" class="aw-fbtn danger" data-aw="nt-del" data-id="' + id + '">🗑 Supprimer</button>';
+        }
+        if (a) h += '<div class="aw-nt-act">' + a + '</div>';
+        return h + '</div></div>';
+    }
+
+    function composeHtml() {
+        function seg(kind, val, label, cur) {
+            return '<button type="button" class="' + (cur === val ? 'on' : '') + '" data-aw="' + kind + '" data-v="' + val + '">' + label + '</button>';
+        }
+        return '<div class="aw-cmp" id="aw-cmp">'
+            + '<label for="aw-cmp-subj">Sujet</label>'
+            + '<input id="aw-cmp-subj" data-f="cSubj" maxlength="120" placeholder="Ex. Inventaire samedi 8 h" value="' + esc(ui.cSubj) + '">'
+            + '<label for="aw-cmp-msg">Message</label>'
+            + '<textarea id="aw-cmp-msg" data-f="cMsg" rows="3" placeholder="Votre message…">' + esc(ui.cMsg) + '</textarea>'
+            + '<label>Priorité</label><div class="aw-seg">'
+            + seg('cmp-prio', 'info', 'ℹ️ Info', ui.cPrio) + seg('cmp-prio', 'important', '⚠️ Important', ui.cPrio) + seg('cmp-prio', 'urgent', '🚨 Urgent', ui.cPrio)
+            + '</div><label>Destinataires</label><div class="aw-seg">'
+            + seg('cmp-rcpt', 'all', '👥 Tous', ui.cRcpt) + seg('cmp-rcpt', 'admin', '👑 Admins', ui.cRcpt) + seg('cmp-rcpt', 'caissier', '💼 Caissiers', ui.cRcpt)
+            + '</div>' + (ui.cErr ? '<div class="aw-cmp-err">' + esc(ui.cErr) + '</div>' : '')
+            + '<div class="aw-nt-act" style="margin-top:2px;"><button type="button" class="aw-fbtn ok" data-aw="cmp-send">📣 Envoyer</button>'
+            + '<button type="button" class="aw-fbtn ghost" data-aw="cmp-cancel">Annuler</button></div></div>';
+    }
+
+    function notifSection(u, dev) {
+        var m = notifModel(u, dev);
+        var h = '<section class="aw-fsec" id="aw-fsec-notif" aria-label="Notifications"><div class="aw-fsec-head">'
+            + '<span class="aw-fsec-title">🔔 Notifications</span>';
+        if (!m) return h + '</div><div class="aw-empty">Module de notifications indisponible.</div></section>';
+        var nU = m.unread.length;
+        h += nU ? '<span class="aw-chip red">' + plural(nU, 'nouvelle') + '</span>' : '<span class="aw-chip green">✓ À jour</span>';
+        var ls = m.api.lastSync();
+        h += '<span class="aw-fsec-sub">' + (ls ? '🔄 Synchro ' + esc(ls) : (driveOn() ? '⏳ Synchronisation…' : '☁️ Hors ligne')) + '</span>';
+        if (dev && !ui.compose) h += '<button type="button" class="aw-fbtn ghost" data-aw="cmp-open">＋ Nouvelle</button>';
+        h += '</div>';
+        if (dev && ui.compose) h += composeHtml();
+
+        var list = dev ? m.unread.concat(m.read) : m.unread;
+        var api = m.api;
+        m.unread.forEach(function (n) { _presented[n.id] = 1; }); // déjà présentée dans cet accueil
+        if (list.length) {
+            h += list.map(function (n) { return ntCard(n, u, dev, m.unread.indexOf(n) >= 0, api); }).join('');
+        } else {
+            h += '<div class="aw-empty">' + (dev ? 'Aucune notification active.' : '✓ Aucune nouvelle notification — vous êtes à jour.') + '</div>';
+        }
+        if (!dev && m.read.length) {
+            h += '<button type="button" class="aw-link" data-aw="nt-show-read">' + (ui.showRead ? 'Masquer les notifications lues' : 'Afficher les notifications lues (' + m.read.length + ')') + '</button>';
+            if (ui.showRead) h += '<div style="margin-top:7px;">' + m.read.map(function (n) { return ntCard(n, u, dev, false, api); }).join('') + '</div>';
+        }
+        if (dev && m.inactive.length) {
+            h += '<button type="button" class="aw-link" data-aw="nt-show-inactive">' + (ui.showInactive ? 'Masquer les notifications inactives' : 'Notifications inactives (' + m.inactive.length + ')') + '</button>';
+            if (ui.showInactive) h += '<div style="margin-top:7px;">' + m.inactive.map(function (n) { return ntCard(n, u, dev, false, api); }).join('') + '</div>';
+        }
+        if (!ls && !driveOn()) h += '<div class="aw-rv-note" style="margin-top:8px;">Les notifications arrivent dès que Google Drive est connecté.</div>';
+        return h + '</section>';
+    }
+
+    /* ───────────────────── Réservations clients fidélité ───────────────────── */
+    function resvModel() {
+        var d; try { d = JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}; } catch (e) { d = {}; }
+        var pl = [];
+        try { pl = (typeof products !== 'undefined' && Array.isArray(products)) ? products : JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch (e) {}
+        var pm = {};
+        (pl || []).forEach(function (p) { if (p) pm[String(p.id)] = p; });
+        var rows = [];
+        (d.customers || []).forEach(function (c) {
+            var rs = (c && c.reservations) || [];
+            if (!rs.length) return;
+            var items = rs.map(function (r) {
+                var p = pm[String(r.productId)], s = p ? Number(p.stock) : null;
+                // Même règle que Fidélité Pro / fiche client : mis de côté, ou stock suffisant
+                var st = (r.decremented !== false) ? 'ready' : ((s != null && !isNaN(s) && s >= (Number(r.qty) || 0)) ? 'stock' : 'wait');
+                return { r: r, st: st, name: (p && p.name) || r.productName || 'Article' };
+            });
+            var dispo = items.filter(function (i) { return i.st !== 'wait'; }).length;
+            items.sort(function (a, b) { return (a.st === 'wait') - (b.st === 'wait'); });
+            rows.push({ c: c, items: items, tot: items.length, dispo: dispo });
+        });
+        rows.sort(function (a, b) { return (b.dispo - a.dispo) || (b.tot - a.tot) || String(a.c.name || '').localeCompare(String(b.c.name || ''), 'fr'); });
+        return rows;
+    }
+
+    function rvRow(x) {
+        var c = x.c, id = esc(String(c.id)), open = !!ui.rvOpen[String(c.id)];
+        var none = x.dispo === 0, all = x.dispo === x.tot;
+        var bub = '📦 ' + plural(x.tot, 'réservé') + ' · ' + (none ? '⏳ aucun disponible'
+            : '✅ ' + (all ? (x.tot > 1 ? 'tous disponibles' : 'disponible') : plural(x.dispo, 'disponible')));
+        var phoneOk = !!(c.phone && String(c.phone).replace(/\D/g, '')) && !c.noWhatsapp;
+        var nt = getNotified()[String(c.id)];
+        var ntOk = nt && (Date.now() - Date.parse(nt) < 3 * 86400000);
+        var h = '<div class="aw-rv' + (open ? ' open' : '') + '">'
+            + '<div class="aw-rv-row" data-aw="rv-toggle" data-id="' + id + '" role="button" tabindex="0" aria-expanded="' + open + '">'
+            + '<div class="aw-rv-av">' + esc(initials(c.name)) + (x.dispo ? '<span class="aw-rv-dot" title="' + plural(x.dispo, 'article disponible', 'articles disponibles') + '">' + x.dispo + '</span>' : '') + '</div>'
+            + '<div class="aw-rv-main"><div class="aw-rv-name">' + esc(c.name || 'Client') + (x.tot > 1 ? '<span class="aw-rv-multi">Plusieurs réservations</span>' : '') + '</div>'
+            + '<div class="aw-rv-sub"><span class="aw-bub ' + (none ? 'wait' : 'ok') + '">' + bub + '</span>'
+            + (ntOk ? '<span class="aw-rv-note">📲 prévenu ' + esc(fmtWhen(nt)) + '</span>' : '') + '</div></div>'
+            + '<span class="aw-nt-chev">▼</span></div>'
+            + '<div class="aw-rv-items">';
+        h += x.items.map(function (i) {
+            var r = i.r, q = r.unitType === 'kg' ? (r.qty + ' kg') : ('×' + (r.qty || 1));
+            var lab = i.st === 'ready' ? '✅ Prêt · mis de côté' : (i.st === 'stock' ? '✅ En stock' : '⏳ En attente de stock');
+            var dt = r.date ? new Date(r.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '';
+            return '<div class="aw-rv-it"><span>' + (i.st === 'wait' ? '⏳' : '✅') + '</span><span>' + esc(i.name) + ' <span class="q">' + esc(q) + '</span>'
+                + (dt ? ' <span class="dt">· réservé le ' + esc(dt) + '</span>' : '') + '</span>'
+                + '<span class="aw-rv-st ' + i.st + '">' + lab + '</span></div>';
+        }).join('');
+        var act = '';
+        if (x.dispo && phoneOk) act += '<button type="button" class="aw-fbtn wa" data-aw="rv-wa" data-id="' + id + '">📲 Prévenir sur WhatsApp' + (x.dispo > 1 ? ' (' + x.dispo + ' articles)' : '') + '</button>';
+        act += '<button type="button" class="aw-fbtn ghost" data-aw="rv-open" data-id="' + id + '">👁 Ouvrir la fiche</button>';
+        if (x.dispo && !phoneOk) act += '<span class="aw-rv-note">' + (c.noWhatsapp ? '🚫 Client sans messages' : 'Aucun numéro WhatsApp') + '</span>';
+        return h + '<div class="aw-rv-act">' + act + '</div></div></div>';
+    }
+
+    function resvSection() {
+        var rows = resvModel();
+        var ready = rows.filter(function (x) { return x.dispo > 0; });
+        var waiting = rows.filter(function (x) { return x.dispo === 0; });
+        var art = ready.reduce(function (s, x) { return s + x.dispo; }, 0);
+        var h = '<section class="aw-fsec" id="aw-fsec-resv" aria-label="Réservations clients"><div class="aw-fsec-head">'
+            + '<span class="aw-fsec-title">📦 Réservations clients</span>';
+        if (ready.length) h += '<span class="aw-chip green">' + plural(ready.length, 'client') + ' · ✅ ' + plural(art, 'article') + ' à remettre</span>';
+        else if (rows.length) h += '<span class="aw-chip amber">⏳ en attente de stock</span>';
+        h += '</div>';
+        if (!rows.length) return h + '<div class="aw-empty">Aucune réservation en cours.</div></section>';
+        if (ready.length) {
+            var shown = ui.rvAll ? ready : ready.slice(0, 6);
+            h += shown.map(rvRow).join('');
+            if (ready.length > 6) h += '<button type="button" class="aw-link" data-aw="rv-all">' + (ui.rvAll ? 'Réduire la liste' : 'Voir les ' + ready.length + ' clients') + '</button>';
+        } else {
+            h += '<div class="aw-empty">Aucun article réservé n’est disponible pour le moment.</div>';
+        }
+        if (waiting.length) {
+            h += '<button type="button" class="aw-link" data-aw="rv-show-wait">' + (ui.showWaiting ? 'Masquer les clients en attente' : '⏳ ' + plural(waiting.length, 'client') + ' en attente de stock') + '</button>';
+            if (ui.showWaiting) h += '<div style="margin-top:7px;">' + waiting.map(rvRow).join('') + '</div>';
+        }
+        return h + '</section>';
+    }
+
+    /* ─────────────────────────────── Rendu ─────────────────────────────── */
+    function applyMode() {
+        var m = $(MODAL_ID), u = cu();
+        if (!m) return;
+        var admin = !!(u && u.role === 'admin');
+        m.classList.toggle('aw-mode-user', !admin);
+        var h2 = m.querySelector('.admin-welcome-header h2');
+        if (h2 && h2.firstChild && h2.firstChild.nodeType === 3) h2.firstChild.nodeValue = (admin ? '👑 ' : '👋 ') + 'Bienvenue, ';
+        var nm = $('admin-welcome-name');
+        if (nm && u && u.username) nm.textContent = u.username;
+    }
+    function mount() {
+        var m = $(MODAL_ID);
+        if (!m) return null;
+        var body = m.querySelector('.admin-welcome-body');
+        if (!body) return null;
+        var f = $('aw-feed');
+        if (!f) {
+            f = document.createElement('div');
+            f.id = 'aw-feed';
+            f.setAttribute('aria-live', 'polite');
+            var grid = body.querySelector('.admin-welcome-info-grid');
+            if (grid && grid.parentNode === body) body.insertBefore(f, grid.nextSibling); else body.insertBefore(f, body.firstChild);
+            f.addEventListener('click', onClick);
+            f.addEventListener('input', onInput);
+            f.addEventListener('keydown', onKey);
+        }
+        return f;
+    }
+    function render() {
+        var f = mount();
+        if (!f) return;
+        var u = cu(), dev = isDev(u);
+        var foot = (u && u.role !== 'admin')
+            ? '<div class="aw-feed-foot"><button type="button" class="aw-fbtn primary" data-aw="close">💼 Commencer ma journée</button></div>' : '';
+        f.innerHTML = notifSection(u, dev) + resvSection() + foot;
+    }
+    var _rT = null;
+    window._awFeedRefresh = function () {
+        if (!isOpen()) return;
+        var ae = document.activeElement;
+        if (ae && ae.closest && ae.closest('#aw-cmp')) return; // ne pas interrompre la saisie
+        clearTimeout(_rT);
+        _rT = setTimeout(function () { try { render(); } catch (e) { console.warn('[accueil]', e); } }, 120);
+    };
+
+    /* ──────────────────────────── Interactions ──────────────────────────── */
+    function custById(sid) {
+        var d; try { d = JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}; } catch (e) { d = {}; }
+        return (d.customers || []).find(function (c) { return String(c.id) === String(sid); }) || null;
+    }
+    function onInput(e) {
+        var k = e.target && e.target.getAttribute('data-f');
+        if (k) ui[k] = e.target.value;
+    }
+    function onKey(e) {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.getAttribute && /^(nt|rv)-toggle$/.test(e.target.getAttribute('data-aw') || '')) {
+            e.preventDefault();
+            e.target.click();
+        }
+    }
+    function onClick(e) {
+        var el = e.target.closest ? e.target.closest('[data-aw]') : null;
+        if (!el) return;
+        var act = el.getAttribute('data-aw'), id = el.getAttribute('data-id');
+        var api = window._notifApi, u = cu();
+        switch (act) {
+            case 'nt-toggle': ui.open[id] = !ui.open[id]; break;
+            case 'nt-ack':
+                if (api && api.ackById(id)) toast('✓ Notification marquée comme lue', 'success');
+                break;
+            case 'nt-hide':
+                if (api && api.isPendingFor((api.list() || []).find(function (n) { return n.id === id; }), u)) api.ackById(id);
+                setHidden(u, id);
+                toast('🗑 Notification retirée de votre accueil', 'info');
+                break;
+            case 'nt-off': if (api) { api.setActive(id, false); toast('⏸️ Notification désactivée', 'info'); } break;
+            case 'nt-on': if (api) { api.setActive(id, true); toast('▶️ Notification réactivée', 'success'); } break;
+            case 'nt-del': ui.confirmDel = id; break;
+            case 'nt-del-cancel': ui.confirmDel = null; break;
+            case 'nt-del-ok':
+                if (api) { api.remove(id); toast('🗑 Notification supprimée', 'info'); }
+                ui.confirmDel = null; delete ui.open[id];
+                break;
+            case 'nt-show-read': ui.showRead = !ui.showRead; break;
+            case 'nt-show-inactive': ui.showInactive = !ui.showInactive; break;
+            case 'cmp-open': ui.compose = true; ui.cErr = ''; render(); setTimeout(function () { var i = $('aw-cmp-subj'); if (i) i.focus(); }, 30); return;
+            case 'cmp-cancel': ui.compose = false; ui.cErr = ''; break;
+            case 'cmp-prio': ui.cPrio = el.getAttribute('data-v'); break;
+            case 'cmp-rcpt': ui.cRcpt = el.getAttribute('data-v'); break;
+            case 'cmp-send':
+                ui.cSubj = ($('aw-cmp-subj') || {}).value || ui.cSubj;
+                ui.cMsg = ($('aw-cmp-msg') || {}).value || ui.cMsg;
+                if (!String(ui.cSubj).trim()) { ui.cErr = '⚠️ Le sujet est obligatoire.'; break; }
+                if (!String(ui.cMsg).trim()) { ui.cErr = '⚠️ Le message est obligatoire.'; break; }
+                if (!api) { ui.cErr = 'Module de notifications indisponible.'; break; }
+                var n = api.add({ subject: ui.cSubj, message: ui.cMsg, priority: ui.cPrio, recipients: ui.cRcpt });
+                ui.open[n.id] = true;
+                ui.compose = false; ui.cSubj = ''; ui.cMsg = ''; ui.cErr = ''; ui.cPrio = 'info'; ui.cRcpt = 'all';
+                toast(driveOn() ? '📣 Notification envoyée — ' + (RCPT[n.recipients] || '') : '📣 Notification créée — elle partira vers les autres appareils dès que Google Drive sera connecté', driveOn() ? 'success' : 'info');
+                break;
+            case 'rv-toggle': ui.rvOpen[id] = !ui.rvOpen[id]; break;
+            case 'rv-all': ui.rvAll = !ui.rvAll; break;
+            case 'rv-show-wait': ui.showWaiting = !ui.showWaiting; break;
+            case 'rv-wa':
+                var c = custById(id);
+                if (c && typeof window._resvNotifyWhatsAppAll === 'function') { window._resvNotifyWhatsAppAll(c.id); setNotified(String(c.id)); }
+                else toast('⚠️ Envoi WhatsApp indisponible', 'error');
+                break;
+            case 'rv-open':
+                var c2 = custById(id);
+                if (typeof closeAdminWelcomeModal === 'function') closeAdminWelcomeModal();
+                setTimeout(function () {
+                    if (typeof window.switchTab === 'function') window.switchTab('fidelite');
+                    setTimeout(function () { if (c2 && typeof window._ltyShowDetail === 'function') window._ltyShowDetail(c2.id); }, 450);
+                }, 150);
+                return;
+            case 'close':
+                if (typeof closeAdminWelcomeModal === 'function') closeAdminWelcomeModal();
+                else { var mm = $(MODAL_ID); if (mm) mm.classList.remove('active'); }
+                return;
+            default: return;
+        }
+        render();
+    }
+
+    /* ───────── Ouverture pour tous + notification bloquante après l'accueil ───────── */
+    window._awOpenForUser = function (user) {
+        var m = $(MODAL_ID);
+        if (!m) return;
+        var nm = $('admin-welcome-name');
+        if (nm && user && user.username) nm.textContent = user.username;
+        m.classList.add('active');
+    };
+    // Nouvelle notification non lue (connexion ou réception en cours de journée) :
+    // l'accueil s'ouvre sur les notifications, une seule fois par notification et par session.
+    // (La fenêtre « notification bloquante » d'origine n'a jamais été présente dans la page :
+    //  sans ce relais, les caissiers ne voyaient tout simplement pas les notifications.)
+    var _deferredCheck = null, _presented = {};
+    var _origCheck = window._notifCheckForCashier;
+    function loginScreenShown() {
+        var lm = $('login-modal'), sp = $('login-splash');
+        if (lm && (lm.classList.contains('active') || lm.style.display === 'flex')) return true;
+        if (sp && sp.style.display && sp.style.display !== 'none') return true;
+        return false;
+    }
+    function presentPending(user) {
+        if (isOpen()) { _deferredCheck = user || true; return; }
+        if ($('notif-block-modal') && typeof _origCheck === 'function') return _origCheck.apply(this, arguments);
+        var api = window._notifApi, u = (user && user.id) ? user : cu();
+        if (!api || !u || loginScreenShown()) return;
+        var fresh = (api.list() || []).filter(function (n) { return api.isPendingFor(n, u) && !_presented[n.id]; });
+        if (!fresh.length) return;
+        fresh.forEach(function (n) { ui.open[n.id] = true; });
+        if (u.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
+        else window._awOpenForUser(u);
+        setTimeout(function () { var s = $('aw-fsec-notif'); if (s && s.scrollIntoView) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
+    }
+    window._notifCheckForCashier = presentPending;
+    function onModalChange() {
+        if (isOpen()) {
+            injectCss();
+            applyMode();
+            try { render(); } catch (e) { console.warn('[accueil]', e); }
+        } else {
+            ui.compose = false; ui.confirmDel = null; ui.open = {}; ui.rvOpen = {}; // accueil suivant : tout replié
+            if (_deferredCheck) {
+                var du = _deferredCheck; _deferredCheck = null;
+                setTimeout(function () { try { window._notifCheckForCashier(du === true ? undefined : du); } catch (e) {} }, 400);
+            }
+        }
+    }
+    function init() {
+        injectCss();
+        var m = $(MODAL_ID);
+        if (m && window.MutationObserver) {
+            var was = m.classList.contains('active');
+            new MutationObserver(function () {
+                var now = m.classList.contains('active');
+                if (now !== was) { was = now; onModalChange(); }
+            }).observe(m, { attributes: true, attributeFilter: ['class'] });
+            if (was) onModalChange();
+        }
+        // Voyant « 🔔 x en attente » du haut : un clic ouvre l'accueil sur les notifications
+        var ind = $('notif-sync-indicator');
+        if (ind && !ind._awBound) {
+            ind._awBound = true;
+            ind.setAttribute('role', 'button');
+            ind.setAttribute('tabindex', '0');
+            ind.addEventListener('click', function () {
+                var u = cu();
+                if (!u) return;
+                if (u.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
+                else window._awOpenForUser(u);
+                setTimeout(function () { var s = $('aw-fsec-notif'); if (s && s.scrollIntoView) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 250);
+            });
+        }
+        // Réservations / stock modifiés ailleurs (Fidélité Pro, Gestion, autre onglet) → mise à jour en direct
+        window.addEventListener('storage', function (e) {
+            if (e.key === 'covo_loyalty' || e.key === 'covo_products') window._awFeedRefresh();
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
