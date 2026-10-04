@@ -57633,7 +57633,29 @@ window._rachatRender=function(filter){
             '#notif-sync-indicator{cursor:pointer;}',
             '@keyframes awFadeIn{from{opacity:0;transform:translateY(-3px);}to{opacity:1;transform:none;}}',
             '@keyframes awPulse{0%,100%{box-shadow:0 0 0 0 rgba(231,76,60,.5);}50%{box-shadow:0 0 0 5px rgba(231,76,60,0);}}',
-            '@media (max-width:520px){.aw-nt-body{padding-left:12px;}.aw-rv-items{padding-left:12px;}.aw-fsec{padding:11px 11px;}}'
+            '@media (max-width:520px){.aw-nt-body{padding-left:12px;}.aw-rv-items{padding-left:12px;}.aw-fsec{padding:11px 11px;}}',
+            '.aw-fsec.aw-flash{animation:awFlash 1.8s ease;}',
+            '@keyframes awFlash{0%,45%{box-shadow:0 0 0 2px #2ecc71,0 0 24px rgba(46,204,113,.35);}100%{box-shadow:0 0 0 0 rgba(46,204,113,0);}}',
+            /* Bulle flottante « des clients ont réservé » */
+            '#aw-resv-fab{position:fixed;left:16px;bottom:18px;z-index:9050;display:flex;align-items:center;gap:11px;max-width:min(350px,calc(100vw - 32px));padding:10px 10px 10px 11px;border-radius:16px;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 55%,#0f3460 100%);color:#fff;border:1.5px solid rgba(245,158,11,.55);box-shadow:0 12px 32px rgba(0,0,0,.38);cursor:pointer;opacity:0;transform:translateY(16px) scale(.96);pointer-events:none;transition:opacity .28s ease,transform .28s ease,box-shadow .2s;font-family:inherit;text-align:left;}',
+            '#aw-resv-fab.on{opacity:1;transform:none;pointer-events:auto;}',
+            '#aw-resv-fab:hover{box-shadow:0 14px 38px rgba(0,0,0,.45);transform:translateY(-2px);}',
+            '#aw-resv-fab:focus-visible{outline:2px solid #fff;outline-offset:3px;}',
+            '#aw-resv-fab.ready{border-color:rgba(46,204,113,.65);}',
+            '#aw-resv-fab .ico{position:relative;width:40px;height:40px;border-radius:12px;background:rgba(245,158,11,.18);display:flex;align-items:center;justify-content:center;font-size:1.25rem;flex-shrink:0;}',
+            '#aw-resv-fab.ready .ico{background:rgba(46,204,113,.18);}',
+            '#aw-resv-fab.ready .ico::after{content:"";position:absolute;inset:-3px;border-radius:14px;border:2px solid rgba(46,204,113,.55);animation:awRing 2.2s ease-out infinite;}',
+            '#aw-resv-fab .n{position:absolute;top:-7px;right:-8px;min-width:21px;height:21px;padding:0 5px;border-radius:11px;background:#f59e0b;color:#3b2300;font-size:.7rem;font-weight:900;display:flex;align-items:center;justify-content:center;border:2px solid #16213e;box-sizing:border-box;z-index:1;}',
+            '#aw-resv-fab.ready .n{background:#2ecc71;color:#063018;}',
+            '#aw-resv-fab .tx{display:flex;flex-direction:column;min-width:0;line-height:1.3;}',
+            '#aw-resv-fab .tx b{font-size:.81rem;font-weight:800;}',
+            '#aw-resv-fab .tx small{font-size:.69rem;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+            '#aw-resv-fab .tx .cta{font-size:.66rem;font-weight:800;color:#7cc4ff;margin-top:1px;}',
+            '#aw-resv-fab .x{background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.75);width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:.9rem;line-height:1;flex-shrink:0;align-self:flex-start;font-family:inherit;}',
+            '#aw-resv-fab .x:hover{background:rgba(255,255,255,.2);color:#fff;}',
+            '@keyframes awRing{0%{transform:scale(1);opacity:.9;}100%{transform:scale(1.35);opacity:0;}}',
+            '@media (max-width:520px){#aw-resv-fab{left:10px;bottom:12px;padding:8px 8px 8px 9px;gap:9px;max-width:calc(100vw - 124px);}#aw-resv-fab .tx small{display:none;}#aw-resv-fab .tx b{font-size:.76rem;}}',
+            '@media (prefers-reduced-motion:reduce){#aw-resv-fab,#aw-resv-fab .ico::after,.aw-fsec.aw-flash{transition:none;animation:none;}}'
         ].join('\n');
         document.head.appendChild(s);
     }
@@ -57997,12 +58019,98 @@ window._rachatRender=function(filter){
         setTimeout(function () { var s = $('aw-fsec-notif'); if (s && s.scrollIntoView) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
     }
     window._notifCheckForCashier = presentPending;
+
+    function openWelcomeAt(sectionId) {
+        var u = cu();
+        if (!u) return;
+        if (u.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
+        else window._awOpenForUser(u);
+        setTimeout(function () {
+            var s = $(sectionId);
+            if (!s) return;
+            if (s.scrollIntoView) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            s.classList.remove('aw-flash'); void s.offsetWidth; s.classList.add('aw-flash');
+        }, 280);
+    }
+    window._awOpenWelcomeAt = openWelcomeAt;
+
+    /* ─────────── Bulle flottante « des clients ont réservé des articles » ───────────
+       Visible dès qu'au moins un client fidélité a une réservation en cours. Un clic ouvre
+       la fenêtre d'accueil directement sur « Réservations clients ». ✕ = masquée jusqu'au
+       prochain changement (nouvelle réservation, article devenu disponible…). */
+    var BUB_KEY = 'covo_aw_resv_bubble_hidden';
+    function resvStats() {
+        var rows = resvModel(), ready = rows.filter(function (x) { return x.dispo > 0; });
+        return {
+            rows: rows, clients: rows.length, readyClients: ready.length,
+            art: ready.reduce(function (s, x) { return s + x.dispo; }, 0),
+            tot: rows.reduce(function (s, x) { return s + x.tot; }, 0),
+            names: (ready.length ? ready : rows).slice(0, 3).map(function (x) { return String(x.c.name || 'Client').split(/\s+/)[0]; }),
+            first: ready.length ? String(ready[0].c.id) : null
+        };
+    }
+    function bubbleSig(s) { return [s.clients, s.readyClients, s.art, s.tot].join('|'); }
+    function bubbleUpdate() {
+        var u = cu(), b = $('aw-resv-fab');
+        var s = null;
+        try { s = resvStats(); } catch (e) { s = null; }
+        var show = !!(u && s && s.clients > 0 && !isOpen() && !loginScreenShown());
+        var hidden = null;
+        try { hidden = sessionStorage.getItem(BUB_KEY); } catch (e) {}
+        if (show && hidden && hidden === bubbleSig(s)) show = false;
+        if (!show) { if (b) { b.classList.remove('on'); b.setAttribute('aria-hidden', 'true'); } return; }
+        injectCss();
+        if (!b) {
+            b = document.createElement('div');
+            b.id = 'aw-resv-fab';
+            b.setAttribute('role', 'button');
+            b.setAttribute('tabindex', '0');
+            b.addEventListener('click', function (e) {
+                if (e.target.closest && e.target.closest('.x')) {
+                    e.stopPropagation();
+                    try { sessionStorage.setItem(BUB_KEY, b.getAttribute('data-sig') || ''); } catch (er) {}
+                    b.classList.remove('on');
+                    toast('📦 Bulle masquée — elle réapparaîtra à la prochaine nouveauté', 'info');
+                    return;
+                }
+                var st = resvStats();
+                if (st.first) ui.rvOpen[st.first] = true; // déplier le 1er client à servir
+                b.classList.remove('on');
+                openWelcomeAt('aw-fsec-resv');
+            });
+            b.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); }
+            });
+            document.body.appendChild(b);
+        }
+        var sig = bubbleSig(s);
+        b.setAttribute('data-sig', sig);
+        var ready = s.art > 0;
+        var title = ready
+            ? plural(s.readyClients, 'client') + (s.readyClients > 1 ? ' ont' : ' a') + ' des articles disponibles'
+            : plural(s.clients, 'client') + (s.clients > 1 ? ' ont' : ' a') + ' réservé des articles';
+        var sub = ready
+            ? '✅ ' + plural(s.art, 'article') + ' à remettre · ' + s.names.join(', ') + (s.readyClients > 3 ? '…' : '')
+            : '⏳ ' + plural(s.tot, 'article') + ' en attente de stock · ' + s.names.join(', ') + (s.clients > 3 ? '…' : '');
+        b.classList.toggle('ready', ready);
+        b.setAttribute('aria-label', title + ' — ' + sub + '. Ouvrir les réservations');
+        b.title = 'Voir les réservations clients';
+        b.innerHTML = '<span class="ico">📦<span class="n">' + (ready ? s.art : s.tot) + '</span></span>'
+            + '<span class="tx"><b>' + esc(title) + '</b><small>' + esc(sub) + '</small><span class="cta">Voir les réservations ›</span></span>'
+            + '<button type="button" class="x" aria-label="Masquer la bulle" title="Masquer">×</button>';
+        b.removeAttribute('aria-hidden');
+        requestAnimationFrame(function () { b.classList.add('on'); });
+    }
+    window._awResvBubbleUpdate = bubbleUpdate;
+
     function onModalChange() {
         if (isOpen()) {
             injectCss();
             applyMode();
             try { render(); } catch (e) { console.warn('[accueil]', e); }
+            bubbleUpdate();
         } else {
+            setTimeout(bubbleUpdate, 350);
             ui.compose = false; ui.confirmDel = null; ui.open = {}; ui.rvOpen = {}; // accueil suivant : tout replié
             if (_deferredCheck) {
                 var du = _deferredCheck; _deferredCheck = null;
@@ -58027,18 +58135,18 @@ window._rachatRender=function(filter){
             ind._awBound = true;
             ind.setAttribute('role', 'button');
             ind.setAttribute('tabindex', '0');
-            ind.addEventListener('click', function () {
-                var u = cu();
-                if (!u) return;
-                if (u.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
-                else window._awOpenForUser(u);
-                setTimeout(function () { var s = $('aw-fsec-notif'); if (s && s.scrollIntoView) s.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 250);
-            });
+            ind.addEventListener('click', function () { openWelcomeAt('aw-fsec-notif'); });
         }
         // Réservations / stock modifiés ailleurs (Fidélité Pro, Gestion, autre onglet) → mise à jour en direct
         window.addEventListener('storage', function (e) {
-            if (e.key === 'covo_loyalty' || e.key === 'covo_products') window._awFeedRefresh();
+            if (e.key === 'covo_loyalty' || e.key === 'covo_products') { window._awFeedRefresh(); bubbleUpdate(); }
+            if (e.key === 'covo_current_user') bubbleUpdate();
         });
+        // Connexion / déconnexion / changement de compte dans cet onglet
+        window.addEventListener('covo-autosave-change', function () { setTimeout(bubbleUpdate, 200); });
+        // Réservations et stock modifiés dans COVO Pro même (vente, réception, fiche client…)
+        setInterval(bubbleUpdate, 8000);
+        setTimeout(bubbleUpdate, 2500);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
