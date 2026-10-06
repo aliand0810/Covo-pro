@@ -46672,7 +46672,8 @@ function initAdminSections() {
             _notifMemCache = driveList.map(function(dn) {
                 var ln = localMap[dn.id];
                 if (!ln) return dn;
-                return Object.assign({}, dn, { acks: Object.assign({}, dn.acks || {}, ln.acks || {}) });
+                return Object.assign({}, dn, { acks: Object.assign({}, dn.acks || {}, ln.acks || {}),
+                    replies: _notifMergeReplies(dn.replies, ln.replies), checks: _notifMergeChecks(dn.checks, ln.checks) });
             });
             // Ajouter locaux absents de Drive (créés offline)
             localList.forEach(function(ln) {
@@ -47011,7 +47012,10 @@ function initAdminSections() {
             var mergedAcks = Object.assign({}, dn.acks || {}, ln.acks || {});
             var acksChanged = JSON.stringify(mergedAcks) !== JSON.stringify(dn.acks || {});
             if (acksChanged) changed = true;
-            return Object.assign({}, dn, { acks: mergedAcks });
+            var mergedReplies = _notifMergeReplies(dn.replies, ln.replies);
+            var mergedChecks = _notifMergeChecks(dn.checks, ln.checks);
+            if (mergedReplies.length !== (dn.replies || []).length || JSON.stringify(mergedChecks) !== JSON.stringify(dn.checks || {})) changed = true;
+            return Object.assign({}, dn, { acks: mergedAcks, replies: mergedReplies, checks: mergedChecks });
         });
 
         // Ajouter les notifications locales absentes de Drive (créées offline)
@@ -47231,6 +47235,26 @@ function initAdminSections() {
         return !_notifIsAckedBy(n, user);
     }
 
+    // ─── Fusion des réponses et des vérifications de produits (local + Drive) ─────
+    function _notifMergeReplies(a, b) {
+        var m = {};
+        (a || []).concat(b || []).forEach(function(r) { if (r && r.id) m[r.id] = r; });
+        return Object.keys(m).map(function(k) { return m[k]; }).sort(function(x, y) { return String(x.at || '').localeCompare(String(y.at || '')); });
+    }
+    function _notifMergeChecks(a, b) {
+        var out = {};
+        [a || {}, b || {}].forEach(function(src) {
+            Object.keys(src).forEach(function(uid) {
+                out[uid] = out[uid] || {};
+                Object.keys(src[uid] || {}).forEach(function(pid) {
+                    var cur = out[uid][pid], v = src[uid][pid];
+                    if (!cur || String((v && v.at) || '') > String((cur && cur.at) || '')) out[uid][pid] = v;
+                });
+            });
+        });
+        return out;
+    }
+
     // ─── Recompte immédiat du voyant pour le compte connecté ──────────────────
     // (avant : recalculé seulement après un échange avec Google Drive → valeur figée
     //  après une connexion, une lecture ou une notification reçue d'un autre onglet)
@@ -47288,8 +47312,11 @@ function initAdminSections() {
                 priority:   ({ info: 1, important: 1, urgent: 1 })[o.priority] ? o.priority : 'info',
                 recipients: ({ all: 1, admin: 1, caissier: 1 })[o.recipients] ? o.recipients : 'all',
                 driveFiles: [],
+                products:   Array.isArray(o.products) ? o.products.slice(0, 40) : [],
                 active:     true,
-                acks:       {}
+                acks:       {},
+                replies:    [],
+                checks:     {}
             };
             var list = window._notifLoad().slice();
             list.unshift(notif);
@@ -57734,6 +57761,7 @@ window._rachatRender=function(filter){
             + '<span class="aw-nt-ico">' + P[0] + '</span><div class="aw-nt-main"><div class="aw-nt-top">'
             + '<span class="aw-nt-tag">' + P[1] + '</span>'
             + (isUnread ? '<span class="aw-nt-new">Nouveau</span>' : '')
+            + (typeof window._awNtReplyBadge === 'function' ? window._awNtReplyBadge(n, u) : '')
             + (!n.active ? '<span>⏸️ Inactive</span>' : '')
             + '<span>' + esc(n.createdBy || 'Administrateur') + ' · ' + esc(fmtWhen(n.createdAt)) + ' · ' + (RCPT[n.recipients || 'all'] || RCPT.all) + '</span></div>'
             + '<div class="aw-nt-subj">' + esc(n.subject || '(sans objet)') + '</div>'
@@ -57747,6 +57775,7 @@ window._rachatRender=function(filter){
                     : '<span>📄 ' + esc((f && f.name) || 'Pièce jointe') + '</span>';
             }).join('') + '</div>';
         }
+        if (typeof window._awNtExtras === 'function') h += window._awNtExtras(n, u, dev, author);
         if (dev || author) {
             var acks = n.acks || {};
             var names = Object.keys(acks).map(function (k) { return acks[k] || {}; })
@@ -57782,6 +57811,7 @@ window._rachatRender=function(filter){
             + '<input id="aw-cmp-subj" data-f="cSubj" maxlength="120" placeholder="Ex. Inventaire samedi 8 h" value="' + esc(ui.cSubj) + '">'
             + '<label for="aw-cmp-msg">Message</label>'
             + '<textarea id="aw-cmp-msg" data-f="cMsg" rows="3" placeholder="Votre message…">' + esc(ui.cMsg) + '</textarea>'
+            + (typeof window._awCmpProductsHtml === 'function' ? window._awCmpProductsHtml() : '')
             + '<label>Priorité</label><div class="aw-seg">'
             + seg('cmp-prio', 'info', 'ℹ️ Info', ui.cPrio) + seg('cmp-prio', 'important', '⚠️ Important', ui.cPrio) + seg('cmp-prio', 'urgent', '🚨 Urgent', ui.cPrio)
             + '</div><label>Destinataires</label><div class="aw-seg">'
@@ -57804,7 +57834,9 @@ window._rachatRender=function(filter){
         h += '</div>';
         if (dev && ui.compose) h += composeHtml();
 
-        var list = dev ? m.unread.concat(m.read) : m.unread;
+        var list = dev ? m.unread.concat(m.read) : m.unread.concat(m.read.filter(function (n) {
+            return ui.open[n.id] || (typeof window._awNtHasNewReplies === 'function' && window._awNtHasNewReplies(n, u));
+        }));
         var api = m.api;
         m.unread.forEach(function (n) { _presented[n.id] = 1; }); // déjà présentée dans cet accueil
         if (list.length) {
@@ -57814,7 +57846,7 @@ window._rachatRender=function(filter){
         }
         if (!dev && m.read.length) {
             h += '<button type="button" class="aw-link" data-aw="nt-show-read">' + (ui.showRead ? 'Masquer les notifications lues' : 'Afficher les notifications lues (' + m.read.length + ')') + '</button>';
-            if (ui.showRead) h += '<div style="margin-top:7px;">' + m.read.map(function (n) { return ntCard(n, u, dev, false, api); }).join('') + '</div>';
+            if (ui.showRead) h += '<div style="margin-top:7px;">' + m.read.filter(function (n) { return list.indexOf(n) < 0; }).map(function (n) { return ntCard(n, u, dev, false, api); }).join('') + '</div>';
         }
         if (dev && m.inactive.length) {
             h += '<button type="button" class="aw-link" data-aw="nt-show-inactive">' + (ui.showInactive ? 'Masquer les notifications inactives' : 'Notifications inactives (' + m.inactive.length + ')') + '</button>';
@@ -57943,10 +57975,12 @@ window._rachatRender=function(filter){
         f.innerHTML = notifSection(u, dev) + resvSection() + foot;
     }
     var _rT = null;
+    // Ouvrir l'accueil sur une notification précise (dépliée), ex. « 💬 Répondre » depuis l'alerte urgente
+    window._awFeedOpenNotif = function (id) { ui.open[id] = true; if (isOpen()) render(); };
     window._awFeedRefresh = function () {
         if (!isOpen()) return;
         var ae = document.activeElement;
-        if (ae && ae.closest && ae.closest('#aw-cmp')) return; // ne pas interrompre la saisie
+        if (ae && ae.closest && ae.closest('#aw-cmp, .aw-reply')) return; // ne pas interrompre la saisie
         clearTimeout(_rT);
         _rT = setTimeout(function () { try { render(); } catch (e) { console.warn('[accueil]', e); } }, 120);
     };
@@ -57992,7 +58026,7 @@ window._rachatRender=function(filter){
             case 'nt-show-read': ui.showRead = !ui.showRead; break;
             case 'nt-show-inactive': ui.showInactive = !ui.showInactive; break;
             case 'cmp-open': ui.compose = true; ui.cErr = ''; render(); setTimeout(function () { var i = $('aw-cmp-subj'); if (i) i.focus(); }, 30); return;
-            case 'cmp-cancel': ui.compose = false; ui.cErr = ''; break;
+            case 'cmp-cancel': ui.compose = false; ui.cErr = ''; if (typeof window._awCmpProductsReset === 'function') window._awCmpProductsReset(); break;
             case 'cmp-prio': ui.cPrio = el.getAttribute('data-v'); break;
             case 'cmp-rcpt': ui.cRcpt = el.getAttribute('data-v'); break;
             case 'cmp-send':
@@ -58001,7 +58035,8 @@ window._rachatRender=function(filter){
                 if (!String(ui.cSubj).trim()) { ui.cErr = '⚠️ Le sujet est obligatoire.'; break; }
                 if (!String(ui.cMsg).trim()) { ui.cErr = '⚠️ Le message est obligatoire.'; break; }
                 if (!api) { ui.cErr = 'Module de notifications indisponible.'; break; }
-                var n = api.add({ subject: ui.cSubj, message: ui.cMsg, priority: ui.cPrio, recipients: ui.cRcpt });
+                var n = api.add({ subject: ui.cSubj, message: ui.cMsg, priority: ui.cPrio, recipients: ui.cRcpt,
+                                  products: (typeof window._awCmpProductsTake === 'function' ? window._awCmpProductsTake() : []) });
                 ui.open[n.id] = true;
                 ui.compose = false; ui.cSubj = ''; ui.cMsg = ''; ui.cErr = ''; ui.cPrio = 'info'; ui.cRcpt = 'all';
                 toast(driveOn() ? '📣 Notification envoyée — ' + (RCPT[n.recipients] || '') : '📣 Notification créée — elle partira vers les autres appareils dès que Google Drive sera connecté', driveOn() ? 'success' : 'info');
@@ -58026,7 +58061,9 @@ window._rachatRender=function(filter){
                 if (typeof closeAdminWelcomeModal === 'function') closeAdminWelcomeModal();
                 else { var mm = $(MODAL_ID); if (mm) mm.classList.remove('active'); }
                 return;
-            default: return;
+            default:
+                if (typeof window._awFeedExtraAction === 'function' && window._awFeedExtraAction(act, id, el)) break;
+                return;
         }
         render();
     }
@@ -58653,9 +58690,11 @@ window._rachatRender=function(filter){
             + ((n.driveFiles && n.driveFiles.length) ? '<div class="cu-files">' + n.driveFiles.map(function (f) {
                 return f && f.url ? '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">📄 ' + esc(f.name || 'Pièce jointe') + ' ↗</a>' : '';
             }).join('') + '</div>' : '')
+            + (typeof window._awNtProductsStatic === 'function' ? window._awNtProductsStatic(n) : '')
             + '</div>'
             + '<div class="cu-foot">'
             + '<button type="button" class="cu-ok" data-cu="ack">✓ J’ai lu</button>'
+            + '<button type="button" class="cu-later" data-cu="reply">💬 Répondre / vérifier</button>'
             + '<button type="button" class="cu-later" data-cu="later">⏰ Me le rappeler dans 5 min</button>'
             + '</div></div>';
         setTimeout(function () { var b = el.querySelector('.cu-ok'); if (b) b.focus(); }, 60);
@@ -58690,6 +58729,19 @@ window._rachatRender=function(filter){
             hide();
             if (typeof showScanToast === 'function') showScanToast('✓ Message urgent marqué comme lu', 'success');
             setTimeout(check, 400);                                            // message urgent suivant éventuel
+        } else if (act === 'reply') {
+            // Ouvre l'accueil sur ce message (l'alerte se retire tant que l'accueil est ouvert)
+            snooze[n.id] = Date.now() + 60000;
+            hide();
+            if (typeof window._awFeedOpenNotif === 'function') window._awFeedOpenNotif(n.id);
+            var u0 = (window._notifApi && window._notifApi.currentUser()) || null;
+            if (u0 && u0.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
+            else if (typeof window._awOpenForUser === 'function') window._awOpenForUser(u0);
+            setTimeout(function () {
+                if (typeof window._awFeedOpenNotif === 'function') window._awFeedOpenNotif(n.id);
+                var box = document.querySelector('.aw-reply-input[data-id="' + n.id + '"]');
+                if (box) { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); box.focus(); }
+            }, 450);
         } else if (act === 'later') {
             snooze[n.id] = Date.now() + snoozeMs();
             hide();
@@ -58722,5 +58774,313 @@ window._rachatRender=function(filter){
         setTimeout(check, 4000);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATIONS : PRODUITS À VÉRIFIER (avec leur numéro) + RÉPONSES
+   • À la rédaction (« ＋ Nouvelle »), on ajoute des produits : nom + n° (code-barres)
+     + stock. Le destinataire les vérifie en scannant / saisissant le n° (contrôle du
+     numéro) ou en cochant ; l'auteur voit qui a vérifié quoi et quand.
+   • Chacun peut répondre au message : fil de discussion, « 💬 nouvelle réponse »
+     signalé à l'auteur et aux participants.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._awNtExtrasInstalled) return;
+    window._awNtExtrasInstalled = true;
+
+    var cmpSel = [], cmpQuery = '', drafts = {};
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toast(m, ty) { if (typeof showScanToast === 'function') showScanToast(m, ty || 'info'); }
+    function cu() { return (window._notifApi && window._notifApi.currentUser()) || null; }
+    function prods() { try { return (typeof products !== 'undefined' && Array.isArray(products)) ? products : JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch (e) { return []; } }
+    function prodById(id) { return prods().find(function (p) { return p && String(p.id) === String(id); }) || null; }
+    function numOf(p) { return String((p && (p.barcode || p.id)) || ''); }
+    function when(iso) {
+        try { var d = new Date(iso), n = new Date(), hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            return d.toDateString() === n.toDateString() ? ("aujourd'hui " + hm) : (d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + hm); } catch (e) { return ''; }
+    }
+    function findNotif(id) { return (window._notifLoad ? window._notifLoad() : []).find(function (n) { return n.id === id; }) || null; }
+    function saveNotif(id, mut) {
+        var list = (window._notifLoad ? window._notifLoad() : []).slice();
+        var i = list.findIndex(function (n) { return n.id === id; });
+        if (i < 0) return null;
+        var n = JSON.parse(JSON.stringify(list[i]));
+        mut(n);
+        list[i] = n;
+        window._notifSave(list);
+        return n;
+    }
+
+    /* ── Réponses vues / non vues (par compte, sur cet appareil) ── */
+    function seenKey(u) { return 'covo_notif_reply_seen_' + ((u && u.id) || 'anon'); }
+    function seenMap(u) { try { return JSON.parse(localStorage.getItem(seenKey(u)) || '{}') || {}; } catch (e) { return {}; } }
+    function markSeen(id) {
+        var u = cu(); if (!u) return;
+        var n = findNotif(id); if (!n) return;
+        var last = (n.replies || []).reduce(function (m, r) { return r.at > m ? r.at : m; }, '');
+        var s = seenMap(u); s[id] = last || new Date().toISOString();
+        try { localStorage.setItem(seenKey(u), JSON.stringify(s)); } catch (e) {}
+    }
+    function newReplies(n, u) {
+        if (!n || !u) return [];
+        var s = seenMap(u)[n.id] || '';
+        return (n.replies || []).filter(function (r) { return r.userId !== u.id && String(r.at || '') > s; });
+    }
+    window._awNtHasNewReplies = function (n, u) { return newReplies(n, u).length > 0; };
+    window._awNtReplyBadge = function (n, u) {
+        var k = newReplies(n, u).length;
+        return k ? '<span class="aw-nt-rbadge">💬 ' + k + ' nouvelle' + (k > 1 ? 's' : '') + ' réponse' + (k > 1 ? 's' : '') + '</span>' : '';
+    };
+
+    /* ── Produits à vérifier (dans la carte de notification) ── */
+    function myChecks(n, u) { return ((n.checks || {})[u && u.id] || {}); }
+    function whoChecked(n, pid) {
+        var out = [];
+        Object.keys(n.checks || {}).forEach(function (uid) { var c = (n.checks[uid] || {})[pid]; if (c && c.on !== false) out.push(c); });
+        return out;
+    }
+    window._awNtExtras = function (n, u, dev, author) {
+        var h = '';
+        var list = n.products || [];
+        if (list.length) {
+            var mine = myChecks(n, u);
+            var done = list.filter(function (p) { var c = mine[p.id]; return c && c.on !== false; }).length;
+            h += '<div class="aw-nt-prods"><div class="aw-nt-prods-h">📦 Produits à vérifier'
+                + ((dev || author) ? '' : ' <span class="aw-chip ' + (done === list.length ? 'green' : 'amber') + '">' + done + ' / ' + list.length + ' vérifié' + (done > 1 ? 's' : '') + '</span>') + '</div>';
+            list.forEach(function (p) {
+                var live = prodById(p.id), c = mine[p.id], ok = !!(c && c.on !== false);
+                var who = whoChecked(n, p.id);
+                h += '<div class="aw-nt-prod' + (ok ? ' ok' : '') + '">'
+                    + ((dev || author) ? '<span class="aw-pchk ro">' + (who.length ? '✓' : '•') + '</span>'
+                        : '<button type="button" class="aw-pchk" data-aw="pchk" data-id="' + esc(n.id) + '" data-pid="' + esc(p.id) + '" aria-pressed="' + ok + '" title="' + (ok ? 'Annuler la vérification' : 'Marquer comme vérifié') + '">' + (ok ? '✓' : '') + '</button>')
+                    + '<span class="nm">' + esc((live && live.name) || p.name) + '</span>'
+                    + '<span class="num">n° ' + esc(p.num) + '</span>'
+                    + '<span class="stk">' + (live ? ('stock ' + (live.unitType === 'kg' ? (+live.stock || 0).toFixed(3) + ' kg' : (+live.stock || 0))) : 'article introuvable') + '</span>'
+                    + (who.length && (dev || author) ? '<span class="who">✓ ' + who.map(function (w) { return esc(w.username) + ' (' + esc(when(w.at)) + ')'; }).join(', ') + '</span>' : '')
+                    + (ok && !(dev || author) ? '<span class="who">vérifié ' + esc(when(c.at)) + (c.by === 'scan' ? ' · n° contrôlé' : '') + '</span>' : '')
+                    + '</div>';
+            });
+            if (!(dev || author)) {
+                h += '<div class="aw-verify"><input class="aw-verify-input" data-id="' + esc(n.id) + '" inputmode="numeric" autocomplete="off" placeholder="🔎 Scanner ou saisir le n° du produit, puis Entrée"><span class="aw-verify-msg" data-id="' + esc(n.id) + '"></span></div>';
+            }
+            h += '</div>';
+        }
+        // Fil de réponses
+        var reps = n.replies || [];
+        h += '<div class="aw-thread">';
+        if (reps.length) {
+            h += '<div class="aw-thread-h">💬 Réponses (' + reps.length + ')</div>';
+            reps.forEach(function (r) {
+                h += '<div class="aw-rep' + (u && r.userId === u.id ? ' mine' : '') + '"><div class="aw-rep-m"><b>' + esc(r.username || '—') + '</b> · ' + esc(when(r.at)) + '</div><div class="aw-rep-t">' + esc(r.text) + '</div></div>';
+            });
+        }
+        h += '<div class="aw-reply"><textarea class="aw-reply-input" data-id="' + esc(n.id) + '" rows="2" maxlength="1000" placeholder="💬 Répondre à ce message…">' + esc(drafts[n.id] || '') + '</textarea>'
+            + '<button type="button" class="aw-fbtn ok" data-aw="nt-reply" data-id="' + esc(n.id) + '">Envoyer</button></div>';
+        return h + '</div>';
+    };
+
+    /* ── Produits dans l'alerte urgente (lecture seule) ── */
+    window._awNtProductsStatic = function (n) {
+        var list = n.products || [];
+        if (!list.length) return '';
+        return '<div style="margin-top:12px;background:rgba(0,0,0,.25);border-radius:12px;padding:10px 12px;">'
+            + '<div style="font-size:.72rem;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:#ffb4a8;margin-bottom:6px;">📦 Produits à vérifier (' + list.length + ')</div>'
+            + list.map(function (p) {
+                var live = prodById(p.id);
+                return '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:.84rem;padding:3px 0;border-top:1px dashed rgba(255,255,255,.12);">'
+                    + '<b>' + esc((live && live.name) || p.name) + '</b><span style="font-family:monospace;color:#ffd7a8;">n° ' + esc(p.num) + '</span>'
+                    + '<span style="margin-left:auto;opacity:.75;font-size:.74rem;">' + (live ? 'stock ' + (+live.stock || 0) : '') + '</span></div>';
+            }).join('')
+            + '<div style="font-size:.7rem;opacity:.7;margin-top:6px;">Vérifiez en scannant les n° via « 💬 Répondre / vérifier ».</div></div>';
+    };
+
+    /* ── Rédaction : ajout de produits ── */
+    function cmpResults() {
+        var q = cmpQuery.trim().toLowerCase();
+        if (q.length < 2) return '';
+        var res = prods().filter(function (p) {
+            if (!p || p.active === false || cmpSel.some(function (s) { return String(s.id) === String(p.id); })) return false;
+            return String(p.name || '').toLowerCase().indexOf(q) >= 0 || String(p.barcode || '').toLowerCase().indexOf(q) >= 0 || String(p.id) === q;
+        }).slice(0, 8);
+        if (!res.length) return '<div class="aw-pres-empty">Aucun produit</div>';
+        return res.map(function (p) {
+            return '<button type="button" class="aw-pres" data-aw="cmp-padd" data-pid="' + esc(p.id) + '"><span>' + esc(p.name) + '</span><span class="num">n° ' + esc(numOf(p)) + '</span><span class="stk">stock ' + (+p.stock || 0) + '</span></button>';
+        }).join('');
+    }
+    window._awCmpProductsHtml = function () {
+        return '<label>📦 Produits à vérifier <span style="text-transform:none;font-weight:600;opacity:.75;">(facultatif — le n° est ajouté au message)</span></label>'
+            + '<div class="aw-cmp-prods">' + cmpSel.map(function (p) {
+                return '<span class="aw-pchip">' + esc(p.name) + ' <b>n° ' + esc(p.num) + '</b><button type="button" data-aw="cmp-pdel" data-pid="' + esc(p.id) + '" aria-label="Retirer">×</button></span>';
+            }).join('') + '</div>'
+            + '<input class="aw-cmp-pinput" autocomplete="off" placeholder="🔎 Nom, code-barres ou n° du produit…" value="' + esc(cmpQuery) + '">'
+            + '<div class="aw-cmp-pres">' + cmpResults() + '</div>';
+    };
+    window._awCmpProductsTake = function () { var out = cmpSel.slice(); cmpSel = []; cmpQuery = ''; return out; };
+    window._awCmpProductsReset = function () { cmpSel = []; cmpQuery = ''; };
+
+    /* ── Actions ── */
+    function setCheck(id, pid, on, by) {
+        var u = cu(); if (!u) return null;
+        return saveNotif(id, function (n) {
+            n.checks = n.checks || {};
+            n.checks[u.id] = n.checks[u.id] || {};
+            n.checks[u.id][pid] = { on: !!on, at: new Date().toISOString(), username: u.username || u.id, by: by || 'clic' };
+        });
+    }
+    window._awFeedExtraAction = function (act, id, el) {
+        var pid = el && el.getAttribute('data-pid');
+        if (act === 'pchk') {
+            var n0 = findNotif(id); if (!n0) return false;
+            var c = myChecks(n0, cu())[pid];
+            setCheck(id, pid, !(c && c.on !== false), 'clic');
+            return true;
+        }
+        if (act === 'nt-reply') {
+            var u = cu(), txt = String(drafts[id] || '').trim();
+            var box = document.querySelector('.aw-reply-input[data-id="' + id + '"]');
+            if (box) txt = String(box.value || '').trim();
+            if (!u || !txt) { toast('✏️ Écrivez votre réponse avant d’envoyer', 'info'); return false; }
+            saveNotif(id, function (n) {
+                n.replies = n.replies || [];
+                n.replies.push({ id: 'R-' + Date.now() + '-' + Math.floor(Math.random() * 1000), at: new Date().toISOString(), userId: u.id, username: u.username || u.id, text: txt.slice(0, 1000) });
+            });
+            delete drafts[id];
+            markSeen(id);
+            // Répondre vaut lecture du message
+            var n1 = findNotif(id);
+            if (n1 && window._notifApi && window._notifApi.isPendingFor(n1, u)) window._notifApi.ackById(id);
+            if (typeof window._awFeedOpenNotif === 'function') window._awFeedOpenNotif(id);
+            toast('💬 Réponse envoyée', 'success');
+            return true;
+        }
+        if (act === 'cmp-padd') {
+            var p = prodById(pid);
+            if (p && !cmpSel.some(function (s) { return String(s.id) === String(p.id); })) cmpSel.push({ id: p.id, name: p.name || 'Article', num: numOf(p) });
+            cmpQuery = '';
+            setTimeout(function () { var i = document.querySelector('.aw-cmp-pinput'); if (i) i.focus(); }, 30);
+            return true;
+        }
+        if (act === 'cmp-pdel') {
+            cmpSel = cmpSel.filter(function (s) { return String(s.id) !== String(pid); });
+            return true;
+        }
+        return false;
+    };
+
+    // Saisie : recherche produits (sans tout redessiner), brouillons de réponse, contrôle du n°
+    document.addEventListener('input', function (e) {
+        var t = e.target;
+        if (!t || !t.classList) return;
+        if (t.classList.contains('aw-cmp-pinput')) {
+            cmpQuery = t.value || '';
+            var box = document.querySelector('.aw-cmp-pres');
+            if (box) box.innerHTML = cmpResults();
+        } else if (t.classList.contains('aw-reply-input')) {
+            drafts[t.getAttribute('data-id')] = t.value;
+        }
+    });
+    document.addEventListener('keydown', function (e) {
+        var t = e.target;
+        if (!t || !t.classList || e.key !== 'Enter') return;
+        if (t.classList.contains('aw-cmp-pinput')) {
+            e.preventDefault();
+            var first = document.querySelector('.aw-cmp-pres .aw-pres');
+            if (first) first.click();
+        } else if (t.classList.contains('aw-reply-input') && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            var btn = document.querySelector('[data-aw="nt-reply"][data-id="' + t.getAttribute('data-id') + '"]');
+            if (btn) btn.click();
+        } else if (t.classList.contains('aw-verify-input')) {
+            e.preventDefault();
+            var id = t.getAttribute('data-id'), code = String(t.value || '').trim().toUpperCase();
+            var n = findNotif(id); if (!n || !code) return;
+            var hit = (n.products || []).find(function (p) {
+                var live = prodById(p.id);
+                return String(p.num).toUpperCase() === code || (live && String(live.barcode || '').toUpperCase() === code) || String(p.id).toUpperCase() === code;
+            });
+            var msg = document.querySelector('.aw-verify-msg[data-id="' + id + '"]');
+            if (!hit) {
+                if (msg) { msg.textContent = '❌ Le n° ' + code + ' ne correspond à aucun produit de ce message'; msg.className = 'aw-verify-msg bad'; }
+                t.select();
+                return;
+            }
+            setCheck(id, hit.id, true, 'scan');
+            if (typeof window._awFeedOpenNotif === 'function') window._awFeedOpenNotif(id);
+            setTimeout(function () {
+                var i2 = document.querySelector('.aw-verify-input[data-id="' + id + '"]');
+                var m2 = document.querySelector('.aw-verify-msg[data-id="' + id + '"]');
+                if (m2) { m2.textContent = '✅ ' + hit.name + ' — n° ' + hit.num + ' vérifié'; m2.className = 'aw-verify-msg ok'; }
+                if (i2) i2.focus();
+            }, 40);
+        }
+    });
+    // Déplier une notification = ses réponses sont vues
+    document.addEventListener('click', function (e) {
+        var row = e.target.closest ? e.target.closest('[data-aw="nt-toggle"]') : null;
+        if (row) markSeen(row.getAttribute('data-id'));
+    }, true);
+
+    // Nouvelle réponse reçue (autre onglet / autre appareil) → avertissement
+    var lastCount = null;
+    function tickReplies() {
+        var u = cu(); if (!u || !window._notifApi) return;
+        var api = window._notifApi, total = 0, latest = null;
+        (api.list() || []).forEach(function (n) {
+            var dev = !!(u.isMaster || u.id === 'USR-MASTER');
+            if (!dev && !api.isForUser(n, u) && !api.isAuthor(n, u)) return;
+            var nr = newReplies(n, u);
+            total += nr.length;
+            nr.forEach(function (r) { if (!latest || r.at > latest.r.at) latest = { r: r, n: n }; });
+        });
+        if (lastCount !== null && total > lastCount && latest) {
+            toast('💬 Nouvelle réponse de ' + latest.r.username + ' : « ' + String(latest.r.text).slice(0, 60) + (latest.r.text.length > 60 ? '…' : '') + ' »', 'info');
+            if (typeof window._awFeedRefresh === 'function') window._awFeedRefresh();
+        }
+        lastCount = total;
+    }
+    setInterval(tickReplies, 3000);
+
+    /* ── Styles ── */
+    var st = document.createElement('style');
+    st.textContent = [
+        '.aw-nt-rbadge{background:#7c3aed;color:#fff;padding:1px 8px;border-radius:10px;font-weight:800;animation:awTagBlink 1.6s ease-in-out infinite;}',
+        '.aw-nt-prods{margin-top:10px;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:9px 11px;}',
+        '.aw-nt-prods-h{font-size:.72rem;font-weight:900;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+        '.aw-nt-prod{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-top:1px dashed rgba(255,255,255,.1);font-size:.8rem;color:rgba(255,255,255,.9);}',
+        '.aw-nt-prod .nm{font-weight:800;}',
+        '.aw-nt-prod .num{font-family:ui-monospace,Menlo,Consolas,monospace;background:rgba(255,255,255,.1);padding:1px 7px;border-radius:6px;font-size:.76rem;color:#ffe08a;}',
+        '.aw-nt-prod .stk{margin-left:auto;font-size:.7rem;color:rgba(255,255,255,.55);}',
+        '.aw-nt-prod .who{flex-basis:100%;font-size:.68rem;color:#2ecc71;padding-left:30px;}',
+        '.aw-nt-prod.ok .nm{color:#2ecc71;}',
+        '.aw-pchk{width:22px;height:22px;border-radius:6px;border:2px solid rgba(255,255,255,.4);background:transparent;color:#fff;font-weight:900;cursor:pointer;flex-shrink:0;line-height:1;padding:0;font-family:inherit;}',
+        '.aw-nt-prod.ok .aw-pchk{background:#27ae60;border-color:#27ae60;}',
+        '.aw-pchk.ro{display:inline-flex;align-items:center;justify-content:center;cursor:default;border-style:dashed;font-size:.8rem;}',
+        '.aw-verify{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;}',
+        '.aw-verify-input{flex:1;min-width:180px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:8px;padding:7px 10px;font-size:.8rem;font-family:inherit;}',
+        '.aw-verify-msg{font-size:.72rem;font-weight:700;}.aw-verify-msg.ok{color:#2ecc71;}.aw-verify-msg.bad{color:#ff8a80;}',
+        '.aw-thread{margin-top:10px;}',
+        '.aw-thread-h{font-size:.72rem;font-weight:900;color:rgba(255,255,255,.75);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}',
+        '.aw-rep{background:rgba(255,255,255,.06);border-radius:10px;padding:7px 10px;margin-bottom:6px;max-width:92%;}',
+        '.aw-rep.mine{background:rgba(39,174,96,.16);margin-left:auto;}',
+        '.aw-rep-m{font-size:.66rem;color:rgba(255,255,255,.55);}.aw-rep-m b{color:#fff;}',
+        '.aw-rep-t{font-size:.8rem;color:rgba(255,255,255,.92);white-space:pre-wrap;word-break:break-word;margin-top:2px;}',
+        '.aw-reply{display:flex;gap:8px;align-items:flex-end;margin-top:6px;}',
+        '.aw-reply-input{flex:1;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:8px;padding:7px 10px;font-size:.8rem;font-family:inherit;resize:vertical;min-height:38px;}',
+        '.aw-cmp-prods{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;}',
+        '.aw-pchip{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);border-radius:20px;padding:3px 4px 3px 10px;font-size:.74rem;color:#fff;}',
+        '.aw-pchip b{font-family:ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;font-weight:700;}',
+        '.aw-pchip button{background:rgba(0,0,0,.3);border:none;color:#fff;width:20px;height:20px;border-radius:50%;cursor:pointer;line-height:1;}',
+        '.aw-cmp .aw-cmp-pinput{margin-bottom:4px;}',
+        '.aw-cmp-pres{display:flex;flex-direction:column;gap:3px;margin-bottom:8px;}',
+        '.aw-pres{display:flex;gap:8px;align-items:center;text-align:left;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:6px 9px;font-size:.78rem;cursor:pointer;font-family:inherit;}',
+        '.aw-pres:hover{background:rgba(255,255,255,.14);}',
+        '.aw-pres .num{font-family:ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;font-size:.72rem;}',
+        '.aw-pres .stk{margin-left:auto;font-size:.68rem;opacity:.6;}',
+        '.aw-pres-empty{font-size:.74rem;opacity:.6;padding:4px 2px;}'
+    ].join('\n');
+    document.head.appendChild(st);
 })();
 </script>
