@@ -58408,3 +58408,83 @@ window._rachatRender=function(filter){
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATIONS ANIMÉES SELON LA PRIORITÉ (jusqu'au clic sur « J'ai lu »)
+   • 🚨 URGENT     : la carte clignote en rouge, l'icône tremble, l'étiquette « URGENT » bat.
+   • ⚠️ IMPORTANT  : halo orange qui « respire » doucement, l'icône se balance comme une cloche.
+   • Le voyant « 🔔 x en attente » du haut prend la même animation (urgent prioritaire).
+   Dès que la notification est marquée « J'ai lu » (ou effacée), l'animation s'arrête.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoNotifAnimInstalled) return;
+    window._covoNotifAnimInstalled = true;
+
+    var css = [
+        /* Cartes de la fenêtre d'accueil — URGENT */
+        '#aw-feed .aw-nt.unread.p-urgent{animation:awNtUrgent 1.4s ease-in-out infinite;}',
+        '#aw-feed .aw-nt.unread.p-urgent .aw-nt-ico{display:inline-block;animation:awIcoShake 1.4s ease-in-out infinite;transform-origin:50% 60%;}',
+        '#aw-feed .aw-nt.unread.p-urgent .aw-nt-tag,#aw-feed .aw-nt.unread.p-urgent .aw-nt-new{animation:awTagBlink 1s ease-in-out infinite;}',
+        '@keyframes awNtUrgent{0%,100%{background:rgba(231,76,60,.10);box-shadow:0 0 0 0 rgba(231,76,60,0);}50%{background:rgba(231,76,60,.24);box-shadow:0 0 0 2px rgba(231,76,60,.6),0 0 20px rgba(231,76,60,.45);}}',
+        '@keyframes awIcoShake{0%,52%,100%{transform:rotate(0) scale(1);}58%{transform:rotate(-15deg) scale(1.18);}66%{transform:rotate(13deg) scale(1.18);}74%{transform:rotate(-9deg) scale(1.1);}82%{transform:rotate(6deg) scale(1.05);}90%{transform:rotate(-3deg);}}',
+        '@keyframes awTagBlink{0%,100%{opacity:1;}50%{opacity:.25;}}',
+        /* Cartes — IMPORTANT */
+        '#aw-feed .aw-nt.unread.p-important{animation:awNtImportant 2.6s ease-in-out infinite;}',
+        '#aw-feed .aw-nt.unread.p-important .aw-nt-ico{display:inline-block;animation:awIcoSwing 2.6s ease-in-out infinite;transform-origin:50% 0;}',
+        '@keyframes awNtImportant{0%,100%{background:rgba(230,126,34,.07);box-shadow:0 0 0 0 rgba(230,126,34,0);}50%{background:rgba(230,126,34,.16);box-shadow:0 0 0 2px rgba(230,126,34,.5),0 0 14px rgba(230,126,34,.3);}}',
+        '@keyframes awIcoSwing{0%,62%,100%{transform:rotate(0);}68%{transform:rotate(16deg);}76%{transform:rotate(-13deg);}84%{transform:rotate(8deg);}92%{transform:rotate(-4deg);}}',
+        /* Voyant du haut */
+        '#notif-sync-indicator.nsi-alert-urgent{animation:nsiUrgent 1.2s ease-in-out infinite;border-color:#e74c3c !important;background:rgba(231,76,60,.18) !important;}',
+        '#notif-sync-indicator.nsi-alert-urgent #notif-sync-label{color:#e74c3c !important;font-weight:900;}',
+        '#notif-sync-indicator.nsi-alert-urgent #notif-sync-dot{background:#e74c3c !important;}',
+        '#notif-sync-indicator.nsi-alert-important{animation:nsiImportant 2.4s ease-in-out infinite;border-color:#e67e22 !important;background:rgba(230,126,34,.16) !important;}',
+        '#notif-sync-indicator.nsi-alert-important #notif-sync-label{color:#e67e22 !important;font-weight:800;}',
+        '#notif-sync-indicator.nsi-alert-important #notif-sync-dot{background:#e67e22 !important;}',
+        '@keyframes nsiUrgent{0%,60%,100%{transform:translateX(0);box-shadow:0 0 0 0 rgba(231,76,60,.65);}8%,24%{transform:translateX(-2px);}16%,32%{transform:translateX(2px);}40%{transform:translateX(0);box-shadow:0 0 0 6px rgba(231,76,60,0);}}',
+        '@keyframes nsiImportant{0%,100%{box-shadow:0 0 0 0 rgba(230,126,34,.55);}50%{box-shadow:0 0 0 6px rgba(230,126,34,0);}}',
+        /* Animations réduites (réglage d'accessibilité du système) : couleurs fixes, sans mouvement */
+        '@media (prefers-reduced-motion:reduce){#aw-feed .aw-nt.unread.p-urgent,#aw-feed .aw-nt.unread.p-important,#aw-feed .aw-nt.unread .aw-nt-ico,#aw-feed .aw-nt.unread .aw-nt-tag,#aw-feed .aw-nt.unread .aw-nt-new,#notif-sync-indicator.nsi-alert-urgent,#notif-sync-indicator.nsi-alert-important{animation:none !important;}'
+            + '#aw-feed .aw-nt.unread.p-urgent{background:rgba(231,76,60,.2);box-shadow:0 0 0 2px rgba(231,76,60,.6);}#aw-feed .aw-nt.unread.p-important{background:rgba(230,126,34,.14);box-shadow:0 0 0 2px rgba(230,126,34,.5);}}'
+    ].join('\n');
+    var st = document.createElement('style');
+    st.id = 'covo-notif-anim-css';
+    st.textContent = css;
+    document.head.appendChild(st);
+
+    // Priorité la plus haute parmi les notifications NON LUES du compte connecté
+    function topPriority() {
+        var api = window._notifApi;
+        if (!api) return null;
+        var u = api.currentUser(), p = null;
+        (api.list() || []).forEach(function (n) {
+            if (!api.isPendingFor(n, u)) return;
+            if (n.priority === 'urgent') p = 'urgent';
+            else if (n.priority === 'important' && p !== 'urgent') p = 'important';
+        });
+        return p;
+    }
+    var CLS = { urgent: 'nsi-alert-urgent', important: 'nsi-alert-important' };
+    function applyIndicator() {
+        var el = document.getElementById('notif-sync-indicator');
+        if (!el) return;
+        var p = topPriority(), want = p ? CLS[p] : null;
+        Object.keys(CLS).forEach(function (k) { var c = CLS[k]; if (c !== want && el.classList.contains(c)) el.classList.remove(c); });
+        if (want && !el.classList.contains(want)) el.classList.add(want);
+    }
+    window._notifAnimApply = applyIndicator;
+
+    function init() {
+        var el = document.getElementById('notif-sync-indicator');
+        // Le voyant est réécrit à chaque synchronisation : on réapplique l'animation aussitôt
+        if (el && window.MutationObserver) {
+            new MutationObserver(function () { applyIndicator(); })
+                .observe(el, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true, characterData: true });
+        }
+        window.addEventListener('covo-autosave-change', function () { setTimeout(applyIndicator, 200); });
+        setInterval(applyIndicator, 3000);
+        setTimeout(applyIndicator, 1500);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
