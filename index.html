@@ -58729,6 +58729,11 @@ window._rachatRender=function(filter){
             hide();
             if (typeof showScanToast === 'function') showScanToast('✓ Message urgent marqué comme lu', 'success');
             setTimeout(check, 400);                                            // message urgent suivant éventuel
+        } else if (act === 'popen') {
+            // Fiche produit au premier plan : l'alerte se retire 1 min puis revient si le message n'est pas lu
+            snooze[n.id] = Date.now() + 60000;
+            hide();
+            if (typeof window._awOpenProduct === 'function') window._awOpenProduct(b.getAttribute('data-pid'));
         } else if (act === 'reply') {
             // Ouvre l'accueil sur ce message (l'alerte se retire tant que l'accueil est ouvert)
             snooze[n.id] = Date.now() + 60000;
@@ -58856,7 +58861,7 @@ window._rachatRender=function(filter){
                 h += '<div class="aw-nt-prod' + (ok ? ' ok' : '') + '">'
                     + ((dev || author) ? '<span class="aw-pchk ro">' + (who.length ? '✓' : '•') + '</span>'
                         : '<button type="button" class="aw-pchk" data-aw="pchk" data-id="' + esc(n.id) + '" data-pid="' + esc(p.id) + '" aria-pressed="' + ok + '" title="' + (ok ? 'Annuler la vérification' : 'Marquer comme vérifié') + '">' + (ok ? '✓' : '') + '</button>')
-                    + '<span class="nm">' + esc((live && live.name) || p.name) + '</span>'
+                    + '<button type="button" class="aw-nt-plink" data-aw="popen" data-pid="' + esc(p.id) + '" title="Ouvrir la fiche produit pour la modifier">' + esc((live && live.name) || p.name) + ' <span aria-hidden="true">✏️</span></button>'
                     + '<span class="num">n° ' + esc(p.num) + '</span>'
                     + '<span class="stk">' + (live ? ('stock ' + (live.unitType === 'kg' ? (+live.stock || 0).toFixed(3) + ' kg' : (+live.stock || 0))) : 'article introuvable') + '</span>'
                     + (who.length && (dev || author) ? '<span class="who">✓ ' + who.map(function (w) { return esc(w.username) + ' (' + esc(when(w.at)) + ')'; }).join(', ') + '</span>' : '')
@@ -58891,10 +58896,10 @@ window._rachatRender=function(filter){
             + list.map(function (p) {
                 var live = prodById(p.id);
                 return '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:.84rem;padding:3px 0;border-top:1px dashed rgba(255,255,255,.12);">'
-                    + '<b>' + esc((live && live.name) || p.name) + '</b><span style="font-family:monospace;color:#ffd7a8;">n° ' + esc(p.num) + '</span>'
+                    + '<button type="button" class="cu-plink" data-cu="popen" data-pid="' + esc(p.id) + '" title="Ouvrir la fiche produit pour la modifier">' + esc((live && live.name) || p.name) + ' ✏️</button><span style="font-family:monospace;color:#ffd7a8;">n° ' + esc(p.num) + '</span>'
                     + '<span style="margin-left:auto;opacity:.75;font-size:.74rem;">' + (live ? 'stock ' + (+live.stock || 0) : '') + '</span></div>';
             }).join('')
-            + '<div style="font-size:.7rem;opacity:.7;margin-top:6px;">Vérifiez en scannant les n° via « 💬 Répondre / vérifier ».</div></div>';
+            + '<div style="font-size:.7rem;opacity:.7;margin-top:6px;">Touchez un produit pour ouvrir sa fiche · vérifiez les n° via « 💬 Répondre / vérifier ».</div></div>';
     };
 
     /* ── Rédaction : ajout de produits ── */
@@ -58932,6 +58937,7 @@ window._rachatRender=function(filter){
     }
     window._awFeedExtraAction = function (act, id, el) {
         var pid = el && el.getAttribute('data-pid');
+        if (act === 'popen') { if (typeof window._awOpenProduct === 'function') window._awOpenProduct(pid); return false; }
         if (act === 'pchk') {
             var n0 = findNotif(id); if (!n0) return false;
             var c = myChecks(n0, cu())[pid];
@@ -59080,6 +59086,59 @@ window._rachatRender=function(filter){
         '.aw-pres .num{font-family:ui-monospace,Menlo,Consolas,monospace;color:#ffe08a;font-size:.72rem;}',
         '.aw-pres .stk{margin-left:auto;font-size:.68rem;opacity:.6;}',
         '.aw-pres-empty{font-size:.74rem;opacity:.6;padding:4px 2px;}'
+    ].join('\n');
+    document.head.appendChild(st);
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATION → FICHE PRODUIT : un clic sur un « produit à vérifier » ouvre sa fiche
+   pour le modifier directement (fiche complète pour un admin, édition rapide pour un
+   caissier autorisé, fiche en lecture pour les autres). La fiche s'ouvre AU-DESSUS de la
+   fenêtre d'accueil, qui reste ouverte derrière et se met à jour après l'enregistrement.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._awOpenProduct) return;
+    function toast(m, ty) { if (typeof showScanToast === 'function') showScanToast(m, ty || 'info'); }
+    function liftAbove(id, z) {
+        // Passe une fenêtre devant l'accueil le temps de son ouverture, puis rétablit son niveau
+        var el = document.getElementById(id);
+        if (!el) return;
+        var prev = el.style.zIndex;
+        el.style.zIndex = String(z);
+        if (!window.MutationObserver) return;
+        var mo = new MutationObserver(function () {
+            if (getComputedStyle(el).display === 'none') { el.style.zIndex = prev; mo.disconnect(); }
+        });
+        mo.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+    }
+    window._awOpenProduct = function (pid) {
+        var list = (typeof products !== 'undefined' && Array.isArray(products)) ? products : [];
+        var p = list.find(function (x) { return String(x.id) === String(pid); });
+        if (!p) { toast('⚠️ Produit introuvable dans le catalogue (supprimé ?)', 'error'); return; }
+        var u = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+        var admin = !!(u && (u.role === 'admin' || u.isMaster || u.id === 'USR-MASTER')) || (typeof isAdmin !== 'undefined' && isAdmin);
+        var canCashierEdit = (typeof cashierPermissions !== 'undefined' && cashierPermissions && cashierPermissions.editEnabled);
+        if (admin && typeof window.openProductEditModal === 'function') {
+            window.openProductEditModal(p.id);                      // fiche complète (niveau 25000, au-dessus de l'accueil)
+        } else if (canCashierEdit && typeof openCashierEditModal === 'function') {
+            openCashierEditModal(p.id);                             // édition rapide autorisée au caissier
+            liftAbove('cashier-edit-modal', 26000);
+        } else if (typeof window.openProductDetail === 'function') {
+            window.openProductDetail(p.id);                         // consultation seule
+            toast('👁️ Fiche en consultation — modification réservée aux administrateurs', 'info');
+        }
+    };
+    var st = document.createElement('style');
+    st.textContent = [
+        '.aw-nt-plink{background:none;border:none;padding:0;margin:0;color:#fff;font:inherit;font-weight:800;cursor:pointer;text-align:left;text-decoration:underline;text-decoration-color:rgba(255,255,255,.35);text-underline-offset:3px;}',
+        '.aw-nt-plink:hover{color:#ffe08a;text-decoration-color:#ffe08a;}',
+        '.aw-nt-prod.ok .aw-nt-plink{color:#2ecc71;}',
+        '.aw-nt-plink span{font-size:.72rem;opacity:.75;}',
+        '.cu-plink{background:none;border:none;padding:0;color:#fff;font:inherit;font-weight:800;cursor:pointer;text-decoration:underline;text-decoration-color:rgba(255,255,255,.4);text-underline-offset:3px;}',
+        '.cu-plink:hover{color:#ffe08a;}',
+        '.aw-nt-plink:focus-visible,.cu-plink:focus-visible{outline:2px solid #fff;outline-offset:2px;border-radius:4px;}'
     ].join('\n');
     document.head.appendChild(st);
 })();
