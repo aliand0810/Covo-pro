@@ -57972,7 +57972,7 @@ window._rachatRender=function(filter){
         var u = cu(), dev = isDev(u);
         var foot = (u && u.role !== 'admin')
             ? '<div class="aw-feed-foot"><button type="button" class="aw-fbtn primary" data-aw="close">💼 Commencer ma journée</button></div>' : '';
-        f.innerHTML = notifSection(u, dev) + resvSection() + foot;
+        f.innerHTML = (typeof window._awValidSectionHtml === 'function' ? window._awValidSectionHtml() : '') + notifSection(u, dev) + resvSection() + foot;
     }
     var _rT = null;
     // Ouvrir l'accueil sur une notification précise (dépliée), ex. « 💬 Répondre » depuis l'alerte urgente
@@ -59141,5 +59141,235 @@ window._rachatRender=function(filter){
         '.aw-nt-plink:focus-visible,.cu-plink:focus-visible{outline:2px solid #fff;outline-offset:2px;border-radius:4px;}'
     ].join('\n');
     document.head.appendChild(st);
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   RÉSERVATIONS CLIENTS À VALIDER (fenêtre de bienvenue) + SIGNAL SONORE
+   • Toute réservation faite par un client dans son portail apparaît en tête de l'accueil :
+     « 📥 Réservation en cours — merci de la valider », avec le détail et un bouton ✅ Valider.
+   • À l'arrivée : carillon + annonce vocale « Nouvelle réservation de … Merci de la valider. »
+     (« Un nouveau client, …, a fait une réservation » pour sa toute première réservation).
+   • À l'ouverture de l'accueil, s'il reste des réservations à valider : rappel sonore.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._awValidInstalled) return;
+    window._awValidInstalled = true;
+
+    var SOUND_KEY = 'covo_resv_sound', DONE_KEY = 'covo_resv_announced';
+    var lastSoundAt = 0;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toast(m, ty) { if (typeof showScanToast === 'function') showScanToast(m, ty || 'info'); }
+    function cu() { try { if (typeof currentUser !== 'undefined' && currentUser) return currentUser; } catch (e) {} return null; }
+    function lg() { try { return JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}; } catch (e) { return {}; } }
+    function soundOn() { try { return localStorage.getItem(SOUND_KEY) !== '0'; } catch (e) { return true; } }
+    function welcomeOpen() { var m = $('admin-welcome-modal'); return !!(m && m.classList.contains('active')); }
+    function when(iso) {
+        try { var d = new Date(iso), n = new Date(), hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            return d.toDateString() === n.toDateString() ? ("aujourd'hui " + hm) : (d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + hm); } catch (e) { return ''; }
+    }
+    function initials(n) { var p = String(n || '?').trim().split(/\s+/); return ((p[0] || '?').charAt(0) + (p.length > 1 ? p[p.length - 1].charAt(0) : '')).toUpperCase(); }
+
+    /* Réservations du portail pas encore validées, regroupées par client */
+    function pendingByClient() {
+        var out = [];
+        (lg().customers || []).forEach(function (c) {
+            var items = (c.reservations || []).filter(function (r) { return r && r.source === 'portail' && !r.validated; });
+            if (!items.length) return;
+            var keys = items.map(function (r) { return r.portalKey; });
+            var past = (c.portalResvKeys || []).filter(function (k) { return keys.indexOf(k) < 0; });
+            out.push({ c: c, items: items, isNew: past.length === 0 });
+        });
+        out.sort(function (a, b) { return String(b.items[0].date || '').localeCompare(String(a.items[0].date || '')); });
+        return out;
+    }
+    window._awValidPending = pendingByClient;
+
+    /* ── Son : carillon + voix ── */
+    var AC = null;
+    function audio() {
+        try { if (!AC) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return null; AC = new C(); } if (AC.state === 'suspended') AC.resume(); return AC; } catch (e) { return null; }
+    }
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, function () { audio(); }, { passive: true }); });
+    function chime() {
+        var c = audio(); if (!c) return;
+        var t0 = c.currentTime + 0.05;
+        [[659.25, 0], [880, 0.18], [1318.5, 0.36]].forEach(function (n) {   // mi – la – mi (carillon « ding-ding-dong »)
+            var o = c.createOscillator(), g = c.createGain();
+            o.type = 'sine'; o.frequency.setValueAtTime(n[0], t0 + n[1]);
+            g.gain.setValueAtTime(0.0001, t0 + n[1]);
+            g.gain.exponentialRampToValueAtTime(0.25, t0 + n[1] + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + n[1] + 0.9);
+            o.connect(g); g.connect(c.destination); o.start(t0 + n[1]); o.stop(t0 + n[1] + 0.95);
+        });
+    }
+    function speak(text) {
+        try {
+            if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+            var u = new SpeechSynthesisUtterance(text);
+            u.lang = 'fr-FR'; u.rate = 1;
+            var v = (window.speechSynthesis.getVoices() || []).filter(function (x) { return /^fr/i.test(x.lang); })[0];
+            if (v) u.voice = v;
+            window.speechSynthesis.speak(u);
+        } catch (e) {}
+    }
+    function announce(text) {
+        if (!soundOn()) return;
+        lastSoundAt = Date.now();
+        chime();
+        setTimeout(function () { speak(text); }, 1100);
+    }
+    window._awValidAnnounce = announce;
+
+    /* ── Arrivée d'une nouvelle réservation (import du portail, autre onglet/app) ── */
+    function done() { try { return JSON.parse(localStorage.getItem(DONE_KEY) || '[]') || []; } catch (e) { return []; } }
+    var known = null;
+    function checkArrivals() {
+        var groups = pendingByClient(), keys = {}, fresh = [];
+        groups.forEach(function (g) { g.items.forEach(function (r) { keys[r.portalKey] = g; }); });
+        if (known === null) { known = keys; return; }
+        var d = done();
+        Object.keys(keys).forEach(function (k) { if (!known[k] && d.indexOf(k) < 0) fresh.push(k); });
+        known = keys;
+        if (!fresh.length) return;
+        // un seul signal par réservation, même avec plusieurs onglets COVO Pro ouverts
+        try { localStorage.setItem(DONE_KEY, JSON.stringify(d.concat(fresh).slice(-500))); } catch (e) {}
+        var clients = [];
+        fresh.forEach(function (k) { if (clients.indexOf(keys[k]) < 0) clients.push(keys[k]); });
+        var text;
+        if (clients.length === 1) {
+            var g = clients[0], nm = g.c.name || 'un client';
+            text = g.isNew
+                ? ('Un nouveau client, ' + nm + ', a fait une réservation. Merci de la valider.')
+                : ('Une réservation est en cours : ' + nm + ' a réservé ' + (fresh.length > 1 ? fresh.length + ' articles' : 'un article') + '. Merci de la valider.');
+        } else {
+            text = clients.length + ' clients ont fait une réservation. Merci de les valider.';
+        }
+        announce(text);
+        if (typeof window._awFeedRefresh === 'function') window._awFeedRefresh();
+    }
+
+    /* ── Section « à valider » en tête de l'accueil ── */
+    window._awValidSectionHtml = function () {
+        var groups = pendingByClient();
+        if (!groups.length) return '';
+        var n = groups.reduce(function (s, g) { return s + g.items.length; }, 0);
+        var h = '<section class="aw-fsec aw-valid" id="aw-fsec-valid" aria-label="Réservations à valider"><div class="aw-fsec-head">'
+            + '<span class="aw-fsec-title">📥 ' + (groups.length > 1 ? groups.length + ' réservations en cours' : 'Une réservation est en cours') + ' — merci de ' + (groups.length > 1 ? 'les' : 'la') + ' valider</span>'
+            + '<span class="aw-chip red">' + n + ' article' + (n > 1 ? 's' : '') + ' à valider</span>'
+            + '<button type="button" class="aw-vmute" data-aw="vmute" title="' + (soundOn() ? 'Couper le signal sonore des réservations' : 'Réactiver le signal sonore') + '">' + (soundOn() ? '🔊' : '🔇') + '</button></div>';
+        groups.forEach(function (g) {
+            var c = g.c, first = g.items[0];
+            var want = g.items.map(function (r) { return r.pickupDate; }).filter(Boolean)[0];
+            h += '<div class="aw-vrow"><div class="aw-rv-av">' + esc(initials(c.name)) + '</div><div class="aw-vmain">'
+                + '<div class="aw-vname">' + esc(c.name || 'Client') + (g.isNew ? ' <span class="aw-vnew">✨ Nouveau client</span>' : '') + '</div>'
+                + '<div class="aw-vitems">' + g.items.map(function (r) {
+                    var q = r.unitType === 'kg' ? (r.qty + ' kg') : ('×' + (r.qty || 1));
+                    var st = (r.decremented !== false) ? '<span class="ok">✅ mis de côté</span>' : '<span class="wait">⏳ en attente de stock</span>';
+                    return '<span class="aw-vitem">' + esc(r.productName || 'Article') + ' <b>' + esc(q) + '</b> · ' + st + '</span>';
+                }).join('') + '</div>'
+                + '<div class="aw-vmeta">Reçue ' + esc(when(first.date)) + (want ? ' · retrait souhaité le ' + esc(new Date(want).toLocaleDateString('fr-FR')) : '') + (c.phone ? ' · 📞 ' + esc(c.phone) : '') + '</div>'
+                + '</div><div class="aw-vact">'
+                + '<button type="button" class="aw-fbtn ok" data-aw="vok" data-id="' + esc(String(c.id)) + '">✅ Valider</button>'
+                + '<button type="button" class="aw-fbtn ghost" data-aw="vsee" data-id="' + esc(String(c.id)) + '">👁 Voir</button>'
+                + '</div></div>';
+        });
+        return h + '</section>';
+    };
+
+    function validateClient(cid) {
+        var d = lg(), u = cu(), n = 0, name = '';
+        (d.customers || []).forEach(function (c) {
+            if (String(c.id) !== String(cid)) return;
+            name = c.name || '';
+            (c.reservations || []).forEach(function (r) {
+                if (r && r.source === 'portail' && !r.validated) {
+                    r.validated = { at: new Date().toISOString(), by: (u && (u.username || u.id)) || '' };
+                    n++;
+                }
+            });
+        });
+        if (!n) return 0;
+        localStorage.setItem('covo_loyalty', JSON.stringify(d));
+        known = null; checkArrivals();
+        // Plus rien à valider : la notification « 📥 Nouvelle réservation » est marquée lue
+        if (!pendingByClient().length && window._notifApi) {
+            var me = window._notifApi.currentUser();
+            (window._notifApi.list() || []).forEach(function (x) {
+                if (x.createdBy === 'Portail client' && window._notifApi.isPendingFor(x, me)) window._notifApi.ackById(x.id);
+            });
+        }
+        if (typeof window._covoLiveRefresh === 'function') window._covoLiveRefresh();
+        toast('✅ Réservation de ' + name + ' validée (' + n + ' article' + (n > 1 ? 's' : '') + ')', 'success');
+        return n;
+    }
+    window._awValidateClient = validateClient;
+
+    // Actions de la section (s'ajoutent à celles déjà gérées par le fil d'accueil)
+    var prevAction = window._awFeedExtraAction;
+    window._awFeedExtraAction = function (act, id, el) {
+        if (act === 'vok') { validateClient(id); return true; }
+        if (act === 'vmute') {
+            try { localStorage.setItem(SOUND_KEY, soundOn() ? '0' : '1'); } catch (e) {}
+            toast(soundOn() ? '🔊 Signal sonore des réservations activé' : '🔇 Signal sonore des réservations coupé', 'info');
+            return true;
+        }
+        if (act === 'vsee') {
+            var row = document.querySelector('.aw-rv-row[data-id="' + id + '"]');
+            if (row) {
+                if (row.getAttribute('aria-expanded') !== 'true') row.click();
+                setTimeout(function () { var r2 = document.querySelector('.aw-rv-row[data-id="' + id + '"]'); if (r2) r2.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 80);
+            } else {
+                var s = $('aw-fsec-resv'); if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            return false;
+        }
+        return typeof prevAction === 'function' ? prevAction(act, id, el) : false;
+    };
+
+    function onOpen() {
+        if (!welcomeOpen()) return;
+        var groups = pendingByClient();
+        if (!groups.length || Date.now() - lastSoundAt < 15000) return;   // déjà annoncé à l'instant
+        var n = groups.length;
+        announce(n > 1 ? (n + ' réservations clients sont en cours. Merci de les valider.') : ('Une réservation est en cours pour ' + (groups[0].c.name || 'un client') + '. Merci de la valider.'));
+    }
+
+    function init() {
+        var st = document.createElement('style');
+        st.textContent = [
+            '#aw-fsec-valid{border:1.5px solid rgba(46,204,113,.6);background:linear-gradient(135deg,rgba(46,204,113,.14),rgba(46,204,113,.04));animation:awValidPulse 2s ease-in-out infinite;}',
+            '@keyframes awValidPulse{0%,100%{box-shadow:0 0 0 0 rgba(46,204,113,.45);}50%{box-shadow:0 0 0 5px rgba(46,204,113,0),0 0 22px rgba(46,204,113,.25);}}',
+            '.aw-vmute{margin-left:auto;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:.85rem;}',
+            '.aw-vrow{display:flex;gap:11px;align-items:flex-start;background:rgba(0,0,0,.2);border-radius:11px;padding:10px 12px;}',
+            '.aw-vrow+.aw-vrow{margin-top:7px;}',
+            '.aw-vmain{flex:1;min-width:0;}',
+            '.aw-vname{font-weight:800;color:#fff;font-size:.88rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}',
+            '.aw-vnew{font-size:.6rem;font-weight:900;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:.4px;}',
+            '.aw-vitems{display:flex;flex-direction:column;gap:2px;margin-top:4px;}',
+            '.aw-vitem{font-size:.78rem;color:rgba(255,255,255,.88);}',
+            '.aw-vitem .ok{color:#2ecc71;font-weight:700;}.aw-vitem .wait{color:#fbbf24;font-weight:700;}',
+            '.aw-vmeta{font-size:.68rem;color:rgba(255,255,255,.5);margin-top:4px;}',
+            '.aw-vact{display:flex;flex-direction:column;gap:6px;flex-shrink:0;}',
+            '@media (max-width:520px){.aw-vrow{flex-wrap:wrap;}.aw-vact{flex-direction:row;width:100%;}.aw-vact .aw-fbtn{flex:1;}}',
+            '@media (prefers-reduced-motion:reduce){#aw-fsec-valid{animation:none;}}'
+        ].join('\n');
+        document.head.appendChild(st);
+        checkArrivals();
+        window.addEventListener('storage', function (e) { if (e.key === 'covo_loyalty') setTimeout(checkArrivals, 50); });
+        setInterval(checkArrivals, 4000);
+        var m = $('admin-welcome-modal');
+        if (m && window.MutationObserver) {
+            var was = m.classList.contains('active');
+            new MutationObserver(function () {
+                var now = m.classList.contains('active');
+                if (now && !was) setTimeout(onOpen, 700);
+                was = now;
+            }).observe(m, { attributes: true, attributeFilter: ['class'] });
+        }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
