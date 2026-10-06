@@ -58056,7 +58056,9 @@ window._rachatRender=function(filter){
         if ($('notif-block-modal') && typeof _origCheck === 'function') return _origCheck.apply(this, arguments);
         var api = window._notifApi, u = (user && user.id) ? user : cu();
         if (!api || !u || loginScreenShown()) return;
-        var fresh = (api.list() || []).filter(function (n) { return api.isPendingFor(n, u) && !_presented[n.id]; });
+        // Les messages URGENTS ont leur propre alerte plein écran (sirène) : pas besoin d'ouvrir l'accueil pour eux
+        var fresh = (api.list() || []).filter(function (n) { return api.isPendingFor(n, u) && !_presented[n.id] && !(n.priority === 'urgent' && window._covoUrgentInstalled); });
+        if (typeof window._covoUrgentCheck === 'function') setTimeout(window._covoUrgentCheck, 50);
         if (!fresh.length) return;
         fresh.forEach(function (n) { ui.open[n.id] = true; });
         if (u.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
@@ -58484,6 +58486,240 @@ window._rachatRender=function(filter){
         window.addEventListener('covo-autosave-change', function () { setTimeout(applyIndicator, 200); });
         setInterval(applyIndicator, 3000);
         setTimeout(applyIndicator, 1500);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALERTE « NOUVEAU MESSAGE URGENT » — plein milieu de l'écran, animée, avec signal sonore
+   Dès qu'une notification URGENTE destinée au compte connecté n'est pas marquée « lue »
+   et que la fenêtre d'accueil est fermée : grande alerte au centre de l'écran, sirène +
+   annonce vocale « Nouveau message urgent ». Elle reste tant que le message n'est pas lu :
+   « ✓ J'ai lu » l'arrête définitivement, « Me le rappeler dans 5 min » la met en pause.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoUrgentInstalled) return;
+    window._covoUrgentInstalled = true;
+
+    var ID = 'covo-urgent-alert', SOUND_KEY = 'covo_urgent_sound';
+    var snooze = {}, current = null, repeatT = null, repeats = 0;
+
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function snoozeMs() { return window._covoUrgentSnoozeMs || 5 * 60 * 1000; }
+    function welcomeOpen() { var m = $('admin-welcome-modal'); return !!(m && m.classList.contains('active')); }
+    function loginShown() {
+        var lm = $('login-modal'), sp = $('login-splash');
+        if (lm && (lm.classList.contains('active') || lm.style.display === 'flex')) return true;
+        if (sp && sp.style.display && sp.style.display !== 'none') return true;
+        return false;
+    }
+    function soundOn() { try { return localStorage.getItem(SOUND_KEY) !== '0'; } catch (e) { return true; } }
+
+    /* ── Son : sirène (Web Audio) + annonce vocale en français ── */
+    var AC = null;
+    function audio() {
+        try {
+            if (!AC) { var C = window.AudioContext || window.webkitAudioContext; if (!C) return null; AC = new C(); }
+            if (AC.state === 'suspended') AC.resume();
+            return AC;
+        } catch (e) { return null; }
+    }
+    // Le navigateur n'autorise le son qu'après une 1re action de l'utilisateur (connexion, clic…)
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, function () { audio(); }, { passive: true }); });
+    function siren(n) {
+        var c = audio(); if (!c) return;
+        var t0 = c.currentTime + 0.05;
+        for (var i = 0; i < n; i++) {
+            var t = t0 + i * 0.55, o = c.createOscillator(), g = c.createGain();
+            o.type = 'sawtooth';
+            o.frequency.setValueAtTime(760, t);
+            o.frequency.linearRampToValueAtTime(1280, t + 0.25);
+            o.frequency.linearRampToValueAtTime(760, t + 0.5);
+            g.gain.setValueAtTime(0.0001, t);
+            g.gain.exponentialRampToValueAtTime(0.16, t + 0.04);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.52);
+            o.connect(g); g.connect(c.destination);
+            o.start(t); o.stop(t + 0.54);
+        }
+    }
+    function speak(text) {
+        try {
+            if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+            window.speechSynthesis.cancel();
+            var u = new SpeechSynthesisUtterance(text);
+            u.lang = 'fr-FR'; u.rate = 1; u.pitch = 1; u.volume = 1;
+            var v = (window.speechSynthesis.getVoices() || []).filter(function (x) { return /^fr/i.test(x.lang); })[0];
+            if (v) u.voice = v;
+            window.speechSynthesis.speak(u);
+        } catch (e) {}
+    }
+    function announce(n, first) {
+        if (!soundOn()) return;
+        siren(first ? 3 : 2);
+        setTimeout(function () {
+            if (!current) return;
+            speak(first ? ('Nouveau message urgent. ' + (n.subject || '')) : 'Message urgent en attente de lecture.');
+        }, first ? 1750 : 1200);
+    }
+    function stopSound() {
+        clearTimeout(repeatT); repeatT = null;
+        try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    function scheduleRepeat() {
+        clearTimeout(repeatT);
+        if (repeats >= 4) return;                    // rappel sonore toutes les 30 s, 4 fois maximum
+        repeatT = setTimeout(function () {
+            if (!current || !$(ID)) return;
+            repeats++; announce(current, false); scheduleRepeat();
+        }, 30000);
+    }
+
+    /* ── Styles ── */
+    function css() {
+        if ($('covo-urgent-css')) return;
+        var s = document.createElement('style');
+        s.id = 'covo-urgent-css';
+        s.textContent = [
+            '#' + ID + '{position:fixed;inset:0;z-index:150000;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(20,0,0,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);animation:cuFade .25s ease;}',
+            '#' + ID + '::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(231,76,60,.45),rgba(231,76,60,0) 60%);animation:cuPulseBg 1.2s ease-in-out infinite;pointer-events:none;}',
+            '#' + ID + ' .cu-card{position:relative;width:min(520px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column;background:linear-gradient(160deg,#1f1020 0%,#2a0f14 55%,#3b0d12 100%);border:2px solid #e74c3c;border-radius:20px;box-shadow:0 0 0 0 rgba(231,76,60,.7),0 30px 80px rgba(0,0,0,.6);color:#fff;overflow:hidden;animation:cuPop .45s cubic-bezier(.2,1.4,.4,1) both,cuGlow 1.2s ease-in-out .45s infinite,cuShake 4s ease-in-out 1s infinite;}',
+            '#' + ID + ' .cu-head{background:linear-gradient(135deg,#e74c3c,#a93226);padding:18px 20px 16px;text-align:center;position:relative;}',
+            '#' + ID + ' .cu-siren{font-size:2.6rem;line-height:1;display:inline-block;animation:cuSiren .6s ease-in-out infinite alternate;filter:drop-shadow(0 0 10px rgba(255,220,200,.9));}',
+            '#' + ID + ' .cu-title{font-size:1.15rem;font-weight:900;letter-spacing:1.5px;margin-top:6px;text-transform:uppercase;animation:cuBlink 1s ease-in-out infinite;}',
+            '#' + ID + ' .cu-meta{font-size:.72rem;color:rgba(255,255,255,.82);margin-top:4px;}',
+            '#' + ID + ' .cu-count{position:absolute;top:12px;right:14px;background:rgba(0,0,0,.25);font-size:.7rem;font-weight:800;padding:2px 9px;border-radius:12px;}',
+            '#' + ID + ' .cu-mute{position:absolute;top:10px;left:12px;background:rgba(0,0,0,.25);border:none;color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:.95rem;}',
+            '#' + ID + ' .cu-body{padding:18px 20px;overflow-y:auto;}',
+            '#' + ID + ' .cu-subj{font-size:1.15rem;font-weight:900;margin-bottom:10px;line-height:1.3;}',
+            '#' + ID + ' .cu-msg{font-size:.92rem;line-height:1.6;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.28);border-radius:12px;padding:12px 14px;color:rgba(255,255,255,.94);}',
+            '#' + ID + ' .cu-files a{display:inline-flex;gap:6px;margin:8px 6px 0 0;font-size:.78rem;color:#8ab4f8;text-decoration:none;background:rgba(66,133,244,.16);padding:5px 10px;border-radius:8px;}',
+            '#' + ID + ' .cu-foot{display:flex;gap:10px;flex-wrap:wrap;padding:0 20px 20px;}',
+            '#' + ID + ' .cu-ok{flex:2;min-width:180px;border:none;border-radius:12px;padding:14px;font-size:1rem;font-weight:900;color:#fff;cursor:pointer;background:linear-gradient(135deg,#27ae60,#1e8449);box-shadow:0 6px 18px rgba(39,174,96,.35);font-family:inherit;}',
+            '#' + ID + ' .cu-later{flex:1;min-width:140px;border:1.5px solid rgba(255,255,255,.3);border-radius:12px;padding:12px;font-size:.82rem;font-weight:700;color:rgba(255,255,255,.85);cursor:pointer;background:transparent;font-family:inherit;}',
+            '#' + ID + ' .cu-ok:hover,#' + ID + ' .cu-later:hover{filter:brightness(1.12);}',
+            '#' + ID + ' button:focus-visible{outline:3px solid #fff;outline-offset:2px;}',
+            '@keyframes cuFade{from{opacity:0;}to{opacity:1;}}',
+            '@keyframes cuPop{0%{transform:scale(.6) translateY(30px);opacity:0;}100%{transform:none;opacity:1;}}',
+            '@keyframes cuGlow{0%,100%{box-shadow:0 0 0 0 rgba(231,76,60,.7),0 30px 80px rgba(0,0,0,.6);}50%{box-shadow:0 0 0 10px rgba(231,76,60,0),0 0 50px rgba(231,76,60,.55);}}',
+            '@keyframes cuShake{0%,88%,100%{transform:none;}90%{transform:translateX(-8px) rotate(-1deg);}92%{transform:translateX(8px) rotate(1deg);}94%{transform:translateX(-6px);}96%{transform:translateX(6px);}98%{transform:translateX(-2px);}}',
+            '@keyframes cuSiren{from{transform:scale(1) rotate(-8deg);}to{transform:scale(1.18) rotate(8deg);}}',
+            '@keyframes cuBlink{0%,100%{opacity:1;}50%{opacity:.45;}}',
+            '@keyframes cuPulseBg{0%,100%{opacity:.35;}50%{opacity:1;}}',
+            '@media (prefers-reduced-motion:reduce){#' + ID + ' .cu-card,#' + ID + ' .cu-siren,#' + ID + ' .cu-title,#' + ID + '::before{animation:none !important;}}'
+        ].join('\n');
+        document.head.appendChild(s);
+    }
+
+    /* ── Affichage ── */
+    function pendingUrgent() {
+        var api = window._notifApi;
+        if (!api) return [];
+        var u = api.currentUser();
+        if (!u) return [];
+        var now = Date.now();
+        return (api.list() || []).filter(function (n) {
+            return n.priority === 'urgent' && api.isPendingFor(n, u) && !(snooze[n.id] > now);
+        }).sort(function (a, b) { return String(a.createdAt || '').localeCompare(String(b.createdAt || '')); });
+    }
+    function fmt(iso) {
+        try { var d = new Date(iso); return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+    }
+    function render(n, total) {
+        css();
+        var el = $(ID);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = ID;
+            el.setAttribute('role', 'alertdialog');
+            el.setAttribute('aria-modal', 'true');
+            el.setAttribute('aria-labelledby', 'cu-subj');
+            el.addEventListener('click', onClick);
+            document.body.appendChild(el);
+        }
+        var R = { all: '👥 Tous', admin: '👑 Admins', caissier: '💼 Caissiers' };
+        el.innerHTML = '<div class="cu-card">'
+            + '<div class="cu-head">'
+            + '<button type="button" class="cu-mute" data-cu="mute" title="' + (soundOn() ? 'Couper le son des alertes' : 'Réactiver le son des alertes') + '" aria-label="Son des alertes">' + (soundOn() ? '🔊' : '🔇') + '</button>'
+            + (total > 1 ? '<span class="cu-count">1 / ' + total + '</span>' : '')
+            + '<div class="cu-siren">🚨</div>'
+            + '<div class="cu-title">Nouveau message urgent</div>'
+            + '<div class="cu-meta">De ' + esc(n.createdBy || 'Administrateur') + ' · ' + esc(fmt(n.createdAt)) + ' · ' + (R[n.recipients || 'all'] || R.all) + '</div>'
+            + '</div>'
+            + '<div class="cu-body"><div class="cu-subj" id="cu-subj">' + esc(n.subject || 'Message urgent') + '</div>'
+            + '<div class="cu-msg">' + esc(n.message || '') + '</div>'
+            + ((n.driveFiles && n.driveFiles.length) ? '<div class="cu-files">' + n.driveFiles.map(function (f) {
+                return f && f.url ? '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">📄 ' + esc(f.name || 'Pièce jointe') + ' ↗</a>' : '';
+            }).join('') + '</div>' : '')
+            + '</div>'
+            + '<div class="cu-foot">'
+            + '<button type="button" class="cu-ok" data-cu="ack">✓ J’ai lu</button>'
+            + '<button type="button" class="cu-later" data-cu="later">⏰ Me le rappeler dans 5 min</button>'
+            + '</div></div>';
+        setTimeout(function () { var b = el.querySelector('.cu-ok'); if (b) b.focus(); }, 60);
+    }
+    function hide() {
+        var el = $(ID);
+        if (el) el.remove();
+        current = null;
+        stopSound();
+    }
+    function check() {
+        if (welcomeOpen() || loginShown()) { if ($(ID)) hide(); return; }   // l'accueil affiche déjà le message
+        var list = pendingUrgent();
+        if (!list.length) { if ($(ID)) hide(); return; }
+        var n = list[0];
+        if (current && current.id === n.id && $(ID)) return;               // déjà affichée
+        var first = !current;
+        current = n; repeats = 0;
+        render(n, list.length);
+        announce(n, true);
+        scheduleRepeat();
+        void first;
+    }
+    window._covoUrgentCheck = check;
+
+    function onClick(e) {
+        var b = e.target.closest ? e.target.closest('[data-cu]') : null;
+        if (!b || !current) return;
+        var act = b.getAttribute('data-cu'), n = current;
+        if (act === 'ack') {
+            if (window._notifApi) window._notifApi.ackById(n.id);
+            hide();
+            if (typeof showScanToast === 'function') showScanToast('✓ Message urgent marqué comme lu', 'success');
+            setTimeout(check, 400);                                            // message urgent suivant éventuel
+        } else if (act === 'later') {
+            snooze[n.id] = Date.now() + snoozeMs();
+            hide();
+            if (typeof showScanToast === 'function') showScanToast('⏰ Rappel du message urgent dans 5 minutes', 'info');
+            setTimeout(check, 400);
+        } else if (act === 'mute') {
+            try { localStorage.setItem(SOUND_KEY, soundOn() ? '0' : '1'); } catch (er) {}
+            if (!soundOn()) stopSound(); else announce(n, false);
+            b.textContent = soundOn() ? '🔊' : '🔇';
+            b.title = soundOn() ? 'Couper le son des alertes' : 'Réactiver le son des alertes';
+        }
+    }
+
+    function init() {
+        var m = $('admin-welcome-modal');
+        if (m && window.MutationObserver) {
+            // Fermeture de la fenêtre d'accueil sans avoir lu le message urgent → alerte
+            new MutationObserver(function () { setTimeout(check, welcomeOpen() ? 0 : 1200); })
+                .observe(m, { attributes: true, attributeFilter: ['class'] });
+        }
+        var lbl = $('notif-sync-indicator');
+        if (lbl && window.MutationObserver) {
+            new MutationObserver(function () { setTimeout(check, 300); }).observe(lbl, { childList: true, subtree: true, characterData: true });
+        }
+        window.addEventListener('covo-autosave-change', function () { setTimeout(check, 800); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && $(ID)) { e.preventDefault(); e.stopPropagation(); }   // ne se ferme pas par Échap : choix explicite
+        }, true);
+        setInterval(check, 4000);
+        setTimeout(check, 4000);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
