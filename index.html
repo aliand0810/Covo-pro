@@ -47313,6 +47313,7 @@ function initAdminSections() {
                 recipients: ({ all: 1, admin: 1, caissier: 1 })[o.recipients] ? o.recipients : 'all',
                 driveFiles: [],
                 products:   Array.isArray(o.products) ? o.products.slice(0, 40) : [],
+                appro:      Array.isArray(o.appro) ? o.appro.slice(0, 30) : [],
                 active:     true,
                 acks:       {},
                 replies:    [],
@@ -57977,6 +57978,23 @@ window._rachatRender=function(filter){
     var _rT = null;
     // Ouvrir l'accueil sur une notification précise (dépliée), ex. « 💬 Répondre » depuis l'alerte urgente
     window._awFeedOpenNotif = function (id) { ui.open[id] = true; if (isOpen()) render(); };
+    // Ouvrir la rédaction (compte Admin-Développeur) avec un sujet / message proposés s'ils sont vides
+    window._awCompose = function (o) {
+        o = o || {};
+        if (!isDev(cu())) return false;
+        ui.compose = true; ui.cErr = '';
+        if (o.subject && !String(ui.cSubj || '').trim()) ui.cSubj = o.subject;
+        if (o.message && !String(ui.cMsg || '').trim()) ui.cMsg = o.message;
+        if (o.priority) ui.cPrio = o.priority;
+        if (isOpen()) render();
+        return true;
+    };
+    window._awComposeFill = function (o) {
+        o = o || {};
+        var s = $('aw-cmp-subj'), m = $('aw-cmp-msg');
+        if (s && !String(s.value).trim() && o.subject) { s.value = o.subject; ui.cSubj = o.subject; }
+        if (m && !String(m.value).trim() && o.message) { m.value = o.message; ui.cMsg = o.message; }
+    };
     window._awFeedRefresh = function () {
         if (!isOpen()) return;
         var ae = document.activeElement;
@@ -58036,7 +58054,8 @@ window._rachatRender=function(filter){
                 if (!String(ui.cMsg).trim()) { ui.cErr = '⚠️ Le message est obligatoire.'; break; }
                 if (!api) { ui.cErr = 'Module de notifications indisponible.'; break; }
                 var n = api.add({ subject: ui.cSubj, message: ui.cMsg, priority: ui.cPrio, recipients: ui.cRcpt,
-                                  products: (typeof window._awCmpProductsTake === 'function' ? window._awCmpProductsTake() : []) });
+                                  products: (typeof window._awCmpProductsTake === 'function' ? window._awCmpProductsTake() : []),
+                                  appro: (typeof window._awCmpApproTake === 'function' ? window._awCmpApproTake() : []) });
                 ui.open[n.id] = true;
                 ui.compose = false; ui.cSubj = ''; ui.cMsg = ''; ui.cErr = ''; ui.cPrio = 'info'; ui.cRcpt = 'all';
                 toast(driveOn() ? '📣 Notification envoyée — ' + (RCPT[n.recipients] || '') : '📣 Notification créée — elle partira vers les autres appareils dès que Google Drive sera connecté', driveOn() ? 'success' : 'info');
@@ -58729,6 +58748,10 @@ window._rachatRender=function(filter){
             hide();
             if (typeof showScanToast === 'function') showScanToast('✓ Message urgent marqué comme lu', 'success');
             setTimeout(check, 400);                                            // message urgent suivant éventuel
+        } else if (act === 'aopen') {
+            snooze[n.id] = Date.now() + 60000;
+            hide();
+            if (typeof window._awOpenAppro === 'function') window._awOpenAppro(b.getAttribute('data-aid'), n.id);
         } else if (act === 'popen') {
             // Fiche produit au premier plan : l'alerte se retire 1 min puis revient si le message n'est pas lu
             snooze[n.id] = Date.now() + 60000;
@@ -59371,5 +59394,447 @@ window._rachatRender=function(filter){
         }
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATIONS : ACHATS D'APPROVISIONNEMENT ÉPINGLÉS (doublons, anomalies…)
+   • À la rédaction d'une notification (« ＋ Nouvelle »), on épingle des achats déjà
+     enregistrés dans Approvisionnement : recherche par n° d'achat, désignation,
+     fournisseur ou montant, ou via « ⚠️ À vérifier » (doublons et anomalies détectés
+     automatiquement). Un doublon épingle aussi son achat jumeau.
+   • Le destinataire voit chaque achat (n°, date, fournisseur, montant, motif), peut
+     l'ouvrir, répondre « sur cet achat » et le marquer « ✓ Traité ». L'état réel est
+     suivi : achat supprimé ou modifié depuis l'envoi.
+   • Depuis la fiche d'un achat (Approvisionnement → modifier) : « 📌 Demander une
+     explication » ouvre directement un message avec cet achat épinglé.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._awApproInstalled) return;
+    window._awApproInstalled = true;
+
+    var sel = [], query = '', showSugg = false, expanded = {};
+    var REASONS = { doublon: '⧉ Doublon ?', anomalie: '⚠️ Anomalie ?', question: '❓ Explication' };
+
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toast(m, ty) { if (typeof showScanToast === 'function') showScanToast(m, ty || 'info'); }
+    function cu() { return (window._notifApi && window._notifApi.currentUser()) || null; }
+    function isDevU(u) { return !!(u && (u.isMaster || u.id === 'USR-MASTER')); }
+    function canEdit(u) { return !!(u && (u.role === 'admin' || isDevU(u))); }
+    function eur(v) { return (parseFloat(v) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function dfr(d) { try { return new Date(String(d).slice(0, 10) + 'T12:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' }); } catch (e) { return d || ''; } }
+    function when(iso) {
+        try { var d = new Date(iso), n = new Date(), hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            return d.toDateString() === n.toDateString() ? ("aujourd'hui " + hm) : (d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + hm); } catch (e) { return ''; }
+    }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim(); }
+    function num(e) { return e && e.numero ? '#' + e.numero : '#—'; }
+    var PAY = { cb: '💳 CB', especes: '💶 Espèces', cash: '💶 Espèces', virement: '🏦 Virement', cheque: '🧾 Chèque', credit: '📒 Crédit' };
+
+    /* ── Données Approvisionnement ── */
+    function loadAppro() {
+        try { if (typeof invLoad === 'function') return invLoad() || []; } catch (e) {}
+        try { return JSON.parse(localStorage.getItem('covo_approvisionnements') || '[]') || []; } catch (e) { return []; }
+    }
+    function byId(list, id) { return list.find(function (e) { return e && String(e.id) === String(id); }) || null; }
+    function dayDiff(a, b) { return Math.abs((new Date(String(a).slice(0, 10) + 'T12:00:00') - new Date(String(b).slice(0, 10) + 'T12:00:00')) / 864e5); }
+    function qtyTxt(e) {
+        if (!e || !e.qte) return '';
+        var u = e.unitType === 'kg' ? ' kg' : (e.unitType === 'pack' ? ' u. (' + (e.nbPacks || 1) + ' pack' + ((e.nbPacks || 1) > 1 ? 's' : '') + ')' : ' u.');
+        return e.qte + u + (e.prixUnit ? ' × ' + eur(e.prixUnit) : '');
+    }
+
+    // Doublons + anomalies : { id: { dup: [entrées jumelles], flags: ['texte', …] } }
+    function analyse(list) {
+        var out = {};
+        function f(id) { return out[id] || (out[id] = { dup: [], flags: [] }); }
+        // 1) Doublons : même montant ET (même désignation à ≤ 3 jours, ou même fournisseur le même jour)
+        var byAmt = {};
+        list.forEach(function (e) {
+            if (!e || !(parseFloat(e.montant) > 0)) return;
+            var k = Math.round(parseFloat(e.montant) * 100);
+            (byAmt[k] = byAmt[k] || []).push(e);
+        });
+        Object.keys(byAmt).forEach(function (k) {
+            var g = byAmt[k];
+            for (var i = 0; i < g.length; i++) for (var j = i + 1; j < g.length; j++) {
+                var a = g[i], b = g[j], dd = dayDiff(a.date, b.date);
+                var sameDesc = norm(a.desc) && norm(a.desc) === norm(b.desc) && dd <= 3;
+                var sameSup = norm(a.fournisseur) && norm(a.fournisseur) === norm(b.fournisseur) && dd < 1;
+                if (sameDesc || sameSup) { f(a.id).dup.push(b); f(b.id).dup.push(a); }
+            }
+        });
+        // 2) Prix unitaire inhabituel pour un même article (≥ 3 achats comparables)
+        var byDesc = {};
+        list.forEach(function (e) {
+            if (!e || !(parseFloat(e.prixUnit) > 0) || !norm(e.desc)) return;
+            var k = norm(e.desc) + '|' + (e.unitType || 'unit');
+            (byDesc[k] = byDesc[k] || []).push(e);
+        });
+        Object.keys(byDesc).forEach(function (k) {
+            var g = byDesc[k];
+            if (g.length < 3) return;
+            g.forEach(function (e) {
+                var others = g.filter(function (x) { return x !== e; }).map(function (x) { return parseFloat(x.prixUnit); }).sort(function (a, b) { return a - b; });
+                var mid = Math.floor(others.length / 2);
+                var med = others.length % 2 ? others[mid] : (others[mid - 1] + others[mid]) / 2;
+                if (!(med > 0)) return;
+                var r = parseFloat(e.prixUnit) / med;
+                if (r >= 1.5 || r <= 0.6) f(e.id).flags.push('Prix unitaire ' + eur(e.prixUnit) + ' au lieu de ~' + eur(med) + ' habituellement (' + (r > 1 ? '+' : '') + Math.round((r - 1) * 100) + ' %)');
+            });
+        });
+        // 3) Incohérences
+        var today = new Date(); today.setHours(23, 59, 59, 0);
+        list.forEach(function (e) {
+            if (!e) return;
+            if (!(parseFloat(e.montant) > 0)) f(e.id).flags.push('Montant nul ou négatif');
+            if (e.date && new Date(String(e.date).slice(0, 10) + 'T00:00:00') > new Date(today.getTime() + 864e5)) f(e.id).flags.push('Date d’achat dans le futur');
+            if (e.dlc && e.date && String(e.dlc).slice(0, 10) < String(e.date).slice(0, 10)) f(e.id).flags.push('DLC antérieure à la date d’achat');
+            if (e.paiement === 'credit' && parseFloat(e.resteADoit) > parseFloat(e.montant) + 0.01) f(e.id).flags.push('Reste à payer supérieur au montant');
+        });
+        Object.keys(out).forEach(function (id) { if (!out[id].dup.length && !out[id].flags.length) delete out[id]; });
+        return out;
+    }
+    window._covoApproAnalyse = function () { return analyse(loadAppro()); };
+
+    function whyOf(e, an) {
+        var a = an[e.id], parts = [];
+        if (a && a.dup.length) parts.push('Doublon possible avec ' + a.dup.slice(0, 3).map(function (d) { return num(d) + ' (' + dfr(d.date) + ')'; }).join(', '));
+        if (a && a.flags.length) parts = parts.concat(a.flags);
+        return parts.join(' · ');
+    }
+    function snap(e, an, reason) {
+        var a = an[e.id];
+        return {
+            id: e.id, numero: e.numero || '', date: e.date || '', desc: e.desc || '', fournisseur: e.fournisseur || '',
+            montant: parseFloat(e.montant) || 0, qte: e.qte || null, unitType: e.unitType || 'unit', prixUnit: e.prixUnit || null,
+            nbPacks: e.nbPacks || null, paiement: e.paiement || '', note: e.note || '',
+            reason: reason || (a && a.dup.length ? 'doublon' : (a && a.flags.length ? 'anomalie' : 'question')),
+            why: whyOf(e, an)
+        };
+    }
+    function pin(id, reason) {
+        var list = loadAppro(), e = byId(list, id);
+        if (!e || sel.some(function (s) { return String(s.id) === String(id); })) return 0;
+        var an = analyse(list), added = 1;
+        sel.push(snap(e, an, reason));
+        // Doublon : l'achat jumeau est épinglé aussi pour comparer les deux
+        var a = an[e.id];
+        if (a && a.dup.length && !reason) {
+            a.dup.slice(0, 2).forEach(function (d) {
+                if (!sel.some(function (s) { return String(s.id) === String(d.id); }) && sel.length < 30) { sel.push(snap(d, an, 'doublon')); added++; }
+            });
+        }
+        return added;
+    }
+    function fillDefaults() {
+        if (typeof window._awComposeFill !== 'function' || !sel.length) return;
+        var hasDup = sel.some(function (s) { return s.reason === 'doublon'; });
+        var hasAno = sel.some(function (s) { return s.reason === 'anomalie'; });
+        window._awComposeFill({
+            subject: hasDup ? 'Doublon possible dans les approvisionnements' : (hasAno ? 'Anomalie dans un approvisionnement' : 'Explication demandée — approvisionnement'),
+            message: 'Bonjour, merci d’expliquer les achats épinglés ci-dessous (' + sel.map(function (s) { return '#' + (s.numero || '—'); }).join(', ') + ') : '
+                + (hasDup ? 's’agit-il d’un doublon à supprimer ou de deux achats réels ?' : 'pouvez-vous confirmer ou corriger ces informations ?')
+        });
+    }
+
+    /* ── Rédaction : section « 📎 Approvisionnements à expliquer » ── */
+    function resultRow(e, an) {
+        var a = an[e.id];
+        var badges = (a && a.dup.length ? '<span class="aw-ap-tag doublon">⧉ doublon ?</span>' : '') + (a && a.flags.length ? '<span class="aw-ap-tag anomalie">⚠️ anomalie</span>' : '');
+        return '<button type="button" class="aw-ap-res" data-aw="cmp-aadd" data-aid="' + esc(e.id) + '" title="' + esc(whyOf(e, an) || 'Épingler cet achat') + '">'
+            + '<span class="n">' + esc(num(e)) + '</span><span class="d">' + esc(dfr(e.date)) + '</span>'
+            + '<span class="t">' + esc(e.desc || '—') + (e.fournisseur ? ' <i>· ' + esc(e.fournisseur) + '</i>' : '') + '</span>'
+            + badges + '<span class="m">' + eur(e.montant) + '</span></button>';
+    }
+    function results() {
+        var list = loadAppro(), an = analyse(list), q = norm(query), qn = String(query).trim().replace(',', '.');
+        var taken = function (e) { return sel.some(function (s) { return String(s.id) === String(e.id); }); };
+        var res;
+        if (q) {
+            var qNum = qn.replace(/^#/, '').replace(/^0+/, '');
+            res = list.filter(function (e) {
+                if (!e || taken(e)) return false;
+                var n = String(e.numero || '').replace(/^0+/, '');
+                return (qNum && n === qNum) || norm(e.desc).indexOf(q) >= 0 || norm(e.fournisseur).indexOf(q) >= 0
+                    || (/^\d+(\.\d+)?$/.test(qn) && String((parseFloat(e.montant) || 0).toFixed(2)).indexOf(qn) === 0);
+            }).slice(0, 8);
+            if (!res.length) return '<div class="aw-pres-empty">Aucun achat trouvé</div>';
+        } else if (showSugg) {
+            res = list.filter(function (e) { return e && an[e.id] && !taken(e); })
+                .sort(function (a, b) { return String(b.datetime || b.date || '').localeCompare(String(a.datetime || a.date || '')); }).slice(0, 12);
+            if (!res.length) return '<div class="aw-pres-empty">✓ Aucun doublon ni anomalie détecté</div>';
+        } else return '';
+        return res.map(function (e) { return resultRow(e, an); }).join('');
+    }
+    function suggCount() { var an = analyse(loadAppro()); return Object.keys(an).filter(function (id) { return !sel.some(function (s) { return String(s.id) === String(id); }); }).length; }
+    function composeHtml() {
+        var nS = suggCount();
+        return '<label>📎 Approvisionnements à expliquer <span style="text-transform:none;font-weight:600;opacity:.75;">(facultatif — doublon, anomalie…)</span></label>'
+            + '<div class="aw-ap-sel">' + sel.map(function (s) {
+                return '<div class="aw-ap-pin"><div class="aw-ap-pin-top"><span class="n">#' + esc(s.numero || '—') + '</span>'
+                    + '<span class="t">' + esc(s.desc) + (s.fournisseur ? ' <i>· ' + esc(s.fournisseur) + '</i>' : '') + ' · ' + esc(dfr(s.date)) + '</span>'
+                    + '<span class="m">' + eur(s.montant) + '</span>'
+                    + '<button type="button" class="x" data-aw="cmp-adel" data-aid="' + esc(s.id) + '" aria-label="Retirer">×</button></div>'
+                    + '<div class="aw-ap-reasons">' + Object.keys(REASONS).map(function (k) {
+                        return '<button type="button" class="' + (s.reason === k ? 'on ' : '') + k + '" data-aw="cmp-areason" data-aid="' + esc(s.id) + '" data-v="' + k + '">' + REASONS[k] + '</button>';
+                    }).join('') + '</div>'
+                    + (s.why ? '<div class="aw-ap-why">' + esc(s.why) + '</div>' : '') + '</div>';
+            }).join('') + '</div>'
+            + '<div class="aw-ap-tools"><input class="aw-cmp-ainput" autocomplete="off" placeholder="🔎 N° d’achat, désignation, fournisseur ou montant…" value="' + esc(query) + '">'
+            + '<button type="button" class="aw-ap-sugg' + (showSugg ? ' on' : '') + (nS ? ' warn' : '') + '" data-aw="cmp-asugg">' + (nS ? '⚠️ ' + nS + ' à vérifier' : '✓ Rien à signaler') + '</button></div>'
+            + '<div class="aw-cmp-ares">' + results() + '</div>';
+    }
+    var prevCmp = window._awCmpProductsHtml;
+    window._awCmpProductsHtml = function () { return (typeof prevCmp === 'function' ? prevCmp() : '') + composeHtml(); };
+    var prevReset = window._awCmpProductsReset;
+    window._awCmpProductsReset = function () { sel = []; query = ''; showSugg = false; if (typeof prevReset === 'function') prevReset(); };
+    window._awCmpApproTake = function () { var out = sel.slice(); sel = []; query = ''; showSugg = false; return out; };
+    // Utilisé depuis la fiche d'un achat
+    window._awCmpApproPin = function (id) { var k = pin(id); return k; };
+
+    /* ── Carte de notification ── */
+    function findNotif(id) { return (window._notifLoad ? window._notifLoad() : []).find(function (n) { return n.id === id; }) || null; }
+    function saveNotif(id, mut) {
+        var list = (window._notifLoad ? window._notifLoad() : []).slice();
+        var i = list.findIndex(function (n) { return n.id === id; });
+        if (i < 0) return null;
+        var n = JSON.parse(JSON.stringify(list[i]));
+        mut(n); list[i] = n; window._notifSave(list);
+        return n;
+    }
+    function doneBy(n, aid) {
+        var out = [];
+        Object.keys(n.checks || {}).forEach(function (uid) { var c = (n.checks[uid] || {})['A:' + aid]; if (c && c.on !== false) out.push(c); });
+        return out;
+    }
+    function liveStatus(s, live) {
+        if (!live) return '<div class="aw-ap-st gone">🗑️ Achat supprimé depuis l’envoi du message</div>';
+        var ch = [];
+        if (Math.abs((parseFloat(live.montant) || 0) - (parseFloat(s.montant) || 0)) > 0.004) ch.push('montant ' + eur(s.montant) + ' → ' + eur(live.montant));
+        if (String(live.desc || '') !== String(s.desc || '')) ch.push('désignation « ' + esc(s.desc) + ' » → « ' + esc(live.desc) + ' »');
+        if (String(live.date || '') !== String(s.date || '')) ch.push('date ' + dfr(s.date) + ' → ' + dfr(live.date));
+        if (String(live.fournisseur || '') !== String(s.fournisseur || '')) ch.push('fournisseur ' + (esc(s.fournisseur) || '—') + ' → ' + (esc(live.fournisseur) || '—'));
+        return ch.length ? '<div class="aw-ap-st mod">✏️ Modifié depuis l’envoi : ' + ch.join(' · ') + '</div>' : '';
+    }
+    function cardHtml(n, u, dev, author) {
+        var list = n.appro || [];
+        if (!list.length) return '';
+        var all = loadAppro(), edit = canEdit(u);
+        var nDone = list.filter(function (s) { return doneBy(n, s.id).length || !byId(all, s.id); }).length;
+        var h = '<div class="aw-nt-appro"><div class="aw-nt-prods-h">📎 Approvisionnements épinglés <span class="aw-chip ' + (nDone === list.length ? 'green' : 'amber') + '">' + nDone + ' / ' + list.length + ' traité' + (nDone > 1 ? 's' : '') + '</span></div>';
+        list.forEach(function (s) {
+            var live = byId(all, s.id), cur = live || s, who = doneBy(n, s.id), mine = u && who.some(function (w) { return w.uid === u.id; });
+            var done = who.length > 0;
+            h += '<div class="aw-ap-row' + (done || !live ? ' done' : '') + '">'
+                + '<div class="aw-ap-top"><span class="aw-ap-tag ' + esc(s.reason) + '">' + (REASONS[s.reason] || REASONS.question) + '</span>'
+                + (live ? '<button type="button" class="aw-ap-link" data-aw="aopen" data-id="' + esc(n.id) + '" data-aid="' + esc(s.id) + '" title="' + (edit ? 'Ouvrir l’achat pour le modifier' : 'Voir le détail de l’achat') + '">' + esc(num(cur)) + ' · ' + esc(cur.desc || '—') + ' <span aria-hidden="true">' + (edit ? '✏️' : '👁️') + '</span></button>'
+                    : '<span class="aw-ap-link off">' + esc('#' + (s.numero || '—')) + ' · ' + esc(s.desc || '—') + '</span>')
+                + '<span class="m">' + eur(cur.montant) + '</span></div>'
+                + '<div class="aw-ap-meta">' + esc(dfr(cur.date)) + (cur.fournisseur ? ' · 🏪 ' + esc(cur.fournisseur) : '') + (qtyTxt(cur) ? ' · ' + esc(qtyTxt(cur)) : '') + (cur.paiement ? ' · ' + esc(PAY[cur.paiement] || cur.paiement) : '') + '</div>'
+                + (s.why ? '<div class="aw-ap-why">' + esc(s.why) + '</div>' : '')
+                + liveStatus(s, live)
+                + (expanded[s.id] && live ? '<div class="aw-ap-more">'
+                    + (live.note ? '<div>📝 ' + esc(live.note) + '</div>' : '')
+                    + (live.dlc ? '<div>⏳ DLC : ' + esc(dfr(live.dlc)) + '</div>' : '')
+                    + (live.paiement === 'credit' ? '<div>📒 Reste à payer : ' + eur(live.resteADoit) + (live.echeance ? ' · échéance ' + esc(dfr(live.echeance)) : '') + '</div>' : '')
+                    + (typeof invCatLabel === 'function' && live.cat ? '<div>🏷️ ' + esc(invCatLabel(live.cat)) + '</div>' : '')
+                    + '</div>' : '')
+                + '<div class="aw-ap-act"><button type="button" class="aw-ap-btn" data-aw="aq" data-id="' + esc(n.id) + '" data-aid="' + esc(s.id) + '">💬 Répondre sur cet achat</button>'
+                + '<button type="button" class="aw-ap-btn' + (mine ? ' on' : '') + '" data-aw="adone" data-id="' + esc(n.id) + '" data-aid="' + esc(s.id) + '" aria-pressed="' + !!mine + '">' + (mine ? '✓ Traité' : '○ Marquer traité') + '</button>'
+                + (who.length ? '<span class="aw-ap-who">✓ ' + who.map(function (w) { return esc(w.username) + ' (' + esc(when(w.at)) + ')'; }).join(', ') + '</span>' : '')
+                + '</div></div>';
+        });
+        return h + '</div>';
+    }
+    var prevExtras = window._awNtExtras;
+    window._awNtExtras = function (n, u, dev, author) {
+        return cardHtml(n, u, dev, author) + (typeof prevExtras === 'function' ? prevExtras(n, u, dev, author) : '');
+    };
+
+    /* ── Alerte urgente (lecture seule + ouverture) ── */
+    var prevStatic = window._awNtProductsStatic;
+    window._awNtProductsStatic = function (n) {
+        var h = typeof prevStatic === 'function' ? prevStatic(n) : '';
+        var list = n.appro || [];
+        if (!list.length) return h;
+        var all = loadAppro();
+        return h + '<div style="margin-top:12px;background:rgba(0,0,0,.25);border-radius:12px;padding:10px 12px;">'
+            + '<div style="font-size:.72rem;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:#ffb4a8;margin-bottom:6px;">📎 Approvisionnements à expliquer (' + list.length + ')</div>'
+            + list.map(function (s) {
+                var live = byId(all, s.id);
+                return '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:.84rem;padding:3px 0;border-top:1px dashed rgba(255,255,255,.12);">'
+                    + '<span style="font-size:.7rem;font-weight:800;color:#ffd7a8;">' + (REASONS[s.reason] || '') + '</span>'
+                    + (live ? '<button type="button" class="cu-plink" data-cu="aopen" data-aid="' + esc(s.id) + '">#' + esc(s.numero || '—') + ' · ' + esc(s.desc) + '</button>' : '<b style="text-decoration:line-through;opacity:.7;">#' + esc(s.numero || '—') + ' · ' + esc(s.desc) + '</b>')
+                    + '<span style="margin-left:auto;opacity:.85;font-size:.78rem;">' + eur(s.montant) + ' · ' + esc(dfr(s.date)) + '</span></div>';
+            }).join('') + '</div>';
+    };
+
+    /* ── Ouvrir un achat épinglé ── */
+    window._awOpenAppro = function (aid, nid) {
+        var u = cu(), e = byId(loadAppro(), aid);
+        if (!e) { toast('⚠️ Cet achat n’existe plus (supprimé ?)', 'error'); return; }
+        if (canEdit(u) && typeof window.invOpenEdit === 'function') { window.invOpenEdit(aid); return; }   // au-dessus de l'accueil
+        expanded[aid] = true;
+        if (nid && typeof window._awFeedOpenNotif === 'function') window._awFeedOpenNotif(nid);
+        var m = document.getElementById('admin-welcome-modal');
+        if (!(m && m.classList.contains('active'))) {
+            if (u && u.role === 'admin' && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
+            else if (typeof window._awOpenForUser === 'function') window._awOpenForUser(u);
+            setTimeout(function () { if (nid && window._awFeedOpenNotif) window._awFeedOpenNotif(nid); }, 400);
+        } else if (typeof window._awFeedRefresh === 'function') window._awFeedRefresh();
+    };
+
+    /* ── Actions ── */
+    var prevAction = window._awFeedExtraAction;
+    window._awFeedExtraAction = function (act, id, el) {
+        var aid = el && el.getAttribute('data-aid');
+        switch (act) {
+            case 'cmp-aadd':
+                var k = pin(aid);
+                if (k > 1) toast('⧉ Doublon : l’achat jumeau a aussi été épinglé pour comparaison', 'info');
+                query = ''; showSugg = showSugg && suggCount() > 0;
+                fillDefaults();
+                setTimeout(function () { var i = document.querySelector('.aw-cmp-ainput'); if (i) i.focus(); }, 30);
+                return true;
+            case 'cmp-adel': sel = sel.filter(function (s) { return String(s.id) !== String(aid); }); return true;
+            case 'cmp-areason': sel.forEach(function (s) { if (String(s.id) === String(aid)) s.reason = el.getAttribute('data-v'); }); return true;
+            case 'cmp-asugg': showSugg = !showSugg; query = ''; return true;
+            case 'aopen': window._awOpenAppro(aid, id); return false;
+            case 'aq':
+                var n0 = findNotif(id), s0 = n0 && (n0.appro || []).find(function (s) { return String(s.id) === String(aid); });
+                var box = document.querySelector('.aw-reply-input[data-id="' + id + '"]');
+                if (box && s0) {
+                    var pre = 'Achat #' + (s0.numero || '—') + ' (' + s0.desc + ', ' + eur(s0.montant) + ') : ';
+                    if (box.value.indexOf(pre) < 0) box.value = (box.value ? box.value.replace(/\s+$/, '') + '\n' : '') + pre;
+                    box.dispatchEvent(new Event('input', { bubbles: true }));
+                    box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    box.focus(); box.setSelectionRange(box.value.length, box.value.length);
+                }
+                return false;
+            case 'adone':
+                var u = cu(); if (!u) return false;
+                saveNotif(id, function (n) {
+                    n.checks = n.checks || {}; n.checks[u.id] = n.checks[u.id] || {};
+                    var c = n.checks[u.id]['A:' + aid];
+                    n.checks[u.id]['A:' + aid] = { on: !(c && c.on !== false), at: new Date().toISOString(), username: u.username || u.id, uid: u.id, by: 'traite' };
+                });
+                if (typeof window._awFeedOpenNotif === 'function') window._awFeedOpenNotif(id);
+                return true;
+        }
+        return typeof prevAction === 'function' ? prevAction(act, id, el) : false;
+    };
+
+    // Recherche sans tout redessiner (la saisie n'est pas interrompue)
+    document.addEventListener('input', function (e) {
+        var t = e.target;
+        if (!t || !t.classList || !t.classList.contains('aw-cmp-ainput')) return;
+        query = t.value || '';
+        var box = document.querySelector('.aw-cmp-ares');
+        if (box) box.innerHTML = results();
+    });
+    document.addEventListener('keydown', function (e) {
+        var t = e.target;
+        if (!t || !t.classList || e.key !== 'Enter' || !t.classList.contains('aw-cmp-ainput')) return;
+        e.preventDefault();
+        var first = document.querySelector('.aw-cmp-ares .aw-ap-res');
+        if (first) first.click();
+    });
+
+    /* ── Fiche d'un achat : « 📌 Demander une explication » (compte Admin-Développeur) ── */
+    function ensureEditBtn() {
+        if ($('inv-edit-ask-btn')) return $('inv-edit-ask-btn');
+        var save = document.querySelector('#inv-edit-modal button[onclick="invSaveEdit()"]');
+        if (!save) return null;
+        var b = document.createElement('button');
+        b.type = 'button'; b.id = 'inv-edit-ask-btn';
+        b.title = 'Envoyer une notification avec cet achat épinglé (doublon, anomalie…)';
+        b.textContent = '📌 Demander une explication';
+        b.style.cssText = 'flex:1;padding:10px;border:1.5px solid #8e44ad;border-radius:8px;background:rgba(142,68,173,0.08);color:#8e44ad;font-weight:800;cursor:pointer;font-size:0.82rem;white-space:nowrap;';
+        b.onclick = function () {
+            var id = ($('inv-edit-id') || {}).value;
+            if (!id) return;
+            var u = cu();
+            if (!isDevU(u)) { toast('🔒 La rédaction de notifications est réservée au compte Admin-Développeur', 'info'); return; }
+            if (typeof invCloseEdit === 'function') invCloseEdit();
+            var m = document.getElementById('admin-welcome-modal');
+            if (!(m && m.classList.contains('active')) && typeof window.openAdminWelcomeModal === 'function') window.openAdminWelcomeModal();
+            setTimeout(function () {
+                var k = pin(id);
+                if (window._awCompose) window._awCompose({});
+                setTimeout(function () {
+                    fillDefaults();
+                    var c = document.getElementById('aw-cmp');
+                    if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    if (k > 1) toast('⧉ Doublon détecté : l’achat jumeau est aussi épinglé', 'info');
+                }, 80);
+            }, 350);
+        };
+        save.parentNode.insertBefore(b, save);
+        return b;
+    }
+    var origOpenEdit = window.invOpenEdit;
+    if (typeof origOpenEdit === 'function') {
+        window.invOpenEdit = function (id) {
+            var r = origOpenEdit.apply(this, arguments);
+            var b = ensureEditBtn();
+            if (b) b.style.display = isDevU(cu()) ? '' : 'none';
+            return r;
+        };
+    }
+
+    // Achats modifiés / supprimés ailleurs (Investissement Pro, autre onglet…) → cartes à jour
+    var lastSig = null;
+    setInterval(function () {
+        var v; try { v = localStorage.getItem('covo_approvisionnements') || ''; } catch (e) { return; }
+        var sig = v.length + ':' + v.slice(0, 200) + v.slice(-200);
+        if (lastSig !== null && sig !== lastSig && typeof window._awFeedRefresh === 'function') window._awFeedRefresh();
+        lastSig = sig;
+    }, 4000);
+
+    /* ── Styles ── */
+    var st = document.createElement('style');
+    st.textContent = [
+        '.aw-ap-sel{display:flex;flex-direction:column;gap:6px;margin-bottom:6px;}',
+        '.aw-ap-pin{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:7px 9px;}',
+        '.aw-ap-pin-top,.aw-ap-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.78rem;color:#fff;}',
+        '.aw-ap-pin-top .n{font-family:ui-monospace,Menlo,Consolas,monospace;color:#d6b4ff;font-weight:800;}',
+        '.aw-ap-pin-top .t{flex:1;min-width:120px;}.aw-ap-pin-top i,.aw-ap-res i{opacity:.65;font-style:normal;}',
+        '.aw-ap-pin-top .m,.aw-ap-top .m{margin-left:auto;font-weight:800;white-space:nowrap;}',
+        '.aw-ap-pin-top .x{background:rgba(0,0,0,.3);border:none;color:#fff;width:22px;height:22px;border-radius:50%;cursor:pointer;line-height:1;}',
+        '.aw-ap-reasons{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;}',
+        '.aw-ap-reasons button{background:transparent;border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.75);border-radius:14px;padding:2px 9px;font-size:.68rem;font-weight:700;cursor:pointer;font-family:inherit;}',
+        '.aw-ap-reasons button.on.doublon{background:#8e44ad;border-color:#8e44ad;color:#fff;}',
+        '.aw-ap-reasons button.on.anomalie{background:#d97706;border-color:#d97706;color:#fff;}',
+        '.aw-ap-reasons button.on.question{background:#2563eb;border-color:#2563eb;color:#fff;}',
+        '.aw-ap-why{font-size:.7rem;color:#ffd08a;margin-top:5px;line-height:1.35;}',
+        '.aw-ap-tools{display:flex;gap:6px;align-items:stretch;flex-wrap:wrap;margin-bottom:4px;}',
+        '.aw-ap-tools .aw-cmp-ainput{flex:1;min-width:180px;margin:0!important;}',
+        '.aw-ap-sugg{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.8);border-radius:8px;padding:6px 10px;font-size:.74rem;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;}',
+        '.aw-ap-sugg.warn{border-color:#f59e0b;color:#fbbf24;}.aw-ap-sugg.on{background:rgba(245,158,11,.18);}',
+        '.aw-cmp-ares{display:flex;flex-direction:column;gap:3px;margin-bottom:8px;}',
+        '.aw-ap-res{display:flex;gap:8px;align-items:center;flex-wrap:wrap;text-align:left;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);color:#fff;border-radius:8px;padding:6px 9px;font-size:.76rem;cursor:pointer;font-family:inherit;}',
+        '.aw-ap-res:hover{background:rgba(255,255,255,.14);}',
+        '.aw-ap-res .n{font-family:ui-monospace,Menlo,Consolas,monospace;color:#d6b4ff;font-weight:800;}',
+        '.aw-ap-res .d{opacity:.6;font-size:.7rem;}.aw-ap-res .t{flex:1;min-width:110px;}.aw-ap-res .m{font-weight:800;white-space:nowrap;}',
+        '.aw-ap-tag{display:inline-block;font-size:.64rem;font-weight:800;padding:1px 7px;border-radius:8px;white-space:nowrap;background:rgba(37,99,235,.35);color:#dbeafe;}',
+        '.aw-ap-tag.doublon{background:rgba(142,68,173,.45);color:#f3e8ff;}.aw-ap-tag.anomalie{background:rgba(217,119,6,.45);color:#fff7ed;}',
+        '.aw-nt-appro{margin-top:10px;background:rgba(0,0,0,.2);border:1px solid rgba(214,180,255,.25);border-radius:10px;padding:9px 11px;}',
+        '.aw-ap-row{padding:8px 0;border-top:1px dashed rgba(255,255,255,.12);}',
+        '.aw-ap-row.done .aw-ap-link{color:#2ecc71;}',
+        '.aw-ap-link{background:none;border:none;padding:0;margin:0;color:#fff;font:inherit;font-weight:800;cursor:pointer;text-align:left;text-decoration:underline;text-decoration-color:rgba(255,255,255,.35);text-underline-offset:3px;}',
+        '.aw-ap-link:hover{color:#e9d5ff;}.aw-ap-link.off{cursor:default;text-decoration:line-through;opacity:.6;}',
+        '.aw-ap-link:focus-visible{outline:2px solid #fff;outline-offset:2px;border-radius:4px;}',
+        '.aw-ap-meta{font-size:.7rem;color:rgba(255,255,255,.6);margin-top:3px;}',
+        '.aw-ap-st{font-size:.7rem;font-weight:700;margin-top:4px;}.aw-ap-st.gone{color:#2ecc71;}.aw-ap-st.mod{color:#93c5fd;}',
+        '.aw-ap-more{font-size:.72rem;color:rgba(255,255,255,.8);margin-top:5px;padding:6px 8px;background:rgba(255,255,255,.05);border-radius:8px;display:flex;flex-direction:column;gap:2px;}',
+        '.aw-ap-act{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;}',
+        '.aw-ap-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:#fff;border-radius:14px;padding:3px 10px;font-size:.7rem;font-weight:700;cursor:pointer;font-family:inherit;}',
+        '.aw-ap-btn:hover{background:rgba(255,255,255,.15);}.aw-ap-btn.on{background:#27ae60;border-color:#27ae60;}',
+        '.aw-ap-who{font-size:.66rem;color:#2ecc71;}'
+    ].join('\n');
+    document.head.appendChild(st);
 })();
 </script>
