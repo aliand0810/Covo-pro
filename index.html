@@ -60364,3 +60364,288 @@ window._rachatRender=function(filter){
     document.addEventListener('pointerdown', sync, true);
 })();
 </script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   BOÎTE À OUTILS — CALCULATRICE (COVO Pro + Caisse Pro)
+   • Onglets « 🔍 Recherche » / « 🧮 Calcul » dans la boîte à outils flottante
+   • Calcul sûr (analyseur maison, jamais d'eval) : + − × ÷, parenthèses, %, ±
+     – « 50 + 10 % » = 55 (pourcentage du nombre de gauche, comme une calculatrice de caisse)
+     – « 200 × 15 % » = 30
+   • Clavier : chiffres, + - * / ( ) , . % · Entrée = · Retour arrière · Échap = effacer
+   • 🛒 insère le total du panier en cours · 📋 copie le résultat
+   • Historique des 6 derniers calculs (clic = réutiliser), mémorisé sur l'appareil
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._tbCalcInstalled) return;
+    window._tbCalcInstalled = true;
+
+    var KEY = 'covo_toolbox_calc';
+    var st = { tab: 'search', hist: [] };
+    try { var s0 = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s0) { st.tab = s0.tab === 'calc' ? 'calc' : 'search'; st.hist = Array.isArray(s0.hist) ? s0.hist.slice(0, 6) : []; } } catch (e) {}
+    function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} }
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toast(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); }
+
+    /* ── Moteur de calcul (aucun eval) ── */
+    function tokenize(s) {
+        var out = [], i = 0;
+        s = String(s).replace(/\s+/g, '').replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-');
+        while (i < s.length) {
+            var c = s[i];
+            if (/[0-9.,]/.test(c)) {
+                var j = i; while (j < s.length && /[0-9.,]/.test(s[j])) j++;
+                var n = s.slice(i, j).replace(',', '.');
+                if ((n.match(/\./g) || []).length > 1 || n === '.') throw new Error('Nombre invalide');
+                out.push({ t: 'n', v: parseFloat(n) }); i = j; continue;
+            }
+            if ('+-*/()%'.indexOf(c) >= 0) { out.push({ t: c }); i++; continue; }
+            throw new Error('Caractère invalide');
+        }
+        return out;
+    }
+    // expr := term (('+'|'-') term)* ; term := unary (('*'|'/') unary)* ; unary := '-' unary | post ;
+    // post := prim '%'?  (le % est marqué, sa valeur dépend de l'opérateur qui l'utilise)
+    function parse(tokens) {
+        var p = 0;
+        function peek() { return tokens[p]; }
+        function eat(t) { var k = tokens[p]; if (!k || k.t !== t) throw new Error('Expression incomplète'); p++; return k; }
+        function prim() {
+            var k = peek();
+            if (!k) throw new Error('Expression incomplète');
+            if (k.t === 'n') { p++; return { v: k.v }; }
+            if (k.t === '(') { p++; var e = expr(); if (peek() && peek().t === ')') p++; return { v: e }; }   // « ) » final facultatif
+            throw new Error('Expression incomplète');
+        }
+        function post() { var x = prim(); if (peek() && peek().t === '%') { p++; return { v: x.v, pct: true }; } return x; }
+        function unary() {
+            var k = peek();
+            if (k && k.t === '-') { p++; var u = unary(); return { v: -u.v, pct: u.pct }; }
+            if (k && k.t === '+') { p++; return unary(); }
+            return post();
+        }
+        function term() {
+            var a = unary();
+            if (!(peek() && (peek().t === '*' || peek().t === '/'))) return { v: a.pct ? a.v / 100 : a.v, pctOf: a.pct ? a.v : null };
+            var v = a.pct ? a.v / 100 : a.v;
+            while (peek() && (peek().t === '*' || peek().t === '/')) {
+                var op = tokens[p++].t, b = unary(), bv = b.pct ? b.v / 100 : b.v;
+                if (op === '/' && bv === 0) throw new Error('Division par zéro');
+                v = op === '*' ? v * bv : v / bv;
+            }
+            return { v: v, pctOf: null };
+        }
+        function expr() {
+            var v = term().v;
+            while (peek() && (peek().t === '+' || peek().t === '-')) {
+                var op = tokens[p++].t, r = term();
+                // « a + b % » : b % de a (pourcentage relatif, façon calculatrice de caisse)
+                var rv = r.pctOf != null ? v * r.pctOf / 100 : r.v;
+                v = op === '+' ? v + rv : v - rv;
+            }
+            return v;
+        }
+        var res = expr();
+        if (p < tokens.length) throw new Error('Expression invalide');
+        return res;
+    }
+    function evaluate(s) {
+        var t = tokenize(s);
+        if (!t.length) return null;
+        var v = parse(t);
+        if (!isFinite(v)) throw new Error('Résultat invalide');
+        return Math.round(v * 1e10) / 1e10;
+    }
+    window._tbCalcEval = evaluate;   // exposé pour les tests
+    function fmt(v) {
+        if (v == null || isNaN(v)) return '0';
+        var a = Math.abs(v), d = a !== 0 && a < 0.01 ? 6 : (Number.isInteger(v) ? 0 : 2);
+        var s = v.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: Math.max(d, Number.isInteger(v) ? 0 : 4) });
+        return s;
+    }
+    function pretty(expr) { return String(expr).replace(/\*/g, ' × ').replace(/\//g, ' ÷ ').replace(/(\d)-/g, '$1 − ').replace(/\+/g, ' + ').replace(/\./g, ','); }
+
+    /* ── Interface ── */
+    var css = document.createElement('style');
+    css.textContent = [
+        '#covo-toolbox .tb-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:13px;background:var(--tb-soft);}',
+        '#covo-toolbox .tb-tabs button{height:32px;padding:0!important;border-radius:10px;border:none;background:transparent;color:var(--tb-mute);font-weight:800;font-size:.76rem;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:background .15s,color .15s;}',
+        '#covo-toolbox .tb-tabs button.on{background:var(--bg-card,#fff);color:var(--tb-a);box-shadow:0 2px 8px rgba(0,0,0,.08)!important;}',
+        '#covo-toolbox .tb-pane{display:flex;flex-direction:column;gap:10px;}',
+        '#covo-toolbox .tb-pane[hidden]{display:none;}',
+        '#covo-toolbox.tb-calc-on .tb-pane-search{display:none;}',
+        '#covo-toolbox:not(.tb-calc-on) .tb-pane-calc{display:none;}',
+        '#covo-toolbox .tb-calc{outline:none;display:flex;flex-direction:column;gap:8px;}',
+        '#covo-toolbox .tb-screen{border-radius:14px;padding:10px 12px 9px;background:linear-gradient(135deg,var(--tb-b),var(--tb-a));color:#fff;text-align:right;min-height:64px;box-sizing:border-box;position:relative;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);}',
+        '#covo-toolbox .tb-screen::before{content:"";position:absolute;left:-24px;bottom:-40px;width:96px;height:96px;border-radius:50%;background:rgba(255,255,255,.07);}',
+        '#covo-toolbox .tb-expr{font-size:.78rem;font-weight:700;opacity:.85;min-height:1.1em;white-space:nowrap;overflow-x:auto;scrollbar-width:none;font-variant-numeric:tabular-nums;}',
+        '#covo-toolbox .tb-expr::-webkit-scrollbar{display:none;}',
+        '#covo-toolbox .tb-out{font-size:1.65rem;font-weight:900;letter-spacing:-.5px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}',
+        '#covo-toolbox .tb-out.err{font-size:.92rem;color:#fecaca;padding-top:6px;}',
+        '#covo-toolbox .tb-out.prev{opacity:.7;}',
+        '#covo-toolbox .tb-keys{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}',
+        '#covo-toolbox .tb-keys button{height:42px;padding:0!important;border-radius:12px;border:1px solid var(--tb-line);background:var(--bg-card,#fff);color:var(--tb-ink);font-size:1.02rem;font-weight:800;cursor:pointer;transition:transform .08s,background .15s;font-variant-numeric:tabular-nums;}',
+        '#covo-toolbox .tb-keys button:hover{border-color:var(--tb-a);}',
+        '#covo-toolbox .tb-keys button:active{transform:scale(.94);}',
+        '#covo-toolbox .tb-keys button.op{background:var(--tb-soft);color:var(--tb-a);font-size:1.15rem;}',
+        '#covo-toolbox .tb-keys button.fn{color:var(--tb-mute);font-size:.86rem;}',
+        '#covo-toolbox .tb-keys button.clr{color:#dc2626;}',
+        '#covo-toolbox .tb-keys button.eq{background:linear-gradient(135deg,var(--tb-a),var(--tb-b));color:#fff;border:none;font-size:1.25rem;box-shadow:0 4px 12px rgba(0,0,0,.18)!important;}',
+        '#covo-toolbox .tb-cx{display:grid;grid-template-columns:1fr 1fr;gap:6px;}',
+        '#covo-toolbox .tb-cx button{height:32px;padding:0 8px!important;border-radius:10px;border:1px dashed var(--tb-line);background:transparent;color:var(--tb-a);font-weight:800;font-size:.7rem;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '#covo-toolbox .tb-cx button:hover{background:var(--tb-soft);border-style:solid;}',
+        '#covo-toolbox .tb-hist{display:flex;flex-direction:column;gap:3px;max-height:96px;overflow-y:auto;scrollbar-width:thin;}',
+        '#covo-toolbox .tb-hist:empty{display:none;}',
+        '#covo-toolbox .tb-hist button{display:flex;justify-content:space-between;gap:8px;padding:4px 8px!important;border-radius:8px;border:none;background:transparent;color:var(--tb-mute);font-size:.68rem;font-weight:700;cursor:pointer;text-align:left;font-variant-numeric:tabular-nums;}',
+        '#covo-toolbox .tb-hist button:hover{background:var(--tb-soft);color:var(--tb-ink);}',
+        '#covo-toolbox .tb-hist button b{color:var(--tb-ink);white-space:nowrap;}',
+        '#covo-toolbox .tb-hist button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}'
+    ].join('\n');
+
+    var expr = '', lastResult = null, justEval = false;
+    function render(preview) {
+        var e = $('tb-cexpr'), o = $('tb-cout'); if (!e || !o) return;
+        o.classList.remove('err', 'prev');
+        if (justEval) { e.textContent = pretty(expr) + ' ='; o.textContent = fmt(lastResult); return; }
+        e.textContent = expr ? pretty(expr) : '';
+        var v = null;
+        try { v = expr ? evaluate(expr) : null; } catch (er) { v = null; }
+        if (v == null) { o.textContent = expr ? (o.textContent || '0') : '0'; if (expr) o.classList.add('prev'); }
+        else { o.textContent = fmt(v); if (preview !== false && /[+\-*/%]/.test(expr.replace(/^-/, ''))) o.classList.add('prev'); }
+        e.scrollLeft = e.scrollWidth;
+    }
+    function press(k) {
+        if (k === 'C') { expr = ''; justEval = false; lastResult = null; render(); return; }
+        if (k === 'back') { if (justEval) { justEval = false; } expr = expr.slice(0, -1); render(); return; }
+        if (k === '=') { equals(); return; }
+        if (k === 'neg') {   // ± sur le dernier nombre
+            if (justEval) { expr = String(lastResult); justEval = false; }
+            var m = /(-?)(\d+(?:[.,]\d*)?%?)$/.exec(expr);
+            if (m) { var pre = expr.slice(0, m.index), before = pre.slice(-1); expr = m[1] ? pre + m[2] : (pre === '' || /[+*/(]/.test(before) ? pre + '-' + m[2] : pre + '(-' + m[2] + ')'); }
+            else expr = '-' + expr;
+            render(); return;
+        }
+        var isOp = /^[+\-*/%]$/.test(k);
+        if (justEval) { expr = isOp ? String(lastResult) : ''; justEval = false; }
+        if (k === ',' || k === '.') {
+            var tail = /(\d*[.,]?\d*)$/.exec(expr)[1];
+            if (/[.,]/.test(tail)) return;
+            if (!tail) expr += '0';
+            expr += '.'; render(); return;
+        }
+        if (isOp && k !== '-' && k !== '%' && (expr === '' || /[(]$/.test(expr))) return;
+        if (isOp && /[+\-*/]$/.test(expr) && k !== '%') expr = expr.slice(0, -1);   // remplace l'opérateur précédent
+        if (k === '%' && (/[%+\-*/(]$/.test(expr) || !expr)) return;
+        if (expr.length > 60) return;
+        expr += k; render();
+    }
+    function equals() {
+        if (!expr || justEval) return;
+        var o = $('tb-cout');
+        try {
+            var v = evaluate(expr);
+            if (v == null) return;
+            lastResult = v; justEval = true;
+            st.hist.unshift({ e: expr, r: v }); st.hist = st.hist.slice(0, 6); save();
+            render(); renderHist();
+        } catch (er) {
+            o.classList.remove('prev'); o.classList.add('err'); o.textContent = '⚠️ ' + (er.message || 'Erreur');
+        }
+    }
+    function renderHist() {
+        var h = $('tb-chist'); if (!h) return;
+        h.innerHTML = st.hist.map(function (x, i) { return '<button type="button" data-ch="' + i + '" title="Réutiliser ce résultat"><span>' + esc(pretty(x.e)) + ' =</span><b>' + esc(fmt(x.r)) + '</b></button>'; }).join('');
+    }
+    function cartTotal() {
+        try {
+            if (typeof cxCartTotal === 'function') return +cxCartTotal() || 0;
+            var el = document.getElementById('cart-total');
+            if (el) return parseFloat(String(el.textContent).replace(/[^\d,.-]/g, '').replace(',', '.')) || 0;
+        } catch (e) {}
+        return 0;
+    }
+    function insertNumber(v) {
+        var s = String(Math.round(v * 100) / 100);
+        if (justEval) { expr = ''; justEval = false; }
+        if (expr && /[\d.%)]$/.test(expr)) expr += '+';
+        expr += s; render();
+    }
+    function copyResult() {
+        var v = justEval ? lastResult : (function () { try { return evaluate(expr); } catch (e) { return null; } })();
+        if (v == null) { toast('Rien à copier', 'info'); return; }
+        var txt = String(v).replace('.', ',');
+        var done = function () { toast('📋 ' + txt + ' copié', 'success'); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { fallback(); });
+        else fallback();
+        function fallback() { try { var t = document.createElement('textarea'); t.value = txt; t.style.position = 'fixed'; t.style.opacity = '0'; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); } catch (e) { toast('Copie impossible', 'error'); } }
+    }
+
+    function setTab(tab, focus) {
+        var root = $('covo-toolbox'); if (!root) return;
+        st.tab = tab === 'calc' ? 'calc' : 'search'; save();
+        root.classList.toggle('tb-calc-on', st.tab === 'calc');
+        $('tb-tab-s').classList.toggle('on', st.tab === 'search'); $('tb-tab-s').setAttribute('aria-selected', String(st.tab === 'search'));
+        $('tb-tab-c').classList.toggle('on', st.tab === 'calc'); $('tb-tab-c').setAttribute('aria-selected', String(st.tab === 'calc'));
+        if (focus) setTimeout(function () { var t = st.tab === 'calc' ? $('tb-calc') : $('tb-q'); if (t) t.focus(); }, 20);
+        if (typeof window._covoToolboxRefresh === 'function') { try { window._covoToolboxRefresh(); } catch (e) {} }
+    }
+    window._tbCalcSetTab = setTab;
+
+    function install() {
+        var root = $('covo-toolbox'), body = root && root.querySelector('.tb-body');
+        if (!body || $('tb-calc')) return !!body;
+        document.head.appendChild(css);
+        var nav = body.querySelector('.tb-nav');
+        var pane = document.createElement('div'); pane.className = 'tb-pane tb-pane-search';
+        Array.prototype.slice.call(body.children).forEach(function (c) { if (c !== nav) pane.appendChild(c); });
+        var tabs = document.createElement('div');
+        tabs.className = 'tb-tabs'; tabs.setAttribute('role', 'tablist');
+        tabs.innerHTML = '<button type="button" id="tb-tab-s" role="tab">🔍 Recherche</button><button type="button" id="tb-tab-c" role="tab" title="Calculatrice">🧮 Calcul</button>';
+        var calc = document.createElement('div'); calc.className = 'tb-pane tb-pane-calc';
+        var K = [['C', 'C', 'fn clr', 'Effacer (Échap)'], ['back', '⌫', 'fn', 'Effacer le dernier chiffre'], ['%', '%', 'op', 'Pourcentage : 50 + 10 % = 55'], ['/', '÷', 'op'],
+                 ['7', '7'], ['8', '8'], ['9', '9'], ['*', '×', 'op'],
+                 ['4', '4'], ['5', '5'], ['6', '6'], ['-', '−', 'op'],
+                 ['1', '1'], ['2', '2'], ['3', '3'], ['+', '+', 'op'],
+                 ['neg', '±', 'fn', 'Changer le signe'], ['0', '0'], [',', ','], ['=', '=', 'eq', 'Calculer (Entrée)']];
+        calc.innerHTML = '<div class="tb-calc" id="tb-calc" tabindex="0" role="application" aria-label="Calculatrice — utilisable au clavier">'
+            + '<div class="tb-screen" aria-live="polite"><div class="tb-expr" id="tb-cexpr"></div><div class="tb-out" id="tb-cout">0</div></div>'
+            + '<div class="tb-keys">' + K.map(function (k) { return '<button type="button" data-ck="' + k[0] + '" class="' + (k[2] || '') + '"' + (k[3] ? ' title="' + k[3] + '"' : '') + ' aria-label="' + (k[3] || k[1]) + '">' + k[1] + '</button>'; }).join('') + '</div>'
+            + '<div class="tb-cx"><button type="button" id="tb-ccart" title="Ajouter le total du panier en cours au calcul">🛒 Total panier</button><button type="button" id="tb-ccopy" title="Copier le résultat">📋 Copier</button></div>'
+            + '<div class="tb-hist" id="tb-chist" aria-label="Derniers calculs"></div>'
+            + '</div>';
+        body.insertBefore(tabs, nav || null);
+        body.insertBefore(pane, nav || null);
+        body.insertBefore(calc, nav || null);
+        $('tb-tab-s').addEventListener('click', function () { setTab('search', true); });
+        $('tb-tab-c').addEventListener('click', function () { setTab('calc', true); });
+        calc.addEventListener('click', function (e) {
+            var b = e.target.closest('button'); if (!b) return;
+            if (b.hasAttribute('data-ck')) press(b.getAttribute('data-ck'));
+            else if (b.hasAttribute('data-ch')) { var x = st.hist[+b.getAttribute('data-ch')]; if (x) insertNumber(x.r); }
+            else if (b.id === 'tb-ccart') { var t = cartTotal(); if (t > 0) insertNumber(t); else toast('🛒 Panier vide', 'info'); }
+            else if (b.id === 'tb-ccopy') copyResult();
+            if (b.hasAttribute('data-ck') || b.hasAttribute('data-ch') || b.id === 'tb-ccart') $('tb-calc').focus({ preventScroll: true });
+        });
+        $('tb-calc').addEventListener('keydown', function (e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copyResult(); } return; }
+            var k = e.key, map = { Enter: '=', '=': '=', Backspace: 'back', Delete: 'C', Escape: 'C', x: '*', X: '*', '×': '*', '÷': '/', ':': '/' };
+            var v = map[k] || (/^[0-9+\-*/%().,]$/.test(k) ? k : null);
+                        if (!v) return;
+            e.preventDefault(); e.stopPropagation();
+            if (v === '(' || v === ')') { if (justEval) { expr = ''; justEval = false; } expr += v; render(); return; }
+            press(v);
+            var btn = calc.querySelector('[data-ck="' + (v === '.' ? ',' : v) + '"]');
+            if (btn) { btn.style.transform = 'scale(.94)'; setTimeout(function () { btn.style.transform = ''; }, 90); }
+        });
+        // Rouvrir la bulle : focus au bon endroit
+        var bubble = $('tb-bubble');
+        if (bubble) bubble.addEventListener('pointerup', function () { if (st.tab === 'calc') setTimeout(function () { var c = $('tb-calc'); if (c && c.offsetParent) c.focus(); }, 60); });
+        renderHist(); render();
+        setTab(st.tab, false);
+        return true;
+    }
+    function boot(n) { if (!install() && n < 40) setTimeout(function () { boot(n + 1); }, 250); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(0); }); else boot(0);
+})();
+</script>
