@@ -59888,12 +59888,14 @@ window._rachatRender=function(filter){
     }
     function hasWord(hay, w) { return (' ' + hay + ' ').indexOf(' ' + w + ' ') >= 0; }
     function wordsOf(s) { return norm(s).replace(/[^a-z0-9.,]+/g, ' ').trim(); }
-    var NUM_RE = /^(n[°o]?|#)\d+$/;
+    var NUM_RE = /^(n[°o]?|#)\d+$/;           // « n°57 », « #57 » : uniquement le n° de fiche
+    var PLAIN_NUM = /^\d{1,5}$/;              // « 57 » : n° de fiche OU code-barres / nom contenant ces chiffres
     function matchTok(p, tok, i) {
         var name = wordsOf(p.name), cat = wordsOf(p.category), desc = wordsOf(p.description), bc = norm(p.barcode);
         var s = stem(tok);
         if (bc && bc.indexOf(tok) >= 0) return true;
         if (NUM_RE.test(tok) && i != null) return String(i + 1) === tok.replace(/\D/g, '');
+        if (PLAIN_NUM.test(tok) && i != null && String(i + 1) === String(+tok)) return true;   // numéro affiché sur la fiche
         var hay = name + ' ' + cat + ' ' + desc;
         if (hay.indexOf(tok) >= 0 || (s !== tok && hay.indexOf(s) >= 0)) return true;
         var fam = familyOf(tok);
@@ -59905,10 +59907,10 @@ window._rachatRender=function(filter){
     }
     window._covoProdMatch = function (p, search) {
         if (!p) return false;
-        var q = norm(search).trim();
+        var q = norm(search).trim().replace(/(^|\s)(n[°o]?|no|num|numero)\.?\s+(\d{1,5})(?=\s|$)/g, '$1n°$3');   // « n° 57 » → « n°57 »
         if (!q) return true;
         var toks = q.split(/\s+/).filter(Boolean);
-        var idx = toks.some(function (t) { return NUM_RE.test(t); }) ? prods().indexOf(p) : null;
+        var idx = toks.some(function (t) { return NUM_RE.test(t) || PLAIN_NUM.test(t); }) ? prods().indexOf(p) : null;
         return toks.every(function (t) { return matchTok(p, t, idx); });
     };
 
@@ -60159,7 +60161,8 @@ window._rachatRender=function(filter){
             if (window._covoProdMatch(p, q)) out.push({ p: p, i: i });
         });
         var n = norm(q).trim();
-        out.forEach(function (x) { var nm = norm(x.p.name); x.s = (nm.indexOf(n) === 0 ? 3 : nm.indexOf(n) >= 0 ? 2 : 0) + (x.p.active === false ? -1 : 0); });
+        var qNum = /^(n[°o]?|no|num|numero|#)?\.?\s*\d{1,5}$/.test(n) ? String(+n.replace(/\D/g, '')) : null;
+        out.forEach(function (x) { var nm = norm(x.p.name); x.s = (qNum && String(x.i + 1) === qNum ? 10 : 0) + (nm.indexOf(n) === 0 ? 3 : nm.indexOf(n) >= 0 ? 2 : 0) + (x.p.active === false ? -1 : 0); });
         return out.sort(function (a, b) { return b.s - a.s || String(a.p.name).localeCompare(String(b.p.name)); });
     }
     function applyToList(q) {
