@@ -19220,6 +19220,21 @@ function toggleInfoSection(headerElement) {
     }
     window._catToggleHidden = _catToggleHidden;
 
+    // Désactiver / réactiver un article pour le SITE WEB catalogue (indépendant du Portail fidélité)
+    function _catToggleSite(id) {
+        var list = _catProducts();
+        var p = null;
+        for (var i = 0; i < list.length; i++) { if (list[i].id == id) { p = list[i]; break; } }
+        if (!p) return;
+        p.hiddenFromSite = !p.hiddenFromSite;
+        try { localStorage.setItem('covo_products', JSON.stringify(list)); } catch (e) {}
+        if (typeof autoSave === 'function') autoSave();
+        if (typeof toast === 'function') toast(p.hiddenFromSite ? '🌐 Article désactivé sur le site web' : '🌐 Article réactivé sur le site web', 'success');
+        if (typeof window._siteSyncSoon === 'function') window._siteSyncSoon(3000);
+        renderCatalogue();
+    }
+    window._catToggleSite = _catToggleSite;
+
     function _catCard(p) {
         var isOut = p.stock <= 0;
         var price = _catEffectivePrice(p);
@@ -19231,6 +19246,11 @@ function toggleInfoSection(headerElement) {
         var hiddenLabel = manualHidden
             ? ' · <span style="color:#9333ea;font-weight:800;">🚫 Masqué du portail</span>'
             : (autoForced ? ' · <span style="color:#b45309;font-weight:800;">🤖 Masqué auto (rupture)</span>' : '');
+        var offSite = !!p.hiddenFromSite;
+        if (offSite) hiddenLabel += ' · <span style="color:#0369a1;font-weight:800;">🌐 Hors site web</span>';
+        var siteCtrl = '<button onclick="event.stopPropagation();window._catToggleSite(' + p.id + ')" title="' + (offSite ? 'Réactiver cet article sur le site web catalogue' : 'Désactiver cet article sur le site web catalogue') + '" ' +
+            'style="flex-shrink:0;position:relative;border:1.5px solid ' + (offSite ? 'rgba(220,38,38,0.4)' : 'rgba(3,105,161,0.35)') + ';background:' + (offSite ? 'rgba(220,38,38,0.08)' : 'rgba(3,105,161,0.08)') + ';width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:0.95rem;display:flex;align-items:center;justify-content:center;' + (offSite ? 'filter:grayscale(1);opacity:.75;' : '') + '">🌐' +
+            (offSite ? '<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#dc2626;font-size:1.25rem;font-weight:900;filter:none;">⃠</span>' : '') + '</button>';
         var toggleCtrl = autoForced
             ? '<span title="Masqué automatiquement car en rupture — redevient visible dès le réapprovisionnement (ou décochez le masquage auto. des ruptures)" ' +
                 'style="flex-shrink:0;border:1.5px solid rgba(180,83,9,0.3);background:rgba(180,83,9,0.1);color:#b45309;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.95rem;">🤖</span>'
@@ -19251,6 +19271,7 @@ function toggleInfoSection(headerElement) {
                 (disc > 0 ? '<div style="font-size:0.66rem;color:var(--text-muted,#999);text-decoration:line-through;">' + (p.unitType === 'kg' ? (p.pricePerKg||0).toFixed(2) : (p.price||0).toFixed(2)) + '€</div>' : '') +
                 '<div style="font-size:0.92rem;font-weight:900;color:' + (disc > 0 ? 'var(--promo,#dc2626)' : 'var(--success,#16a34a)') + ';">' + _catFmtPrice(p, price) + '</div>' +
             '</div>' +
+            siteCtrl +
             toggleCtrl +
         '</div>';
     }
@@ -19289,6 +19310,7 @@ function toggleInfoSection(headerElement) {
             '</div>' +
             outBtn +
             autoLabel +
+            '<button id="cat-site-sync" onclick="window._siteSyncNow(true)" title="Site web catalogue : synchronisation automatique — cliquer pour forcer l\'envoi maintenant" style="padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:transparent;color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;">' + (typeof window._siteSyncLabel === 'function' ? window._siteSyncLabel() : '🌐 Site web') + '</button>' +
             '<input id="catv-search" type="text" value="' + _catEsc(_catSearch) + '" oninput="window._catOnSearch(this.value)" placeholder="🔎 Rechercher un produit…" ' +
                 'style="flex:1;min-width:160px;padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:600;outline:none;">' +
         '</div>';
@@ -60823,5 +60845,151 @@ window._rachatRender=function(filter){
     }
     function boot(n) { if (!install() && n < 40) setTimeout(function () { boot(n + 1); }, 250); }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(0); }); else boot(0);
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   SITE WEB CATALOGUE COVO — synchronisation AUTOMATIQUE
+   Publie la liste des articles (actifs, non désactivés pour le site via 🌐
+   dans l'onglet Catalogue) avec leur prix, promo, image et DISPONIBILITÉ
+   (en stock / rupture) dans Firestore : site/catalogue (lecture publique).
+   - Envoi 8 s après une modification, puis vérification toutes les 60 s :
+     chaque vente (stock) ou modification de fiche est donc reflétée seule.
+   - N'envoie rien si rien n'a changé (empreinte comparée).
+   - Le prix d'achat et le stock exact ne sont JAMAIS publiés.
+   - Passe par l'API REST de Firebase (pas de bibliothèque à charger).
+   Règle Firestore nécessaire :  match /site/{doc} { allow read: if true;
+     allow write: if request.auth != null && request.auth.uid == "<UID staff>"; }
+   ═══════════════════════════════════════════════════════════════════ */
+(function () {
+    var SITE_CFG = {
+        apiKey: "AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY",
+        projectId: "covo-pro-fidelite",
+        email: "staff@covopro-portal.local",
+        password: "R@hi081089"
+    };
+    var KEY_HASH = 'covo_site_sync_hash', KEY_AT = 'covo_site_sync_at';
+    var _tok = null, _tokExp = 0, _busy = false, _timer = null, _lastErr = '';
+
+    function prods() {
+        try { if (typeof products !== 'undefined' && Array.isArray(products) && products.length) return products; } catch (e) {}
+        try { return JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) { return []; }
+    }
+    function settings() {
+        var a = {}; try { a = (typeof appSettings !== 'undefined' && appSettings) ? appSettings : JSON.parse(localStorage.getItem('covo_settings') || '{}'); } catch (e) {}
+        var r = a.rcpt || {}, wa = '';
+        try { wa = ((JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}).settings || {}).whatsappOrderNumber || ''; } catch (e) {}
+        return { name: r.shopName || a.shopName || 'COVO', address: r.address || '', phone: r.phone || '', email: r.email || '', whatsapp: wa };
+    }
+    function promoPrice(base, promo, cost) {
+        if (typeof window._promoPrice === 'function') return window._promoPrice(base, promo, cost);
+        return promo > 0 ? base * (1 - promo / 100) : base;
+    }
+    function buildPayload() {
+        var cats = {}, list = [];
+        prods().forEach(function (p) {
+            if (!p || !p.name || p.active === false || p.hiddenFromSite) return;
+            var isKg = p.unitType === 'kg';
+            var base = parseFloat(isKg ? p.pricePerKg : p.price);
+            if (isNaN(base)) base = 0;
+            var promo = Math.max(0, Math.min(100, parseFloat(p.promo) || 0));
+            var price = promo ? promoPrice(base, promo, p.costPrice) : base;
+            var img = (p.img && String(p.img).indexOf('data:') !== 0 && !/placehold\.co/.test(p.img)) ? String(p.img) : '';
+            var cat = p.category || 'Général';
+            cats[cat] = 1;
+            list.push({
+                id: p.id, name: String(p.name), category: cat,
+                unit: isKg ? 'kg' : 'u',
+                price: +price.toFixed(2),
+                oldPrice: price < base ? +base.toFixed(2) : null,
+                available: (+(p.stock || 0)) > 0,
+                img: img,
+                desc: p.description ? String(p.description).slice(0, 500) : '',
+                brand: p.brand || '',
+                createdAt: p.dateCreated || p.createdAt || ''
+            });
+        });
+        list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr'); });
+        return { shop: settings(), categories: Object.keys(cats).sort(function (a, b) { return a.localeCompare(b, 'fr'); }), products: list };
+    }
+    function hash(str) { var h = 5381; for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return String(h >>> 0) + ':' + str.length; }
+
+    function token() {
+        if (_tok && Date.now() < _tokExp) return Promise.resolve(_tok);
+        return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + SITE_CFG.apiKey, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: SITE_CFG.email, password: SITE_CFG.password, returnSecureToken: true })
+        }).then(function (r) { return r.json(); }).then(function (j) {
+            if (!j.idToken) throw new Error('auth: ' + ((j.error && j.error.message) || 'refusée'));
+            _tok = j.idToken; _tokExp = Date.now() + ((+j.expiresIn || 3600) - 300) * 1000;
+            return _tok;
+        });
+    }
+    function push(json, n) {
+        var url = 'https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/site/catalogue';
+        return token().then(function (t) {
+            return fetch(url, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t },
+                body: JSON.stringify({ fields: {
+                    data: { stringValue: json },
+                    count: { integerValue: String(n) },
+                    updatedAt: { timestampValue: new Date().toISOString() }
+                } })
+            });
+        }).then(function (r) {
+            if (r.status === 401) { _tok = null; }
+            if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 160)); });
+        });
+    }
+    function label() {
+        var at = +localStorage.getItem(KEY_AT) || 0;
+        if (_busy) return '🌐 Site web · envoi…';
+        if (_lastErr) return '🌐 Site web · ⚠️ échec';
+        if (!at) return '🌐 Site web';
+        var d = new Date(at);
+        return '🌐 Site web · ✅ ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    }
+    window._siteSyncLabel = label;
+    function refreshBtn() {
+        var b = document.getElementById('cat-site-sync');
+        if (b) { b.textContent = label(); b.title = _lastErr ? ('Échec de la synchronisation du site web : ' + _lastErr + ' — cliquer pour réessayer') : 'Site web catalogue : synchronisation automatique — cliquer pour forcer l\'envoi maintenant'; }
+    }
+    function sync(manual) {
+        if (_busy) return;
+        if (!navigator.onLine) { if (manual && typeof showScanToast === 'function') showScanToast('📵 Hors ligne — le site sera mis à jour au retour du réseau', 'warning'); return; }
+        var payload = buildPayload();
+        var json = JSON.stringify(payload);
+        var h = hash(json);
+        if (!manual && h === localStorage.getItem(KEY_HASH)) return;   // rien n'a changé
+        _busy = true; refreshBtn();
+        push(json, payload.products.length).then(function () {
+            _lastErr = '';
+            try { localStorage.setItem(KEY_HASH, h); localStorage.setItem(KEY_AT, String(Date.now())); } catch (e) {}
+            if (manual && typeof showScanToast === 'function') showScanToast('🌐 Site web à jour — ' + payload.products.length + ' article(s) publiés', 'success');
+        }).catch(function (err) {
+            _lastErr = String(err && err.message || err);
+            console.warn('[Site web] synchronisation échouée', err);
+            if (manual && typeof showScanToast === 'function') showScanToast('⚠️ Site web non mis à jour : ' + (/PERMISSION|403/.test(_lastErr) ? 'règle Firestore « site » manquante' : _lastErr), 'error');
+        }).then(function () { _busy = false; refreshBtn(); });
+    }
+    window._siteSyncNow = function (manual) { sync(!!manual); };
+    window._siteSyncSoon = function (ms) { clearTimeout(_timer); _timer = setTimeout(function () { sync(false); }, ms || 8000); };
+
+    // Détection des changements : à chaque écriture de covo_products (ventes, fiches, stock…)
+    try {
+        var _set = Storage.prototype.setItem;
+        if (!Storage.prototype._siteHooked) {
+            Storage.prototype._siteHooked = true;
+            Storage.prototype.setItem = function (k, v) {
+                var r = _set.apply(this, arguments);
+                if (k === 'covo_products' && this === window.localStorage) window._siteSyncSoon(8000);
+                return r;
+            };
+        }
+    } catch (e) {}
+    setInterval(function () { if (!document.hidden) sync(false); }, 60000);
+    window.addEventListener('online', function () { window._siteSyncSoon(2000); });
+    setTimeout(function () { sync(false); }, 15000);   // premier envoi après le démarrage
 })();
 </script>
