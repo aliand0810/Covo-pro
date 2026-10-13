@@ -21170,7 +21170,7 @@ logout = function(skipConfirmation = false) {
         });
     })();
 
-    function _printLabel(productId) {
+    function _printLabelSmall(productId) {
         const p = products.find(function(x) { return x.id === productId; });
         if (!p) { showScanToast('❌ Produit introuvable', 'error'); return; }
         const s = window._lblSettings || {};
@@ -21270,11 +21270,187 @@ logout = function(skipConfirmation = false) {
         win.document.close();
     }
 
+    /* ═══ IMPRIMER L'ÉTIQUETTE PRODUIT — choix du format ═══
+       🏷️ Petit format : l'étiquette habituelle (format/rotation des réglages actuels, inchangés).
+       📄 Grand format A4 : affiche avec l'image du produit, le prix en très grand et, si l'article
+          est en promotion, l'ancien prix barré + le prix promo + le pourcentage de remise. */
+    function _printLabel(productId) {
+        const p = products.find(function(x) { return x.id === productId; });
+        if (!p) { showScanToast('❌ Produit introuvable', 'error'); return; }
+        var old = document.getElementById('lbl-fmt-chooser'); if (old) old.remove();
+        const fmt = localStorage.getItem('covo_label_format') || '50x30';
+        const rot = localStorage.getItem('covo_label_rotation') || 'portrait';
+        const promo = _lblPromoInfo(p);
+        const a4Orient = localStorage.getItem('covo_label_a4_orient') || 'portrait';
+        const esc = function(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+        const ov = document.createElement('div');
+        ov.id = 'lbl-fmt-chooser';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(10,12,25,.55);display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Arial,sans-serif;';
+        ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+        const card = function(id, ico, title, sub, grad) {
+            return '<button id="' + id + '" style="flex:1;min-width:190px;display:flex;flex-direction:column;align-items:center;gap:6px;padding:16px 12px;border:2px solid #e5e7eb;border-radius:14px;background:#fff;cursor:pointer;font-family:inherit;transition:transform .15s,border-color .15s,box-shadow .15s;"'
+                + ' onmouseover="this.style.borderColor=\'#f39c12\';this.style.transform=\'translateY(-2px)\';this.style.boxShadow=\'0 8px 20px rgba(0,0,0,.12)\'" onmouseout="this.style.borderColor=\'#e5e7eb\';this.style.transform=\'none\';this.style.boxShadow=\'none\'">'
+                + '<span style="width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:1.7rem;background:' + grad + ';">' + ico + '</span>'
+                + '<b style="font-size:.95rem;color:#111;">' + title + '</b><span style="font-size:.74rem;color:#666;line-height:1.35;text-align:center;">' + sub + '</span></button>';
+        };
+        ov.innerHTML = '<div style="width:100%;max-width:470px;background:#fff;color:#111;border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.35);overflow:hidden;">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:linear-gradient(135deg,#f39c12,#e67e22);color:#fff;">'
+            + '<div><div style="font-weight:900;font-size:1rem;">🏷️ Imprimer l\'étiquette</div><div style="font-size:.74rem;opacity:.9;margin-top:2px;max-width:330px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(p.name) + '</div></div>'
+            + '<button id="lbl-fmt-x" style="width:32px;height:32px;border:none;border-radius:9px;background:rgba(255,255,255,.22);color:#fff;font-size:1rem;cursor:pointer;">✕</button></div>'
+            + '<div style="padding:16px;">'
+            + (promo ? '<div style="margin-bottom:12px;padding:9px 12px;border-radius:10px;background:#fdecea;color:#c0392b;font-weight:800;font-size:.8rem;">🔥 Article en promotion : ' + promo.oldTxt + ' → <b>' + promo.newTxt + '</b> (-' + promo.pct + ' %)</div>' : '')
+            + '<div style="display:flex;gap:10px;flex-wrap:wrap;">'
+            + card('lbl-fmt-small', '🏷️', 'Petit format', 'Étiquette ' + fmt.replace('x', ' × ') + ' mm · ' + (rot === 'landscape' ? 'paysage' : 'portrait') + '<br>(réglages actuels)', '#fef3e2')
+            + card('lbl-fmt-a4', '📄', 'Grand format A4', 'Affiche avec l\'image du produit' + (promo ? '<br><b style="color:#c0392b;">prix promo en grand</b>' : '<br>prix en grand'), '#e8f1fb')
+            + '</div>'
+            + '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;font-size:.78rem;color:#555;">A4 :'
+            + '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="lbl-a4o" value="portrait"' + (a4Orient !== 'landscape' ? ' checked' : '') + '> Portrait</label>'
+            + '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="radio" name="lbl-a4o" value="landscape"' + (a4Orient === 'landscape' ? ' checked' : '') + '> Paysage</label></div>'
+            + '</div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#lbl-fmt-x').onclick = function() { ov.remove(); };
+        ov.querySelector('#lbl-fmt-small').onclick = function() { ov.remove(); _printLabelSmall(productId); };
+        ov.querySelector('#lbl-fmt-a4').onclick = function() {
+            var o = ov.querySelector('input[name="lbl-a4o"]:checked');
+            var orient = o ? o.value : 'portrait';
+            try { localStorage.setItem('covo_label_a4_orient', orient); } catch (e) {}
+            ov.remove();
+            _printLabelA4(productId, orient);
+        };
+        var onKey = function(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', onKey); } };
+        document.addEventListener('keydown', onKey);
+    }
+    window._printLabel = _printLabel;
+
+    /* Prix de base / prix promo d'un article (même calcul que la caisse : window._promoPrice) */
+    function _lblPromoInfo(p) {
+        var base = (p.unitType === 'kg' && p.pricePerKg) ? parseFloat(p.pricePerKg) : parseFloat(p.price);
+        if (isNaN(base) || !(p.promo > 0)) return null;
+        var np = (typeof window._promoPrice === 'function') ? window._promoPrice(base, p.promo, p.costPrice) : base * (1 - p.promo / 100);
+        if (!(np < base)) return null;
+        var u = p.unitType === 'kg' ? ' €/kg' : ' €';
+        return { base: base, price: np, pct: Math.max(1, Math.round((1 - np / base) * 100)), save: base - np,
+                 oldTxt: base.toFixed(2).replace('.', ',') + u, newTxt: np.toFixed(2).replace('.', ',') + u };
+    }
+
+    function _printLabelA4(productId, orient) {
+        const p = products.find(function(x) { return x.id === productId; });
+        if (!p) { showScanToast('❌ Produit introuvable', 'error'); return; }
+        const s = window._lblSettings || {};
+        const land = orient === 'landscape';
+        const esc = function(t) { return String(t == null ? '' : t).replace(/[&<>"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+        const shopName = (typeof appSettings !== 'undefined' && appSettings.shopName)
+            ? appSettings.shopName
+            : (document.getElementById('config-shop-name') ? document.getElementById('config-shop-name').value : '');
+        const isKg = p.unitType === 'kg';
+        let base = (isKg && p.pricePerKg) ? parseFloat(p.pricePerKg) : parseFloat(p.price);
+        if (isNaN(base)) base = 0;
+        const promo = _lblPromoInfo(p);
+        const unit = isKg ? '€<small>/kg</small>' : '€';
+        const money = function(v) { var t = v.toFixed(2).split('.'); return '<span class="int">' + t[0] + '</span><span class="dec">,' + t[1] + '</span><span class="cur">' + unit + '</span>'; };
+        const bc = (p.barcode || '').trim();
+        let bcFormat = 'CODE128';
+        if (/^\d{13}$/.test(bc)) bcFormat = 'EAN13'; else if (/^\d{8}$/.test(bc)) bcFormat = 'EAN8';
+        const img = (p.img && !/placehold\.co/.test(p.img)) ? p.img : '';
+
+        let h = '<div class="sheet' + (promo ? ' is-promo' : '') + (img ? '' : ' no-img') + '">';
+        h += '<header>' + ((s.showShop !== false && shopName) ? '<div class="shop">' + esc(shopName) + '</div>' : '<div></div>')
+            + (promo ? '<div class="flag">PROMO</div>' : '') + '</header>';
+        h += '<main>';
+        if (img) h += '<div class="pic">' + (promo ? '<div class="burst"><span>-' + promo.pct + '<small>%</small></span></div>' : '') + '<img id="a4-img" src="' + esc(img) + '" alt=""></div>';
+        h += '<div class="info">';
+        if (!img && promo) h += '<div class="burst inline"><span>-' + promo.pct + '<small>%</small></span></div>';
+        if (s.showName !== false) h += '<h1 id="a4-name">' + esc(p.name) + '</h1>';
+        const meta = [];
+        if (p.brand) meta.push(esc(p.brand));
+        if (s.showCategory && p.category) meta.push(esc(p.category));
+        if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
+        if (s.showPrice !== false && base) {
+            if (promo) {
+                h += '<div class="was">Au lieu de <s>' + promo.oldTxt + '</s></div>';
+                h += '<div class="price promo">' + money(promo.price) + '</div>';
+                h += '<div class="save">Économisez ' + promo.save.toFixed(2).replace('.', ',') + ' €' + (isKg ? ' /kg' : '') + '</div>';
+            } else {
+                h += '<div class="price">' + money(base) + '</div>';
+            }
+        }
+        h += '</div></main>';
+        h += '<footer>' + ((s.showBarcode !== false && bc) ? '<svg id="a4-bc"></svg>' : '<span></span>')
+            + '<span class="date">Prix au ' + new Date().toLocaleDateString('fr-FR') + '</span></footer>';
+        h += '</div>';
+
+        const win = window.open('', '_blank', 'width=' + (land ? 1000 : 720) + ',height=' + (land ? 720 : 960));
+        if (!win) { showScanToast('⚠️ Autoriser les popups pour imprimer', 'warning'); return; }
+        const W = land ? 297 : 210, H = land ? 210 : 297;
+        win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
+            + '<title>Affiche A4 — ' + esc(p.name) + '</title>'
+            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>'
+            + '<style>'
+            + '@page{size:A4 ' + (land ? 'landscape' : 'portrait') + ';margin:0;}'
+            + '*{box-sizing:border-box;margin:0;padding:0;}'
+            + 'html,body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}'
+            + 'body{font-family:"Arial Black",Arial,Helvetica,sans-serif;color:#111;}'
+            + '.sheet{width:' + W + 'mm;height:' + H + 'mm;padding:12mm;display:flex;flex-direction:column;overflow:hidden;position:relative;}'
+            + '.sheet.is-promo{background:linear-gradient(#fff,#fff) padding-box,repeating-linear-gradient(45deg,#e30613 0 14mm,#ffcc00 14mm 28mm) border-box;border:6mm solid transparent;padding:7mm;}'
+            + 'header{display:flex;align-items:center;justify-content:space-between;gap:6mm;min-height:14mm;}'
+            + '.shop{font-family:Arial,sans-serif;font-weight:900;font-size:16pt;letter-spacing:2px;text-transform:uppercase;color:#1c55a0;}'
+            + '.flag{font-size:30pt;font-weight:900;color:#fff;background:#e30613;padding:2mm 8mm;border-radius:3mm;transform:rotate(-3deg);letter-spacing:3px;box-shadow:2mm 2mm 0 #ffcc00;}'
+            + 'main{flex:1;min-height:0;display:flex;flex-direction:' + (land ? 'row' : 'column') + ';align-items:center;justify-content:center;gap:' + (land ? '10mm' : '6mm') + ';padding:4mm 0;}'
+            + '.pic{position:relative;flex:' + (land ? '0 0 46%' : '0 0 auto') + ';width:' + (land ? 'auto' : '100%') + ';height:' + (land ? '100%' : '42%') + ';display:flex;align-items:center;justify-content:center;}'
+            + '.pic img{max-width:100%;max-height:100%;object-fit:contain;}'
+            + '.burst{position:absolute;top:0;' + (land ? 'left:0' : 'right:6mm') + ';width:38mm;height:38mm;background:#e30613;color:#fff;display:flex;align-items:center;justify-content:center;clip-path:polygon(50% 0,61% 13%,79% 7%,81% 25%,98% 30%,89% 46%,100% 61%,83% 69%,85% 88%,66% 86%,55% 100%,42% 88%,24% 95%,20% 77%,2% 71%,11% 55%,0 39%,17% 32%,16% 13%,35% 14%);transform:rotate(-10deg);z-index:2;}'
+            + '.burst span{font-size:24pt;font-weight:900;line-height:1;}.burst small{font-size:14pt;}'
+            + '.burst.inline{position:relative;top:auto;right:auto;left:auto;margin:0 auto 4mm;}'
+            + '.info{flex:1;min-width:0;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}'
+            + 'h1{font-size:' + (land ? '34pt' : '38pt') + ';line-height:1.05;font-weight:900;text-transform:uppercase;word-break:break-word;overflow-wrap:anywhere;max-width:100%;}'
+            + '.meta{font-family:Arial,sans-serif;font-size:13pt;color:#555;margin-top:2mm;font-weight:700;}'
+            + '.was{font-family:Arial,sans-serif;font-size:20pt;color:#555;margin-top:5mm;font-weight:700;}'
+            + '.was s{text-decoration-thickness:3px;text-decoration-color:#e30613;}'
+            + '.price{display:flex;align-items:flex-start;justify-content:center;line-height:.85;margin-top:3mm;color:#111;}'
+            + '.price .int{font-size:' + (land ? '120pt' : '140pt') + ';font-weight:900;letter-spacing:-4px;}'
+            + '.price .dec{font-size:' + (land ? '58pt' : '66pt') + ';font-weight:900;margin-top:2mm;}'
+            + '.price .cur{font-size:' + (land ? '40pt' : '46pt') + ';font-weight:900;margin:3mm 0 0 2mm;}'
+            + '.price .cur small{font-size:.5em;}'
+            + '.price.promo{color:#e30613;}'
+            + '.save{margin-top:4mm;display:inline-block;background:#ffcc00;color:#111;font-size:18pt;font-weight:900;padding:2mm 6mm;border-radius:2mm;}'
+            + '.no-img main{flex-direction:column;}'
+            + '.no-img .price .int{font-size:180pt;}.no-img h1{font-size:46pt;}'
+            + 'footer{display:flex;align-items:flex-end;justify-content:space-between;gap:6mm;min-height:16mm;}'
+            + 'footer svg{height:18mm;width:auto;max-width:70mm;}'
+            + '.date{font-family:Arial,sans-serif;font-size:9pt;color:#888;}'
+            + '</style></head><body>' + h
+            + '<script>'
+            + '(function(){'
+            + '  var done=false;'
+            + '  function fit(){'
+            + '    var main=document.querySelector("main"), info=document.querySelector(".info"), nm=document.getElementById("a4-name");'
+            + '    if(nm){ var fs=parseFloat(getComputedStyle(nm).fontSize)||40, g=0;'
+            + '      while((main.scrollHeight>main.clientHeight+2 || info.scrollHeight>info.clientHeight+2 || nm.scrollWidth>nm.clientWidth+2) && fs>14 && g++<80){ fs-=1.5; nm.style.fontSize=fs+"px"; } }'
+            + '    var pr=document.querySelector(".price"), g2=0;'
+            + '    while(pr && (main.scrollHeight>main.clientHeight+2 || pr.scrollWidth>info.clientWidth+2) && g2++<40){ var sc=(pr._s||1)*0.95; pr._s=sc; pr.style.transform="scale("+sc+")"; pr.style.transformOrigin="center top"; pr.style.marginBottom=(-(1-sc)*pr.offsetHeight)+"px"; }'
+            + '  }'
+            + '  function go(){ if(done) return; done=true;'
+            + '    var svg=document.getElementById("a4-bc");'
+            + '    if(svg && window.JsBarcode){ try{ JsBarcode(svg,' + JSON.stringify(bc) + ',{format:' + JSON.stringify(bcFormat) + ',width:2,height:50,displayValue:true,fontSize:14,margin:0}); }catch(e){ try{ JsBarcode(svg,' + JSON.stringify(bc) + ',{format:"CODE128",width:2,height:50,displayValue:true,fontSize:14,margin:0}); }catch(e2){ svg.remove(); } } }'
+            + '    fit();'
+            + '    setTimeout(function(){ window.print(); setTimeout(function(){ window.close(); }, 1500); }, 300);'
+            + '  }'
+            + '  window.addEventListener("load", function(){'
+            + '    var im=document.getElementById("a4-img");'
+            + '    if(im && !im.complete){ im.onload=go; im.onerror=function(){ var pc=document.querySelector(".pic"); if(pc) pc.remove(); document.querySelector(".sheet").classList.add("no-img"); go(); }; setTimeout(go, 4000); }'
+            + '    else { if(im && !im.naturalWidth){ var pc=document.querySelector(".pic"); if(pc) pc.remove(); document.querySelector(".sheet").classList.add("no-img"); } go(); }'
+            + '  });'
+            + '})();'
+            + '<\/script></body></html>');
+        win.document.close();
+    }
+    window._printLabelA4 = _printLabelA4;
+
     function _lblTestPrint() {
         const testProduct = { id: 0, name: 'Produit Test', price: 4.99, barcode: '3017620425400', category: 'Général', promo: 10, unitType: 'unit' };
         const saved = products;
         products = [testProduct];
-        _printLabel(0);
+        _printLabelSmall(0);
         products = saved;
     }
 
