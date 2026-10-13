@@ -60851,12 +60851,17 @@ window._rachatRender=function(filter){
 /* ═══════════════════════════════════════════════════════════════════
    SITE WEB CATALOGUE COVO — synchronisation AUTOMATIQUE
    Publie la liste des articles (actifs, non désactivés pour le site via 🌐
-   dans l'onglet Catalogue) avec leur prix, promo, image et DISPONIBILITÉ
+   dans l'onglet Catalogue) avec leur prix, promo, IMAGE et DISPONIBILITÉ
    (en stock / rupture) dans Firestore : site/catalogue (lecture publique).
    - Envoi 8 s après une modification, puis vérification toutes les 60 s :
      chaque vente (stock) ou modification de fiche est donc reflétée seule.
    - N'envoie rien si rien n'a changé (empreinte comparée).
    - Le prix d'achat et le stock exact ne sont JAMAIS publiés.
+   - IMAGES : chaque photo du catalogue (importée dans la fiche ou lien web)
+     est convertie au MÊME FORMAT — carré 400×400, fond blanc, produit centré —
+     puis envoyée par paquets (site/img_0, site/img_1…, < 1 Mo chacun). Seuls
+     les paquets modifiés sont renvoyés. Si une image web refuse la copie
+     (protection du site d'origine), son lien est conservé tel quel.
    - Passe par l'API REST de Firebase (pas de bibliothèque à charger).
    Règle Firestore nécessaire :  match /site/{doc} { allow read: if true;
      allow write: if request.auth != null && request.auth.uid == "<UID staff>"; }
@@ -60868,8 +60873,10 @@ window._rachatRender=function(filter){
         email: "staff@covopro-portal.local",
         password: "R@hi081089"
     };
-    var KEY_HASH = 'covo_site_sync_hash', KEY_AT = 'covo_site_sync_at';
+    var IMG_SIZE = 400, IMG_QUALITY = 0.82, CHUNK_MAX = 880000;
+    var KEY_HASH = 'covo_site_sync_hash', KEY_AT = 'covo_site_sync_at', KEY_CHUNKS = 'covo_site_img_chunks';
     var _tok = null, _tokExp = 0, _busy = false, _timer = null, _lastErr = '';
+    var _thumbs = {};   // empreinte de l'image source -> image normalisée (data URL) | '' si impossible
 
     function prods() {
         try { if (typeof products !== 'undefined' && Array.isArray(products) && products.length) return products; } catch (e) {}
@@ -60885,8 +60892,61 @@ window._rachatRender=function(filter){
         if (typeof window._promoPrice === 'function') return window._promoPrice(base, promo, cost);
         return promo > 0 ? base * (1 - promo / 100) : base;
     }
+    function hash(str) { var h = 5381, h2 = 52711; for (var i = 0; i < str.length; i++) { var c = str.charCodeAt(i); h = ((h << 5) + h + c) | 0; h2 = ((h2 << 5) + h2 ^ c) | 0; } return (h >>> 0).toString(36) + (h2 >>> 0).toString(36) + str.length.toString(36); }
+    function srcOf(p) {
+        var s = p && p.img ? String(p.img).trim() : '';
+        if (!s || /placehold\.co/.test(s)) return '';
+        return s;
+    }
+
+    /* ── Normalisation d'une image : carré blanc IMG_SIZE, produit centré (contain) ── */
+    var _webpOk = null;
+    function outType() {
+        if (_webpOk === null) { try { var c = document.createElement('canvas'); c.width = c.height = 2; _webpOk = c.toDataURL('image/webp').indexOf('data:image/webp') === 0; } catch (e) { _webpOk = false; } }
+        return _webpOk ? 'image/webp' : 'image/jpeg';
+    }
+    function makeThumb(src) {
+        return new Promise(function (resolve) {
+            var img = new Image(), done = false;
+            var finish = function (v) { if (!done) { done = true; resolve(v); } };
+            if (src.indexOf('data:') !== 0) img.crossOrigin = 'anonymous';
+            img.onload = function () {
+                try {
+                    var w = img.naturalWidth, h = img.naturalHeight;
+                    if (!w || !h) return finish('');
+                    var c = document.createElement('canvas'); c.width = c.height = IMG_SIZE;
+                    var x = c.getContext('2d');
+                    x.fillStyle = '#ffffff'; x.fillRect(0, 0, IMG_SIZE, IMG_SIZE);
+                    var pad = Math.round(IMG_SIZE * 0.06), box = IMG_SIZE - pad * 2, k = Math.min(box / w, box / h);
+                    var dw = Math.round(w * k), dh = Math.round(h * k);
+                    x.imageSmoothingQuality = 'high';
+                    x.drawImage(img, Math.round((IMG_SIZE - dw) / 2), Math.round((IMG_SIZE - dh) / 2), dw, dh);
+                    finish(c.toDataURL(outType(), IMG_QUALITY));   // lève une erreur si l'image web interdit la copie
+                } catch (e) { finish(''); }
+            };
+            img.onerror = function () { finish(''); };
+            setTimeout(function () { finish(''); }, 8000);
+            img.src = src;
+        });
+    }
+    function prepareThumbs(list) {
+        var todo = [];
+        list.forEach(function (p) {
+            var s = srcOf(p); if (!s) return;
+            var k = hash(s);
+            if (!(k in _thumbs) && todo.indexOf(s) === -1) todo.push(s);
+        });
+        var i = 0;
+        var next = function () {
+            if (i >= todo.length) return Promise.resolve();
+            var batch = todo.slice(i, i + 6); i += 6;   // 6 images à la fois
+            return Promise.all(batch.map(function (s) { return makeThumb(s).then(function (t) { _thumbs[hash(s)] = t; }); })).then(next);
+        };
+        return next();
+    }
+
     function buildPayload() {
-        var cats = {}, list = [];
+        var cats = {}, list = [], imgs = [];
         prods().forEach(function (p) {
             if (!p || !p.name || p.active === false || p.hiddenFromSite) return;
             var isKg = p.unitType === 'kg';
@@ -60894,25 +60954,42 @@ window._rachatRender=function(filter){
             if (isNaN(base)) base = 0;
             var promo = Math.max(0, Math.min(100, parseFloat(p.promo) || 0));
             var price = promo ? promoPrice(base, promo, p.costPrice) : base;
-            var img = (p.img && String(p.img).indexOf('data:') !== 0 && !/placehold\.co/.test(p.img)) ? String(p.img) : '';
             var cat = p.category || 'Général';
             cats[cat] = 1;
-            list.push({
+            var s = srcOf(p), th = s ? _thumbs[hash(s)] : '';
+            var item = {
                 id: p.id, name: String(p.name), category: cat,
                 unit: isKg ? 'kg' : 'u',
                 price: +price.toFixed(2),
                 oldPrice: price < base ? +base.toFixed(2) : null,
                 available: (+(p.stock || 0)) > 0,
-                img: img,
+                img: (!th && s && s.indexOf('data:') !== 0) ? s : '',   // repli : lien web d'origine
                 desc: p.description ? String(p.description).slice(0, 500) : '',
                 brand: p.brand || '',
+                barcode: p.barcode ? String(p.barcode).trim() : '',   // fiche détaillée (ingrédients, Nutri-Score…) sur le site
                 createdAt: p.dateCreated || p.createdAt || ''
-            });
+            };
+            if (th) imgs.push({ id: String(p.id), item: item, data: th });
+            list.push(item);
         });
+        // Paquets d'images (ordre stable par identifiant → seuls les paquets modifiés changent)
+        imgs.sort(function (a, b) { return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0); });
+        var chunks = [], cur = {}, size = 0;
+        imgs.forEach(function (x) {
+            var len = x.data.length + x.id.length + 8;
+            if (size + len > CHUNK_MAX && size > 0) { chunks.push(cur); cur = {}; size = 0; }
+            cur[x.id] = x.data; size += len;
+            x.item.imgChunk = chunks.length;
+        });
+        if (size > 0) chunks.push(cur);
+        var chunkJson = chunks.map(function (c) { return JSON.stringify(c); });
+        var chunkHashes = chunkJson.map(hash);
         list.sort(function (a, b) { return a.name.localeCompare(b.name, 'fr'); });
-        return { shop: settings(), categories: Object.keys(cats).sort(function (a, b) { return a.localeCompare(b, 'fr'); }), products: list };
+        return {
+            payload: { shop: settings(), categories: Object.keys(cats).sort(function (a, b) { return a.localeCompare(b, 'fr'); }), products: list, imgChunks: chunkHashes, imgSize: IMG_SIZE },
+            chunkJson: chunkJson, chunkHashes: chunkHashes
+        };
     }
-    function hash(str) { var h = 5381; for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return String(h >>> 0) + ':' + str.length; }
 
     function token() {
         if (_tok && Date.now() < _tokExp) return Promise.resolve(_tok);
@@ -60925,18 +61002,10 @@ window._rachatRender=function(filter){
             return _tok;
         });
     }
-    function push(json, n) {
-        var url = 'https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/site/catalogue';
+    function putDoc(name, fields) {
+        var url = 'https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/site/' + name;
         return token().then(function (t) {
-            return fetch(url, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t },
-                body: JSON.stringify({ fields: {
-                    data: { stringValue: json },
-                    count: { integerValue: String(n) },
-                    updatedAt: { timestampValue: new Date().toISOString() }
-                } })
-            });
+            return fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: JSON.stringify({ fields: fields }) });
         }).then(function (r) {
             if (r.status === 401) { _tok = null; }
             if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 160)); });
@@ -60947,26 +61016,47 @@ window._rachatRender=function(filter){
         if (_busy) return '🌐 Site web · envoi…';
         if (_lastErr) return '🌐 Site web · ⚠️ échec';
         if (!at) return '🌐 Site web';
-        var d = new Date(at);
-        return '🌐 Site web · ✅ ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        return '🌐 Site web · ✅ ' + new Date(at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     }
     window._siteSyncLabel = label;
     function refreshBtn() {
         var b = document.getElementById('cat-site-sync');
-        if (b) { b.textContent = label(); b.title = _lastErr ? ('Échec de la synchronisation du site web : ' + _lastErr + ' — cliquer pour réessayer') : 'Site web catalogue : synchronisation automatique — cliquer pour forcer l\'envoi maintenant'; }
+        if (b) { b.textContent = label(); b.title = _lastErr ? ('Échec de la synchronisation du site web : ' + _lastErr + ' — cliquer pour réessayer') : 'Site web catalogue : synchronisation automatique (articles + images) — cliquer pour forcer l\'envoi maintenant'; }
     }
     function sync(manual) {
         if (_busy) return;
         if (!navigator.onLine) { if (manual && typeof showScanToast === 'function') showScanToast('📵 Hors ligne — le site sera mis à jour au retour du réseau', 'warning'); return; }
-        var payload = buildPayload();
-        var json = JSON.stringify(payload);
-        var h = hash(json);
-        if (!manual && h === localStorage.getItem(KEY_HASH)) return;   // rien n'a changé
         _busy = true; refreshBtn();
-        push(json, payload.products.length).then(function () {
+        var nImgs = 0, nChunksSent = 0;
+        prepareThumbs(prods()).then(function () {
+            var b = buildPayload();
+            var json = JSON.stringify(b.payload);
+            var h = hash(json);
+            if (!manual && h === localStorage.getItem(KEY_HASH)) return 'same';   // rien n'a changé
+            nImgs = b.payload.products.filter(function (p) { return p.imgChunk != null; }).length;
+            var sent = {}; try { sent = JSON.parse(localStorage.getItem(KEY_CHUNKS) || '{}') || {}; } catch (e) {}
+            // 1) paquets d'images modifiés d'abord, 2) puis la liste des articles qui les référence
+            var seq = Promise.resolve();
+            b.chunkJson.forEach(function (cj, k) {
+                if (!manual && sent['img_' + k] === b.chunkHashes[k]) return;
+                seq = seq.then(function () {
+                    return putDoc('img_' + k, { data: { stringValue: cj }, hash: { stringValue: b.chunkHashes[k] }, updatedAt: { timestampValue: new Date().toISOString() } })
+                        .then(function () { sent['img_' + k] = b.chunkHashes[k]; nChunksSent++; try { localStorage.setItem(KEY_CHUNKS, JSON.stringify(sent)); } catch (e) {} });
+                });
+            });
+            return seq.then(function () {
+                return putDoc('catalogue', {
+                    data: { stringValue: json },
+                    count: { integerValue: String(b.payload.products.length) },
+                    updatedAt: { timestampValue: new Date().toISOString() }
+                });
+            }).then(function () {
+                try { localStorage.setItem(KEY_HASH, h); localStorage.setItem(KEY_AT, String(Date.now())); } catch (e) {}
+                return b.payload.products.length;
+            });
+        }).then(function (res) {
             _lastErr = '';
-            try { localStorage.setItem(KEY_HASH, h); localStorage.setItem(KEY_AT, String(Date.now())); } catch (e) {}
-            if (manual && typeof showScanToast === 'function') showScanToast('🌐 Site web à jour — ' + payload.products.length + ' article(s) publiés', 'success');
+            if (manual && typeof showScanToast === 'function' && res !== 'same') showScanToast('🌐 Site web à jour — ' + res + ' article(s), ' + nImgs + ' image(s)' + (nChunksSent ? ' · ' + nChunksSent + ' paquet(s) d\'images envoyé(s)' : ''), 'success');
         }).catch(function (err) {
             _lastErr = String(err && err.message || err);
             console.warn('[Site web] synchronisation échouée', err);
@@ -60976,7 +61066,7 @@ window._rachatRender=function(filter){
     window._siteSyncNow = function (manual) { sync(!!manual); };
     window._siteSyncSoon = function (ms) { clearTimeout(_timer); _timer = setTimeout(function () { sync(false); }, ms || 8000); };
 
-    // Détection des changements : à chaque écriture de covo_products (ventes, fiches, stock…)
+    // Détection des changements : à chaque écriture de covo_products (ventes, fiches, stock, photos…)
     try {
         var _set = Storage.prototype.setItem;
         if (!Storage.prototype._siteHooked) {
