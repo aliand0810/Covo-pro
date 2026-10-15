@@ -61352,6 +61352,12 @@ function covoQrPrint(o) {
     window._siteOffEnrich = offEnrich;
     setTimeout(offEnrich, 25000);
     setInterval(function () { if (!document.hidden) offEnrich(); }, 10 * 60000);
+    window._covoFs = function (method, path, body) {
+        return token().then(function (t) {
+            return fetch('https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/' + path,
+                { method: method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: body ? JSON.stringify(body) : undefined });
+        }).then(function (r) { if (r.status === 401) _tok = null; return r; });
+    };
     window._siteSyncNow = function (manual) { sync(!!manual); };
     window._siteSyncSoon = function (ms) { clearTimeout(_timer); _timer = setTimeout(function () { sync(false); }, ms || 8000); };
 
@@ -61370,5 +61376,167 @@ function covoQrPrint(o) {
     setInterval(function () { if (!document.hidden) sync(false); }, 60000);
     window.addEventListener('online', function () { window._siteSyncSoon(2000); });
     setTimeout(function () { sync(false); }, 15000);   // premier envoi après le démarrage
+})();
+</script>
+<script>
+/* ═══ PANIER MIS À DISPOSITION + ÉCHANGES AVEC LE CLIENT (côté caisse)
+   Le caissier connecté met le panier réservé du client à disposition et peut lui écrire.
+   Chaque action est signée (nom + identifiant caissier) et publiée sur le compte du client
+   (site web « Mon compte »). Les réponses du client sont relues toutes les minutes. ═══ */
+(function () {
+    var LKEY = 'covo_loyalty';
+    function lg() { try { return JSON.parse(localStorage.getItem(LKEY) || 'null') || { customers: [] }; } catch (e) { return { customers: [] }; } }
+    function ls(d) { localStorage.setItem(LKEY, JSON.stringify(d)); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function say(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); else if (typeof toast === 'function') toast(m, t); }
+    function cashier() {
+        var u = null;
+        try { if (typeof currentUser !== 'undefined' && currentUser) u = currentUser; } catch (e) {}
+        if (!u) try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {}
+        return { name: (u && (u.name || u.displayName || u.username)) || 'Caisse', id: (u && (u.username || u.login || u.id)) || '' };
+    }
+    function stockOf(pid) {
+        try { var p = (typeof window._ltyGetProduct === 'function') ? window._ltyGetProduct(pid) : null; if (p) return +p.stock; } catch (e) {}
+        try { var list = JSON.parse(localStorage.getItem('covo_products') || '[]'); for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(pid)) return +list[i].stock; } catch (e) {}
+        return null;
+    }
+    function avail(r) { var s = stockOf(r.productId); return (r.decremented !== false) || (s != null && s >= (r.qty || 0)); }
+    function fmt(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+
+    /* Firestore (compte du magasin, via le module du site web) */
+    function enc(x) {
+        if (x === null || x === undefined) return { nullValue: null };
+        if (typeof x === 'boolean') return { booleanValue: x };
+        if (typeof x === 'number') return Number.isInteger(x) ? { integerValue: String(x) } : { doubleValue: x };
+        if (typeof x === 'string') return { stringValue: x };
+        if (Array.isArray(x)) return { arrayValue: { values: x.map(enc) } };
+        var f = {}; Object.keys(x).forEach(function (k) { f[k] = enc(x[k]); }); return { mapValue: { fields: f } };
+    }
+    function dec(v) {
+        if (!v) return null;
+        if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return +v.integerValue; if ('doubleValue' in v) return +v.doubleValue;
+        if ('booleanValue' in v) return v.booleanValue; if ('timestampValue' in v) return v.timestampValue;
+        if ('mapValue' in v) { var o = {}, f = v.mapValue.fields || {}; Object.keys(f).forEach(function (k) { o[k] = dec(f[k]); }); return o; }
+        if ('arrayValue' in v) return (v.arrayValue.values || []).map(dec);
+        return null;
+    }
+    /* Publie réservations + messages sur la fiche en ligne du client (sans toucher au reste) */
+    function publish(c) {
+        if (!c || !c.portalUid || typeof window._covoFs !== 'function') return Promise.resolve(false);
+        var payload = {
+            reservations: (c.reservations || []).slice(0, 50).map(function (r) {
+                return { productId: r.productId != null ? r.productId : null, name: r.productName || '', qty: +r.qty || 1, date: r.date || null,
+                    status: avail(r) ? 'ready' : 'waiting', portalKey: r.portalKey || null, pickupDate: r.pickupDate || '', source: r.source || 'boutique',
+                    prepared: !!r.preparedAt, preparedAt: r.preparedAt || '', preparedBy: r.preparedBy || '', preparedById: r.preparedById || '' };
+            }),
+            messages: (c.messages || []).slice(-60).map(function (m) { return { id: String(m.id), from: m.from === 'client' ? 'client' : 'shop', at: m.at || '', text: String(m.text || '').slice(0, 1000), by: m.by || '', byId: m.byId || '' }; }),
+            updatedAt: new Date().toISOString()
+        };
+        var fields = {}, mask = [];
+        Object.keys(payload).forEach(function (k) { fields[k] = enc(payload[k]); mask.push('updateMask.fieldPaths=' + k); });
+        return window._covoFs('PATCH', 'clients/' + c.portalUid + '?' + mask.join('&') + '&currentDocument.exists=true', { fields: fields })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return true; });
+    }
+    function pushMsg(c, text) {
+        var cs = cashier();
+        if (!Array.isArray(c.messages)) c.messages = [];
+        c.messages.push({ id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from: 'shop', at: new Date().toISOString(), text: text, by: cs.name, byId: cs.id });
+        if (c.messages.length > 200) c.messages = c.messages.slice(-200);
+    }
+    function after(c, okMsg) {
+        publish(c).then(function (sent) {
+            say(sent ? okMsg + ' — client prévenu sur son compte' : okMsg + (c.portalUid ? ' (envoi en ligne impossible pour le moment)' : ' (ce client n\'a pas d\'accès en ligne)'), sent ? 'success' : 'warning');
+        }).catch(function (e) { console.warn('[Échanges]', e); say(okMsg + ' — ⚠️ envoi en ligne impossible, réessayez', 'warning'); });
+        renderCard(c.id);
+    }
+    window._covoResvPrepare = function (clientId, resvId) {
+        var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === clientId; })[0]; if (!c) return;
+        var cs = cashier(), now = new Date().toISOString();
+        var list = (c.reservations || []).filter(function (r) { return avail(r) && !r.preparedAt && (resvId == null || String(r.id) === String(resvId)); });
+        if (!list.length) { say('Aucun article disponible à mettre à disposition', 'warning'); return; }
+        list.forEach(function (r) { r.preparedAt = now; r.preparedBy = cs.name; r.preparedById = cs.id; });
+        var lignes = list.map(function (r) { return '• ' + r.productName + ' (' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + ')'; }).join('\n');
+        pushMsg(c, (list.length > 1 ? 'Votre panier est prêt ! Ces articles vous attendent en magasin :\n' : 'Votre article est prêt ! Il vous attend en magasin :\n') + lignes);
+        ls(d);
+        after(c, '✅ ' + (list.length > 1 ? list.length + ' articles mis à disposition' : 'Article mis à disposition'));
+    };
+    window._covoMsgSend = function (clientId) {
+        var ta = document.getElementById('covo-msg-in'), txt = ta ? ta.value.trim() : ''; if (!txt) return;
+        var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === clientId; })[0]; if (!c) return;
+        pushMsg(c, txt.slice(0, 1000)); ls(d);
+        after(c, '💬 Message envoyé');
+    };
+
+    /* Carte « Panier & échanges » dans la fiche client */
+    function renderCard(id) {
+        var scroll = document.getElementById('lty-detail-scroll'); if (!scroll) return;
+        var old = document.getElementById('covo-msg-card'); if (old) old.remove();
+        var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === id; })[0]; if (!c) return;
+        if (c.msgUnread) { c.msgUnread = 0; ls(d); }
+        var resv = c.reservations || [], ready = resv.filter(function (r) { return avail(r) && !r.preparedAt; }), prepared = resv.filter(function (r) { return r.preparedAt; });
+        var msgs = (c.messages || []).slice(-30), cs = cashier();
+        var card = document.createElement('div'); card.id = 'covo-msg-card'; card.style.cssText = 'margin-bottom:14px;';
+        var h = '<div style="background:rgba(28,85,160,.06);border:1px solid rgba(28,85,160,.25);border-radius:12px;padding:11px 14px;">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
+            + '<div style="font-size:.62rem;font-weight:800;color:#1c55a0;text-transform:uppercase;letter-spacing:.6px;">🛍️ Panier & échanges avec le client</div>'
+            + (ready.length ? '<button onclick="window._covoResvPrepare(\'' + esc(id) + '\',null)" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.76rem;font-weight:800;cursor:pointer;">✅ Mettre le panier à disposition (' + ready.length + ')</button>' : '')
+            + '</div>';
+        if (ready.length) h += ready.map(function (r) {
+            return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px dashed rgba(28,85,160,.2);font-size:.78rem;"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">✅ ' + esc(r.productName) + ' · ' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + ' · disponible</span>'
+                + '<button onclick="window._covoResvPrepare(\'' + esc(id) + '\',' + r.id + ')" style="background:rgba(5,150,105,.14);color:#059669;border:none;border-radius:7px;padding:4px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Mettre à disposition</button></div>';
+        }).join('');
+        if (prepared.length) h += prepared.map(function (r) {
+            return '<div style="padding:5px 0;border-top:1px dashed rgba(28,85,160,.2);font-size:.74rem;color:#059669;font-weight:700;">📦 ' + esc(r.productName) + ' — prêt, mis à disposition par ' + esc(r.preparedBy || 'caisse') + (r.preparedById ? ' (ID ' + esc(r.preparedById) + ')' : '') + ' · ' + esc(fmt(r.preparedAt)) + '</div>';
+        }).join('');
+        if (!c.portalUid) h += '<div style="font-size:.72rem;color:var(--text-muted);margin:6px 0;">Ce client n\'a pas d\'accès en ligne : il ne recevra pas les messages sur son compte.</div>';
+        h += '<div id="covo-msg-thread" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin:8px 0;">'
+            + (msgs.length ? msgs.map(function (m) {
+                var me = m.from !== 'client';
+                return '<div style="align-self:' + (me ? 'flex-end' : 'flex-start') + ';max-width:85%;background:' + (me ? 'rgba(28,85,160,.13)' : 'rgba(232,130,46,.14)') + ';border-radius:12px;padding:7px 10px;">'
+                    + '<div style="font-size:.8rem;white-space:pre-wrap;word-break:break-word;color:var(--text-main);">' + esc(m.text) + '</div>'
+                    + '<div style="font-size:.62rem;color:var(--text-muted);margin-top:3px;">' + (me ? '🧑‍💼 ' + esc(m.by || 'Caisse') + (m.byId ? ' · ID ' + esc(m.byId) : '') : '👤 ' + esc(c.name || 'Client')) + ' · ' + esc(fmt(m.at)) + '</div></div>';
+            }).join('') : '<div style="font-size:.76rem;color:var(--text-muted);">Aucun échange pour le moment.</div>')
+            + '</div><div style="display:flex;gap:6px;"><textarea id="covo-msg-in" rows="2" placeholder="Écrire au client (signé ' + esc(cs.name) + (cs.id ? ' · ' + esc(cs.id) : '') + ')…" style="flex:1;box-sizing:border-box;padding:8px 10px;border:1.5px solid rgba(28,85,160,.3);border-radius:8px;font-size:.8rem;font-family:inherit;resize:vertical;background:var(--input-bg,#fff);color:var(--text-main);"></textarea>'
+            + '<button onclick="window._covoMsgSend(\'' + esc(id) + '\')" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:0 14px;font-size:.78rem;font-weight:800;cursor:pointer;">Envoyer</button></div></div>';
+        card.innerHTML = h;
+        var resvCard = document.getElementById('lty-resv-note-card');
+        if (resvCard && resvCard.parentNode === scroll) scroll.insertBefore(card, resvCard.nextSibling); else scroll.insertBefore(card, scroll.firstChild);
+        var th = document.getElementById('covo-msg-thread'); if (th) th.scrollTop = th.scrollHeight;
+    }
+    var _prevSD = window._ltyShowDetail;
+    if (typeof _prevSD === 'function') window._ltyShowDetail = function (id) { _prevSD.apply(this, arguments); setTimeout(function () { renderCard(id); }, 90); };
+
+    /* Relève des messages envoyés par les clients (toutes les minutes) */
+    var _busy = false;
+    function importMessages() {
+        if (_busy || !navigator.onLine || typeof window._covoFs !== 'function') return;
+        _busy = true;
+        window._covoFs('GET', 'reservations?pageSize=300').then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }).then(function (j) {
+            var d = lg(), n = 0, names = [];
+            (j.documents || []).forEach(function (doc) {
+                var uid = String(doc.name || '').split('/').pop(), f = doc.fields || {};
+                var msgs = dec(f.messages) || []; if (!msgs.length) return;
+                var bc = dec(f.barcode) || '';
+                var c = (d.customers || []).filter(function (x) { return x.portalUid === uid; })[0] || (bc ? (d.customers || []).filter(function (x) { return x.barcode && String(x.barcode).toUpperCase() === String(bc).toUpperCase(); })[0] : null);
+                if (!c) return;
+                if (!Array.isArray(c.messages)) c.messages = [];
+                var have = {}; c.messages.forEach(function (m) { have[String(m.id)] = 1; });
+                msgs.forEach(function (m) {
+                    if (!m || !m.id || m.from !== 'client' || have[String(m.id)]) return;
+                    c.messages.push({ id: String(m.id), from: 'client', at: m.at || new Date().toISOString(), text: String(m.text || '').slice(0, 1000) });
+                    c.msgUnread = (c.msgUnread || 0) + 1; n++; if (names.indexOf(c.name) < 0) names.push(c.name);
+                });
+                c.messages.sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
+            });
+            if (n) {
+                ls(d);
+                say('💬 ' + n + ' nouveau' + (n > 1 ? 'x' : '') + ' message' + (n > 1 ? 's' : '') + ' client : ' + names.slice(0, 3).join(', '), 'success');
+                if (window._resvDetailId && document.getElementById('covo-msg-card')) renderCard(window._resvDetailId);
+            }
+        }).catch(function (e) { console.warn('[Échanges] relève des messages', e); }).then(function () { _busy = false; });
+    }
+    setTimeout(importMessages, 20000);
+    setInterval(function () { if (!document.hidden) importMessages(); }, 60000);
+    window._covoMsgImport = importMessages;
 })();
 </script>
