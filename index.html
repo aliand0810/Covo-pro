@@ -61407,6 +61407,20 @@ function covoQrPrint(o) {
         return null;
     }
     function avail(r) { var s = stockOf(r.productId); return (r.decremented !== false) || (s != null && s >= (r.qty || 0)); }
+    function bkOf(r) { return r.basketId || ('d' + String(r.date || '').slice(0, 10)); }
+    function baskets(c) {
+        var map = {}, order = [];
+        (c.reservations || []).forEach(function (r) {
+            var k = bkOf(r);
+            if (!map[k]) { map[k] = { bk: k, items: [], msgs: [], first: r.date || '' }; order.push(k); }
+            map[k].items.push(r);
+            if (r.date && (!map[k].first || r.date < map[k].first)) map[k].first = r.date;
+        });
+        (c.messages || []).forEach(function (m) { if (m.bk && map[m.bk]) map[m.bk].msgs.push(m); });
+        return order.map(function (k) { return map[k]; }).sort(function (a, b) { return String(a.first).localeCompare(String(b.first)); });
+    }
+    function bkLabel(b) { var d = new Date(b.first); return 'Panier du ' + (isNaN(d) ? '—' : d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })); }
+    window._covoBaskets = function (clientId) { var c = (lg().customers || []).filter(function (x) { return x.id === clientId; })[0]; return c ? baskets(c) : []; };
     function fmt(iso) { var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
 
     /* Firestore (compte du magasin, via le module du site web) */
@@ -61432,10 +61446,10 @@ function covoQrPrint(o) {
         var payload = {
             reservations: (c.reservations || []).slice(0, 50).map(function (r) {
                 return { productId: r.productId != null ? r.productId : null, name: r.productName || '', qty: +r.qty || 1, date: r.date || null,
-                    status: avail(r) ? 'ready' : 'waiting', portalKey: r.portalKey || null, pickupDate: r.pickupDate || '', source: r.source || 'boutique',
+                    status: avail(r) ? 'ready' : 'waiting', portalKey: r.portalKey || null, pickupDate: r.pickupDate || '', source: r.source || 'boutique', basketId: bkOf(r),
                     prepared: !!r.preparedAt, preparedAt: r.preparedAt || '', preparedBy: r.preparedBy || '', preparedById: r.preparedById || '' };
             }),
-            messages: (c.messages || []).slice(-60).map(function (m) { return { id: String(m.id), from: m.from === 'client' ? 'client' : 'shop', at: m.at || '', text: String(m.text || '').slice(0, 1000), by: m.by || '', byId: m.byId || '' }; }),
+            messages: (c.messages || []).slice(-60).map(function (m) { return { id: String(m.id), from: m.from === 'client' ? 'client' : 'shop', at: m.at || '', text: String(m.text || '').slice(0, 1000), by: m.by || '', byId: m.byId || '', bk: m.bk || '' }; }),
             updatedAt: new Date().toISOString()
         };
         var fields = {}, mask = [];
@@ -61443,10 +61457,10 @@ function covoQrPrint(o) {
         return window._covoFs('PATCH', 'clients/' + c.portalUid + '?' + mask.join('&') + '&currentDocument.exists=true', { fields: fields })
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return true; });
     }
-    function pushMsg(c, text) {
+    function pushMsg(c, text, bk) {
         var cs = cashier();
         if (!Array.isArray(c.messages)) c.messages = [];
-        c.messages.push({ id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from: 'shop', at: new Date().toISOString(), text: text, by: cs.name, byId: cs.id });
+        c.messages.push({ id: 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), from: 'shop', at: new Date().toISOString(), text: text, by: cs.name, byId: cs.id, bk: bk || '' });
         if (c.messages.length > 200) c.messages = c.messages.slice(-200);
     }
     function after(c, okMsg) {
@@ -61455,21 +61469,24 @@ function covoQrPrint(o) {
         }).catch(function (e) { console.warn('[Échanges]', e); say(okMsg + ' — ⚠️ envoi en ligne impossible, réessayez', 'warning'); });
         renderCard(c.id);
     }
-    window._covoResvPrepare = function (clientId, resvId) {
+    window._covoResvPrepare = function (clientId, resvId, bk) {
         var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === clientId; })[0]; if (!c) return;
         var cs = cashier(), now = new Date().toISOString();
-        var list = (c.reservations || []).filter(function (r) { return avail(r) && !r.preparedAt && (resvId == null || String(r.id) === String(resvId)); });
+        var list = (c.reservations || []).filter(function (r) { return avail(r) && !r.preparedAt && (resvId == null || String(r.id) === String(resvId)) && (!bk || bkOf(r) === bk); });
         if (!list.length) { say('Aucun article disponible à mettre à disposition', 'warning'); return; }
         list.forEach(function (r) { r.preparedAt = now; r.preparedBy = cs.name; r.preparedById = cs.id; });
-        var lignes = list.map(function (r) { return '• ' + r.productName + ' (' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + ')'; }).join('\n');
-        pushMsg(c, (list.length > 1 ? 'Votre panier est prêt ! Ces articles vous attendent en magasin :\n' : 'Votre article est prêt ! Il vous attend en magasin :\n') + lignes);
+        var groups = {}; list.forEach(function (r) { var k = bkOf(r); (groups[k] = groups[k] || []).push(r); });
+        Object.keys(groups).forEach(function (k) {
+            var g = groups[k], lignes = g.map(function (r) { return '• ' + r.productName + ' (' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + ')'; }).join('\n');
+            pushMsg(c, (g.length > 1 ? 'Votre panier est prêt ! Ces articles vous attendent en magasin :\n' : 'Votre article est prêt ! Il vous attend en magasin :\n') + lignes, k);
+        });
         ls(d);
         after(c, '✅ ' + (list.length > 1 ? list.length + ' articles mis à disposition' : 'Article mis à disposition'));
     };
-    window._covoMsgSend = function (clientId) {
-        var ta = document.getElementById('covo-msg-in'), txt = ta ? ta.value.trim() : ''; if (!txt) return;
+    window._covoMsgSend = function (clientId, bk, bi) {
+        var ta = document.getElementById('covo-msg-in-' + bi), txt = ta ? ta.value.trim() : ''; if (!txt || !bk) return;
         var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === clientId; })[0]; if (!c) return;
-        pushMsg(c, txt.slice(0, 1000)); ls(d);
+        pushMsg(c, txt.slice(0, 1000), bk); ls(d);
         after(c, '💬 Message envoyé');
     };
 
@@ -61487,12 +61504,13 @@ function covoQrPrint(o) {
         try { var p = (typeof window._ltyGetProduct === 'function') ? window._ltyGetProduct(pid) : null; if (p) return p; } catch (e) {}
         return null;
     }
-    window._covoResvPrint = function (clientId) {
+    window._covoResvPrint = function (clientId, bk) {
         var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === clientId; })[0]; if (!c) return;
-        var resv = (c.reservations || []).slice();
+        var resv = (c.reservations || []).filter(function (r) { return !bk || bkOf(r) === bk; });
         if (!resv.length) { say('Ce client n\'a aucune réservation', 'warning'); return; }
         var shop = shopInfo(), cs = cashier(), now = new Date();
-        var lastMsg = (c.messages || []).filter(function (m) { return m.from === 'client'; }).slice(-1)[0];
+        var lastMsg = (c.messages || []).filter(function (m) { return m.from === 'client' && (!bk || m.bk === bk); }).slice(-1)[0];
+        var bkTitle = bk ? (function(){ var f = resv.map(function (x) { return x.date || ''; }).filter(Boolean).sort()[0]; var dd = new Date(f); return 'Panier du ' + (isNaN(dd) ? '—' : dd.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })); })() : 'Toutes les réservations';
         var picks = (resv.map(function (r) { return r.pickupDate; }).filter(Boolean).sort())[0] || '';
         var total = 0, nbArt = 0;
         resv.sort(function (a, b) { var pa = prodOf(a.productId), pb = prodOf(b.productId); return String((pa && pa.category) || '').localeCompare(String((pb && pb.category) || ''), 'fr') || String(a.productName).localeCompare(String(b.productName), 'fr'); });
@@ -61527,7 +61545,7 @@ function covoQrPrint(o) {
         var html = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Préparation — ' + esc(c.name || 'Client') + '</title><style>' + css + '</style></head><body>'
             + '<div class="bar"><button onclick="document.body.classList.remove(\'tk\');window.print()">🖨️ Imprimer (A4)</button><button class="b2" onclick="document.body.classList.add(\'tk\');window.print()">🧾 Imprimer (ticket 80 mm)</button></div>'
             + '<div class="doc"><div class="hd">' + (shop.logo ? '<img src="' + esc(shop.logo) + '" alt="">' : '') + '<div><h1>' + esc(shop.name) + '</h1><div class="s">' + esc([shop.address, shop.phone].filter(Boolean).join(' · ')) + '</div></div>'
-            + '<div class="t"><b>BON DE PRÉPARATION</b>Réservation client · ' + now.toLocaleDateString('fr-FR') + ' ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</div></div>'
+            + '<div class="t"><b>BON DE PRÉPARATION</b>' + esc(bkTitle) + ' · ' + now.toLocaleDateString('fr-FR') + ' ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</div></div>'
             + '<div class="cl"><div class="big"><span>Client</span><b>' + esc(c.name || '—') + '</b></div>'
             + '<div><span>Carte fidélité</span><b>' + esc(c.barcode || '—') + '</b></div>'
             + '<div><span>Téléphone</span><b>' + esc(c.phone || '—') + '</b></div>'
@@ -61551,38 +61569,43 @@ function covoQrPrint(o) {
         var old = document.getElementById('covo-msg-card'); if (old) old.remove();
         var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === id; })[0]; if (!c) return;
         if (c.msgUnread) { c.msgUnread = 0; ls(d); }
-        var resv = c.reservations || [], ready = resv.filter(function (r) { return avail(r) && !r.preparedAt; }), prepared = resv.filter(function (r) { return r.preparedAt; });
-        var msgs = (c.messages || []).slice(-30), cs = cashier();
+        var resv = c.reservations || [], bks = baskets(c), cs = cashier(), cid = esc(id);
         var card = document.createElement('div'); card.id = 'covo-msg-card'; card.style.cssText = 'margin-bottom:14px;';
         var h = '<div style="background:rgba(28,85,160,.06);border:1px solid rgba(28,85,160,.25);border-radius:12px;padding:11px 14px;">'
-            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
-            + '<div style="font-size:.62rem;font-weight:800;color:#1c55a0;text-transform:uppercase;letter-spacing:.6px;">🛍️ Panier & échanges avec le client</div>'
-            + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
-            + (resv.length ? '<button onclick="window._covoResvPrint(\'' + esc(id) + '\')" title="Imprimer la liste des articles réservés à préparer" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.76rem;font-weight:800;cursor:pointer;">🖨️ Bon de préparation (' + resv.length + ')</button>' : '')
-            + (ready.length ? '<button onclick="window._covoResvPrepare(\'' + esc(id) + '\',null)" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.76rem;font-weight:800;cursor:pointer;">✅ Mettre le panier à disposition (' + ready.length + ')</button>' : '')
-            + '</div></div>';
-        if (ready.length) h += ready.map(function (r) {
-            return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px dashed rgba(28,85,160,.2);font-size:.78rem;"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">✅ ' + esc(r.productName) + ' · ' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + ' · disponible</span>'
-                + '<button onclick="window._covoResvPrepare(\'' + esc(id) + '\',' + r.id + ')" style="background:rgba(5,150,105,.14);color:#059669;border:none;border-radius:7px;padding:4px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Mettre à disposition</button></div>';
-        }).join('');
-        if (prepared.length) h += prepared.map(function (r) {
-            return '<div style="padding:5px 0;border-top:1px dashed rgba(28,85,160,.2);font-size:.74rem;color:#059669;font-weight:700;">📦 ' + esc(r.productName) + ' — prêt, mis à disposition par ' + esc(r.preparedBy || 'caisse') + (r.preparedById ? ' (ID ' + esc(r.preparedById) + ')' : '') + ' · ' + esc(fmt(r.preparedAt)) + '</div>';
-        }).join('');
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">'
+            + '<div style="font-size:.62rem;font-weight:800;color:#1c55a0;text-transform:uppercase;letter-spacing:.6px;">🧺 Paniers de réservation & échanges' + (bks.length ? ' (' + bks.length + ')' : '') + '</div>'
+            + (resv.length ? '<button onclick="window._covoResvPrint(\'' + cid + '\')" title="Imprimer tous les articles réservés" style="background:rgba(28,85,160,.12);color:#1c55a0;border:none;border-radius:8px;padding:6px 11px;font-size:.74rem;font-weight:800;cursor:pointer;">🖨️ Tout imprimer</button>' : '')
+            + '</div>';
         if (!c.portalUid) h += '<div style="font-size:.72rem;color:var(--text-muted);margin:6px 0;">Ce client n\'a pas d\'accès en ligne : il ne recevra pas les messages sur son compte.</div>';
-        h += '<div id="covo-msg-thread" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin:8px 0;">'
-            + (msgs.length ? msgs.map(function (m) {
-                var me = m.from !== 'client';
-                return '<div style="align-self:' + (me ? 'flex-end' : 'flex-start') + ';max-width:85%;background:' + (me ? 'rgba(28,85,160,.13)' : 'rgba(232,130,46,.14)') + ';border-radius:12px;padding:7px 10px;">'
-                    + '<div style="font-size:.8rem;white-space:pre-wrap;word-break:break-word;color:var(--text-main);">' + esc(m.text) + '</div>'
-                    + '<div style="font-size:.62rem;color:var(--text-muted);margin-top:3px;">' + (me ? '🧑‍💼 ' + esc(m.by || 'Caisse') + (m.byId ? ' · ID ' + esc(m.byId) : '') : '👤 ' + esc(c.name || 'Client')) + ' · ' + esc(fmt(m.at))
-                    + (!me && resv.length ? ' · <a href="javascript:void(0)" onclick="window._covoResvPrint(\'' + esc(id) + '\')" style="color:#1c55a0;font-weight:800;">🖨️ imprimer ses articles</a>' : '') + '</div></div>';
-            }).join('') : '<div style="font-size:.76rem;color:var(--text-muted);">Aucun échange pour le moment.</div>')
-            + '</div><div style="display:flex;gap:6px;"><textarea id="covo-msg-in" rows="2" placeholder="Écrire au client (signé ' + esc(cs.name) + (cs.id ? ' · ' + esc(cs.id) : '') + ')…" style="flex:1;box-sizing:border-box;padding:8px 10px;border:1.5px solid rgba(28,85,160,.3);border-radius:8px;font-size:.8rem;font-family:inherit;resize:vertical;background:var(--input-bg,#fff);color:var(--text-main);"></textarea>'
-            + '<button onclick="window._covoMsgSend(\'' + esc(id) + '\')" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:0 14px;font-size:.78rem;font-weight:800;cursor:pointer;">Envoyer</button></div></div>';
+        if (!bks.length) h += '<div style="font-size:.76rem;color:var(--text-muted);margin-top:6px;">Aucune réservation en cours. Un fil d\'échange s\'ouvre avec chaque panier réservé.</div>';
+        bks.forEach(function (b, bi) {
+            var ready = b.items.filter(function (r) { return avail(r) && !r.preparedAt; }), prepared = b.items.filter(function (r) { return r.preparedAt; });
+            var nArt = b.items.reduce(function (a, r) { return a + (r.unitType === 'kg' ? 1 : (+r.qty || 1)); }, 0);
+            var st = prepared.length === b.items.length ? '<span style="color:#059669;">✅ prêt · ' + esc(prepared[0].preparedBy || 'caisse') + (prepared[0].preparedById ? ' (ID ' + esc(prepared[0].preparedById) + ')' : '') + '</span>'
+                : (ready.length ? '<span style="color:#1c55a0;">' + ready.length + ' disponible' + (ready.length > 1 ? 's' : '') + '</span>' : '<span style="color:#b45309;">⏳ en attente de stock</span>');
+            h += '<div style="border:1px solid rgba(28,85,160,.22);border-radius:11px;padding:9px 11px;margin-top:9px;background:var(--card-bg,#fff);">'
+                + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">'
+                + '<div style="font-weight:800;font-size:.82rem;color:var(--text-main);">🧺 ' + esc(bkLabel(b)) + ' <span style="font-weight:600;font-size:.7rem;color:var(--text-muted);">· ' + nArt + ' article' + (nArt > 1 ? 's' : '') + ' · </span><span style="font-size:.7rem;">' + st + '</span></div>'
+                + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+                + '<button onclick="window._covoResvPrint(\'' + cid + '\',\'' + esc(b.bk) + '\')" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:.72rem;font-weight:800;cursor:pointer;">🖨️ Bon de préparation</button>'
+                + (ready.length ? '<button onclick="window._covoResvPrepare(\'' + cid + '\',null,\'' + esc(b.bk) + '\')" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:8px;padding:6px 10px;font-size:.72rem;font-weight:800;cursor:pointer;">✅ Mettre ce panier à disposition (' + ready.length + ')</button>' : '')
+                + '</div></div>'
+                + '<div style="font-size:.72rem;color:var(--text-muted);margin:5px 0 6px;">' + b.items.map(function (r) { return esc(r.productName) + ' ' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + (r.preparedAt ? ' ✅' : (avail(r) ? '' : ' ⏳')); }).join(' · ') + '</div>'
+                + '<div class="covo-bk-thread" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:7px;">'
+                + (b.msgs.length ? b.msgs.slice(-30).map(function (m) {
+                    var me = m.from !== 'client';
+                    return '<div style="align-self:' + (me ? 'flex-end' : 'flex-start') + ';max-width:85%;background:' + (me ? 'rgba(28,85,160,.13)' : 'rgba(232,130,46,.14)') + ';border-radius:12px;padding:7px 10px;">'
+                        + '<div style="font-size:.8rem;white-space:pre-wrap;word-break:break-word;color:var(--text-main);">' + esc(m.text) + '</div>'
+                        + '<div style="font-size:.62rem;color:var(--text-muted);margin-top:3px;">' + (me ? '🧑‍💼 ' + esc(m.by || 'Caisse') + (m.byId ? ' · ID ' + esc(m.byId) : '') : '👤 ' + esc(c.name || 'Client')) + ' · ' + esc(fmt(m.at)) + '</div></div>';
+                }).join('') : '<div style="font-size:.74rem;color:var(--text-muted);">Aucun message pour ce panier.</div>')
+                + '</div><div style="display:flex;gap:6px;"><textarea id="covo-msg-in-' + bi + '" rows="2" placeholder="Écrire au client à propos de ce panier (signé ' + esc(cs.name) + (cs.id ? ' · ' + esc(cs.id) : '') + ')…" style="flex:1;box-sizing:border-box;padding:8px 10px;border:1.5px solid rgba(28,85,160,.3);border-radius:8px;font-size:.8rem;font-family:inherit;resize:vertical;background:var(--input-bg,#fff);color:var(--text-main);"></textarea>'
+                + '<button onclick="window._covoMsgSend(\'' + cid + '\',\'' + esc(b.bk) + '\',' + bi + ')" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:0 14px;font-size:.78rem;font-weight:800;cursor:pointer;">Envoyer</button></div></div>';
+        });
+        h += '</div>';
         card.innerHTML = h;
         var resvCard = document.getElementById('lty-resv-note-card');
         if (resvCard && resvCard.parentNode === scroll) scroll.insertBefore(card, resvCard.nextSibling); else scroll.insertBefore(card, scroll.firstChild);
-        var th = document.getElementById('covo-msg-thread'); if (th) th.scrollTop = th.scrollHeight;
+        Array.prototype.forEach.call(card.querySelectorAll('.covo-bk-thread'), function (th) { th.scrollTop = th.scrollHeight; });
     }
     var _prevSD = window._ltyShowDetail;
     if (typeof _prevSD === 'function') window._ltyShowDetail = function (id) { _prevSD.apply(this, arguments); setTimeout(function () { renderCard(id); }, 90); };
@@ -61604,7 +61627,7 @@ function covoQrPrint(o) {
                 var have = {}; c.messages.forEach(function (m) { have[String(m.id)] = 1; });
                 msgs.forEach(function (m) {
                     if (!m || !m.id || m.from !== 'client' || have[String(m.id)]) return;
-                    c.messages.push({ id: String(m.id), from: 'client', at: m.at || new Date().toISOString(), text: String(m.text || '').slice(0, 1000) });
+                    c.messages.push({ id: String(m.id), from: 'client', at: m.at || new Date().toISOString(), text: String(m.text || '').slice(0, 1000), bk: m.bk ? String(m.bk) : '' });
                     c.msgUnread = (c.msgUnread || 0) + 1; n++; if (names.indexOf(c.name) < 0) names.push(c.name);
                 });
                 c.messages.sort(function (a, b) { return String(a.at).localeCompare(String(b.at)); });
