@@ -58108,6 +58108,7 @@ window._rachatRender=function(filter){
         }).join('');
         var act = '';
         if (x.dispo && phoneOk) act += '<button type="button" class="aw-fbtn wa" data-aw="rv-wa" data-id="' + id + '">📲 Prévenir sur WhatsApp' + (x.dispo > 1 ? ' (' + x.dispo + ' articles)' : '') + '</button>';
+        act += '<button type="button" class="aw-fbtn ghost" data-aw="rv-print" data-id="' + id + '" title="Imprimer le bon de préparation : nom du client et articles à préparer">🖨️ Imprimer la liste</button>';
         act += '<button type="button" class="aw-fbtn ghost" data-aw="rv-open" data-id="' + id + '">👁 Ouvrir la fiche</button>';
         if (x.dispo && !phoneOk) act += '<span class="aw-rv-note">' + (c.noWhatsapp ? '🚫 Client sans messages' : 'Aucun numéro WhatsApp') + '</span>';
         return h + '<div class="aw-rv-act">' + act + '</div></div></div>';
@@ -58263,6 +58264,11 @@ window._rachatRender=function(filter){
             case 'rv-toggle': ui.rvOpen[id] = !ui.rvOpen[id]; break;
             case 'rv-all': ui.rvAll = !ui.rvAll; break;
             case 'rv-show-wait': ui.showWaiting = !ui.showWaiting; break;
+            case 'rv-print':
+                var cp = custById(id);
+                if (cp && typeof window._covoResvPrint === 'function') window._covoResvPrint(cp.id);
+                else toast('⚠️ Impression indisponible', 'error');
+                break;
             case 'rv-wa':
                 var c = custById(id);
                 if (c && typeof window._resvNotifyWhatsAppAll === 'function') { window._resvNotifyWhatsAppAll(c.id); setNotified(String(c.id)); }
@@ -61467,6 +61473,78 @@ function covoQrPrint(o) {
         after(c, '💬 Message envoyé');
     };
 
+    /* ═══ BON DE PRÉPARATION : liste des articles réservés par le client, à imprimer ═══ */
+    function shopInfo() {
+        var a = {}; try { a = (typeof appSettings !== 'undefined' && appSettings) ? appSettings : JSON.parse(localStorage.getItem('covo_settings') || '{}'); } catch (e) {}
+        var r = a.rcpt || {};
+        return { name: r.shopName || a.shopName || 'COVO', address: r.address || '', phone: r.phone || '', logo: a.logo || '' };
+    }
+    function prodOf(pid) {
+        var lists = [];
+        try { if (typeof products !== 'undefined' && Array.isArray(products)) lists.push(products); } catch (e) {}
+        try { lists.push(JSON.parse(localStorage.getItem('covo_products') || '[]') || []); } catch (e) {}
+        for (var k = 0; k < lists.length; k++) for (var i = 0; i < lists[k].length; i++) if (lists[k][i] && String(lists[k][i].id) === String(pid)) return lists[k][i];
+        try { var p = (typeof window._ltyGetProduct === 'function') ? window._ltyGetProduct(pid) : null; if (p) return p; } catch (e) {}
+        return null;
+    }
+    window._covoResvPrint = function (clientId) {
+        var d = lg(), c = (d.customers || []).filter(function (x) { return x.id === clientId; })[0]; if (!c) return;
+        var resv = (c.reservations || []).slice();
+        if (!resv.length) { say('Ce client n\'a aucune réservation', 'warning'); return; }
+        var shop = shopInfo(), cs = cashier(), now = new Date();
+        var lastMsg = (c.messages || []).filter(function (m) { return m.from === 'client'; }).slice(-1)[0];
+        var picks = (resv.map(function (r) { return r.pickupDate; }).filter(Boolean).sort())[0] || '';
+        var total = 0, nbArt = 0;
+        resv.sort(function (a, b) { var pa = prodOf(a.productId), pb = prodOf(b.productId); return String((pa && pa.category) || '').localeCompare(String((pb && pb.category) || ''), 'fr') || String(a.productName).localeCompare(String(b.productName), 'fr'); });
+        var rows = resv.map(function (r) {
+            var p = prodOf(r.productId), kg = r.unitType === 'kg';
+            var pu = +(r.price != null ? r.price : (p ? (kg ? p.pricePerKg : p.price) : 0)) || 0, lt = pu * (+r.qty || 1);
+            total += lt; nbArt += kg ? 1 : (+r.qty || 1);
+            var ok = avail(r);
+            return '<tr><td class="ck"><span></span></td>'
+                + '<td><b>' + esc(r.productName || (p && p.name) || 'Article') + '</b>' + (p && p.barcode ? '<small>Code ' + esc(p.barcode) + '</small>' : '') + '</td>'
+                + '<td>' + esc((p && p.category) || '—') + '</td>'
+                + '<td class="q">' + (kg ? String(r.qty).replace('.', ',') + ' kg' : '×' + (r.qty || 1)) + '</td>'
+                + '<td class="n">' + (pu ? (lt.toFixed(2).replace('.', ',') + ' €') : '—') + '</td>'
+                + '<td class="st ' + (r.preparedAt ? 'ok' : (ok ? 'av' : 'wt')) + '">' + (r.preparedAt ? 'Déjà prêt' : (ok ? 'Disponible' : 'En attente de stock')) + '</td></tr>';
+        }).join('');
+        var css = '@page{size:auto;margin:12mm;}*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:13px;}'
+            + '.bar{display:flex;gap:8px;justify-content:center;padding:12px;background:#eef2f7;}.bar button{border:none;border-radius:8px;padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer;background:#1c55a0;color:#fff;}.bar button.b2{background:#e8822e;}'
+            + '.doc{max-width:190mm;margin:0 auto;padding:10px 6px;}'
+            + '.hd{display:flex;align-items:center;gap:12px;border-bottom:3px solid #1c55a0;padding-bottom:10px;}.hd img{width:46px;height:46px;border-radius:50%;}.hd h1{font-size:20px;}.hd .s{font-size:11px;color:#555;}.hd .t{margin-left:auto;text-align:right;}.hd .t b{display:block;font-size:15px;color:#1c55a0;}'
+            + '.cl{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0;}.cl div{border:1px solid #d5dbe4;border-radius:8px;padding:7px 9px;}.cl span{display:block;font-size:10px;color:#666;text-transform:none;}.cl b{font-size:14px;}.cl .big{grid-column:span 2;}.cl .big b{font-size:18px;}'
+            + 'table{width:100%;border-collapse:collapse;margin-top:6px;}th{font-size:10.5px;text-align:left;color:#555;border-bottom:2px solid #111;padding:6px 4px;}td{border-bottom:1px solid #d5dbe4;padding:8px 4px;vertical-align:top;}td small{display:block;color:#666;font-size:10.5px;margin-top:2px;}'
+            + 'td.q{font-size:15px;font-weight:700;white-space:nowrap;}td.n,th.n{text-align:right;white-space:nowrap;}td.ck span{display:inline-block;width:16px;height:16px;border:2px solid #111;border-radius:3px;}'
+            + 'td.st{font-size:11px;font-weight:700;white-space:nowrap;}td.st.ok{color:#047857;}td.st.av{color:#1c55a0;}td.st.wt{color:#b45309;}'
+            + 'tfoot td{font-weight:700;border-bottom:none;border-top:2px solid #111;}'
+            + '.msg{margin-top:12px;border-left:4px solid #e8822e;background:#fff7ed;padding:8px 10px;border-radius:4px;font-size:12px;}.msg b{display:block;font-size:10.5px;color:#9a4b0b;margin-bottom:2px;}'
+            + '.sg{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:22px;}.sg div{border-top:1px dashed #888;padding-top:5px;font-size:11px;color:#555;min-height:40px;}'
+            + '.ft{margin-top:14px;font-size:10px;color:#777;text-align:center;}'
+            /* format ticket 80 mm */
+            + 'body.tk .doc{max-width:72mm;padding:0;}body.tk{font-size:11px;}body.tk .hd{flex-wrap:wrap;}body.tk .hd img{display:none;}body.tk .hd .t{margin-left:0;text-align:left;width:100%;}body.tk .cl{grid-template-columns:1fr 1fr;}body.tk .cl .big{grid-column:span 2;}'
+            + 'body.tk thead th:nth-child(3),body.tk tbody td:nth-child(3),body.tk thead th:nth-child(6),body.tk tbody td:nth-child(6),body.tk tfoot td.x{display:none;}body.tk .sg{grid-template-columns:1fr;}'
+            + '@media print{.bar{display:none;}body.tk{width:72mm;}}';
+        var html = '<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Préparation — ' + esc(c.name || 'Client') + '</title><style>' + css + '</style></head><body>'
+            + '<div class="bar"><button onclick="document.body.classList.remove(\'tk\');window.print()">🖨️ Imprimer (A4)</button><button class="b2" onclick="document.body.classList.add(\'tk\');window.print()">🧾 Imprimer (ticket 80 mm)</button></div>'
+            + '<div class="doc"><div class="hd">' + (shop.logo ? '<img src="' + esc(shop.logo) + '" alt="">' : '') + '<div><h1>' + esc(shop.name) + '</h1><div class="s">' + esc([shop.address, shop.phone].filter(Boolean).join(' · ')) + '</div></div>'
+            + '<div class="t"><b>BON DE PRÉPARATION</b>Réservation client · ' + now.toLocaleDateString('fr-FR') + ' ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</div></div>'
+            + '<div class="cl"><div class="big"><span>Client</span><b>' + esc(c.name || '—') + '</b></div>'
+            + '<div><span>Carte fidélité</span><b>' + esc(c.barcode || '—') + '</b></div>'
+            + '<div><span>Téléphone</span><b>' + esc(c.phone || '—') + '</b></div>'
+            + '<div><span>Articles à préparer</span><b>' + nbArt + ' (' + resv.length + ' ligne' + (resv.length > 1 ? 's' : '') + ')</b></div>'
+            + '<div><span>Retrait prévu</span><b>' + (picks ? new Date(picks + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : 'À convenir') + '</b></div>'
+            + '<div class="big"><span>Préparé par</span><b>' + esc(cs.name) + (cs.id ? ' · ID ' + esc(cs.id) : '') + '</b></div></div>'
+            + '<table><thead><tr><th></th><th>Article</th><th>Rayon</th><th>Qté</th><th class="n">Montant</th><th>État</th></tr></thead><tbody>' + rows + '</tbody>'
+            + '<tfoot><tr><td></td><td>Total estimé</td><td class="x"></td><td></td><td class="n">' + total.toFixed(2).replace('.', ',') + ' €</td><td class="x"></td></tr></tfoot></table>'
+            + (lastMsg ? '<div class="msg"><b>Message du client · ' + esc(new Date(lastMsg.at).toLocaleDateString('fr-FR')) + '</b>' + esc(lastMsg.text) + '</div>' : '')
+            + '<div class="sg"><div>Préparé par (visa)</div><div>Remis au client le</div></div>'
+            + '<div class="ft">Cochez chaque article une fois mis dans le panier. Règlement en caisse au moment du retrait.</div></div>'
+            + '<script>setTimeout(function(){window.print();},400);<\/script></body></html>';
+        var w = window.open('', '_blank', 'width=900,height=1000');
+        if (!w) { say('⚠️ Autorisez les fenêtres pop-up pour imprimer', 'warning'); return; }
+        w.document.open(); w.document.write(html); w.document.close();
+    };
+
     /* Carte « Panier & échanges » dans la fiche client */
     function renderCard(id) {
         var scroll = document.getElementById('lty-detail-scroll'); if (!scroll) return;
@@ -61479,8 +61557,10 @@ function covoQrPrint(o) {
         var h = '<div style="background:rgba(28,85,160,.06);border:1px solid rgba(28,85,160,.25);border-radius:12px;padding:11px 14px;">'
             + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
             + '<div style="font-size:.62rem;font-weight:800;color:#1c55a0;text-transform:uppercase;letter-spacing:.6px;">🛍️ Panier & échanges avec le client</div>'
+            + '<div style="display:flex;gap:6px;flex-wrap:wrap;">'
+            + (resv.length ? '<button onclick="window._covoResvPrint(\'' + esc(id) + '\')" title="Imprimer la liste des articles réservés à préparer" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.76rem;font-weight:800;cursor:pointer;">🖨️ Bon de préparation (' + resv.length + ')</button>' : '')
             + (ready.length ? '<button onclick="window._covoResvPrepare(\'' + esc(id) + '\',null)" style="background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:.76rem;font-weight:800;cursor:pointer;">✅ Mettre le panier à disposition (' + ready.length + ')</button>' : '')
-            + '</div>';
+            + '</div></div>';
         if (ready.length) h += ready.map(function (r) {
             return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px dashed rgba(28,85,160,.2);font-size:.78rem;"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">✅ ' + esc(r.productName) + ' · ' + (r.unitType === 'kg' ? r.qty + ' kg' : '×' + r.qty) + ' · disponible</span>'
                 + '<button onclick="window._covoResvPrepare(\'' + esc(id) + '\',' + r.id + ')" style="background:rgba(5,150,105,.14);color:#059669;border:none;border-radius:7px;padding:4px 9px;font-size:.72rem;font-weight:800;cursor:pointer;">Mettre à disposition</button></div>';
@@ -61494,7 +61574,8 @@ function covoQrPrint(o) {
                 var me = m.from !== 'client';
                 return '<div style="align-self:' + (me ? 'flex-end' : 'flex-start') + ';max-width:85%;background:' + (me ? 'rgba(28,85,160,.13)' : 'rgba(232,130,46,.14)') + ';border-radius:12px;padding:7px 10px;">'
                     + '<div style="font-size:.8rem;white-space:pre-wrap;word-break:break-word;color:var(--text-main);">' + esc(m.text) + '</div>'
-                    + '<div style="font-size:.62rem;color:var(--text-muted);margin-top:3px;">' + (me ? '🧑‍💼 ' + esc(m.by || 'Caisse') + (m.byId ? ' · ID ' + esc(m.byId) : '') : '👤 ' + esc(c.name || 'Client')) + ' · ' + esc(fmt(m.at)) + '</div></div>';
+                    + '<div style="font-size:.62rem;color:var(--text-muted);margin-top:3px;">' + (me ? '🧑‍💼 ' + esc(m.by || 'Caisse') + (m.byId ? ' · ID ' + esc(m.byId) : '') : '👤 ' + esc(c.name || 'Client')) + ' · ' + esc(fmt(m.at))
+                    + (!me && resv.length ? ' · <a href="javascript:void(0)" onclick="window._covoResvPrint(\'' + esc(id) + '\')" style="color:#1c55a0;font-weight:800;">🖨️ imprimer ses articles</a>' : '') + '</div></div>';
             }).join('') : '<div style="font-size:.76rem;color:var(--text-muted);">Aucun échange pour le moment.</div>')
             + '</div><div style="display:flex;gap:6px;"><textarea id="covo-msg-in" rows="2" placeholder="Écrire au client (signé ' + esc(cs.name) + (cs.id ? ' · ' + esc(cs.id) : '') + ')…" style="flex:1;box-sizing:border-box;padding:8px 10px;border:1.5px solid rgba(28,85,160,.3);border-radius:8px;font-size:.8rem;font-family:inherit;resize:vertical;background:var(--input-bg,#fff);color:var(--text-main);"></textarea>'
             + '<button onclick="window._covoMsgSend(\'' + esc(id) + '\')" style="background:#1c55a0;color:#fff;border:none;border-radius:8px;padding:0 14px;font-size:.78rem;font-weight:800;cursor:pointer;">Envoyer</button></div></div>';
