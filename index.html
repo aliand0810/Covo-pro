@@ -19311,7 +19311,7 @@ function toggleInfoSection(headerElement) {
             outBtn +
             autoLabel +
             '<button id="cat-site-cfg" onclick="window._siteCfgOpen&&window._siteCfgOpen()" title="Site web : adresse, numéro WhatsApp et QR code à imprimer" style="padding:8px 12px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;">📱 QR code site</button>' +
-            '<button id="cat-site-sync" onclick="window._siteSyncNow(true)" title="Site web catalogue : synchronisation automatique — cliquer pour forcer l\'envoi maintenant" style="padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:transparent;color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;">' + (typeof window._siteSyncLabel === 'function' ? window._siteSyncLabel() : '🌐 Site web') + '</button>' +
+            '<button id="cat-site-sync" onclick="window._siteSyncNow(true)" title="Site web catalogue : synchronisation automatique toutes les 24 h — cliquer pour envoyer maintenant" style="padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:transparent;color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;">' + (typeof window._siteSyncLabel === 'function' ? window._siteSyncLabel() : '🌐 Site web') + '</button>' +
             '<input id="catv-search" type="text" value="' + _catEsc(_catSearch) + '" oninput="window._catOnSearch(this.value)" placeholder="🔎 Rechercher un produit…" ' +
                 'style="flex:1;min-width:160px;padding:8px 14px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:600;outline:none;">' +
         '</div>';
@@ -61113,18 +61113,32 @@ function covoQrPrint(o) {
             if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 160)); });
         });
     }
+    // ═══ Synchronisation du catalogue du site : une fois toutes les 24 heures
+    //     (+ bouton « Synchroniser maintenant » et changement du numéro WhatsApp : envoi immédiat)
+    var SYNC_EVERY = 24 * 3600 * 1000;
+    function lastAt() { return +localStorage.getItem(KEY_AT) || 0; }
+    function due() { return Date.now() - lastAt() >= SYNC_EVERY; }
+    function nextAt() { var a = lastAt(); return a ? a + SYNC_EVERY : Date.now(); }
+    function whenTxt(t) {
+        var d = new Date(t), today = new Date(), tm = new Date(); tm.setDate(today.getDate() + 1);
+        var hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        if (d.toDateString() === today.toDateString()) return 'aujourd\'hui ' + hm;
+        if (d.toDateString() === tm.toDateString()) return 'demain ' + hm;
+        return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' ' + hm;
+    }
+    window._siteSyncNext = function () { return lastAt() ? whenTxt(nextAt()) : 'dès que possible'; };
     function label() {
-        var at = +localStorage.getItem(KEY_AT) || 0;
-        if (_busy) return '🌐 Site web · envoi…';
-        if (_lastErr) return '🌐 Site web · ⚠️ échec';
-        if (!at) return '🌐 Site web';
-        return '🌐 Site web · ✅ ' + new Date(at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        var at = lastAt();
+        if (_busy) return '⏳ Synchronisation du site…';
+        if (_lastErr) return '🔄 Synchroniser le site · ⚠️ échec';
+        if (!at) return '🔄 Synchroniser le site';
+        return '🔄 Synchroniser le site · ✅ ' + whenTxt(at);
     }
     window._siteSyncLabel = label;
     function refreshBtn() {
         try { statusRefresh(); } catch (e) {}
         var b = document.getElementById('cat-site-sync');
-        if (b) { b.textContent = label(); b.title = _lastErr ? ('Échec de la synchronisation du site web : ' + _lastErr + ' — cliquer pour réessayer') : 'Site web catalogue : synchronisation automatique (articles + images) — cliquer pour forcer l\'envoi maintenant'; }
+        if (b) { b.textContent = label(); b.title = _lastErr ? ('Échec de la synchronisation du site web : ' + _lastErr + ' — cliquer pour réessayer') : 'Site web catalogue : synchronisation automatique toutes les 24 h (prochaine : ' + window._siteSyncNext() + ') — cliquer pour envoyer maintenant'; }
     }
     function sync(manual) {
         if (_busy) return;
@@ -61135,7 +61149,7 @@ function covoQrPrint(o) {
             var b = buildPayload();
             var json = JSON.stringify(b.payload);
             var h = hash(json);
-            if (!manual && h === localStorage.getItem(KEY_HASH)) return 'same';   // rien n'a changé
+            if (!manual && h === localStorage.getItem(KEY_HASH)) { try { localStorage.setItem(KEY_AT, String(Date.now())); } catch (e) {} return 'same'; }   // rien n'a changé
             nImgs = b.payload.products.filter(function (p) { return p.imgChunk != null; }).length;
             var sent = {}; try { sent = JSON.parse(localStorage.getItem(KEY_CHUNKS) || '{}') || {}; } catch (e) {}
             // 1) paquets d'images modifiés d'abord, 2) puis la liste des articles qui les référence
@@ -61218,7 +61232,7 @@ function covoQrPrint(o) {
             .catch(function (e) { box.innerHTML = '<div style="padding:20px;color:#b91c1c;font-size:.8rem;">⚠️ ' + covoQrEsc(e.message || e) + '</div>'; });
     }
     function statusRefresh() {
-        var s = el('scfg-status'); if (s) s.textContent = label() + (_lastErr ? ' — ' + _lastErr : '') + (_bcErr ? ' — ' + window._siteBarcodeStatus() : '');
+        var s = el('scfg-status'); if (s) s.textContent = label() + ' · prochaine synchro automatique : ' + window._siteSyncNext() + (_lastErr ? ' — ' + _lastErr : '') + (_bcErr ? ' — ' + window._siteBarcodeStatus() : '');
     }
     window._siteCfgOpen = function () {
         var ov = el('scfg-ov');
@@ -61364,8 +61378,12 @@ function covoQrPrint(o) {
                 { method: method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: body ? JSON.stringify(body) : undefined });
         }).then(function (r) { if (r.status === 401) _tok = null; return r; });
     };
-    window._siteSyncNow = function (manual) { sync(!!manual); };
-    window._siteSyncSoon = function (ms) { clearTimeout(_timer); _timer = setTimeout(function () { sync(false); }, ms || 8000); };
+    window._siteSyncNow = function (manual) {
+        if (manual && typeof showScanToast === 'function' && !_busy) showScanToast('🔄 Envoi du catalogue vers le site web…', 'info');
+        sync(!!manual);
+    };
+    window._siteSyncSoon = function () { /* modifications prises en compte à la prochaine synchronisation (toutes les 24 h) */ refreshBtn(); };
+    function checkDue() { if (due() && !document.hidden) sync(false); }
 
     // Détection des changements : à chaque écriture de covo_products (ventes, fiches, stock, photos…)
     try {
@@ -61379,9 +61397,10 @@ function covoQrPrint(o) {
             };
         }
     } catch (e) {}
-    setInterval(function () { if (!document.hidden) sync(false); }, 60000);
-    window.addEventListener('online', function () { window._siteSyncSoon(2000); });
-    setTimeout(function () { sync(false); }, 15000);   // premier envoi après le démarrage
+    setInterval(checkDue, 10 * 60000);                       // vérifie toutes les 10 min si les 24 h sont écoulées
+    window.addEventListener('online', function () { setTimeout(checkDue, 2000); });
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(checkDue, 3000); });
+    setTimeout(checkDue, 15000);                              // au démarrage, seulement si la dernière synchro date de plus de 24 h
 })();
 </script>
 <script>
