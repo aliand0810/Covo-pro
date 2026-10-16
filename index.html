@@ -60872,7 +60872,13 @@ function covoQrMake(text, size) {
     });
 }
 function covoQrEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-function covoQrWa(w) { w = String(w || '').replace(/\D/g, ''); if (!w) return ''; if (w.indexOf('33') === 0 && w.length === 11) return '0' + w.slice(2).replace(/(\d)(?=(\d{2})+$)/g, '$1 '); return '+' + w; }
+function covoQrWa(w) {
+    var raw = String(w || '').trim(); w = raw.replace(/\D/g, ''); if (!w) return '';
+    if (/^0\d{9}$/.test(w)) return w.replace(/(\d)(?=(\d{2})+$)/g, '$1 ');                         // déjà au format national
+    var m = /^(33|262|590|594|596)(\d{9})$/.exec(w);
+    if (m) return ('0' + m[2]).replace(/(\d)(?=(\d{2})+$)/g, '$1 ');                                 // 262693484543 → 06 93 48 45 43
+    return '+' + w;
+}
 /* o = { url, name, logo, address, phone, whatsapp, qr (data URL), format: 'a4' | 'a6' } */
 function covoQrPosterHtml(o) {
     var e = covoQrEsc, name = o.name || 'COVO', shortUrl = String(o.url || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -60986,7 +60992,8 @@ function covoQrPrint(o) {
         var a = {}; try { a = (typeof appSettings !== 'undefined' && appSettings) ? appSettings : JSON.parse(localStorage.getItem('covo_settings') || '{}'); } catch (e) {}
         var r = a.rcpt || {}, wa = '';
         try { wa = ((JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}).settings || {}).whatsappOrderNumber || ''; } catch (e) {}
-        return { name: r.shopName || a.shopName || 'COVO', address: r.address || '', phone: r.phone || '', email: r.email || '', whatsapp: wa };
+        var waDisp = ''; try { waDisp = ((JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}).settings || {}).whatsappDisplay || ''; } catch (e) {}
+        return { name: r.shopName || a.shopName || 'COVO', address: r.address || '', phone: r.phone || '', email: r.email || '', whatsapp: wa, whatsappDisplay: waDisp };
     }
     function promoPrice(base, promo, cost) {
         if (typeof window._promoPrice === 'function') return window._promoPrice(base, promo, cost);
@@ -61187,20 +61194,55 @@ function covoQrPrint(o) {
     // ═══ Numéro WhatsApp UNIQUE du magasin ═══
     // Stocké à un seul endroit (covo_loyalty.settings.whatsappOrderNumber), lu par Fidélité Pro.
     // COVO Pro le transmet au site web (dans la synchro) et au portail fidélité (public/catalogue).
-    function waGet() { try { return ((JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}).settings || {}).whatsappOrderNumber || ''; } catch (e) { return ''; } }
-    function waSet(digits) {
+    function waSettings() { try { return ((JSON.parse(localStorage.getItem('covo_loyalty') || '{}') || {}).settings || {}); } catch (e) { return {}; } }
+    function waGet() { return waSettings().whatsappOrderNumber || ''; }
+    // Numéro tel qu'il a été saisi (« 06 93 48 45 43 ») — c'est lui qui est affiché partout
+    function waDisplayGet() { var s = waSettings(); return s.whatsappDisplay || (s.whatsappOrderNumber ? covoQrWa(s.whatsappOrderNumber) : ''); }
+    function waSet(digits, display) {
         var d; try { d = JSON.parse(localStorage.getItem('covo_loyalty') || 'null') || { customers: [] }; } catch (e) { d = { customers: [] }; }
         if (!d.settings) d.settings = {};
         d.settings.whatsappOrderNumber = digits;
-        localStorage.setItem('covo_loyalty', JSON.stringify(d));
+        if (display) d.settings.whatsappDisplay = display; else delete d.settings.whatsappDisplay;
+        return safeSet('covo_loyalty', JSON.stringify(d));
     }
-    function waNorm(raw) {
+    // Indicatif d'un numéro national (10 chiffres commençant par 0) : France métropolitaine OU outre-mer.
+    // 06 92 / 06 93 / 06 39 = La Réunion / Mayotte → 262 (et non 33 : +33 6 93… n'existe pas).
+    function ccFor(n) {
+        var p = n.slice(0, 4);
+        if (/^(0692|0693|0639|0262|0263|0269)$/.test(p)) return '262';
+        if (/^(0690|0691|0590)$/.test(p)) return '590';
+        if (/^(0694|0594)$/.test(p)) return '594';
+        if (/^(0696|0697|0596)$/.test(p)) return '596';
+        return '33';
+    }
+    // Forme exigée par WhatsApp pour ses liens (wa.me) : chiffres avec indicatif, sans « + »
+    function waIntl(raw) {
         raw = String(raw || '').trim(); if (!raw) return '';
-        if (typeof window._waNormPhone === 'function') return window._waNormPhone(raw, '33');
-        var d = raw.replace(/\D/g, '');
-        if (d.indexOf('00') === 0) d = d.slice(2); else if (d.length === 10 && d.charAt(0) === '0') d = '33' + d.slice(1);
+        var d = raw.replace(/\D/g, ''); if (!d) return '';
+        if (raw.charAt(0) === '+') return d;
+        if (d.indexOf('00') === 0) return d.slice(2);
+        if (d.length === 10 && d.charAt(0) === '0') return ccFor(d) + d.slice(1);
         return d;
     }
+    window._waIntl = waIntl;
+    function waNorm(raw) { return waIntl(raw); }
+    function waDisplayOf(raw) { return String(raw || '').trim().replace(/\s+/g, ' '); }
+    // Écriture sûre : si la mémoire du navigateur est pleine, on libère d'abord le cache des
+    // fiches produit du site (il se reconstitue tout seul), au lieu d'échouer en silence.
+    function safeSet(k, v) {
+        try { localStorage.setItem(k, v); return true; } catch (e) {}
+        try { localStorage.removeItem('covo_site_off'); localStorage.setItem(k, v); return true; } catch (e) { console.warn('[Site web] enregistrement impossible (mémoire pleine)', k, e); return false; }
+    }
+    // Correction automatique d'un ancien numéro enregistré avec un mauvais « 33 » (ex. 33693484543)
+    (function fixOldNumber() {
+        var cur = waGet(), m = /^33(\d{9})$/.exec(cur);
+        if (!m) return;
+        var nat = '0' + m[1], ok = ccFor(nat);
+        if (ok === '33') return;
+        var s = waSettings();
+        waSet(ok + m[1], s.whatsappDisplay || nat.replace(/(\d)(?=(\d{2})+$)/g, '$1 '));
+        setTimeout(function () { try { sync(false); } catch (e) {} }, 6000);
+    })();
     var KEY_WA_PORTAL = 'covo_portal_wa_pushed', KEY_URL = 'covo_site_url';
     function pushPortalWa() {
         var wa = waGet();
@@ -61216,7 +61258,25 @@ function covoQrPrint(o) {
     window._sitePushPortalWa = pushPortalWa;
 
     // ═══ Fenêtre « Site web » : adresse, numéro WhatsApp, QR code à imprimer ═══
-    function siteUrl() { return localStorage.getItem(KEY_URL) || ''; }
+    function siteUrl() {
+        var u = '';
+        try { u = ((typeof appSettings !== 'undefined' && appSettings) ? appSettings.siteUrl : '') || ''; } catch (e) {}
+        if (!u) { try { u = (JSON.parse(localStorage.getItem('covo_settings') || '{}') || {}).siteUrl || ''; } catch (e) {} }
+        if (!u) u = localStorage.getItem(KEY_URL) || '';
+        // Restauration depuis une sauvegarde : on remet aussi la copie locale à jour
+        if (u && localStorage.getItem(KEY_URL) !== u) { try { localStorage.setItem(KEY_URL, u); } catch (e) {} }
+        return u;
+    }
+    function siteUrlSave(url) {
+        var ok = true, s = {};
+        try { s = JSON.parse(localStorage.getItem('covo_settings') || '{}') || {}; } catch (e) { s = {}; }
+        if (url) s.siteUrl = url; else delete s.siteUrl;
+        try { if (typeof appSettings !== 'undefined' && appSettings) { if (url) appSettings.siteUrl = url; else delete appSettings.siteUrl; } } catch (e) {}
+        if (!safeSet('covo_settings', JSON.stringify(s))) ok = false;
+        if (url) { if (!safeSet(KEY_URL, url)) ok = false; } else { try { localStorage.removeItem(KEY_URL); } catch (e) {} }
+        if (typeof cpDriveMarkDirty === 'function') { try { cpDriveMarkDirty(); } catch (e) {} }
+        return ok;
+    }
     function shopInfo() {
         var s = settings(), logo = '';
         try { logo = (typeof appSettings !== 'undefined' && appSettings && appSettings.logo) || ''; } catch (e) {}
@@ -61267,7 +61327,7 @@ function covoQrPrint(o) {
             document.body.appendChild(ov);
         }
         el('scfg-url').value = siteUrl();
-        el('scfg-wa').value = fmtWa(waGet());
+        el('scfg-wa').value = waDisplayGet();
         ov.style.display = 'flex';
         statusRefresh(); qrPreview();
     };
@@ -61276,14 +61336,15 @@ function covoQrPrint(o) {
         var url = (el('scfg-url').value || '').trim();
         if (url && !/^https?:\/\//i.test(url)) url = 'https://' + url;
         if (url && !/^https?:\/\/[^\s/]+\.[^\s]+/i.test(url)) { toastMsg('⚠️ Adresse du site invalide', 'error'); return; }
-        var waRaw = el('scfg-wa').value, wa = waNorm(waRaw);
+        var waRaw = el('scfg-wa').value, wa = waNorm(waRaw), waDisp = waDisplayOf(waRaw);
         if (waRaw.trim() && wa.length < 9) { toastMsg('⚠️ Numéro WhatsApp invalide', 'error'); return; }
-        var waChanged = wa !== waGet();
-        try { if (url) localStorage.setItem(KEY_URL, url); else localStorage.removeItem(KEY_URL); } catch (e) {}
-        if (waChanged) waSet(wa);
-        el('scfg-url').value = url; el('scfg-wa').value = fmtWa(wa);
+        var waChanged = wa !== waGet() || waDisp !== (waSettings().whatsappDisplay || '');
+        var okUrl = siteUrlSave(url), okWa = true;
+        if (waChanged) okWa = waSet(wa, waDisp);
+        el('scfg-url').value = siteUrl(); el('scfg-wa').value = waDisplayGet();
         qrPreview();
-        if (waChanged) { sync(false); toastMsg('✅ Numéro WhatsApp mis à jour — envoi au site web et au portail fidélité', 'success'); }
+        if (!okUrl || !okWa) { toastMsg('⚠️ Enregistrement impossible : la mémoire du navigateur est pleine', 'error'); return; }
+        if (waChanged) { sync(false); toastMsg('✅ Adresse et numéro enregistrés — envoi au site web et au portail fidélité', 'success'); }
         else toastMsg('✅ Réglages du site enregistrés', 'success');
     };
     window._siteCfgPrint = function (fmt) {
