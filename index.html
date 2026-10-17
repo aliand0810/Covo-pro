@@ -17942,7 +17942,8 @@ function toggleInfoSection(headerElement) {
         
         // Populate form
         document.getElementById('edit-name').value = product.name || '';
-        document.getElementById('edit-image').value = product.image || '';
+        window._cemImgShown = window._covoImgLink ? window._covoImgLink(product) : (product.img || '');
+        document.getElementById('edit-image').value = window._cemImgShown;
         document.getElementById('edit-barcode').value = product.barcode || '';
         document.getElementById('edit-stock').value = product.stock || 0;
         document.getElementById('edit-price').value = product.price || 0;
@@ -18199,7 +18200,7 @@ function toggleInfoSection(headerElement) {
 
         // Update only allowed fields
         if (perms.name) product.name = document.getElementById('edit-name').value;
-        if (perms.image) product.image = document.getElementById('edit-image').value;
+        if (perms.image) { if (window._covoImgApply) window._covoImgApply(product, document.getElementById('edit-image').value, window._cemImgShown); else { var _ei = document.getElementById('edit-image').value.trim(); if (_ei) product.img = _ei; } }
         if (perms.category) product.category = document.getElementById('edit-category').value;
         if (perms.barcode) product.barcode = document.getElementById('edit-barcode').value;
         if (perms.stock) product.stock = parseInt(document.getElementById('edit-stock').value) || 0;
@@ -22672,7 +22673,7 @@ logout = function(skipConfirmation = false) {
             p.promo = parseInt(document.getElementById(`edit-promo-${id}`).value);
             p.expiryDate = document.getElementById(`edit-expiry-${id}`).value || null;
             const newImg = document.getElementById(`edit-img-${id}`).value.trim();
-            if (newImg) p.img = newImg;
+            if (window._covoImgApply) window._covoImgApply(p, newImg, null); else if (newImg) p.img = newImg;
             // Night tariff fields
             p.nightTariff = document.getElementById(`edit-night-${id}`).checked;
             const nightPctVal = document.getElementById(`edit-night-pct-${id}`).value;
@@ -23809,7 +23810,9 @@ logout = function(skipConfirmation = false) {
         // Image
         const imgIn = document.getElementById('pem-img');
         const imgPv = document.getElementById('pem-img-prev');
-        if (imgIn) imgIn.value = (p.img && !p.img.startsWith('data:')) ? p.img : '';
+        window._pemImgShown = window._covoImgLink ? window._covoImgLink(p) : ((p.img && !p.img.startsWith('data:')) ? p.img : '');
+        if (imgIn) imgIn.value = window._pemImgShown;
+        if (window._covoImgHint) window._covoImgHint('pem-img', p);
         if (imgPv) { imgPv.src = p.img || ''; imgPv.style.opacity = p.img ? '1' : '0.2'; }
 
         // Identité
@@ -24167,7 +24170,7 @@ logout = function(skipConfirmation = false) {
         }
 
         const imgVal = document.getElementById('pem-img').value.trim();
-        if (imgVal) p.img = imgVal;
+        if (window._covoImgApply) window._covoImgApply(p, imgVal, window._pemImgShown); else if (imgVal) p.img = imgVal;
 
         const priceVal = parseFloat(document.getElementById('pem-price').value);
         if (!isNaN(priceVal) && priceVal >= 0) {
@@ -27042,7 +27045,7 @@ logout = function(skipConfirmation = false) {
 
     function cleanImageCache() {
         {
-            products.forEach(p => { if (p.img && p.img.length > 500000) p.img = ''; }); saveAll(); showScanToast('✅ Cache nettoyé');
+            products.forEach(p => { if (p.img && p.img.length > 500000) p.img = (p.imgUrl && /^https?:/i.test(p.imgUrl)) ? p.imgUrl : ''; }); saveAll(); showScanToast('✅ Cache nettoyé');
         }
     }
 
@@ -36744,7 +36747,7 @@ function renderCatalogueTab() {
                         <div>
                             <label>URL Image</label>
                             <div style="display:flex;gap:6px;align-items:center;">
-                                <input type="text" id="cie-img-${p.id}" value="${(!p.img||p.img.startsWith('data:'))?'':p.img}" style="flex:1;" oninput="ciePreviewImg(${p.id})">
+                                <input type="text" id="cie-img-${p.id}" data-shown="${(window._covoImgLink ? window._covoImgLink(p) : ((!p.img||p.img.startsWith('data:'))?'':p.img)).replace(/"/g,'&quot;')}" value="${(window._covoImgLink ? window._covoImgLink(p) : ((!p.img||p.img.startsWith('data:'))?'':p.img)).replace(/"/g,'&quot;')}" style="flex:1;" oninput="ciePreviewImg(${p.id})">
                                 <img id="cie-img-prev-${p.id}" src="${(!p.img||p.img.startsWith('data:'))?'':p.img}" alt=""
                                     style="${p.img&&!p.img.startsWith('data:')?'':'display:none;'}width:38px;height:38px;object-fit:cover;border-radius:6px;border:1.5px solid #ddd;flex-shrink:0;"
                                     onerror="this.style.display='none'">
@@ -37033,8 +37036,8 @@ function catSaveInlineEdit(id) {
     p.expiryDate = document.getElementById(`cie-expiry-${id}`)?.value || null;
     p.promo = parseInt(document.getElementById(`cie-promo-${id}`)?.value) || 0;
     p.active = document.getElementById(`cie-active-${id}`)?.value === '1';
-    const newImg = document.getElementById(`cie-img-${id}`)?.value.trim();
-    if (newImg) p.img = newImg;
+    const _cieImgEl = document.getElementById(`cie-img-${id}`), newImg = _cieImgEl ? _cieImgEl.value.trim() : '';
+    if (window._covoImgApply) window._covoImgApply(p, newImg, _cieImgEl ? _cieImgEl.getAttribute('data-shown') : null); else if (newImg) p.img = newImg;
     // Night tariff
     p.nightTariff = document.getElementById(`cie-night-${id}`)?.checked || false;
     const nightPctVal = document.getElementById(`cie-night-pct-${id}`)?.value;
@@ -37303,7 +37306,8 @@ function catOpenEditModal(id) {
     document.getElementById('cat-f-stock').value = p.stock;
     document.getElementById('cat-f-barcode').value = p.barcode || '';
     document.getElementById('cat-f-expiry').value = p.expiryDate || '';
-    document.getElementById('cat-f-img').value = (!p.img||p.img.startsWith('data:')) ? '' : p.img;
+    window._catImgShown = window._covoImgLink ? window._covoImgLink(p) : ((!p.img||p.img.startsWith('data:')) ? '' : p.img);
+    document.getElementById('cat-f-img').value = window._catImgShown;
     document.getElementById('cat-f-active').value = p.active !== false ? '1' : '0';
     const costEl2 = document.getElementById('cat-f-cost');
     if (costEl2) costEl2.value = p.costPrice != null ? p.costPrice : '';
@@ -37590,7 +37594,7 @@ async function saveCatalogueProduct() {
         p.promo = promo;
         p.active = active;
         if (costPrice !== null) p.costPrice = costPrice; else delete p.costPrice;
-        if (finalImg) p.img = finalImg;
+        if (imgUrl && window._covoImgApply) window._covoImgApply(p, imgUrl, window._catImgShown); else if (finalImg) p.img = finalImg;
         showScanToast('✅ Produit modifié');
     } else {
         // Ajout
@@ -61722,5 +61726,81 @@ function covoQrPrint(o) {
     setTimeout(importMessages, 20000);
     setInterval(function () { if (!document.hidden) importMessages(); }, 60000);
     window._covoMsgImport = importMessages;
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIEN DE L'IMAGE PRODUIT — toujours conservé et toujours affiché à la modification
+   • p.img     = image affichée (lien web, ou photo importée « data: »)
+   • p.imgUrl  = dernier LIEN web connu de l'image (gardé même si une photo l'a remplacé)
+   • Les fenêtres de modification affichent ce lien ; s'il n'est pas modifié, l'image
+     actuelle n'est pas touchée ; s'il est modifié, il devient la nouvelle image.
+   • Réparation : ancien champ « image » (fiche caissier) recopié dans « img ».
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoImgLinkInstalled) return;
+    window._covoImgLinkInstalled = true;
+    function isWeb(s) { return typeof s === 'string' && /^https?:\/\//i.test(s.trim()) && !/placehold\.co/i.test(s); }
+    function list() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} return null; }
+    var known = {};   // id → dernier lien web connu pendant la session
+
+    // Lien à afficher pour un produit
+    window._covoImgLink = function (p) {
+        if (!p) return '';
+        if (isWeb(p.img)) return p.img.trim();
+        if (isWeb(p.imgUrl)) return p.imgUrl.trim();
+        if (isWeb(p.image)) return p.image.trim();
+        var k = known[String(p.id)]; return k || '';
+    };
+    // Enregistrement depuis un champ « lien de l'image » : shown = valeur affichée à l'ouverture
+    window._covoImgApply = function (p, val, shown) {
+        if (!p) return;
+        val = String(val || '').trim();
+        if (!val) { repairOne(p); return; }                                        // champ vide : on garde l'image actuelle
+        if (shown != null && val === String(shown).trim() && p.img) { repairOne(p); return; }   // lien inchangé : rien ne bouge
+        p.img = val;
+        if (isWeb(val)) { p.imgUrl = val; known[String(p.id)] = val; }
+        if (p.image !== undefined) delete p.image;
+    };
+    function repairOne(p) {
+        if (!p) return false;
+        var ch = false, id = String(p.id);
+        if (!p.img && isWeb(p.image)) { p.img = p.image.trim(); ch = true; }
+        if (isWeb(p.image) && !isWeb(p.imgUrl) && !isWeb(p.img)) { p.imgUrl = p.image.trim(); ch = true; }
+        if (p.image !== undefined && p.img) { delete p.image; ch = true; }
+        if (isWeb(p.img)) {
+            var u = p.img.trim();
+            if (p.imgUrl !== u) { p.imgUrl = u; ch = true; }
+            known[id] = u;
+        } else if (p.img && !isWeb(p.imgUrl) && known[id]) {          // lien remplacé par une photo pendant la session
+            p.imgUrl = known[id]; ch = true;
+        } else if (isWeb(p.imgUrl)) known[id] = p.imgUrl.trim();
+        return ch;
+    }
+    function repairAll() { var l = list(), n = 0; if (!l) return 0; l.forEach(function (p) { if (repairOne(p)) n++; }); return n; }
+    window._covoImgRepair = repairAll;
+
+    // Avant chaque enregistrement : le lien suit l'image
+    ['saveAll', 'autoSave'].forEach(function (fn) {
+        var o = window[fn];
+        if (typeof o === 'function' && !o._imgWrapped) {
+            var w = function () { try { repairAll(); } catch (e) {} return o.apply(this, arguments); };
+            w._imgWrapped = true; window[fn] = w;
+        }
+    });
+    // Au démarrage : réparation unique des données existantes
+    setTimeout(function () { try { if (repairAll() && typeof window.saveAll === 'function') window.saveAll(); } catch (e) {} }, 2500);
+
+    // Indication sous le champ de la fiche produit
+    window._covoImgHint = function (inputId, p) {
+        var inp = document.getElementById(inputId); if (!inp) return;
+        var h = document.getElementById(inputId + '-hint');
+        if (!h) { h = document.createElement('div'); h.id = inputId + '-hint'; h.style.cssText = 'font-size:.72rem;font-weight:600;color:var(--gray,#7f8c8d);margin-top:6px;line-height:1.35;'; var row = inp.parentNode; row.parentNode.insertBefore(h, row.nextSibling); }
+        var link = window._covoImgLink(p), isPhoto = p && p.img && /^data:/i.test(p.img);
+        inp.placeholder = isPhoto ? 'Photo importée — collez un lien pour la remplacer' : 'https://...';
+        h.textContent = isPhoto ? (link ? '📷 Photo importée affichée · lien d’origine conservé ci-dessus' : '📷 Photo importée depuis l’appareil (pas de lien web)') : (link ? '🔗 Lien enregistré avec le produit' : '');
+        h.style.display = h.textContent ? '' : 'none';
+    };
 })();
 </script>
