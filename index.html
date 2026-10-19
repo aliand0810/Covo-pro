@@ -60294,7 +60294,7 @@ window._rachatRender=function(filter){
     function shown(el) { return !!(el && el.offsetParent !== null && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'); }
     function visibility() {
         var tab = $('tab-products');
-        var on = !!(tab && tab.classList.contains('active') && shown(tab)) && !shown($('login-splash')) && !($('login-modal') && $('login-modal').classList.contains('active'));
+        var on = !shown($('login-splash')) && !($('login-modal') && $('login-modal').classList.contains('active'));   // visible sur tous les onglets de COVO Pro
         var was = root.classList.contains('show');
         root.classList.toggle('show', on);
         if (on) { place(st.x, st.y); navState(); if (!was) afterFilter(); }
@@ -61803,5 +61803,689 @@ function covoQrPrint(o) {
         h.textContent = isPhoto ? (link ? '📷 Photo importée affichée · lien d’origine conservé ci-dessus' : '📷 Photo importée depuis l’appareil (pas de lien web)') : (link ? '🔗 Lien enregistré avec le produit' : '');
         h.style.display = h.textContent ? '' : 'none';
     };
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — BOÎTE À OUTILS : RACCOURCIS, APPLICATIONS, ÉPINGLES
+   • Onglet « ⚡ Raccourcis » : toutes les commandes de la barre du haut (Scanner, Retour client,
+     Fin de poste, Thème, Plein écran, Admin Pro, Mode caissier, Tarif Nuit, Déconnexion) et de la
+     barre d'état (Sauvegarder, Sync Drive, Drive pas à jour, Auto-save, articles expirés/masqués),
+     plus les liens directs vers les applications COVO — même protocole : chaque tuile déclenche
+     la commande d'origine (mêmes droits, mêmes confirmations) et n'apparaît que si elle est
+     disponible pour l'utilisateur connecté
+   • 📌 Épingles : jusqu'à 8 raccourcis ou applications épinglés ; boîte à outils fermée, le survol
+     de la bulle 🧰 les déploie en couronne autour d'elle
+   • Les boutons du haut et les onglets-renvois intégrés ici sont retirés de l'écran
+   • Boîte à outils disponible sur tous les onglets de COVO Pro
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._tbaInstalled) return;
+    window._tbaInstalled = true;
+    var PREF = 'covo_toolbox_actions', PINS = 'covo_toolbox_pins', MAXPIN = 8;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toast(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); }
+    function I(p, w) { return '<svg viewBox="0 0 24 24" width="' + (w || 20) + '" height="' + (w || 20) + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>'; }
+    var IC = {
+        scan: I('<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10.5 8v8M14 8v8M17 8v8"/>'),
+        retour: I('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
+        finposte: I('<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>'),
+        theme: I('<circle cx="13.5" cy="6.5" r="1.3"/><circle cx="17.5" cy="10.5" r="1.3"/><circle cx="8.5" cy="7.5" r="1.3"/><circle cx="6.5" cy="12.5" r="1.3"/><path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A5.6 5.6 0 0 0 22 9.8C22 5.5 17.5 2 12 2z"/>'),
+        full: I('<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>'),
+        unfull: I('<path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/>'),
+        admin: I('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>'),
+        cashier: I('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M3 13h18"/>'),
+        night: I('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+        logout: I('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'),
+        save: I('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/>'),
+        sync: I('<path d="M17.5 19H8a5 5 0 1 1 1.2-9.9A6 6 0 0 1 20.5 11 4 4 0 0 1 17.5 19z"/><path d="M12 11v5M9.5 13.5L12 16l2.5-2.5"/>'),
+        alert: I('<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
+        bolt: I('<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>', 15),
+        ext: I('<path d="M7 17L17 7M8 7h9v9"/>', 14),
+        caisse: I('<rect x="3" y="10" width="18" height="11" rx="2"/><path d="M7 10V5h10v5"/><path d="M7 14h2M11 14h2M15 14h2M7 17h10"/>'),
+        fid: I('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'),
+        gest: I('<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>'),
+        appro: I('<path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>'),
+        fin: I('<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/>'),
+        hist: I('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>'),
+        clot: I('<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>')
+    };
+    IC.pin = I('<path d="M12 17v5"/><path d="M8 3h8"/><path d="M9 3v7.5L6 14v2h12v-2l-3-3.5V3"/>', 13);
+    IC.eye = I('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>');
+    IC.cloudup = I('<path d="M17.5 19H8a5 5 0 1 1 1.2-9.9A6 6 0 0 1 20.5 11 4 4 0 0 1 17.5 19z"/><path d="M12 16v-5M9.5 13.5L12 11l2.5 2.5"/>');
+    IC.auto = I('<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>');
+    IC.bell = I('<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>');
+    IC.all = I('<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M8 13h8M8 17h5"/>');
+
+    /* Commandes = éléments d'origine de COVO Pro (on les déclenche, on ne les réécrit pas) */
+    var ACTS = [
+        { k: 'scan', g: 'act', sel: '#scan-btn', ic: 'scan', l: 'Scanner', c: ['#22c55e', '#15803d'] },
+        { k: 'retour', g: 'act', sel: '#retour-client-btn', ic: 'retour', l: 'Retour client', c: ['#f59e0b', '#c2410c'] },
+        { k: 'finposte', g: 'act', sel: '#fin-poste-btn', ic: 'finposte', l: 'Fin de poste', c: ['#ef4444', '#b91c1c'] },
+        { k: 'theme', g: 'act', sel: '#covo-theme-btn', ic: 'theme', l: 'Thème', c: ['#14b8a6', '#0f766e'] },
+        { k: 'full', g: 'act', sel: '#fullscreen-btn', ic: 'full', l: 'Plein écran', c: ['#a855f7', '#7e22ce'] },
+        { k: 'admin', g: 'act', sel: '#admin-btn', ic: 'admin', l: 'Admin Pro', c: ['#f43f5e', '#be123c'] },
+        { k: 'cashier', g: 'act', sel: '#switch-cashier-btn', ic: 'cashier', l: 'Mode caissier', c: ['#10b981', '#047857'] },
+        { k: 'night', g: 'act', sel: '#night-tariff-btn', ic: 'night', l: 'Tarif Nuit', c: ['#6366f1', '#3730a3'] },
+        { k: 'notifs', g: 'act', sel: null, ic: 'bell', l: 'Notifications', c: ['#0ea5e9', '#1d4ed8'], fn: '_covoNotifOpen' },
+        { k: 'save', g: 'drive', sel: '#all-users-save-btn', ic: 'save', l: 'Sauvegarder', c: ['#2563eb', '#1e40af'], fn: '_quickManualSave' },
+        { k: 'sync', g: 'drive', sel: '#all-users-drive-btn', ic: 'sync', l: 'Sync Drive', c: ['#0ea5e9', '#0369a1'], fn: '_quickDriveSync' },
+        { k: 'dirty', g: 'drive', sel: '#gd-dev-dirty-badge', ic: 'cloudup', l: 'Drive pas à jour', c: ['#4285f4', '#34a853'] },
+        { k: 'master', g: 'drive', sel: '#master-save-bar', ic: 'all', l: 'Tout sauvegarder', c: ['#e74c3c', '#c0392b'] },
+        { k: 'autosave', g: 'drive', sel: '#dev-autosave-chip', ic: 'auto', l: 'Auto-save', c: ['#64748b', '#334155'] },
+        { k: 'expired', g: 'drive', sel: '#badge-expired', ic: 'alert', l: 'Expirés', c: ['#f97316', '#c2410c'] },
+        { k: 'masked', g: 'drive', sel: '#badge-masked', ic: 'eye', l: 'Masqués', c: ['#94a3b8', '#475569'] }
+    ];
+    var SATS = [
+        { k: 'caisse', sh: 'Caisse', l: 'Caisse Pro', s: 'Encaissement', url: 'https://aliand0810.github.io/Caisse-Pro/', t: 'caissepro', ic: 'caisse', c: ['#059669', '#047857'], all: true },
+        { k: 'fid', sh: 'Fidélité', l: 'Fidélité Pro', s: 'Clients & points', url: 'https://aliand0810.github.io/Fid-lit-Pro/', t: 'fidelitepro', ic: 'fid', c: ['#8b5cf6', '#6d28d9'], tab: 'tab-btn-fidelite' },
+        { k: 'gest', sh: 'Gestion', l: 'Gestion Pro', s: 'Heures · Inventaire · Stock · Factures', url: 'https://aliand0810.github.io/Gestion-Pro/', t: 'gestionpro', ic: 'gest', c: ['#475569', '#1f2937'], tab: 'tab-btn-gestionhub' },
+        { k: 'appro', sh: 'Appro.', l: 'Approvisionnement Pro', s: 'Achats fournisseurs', url: 'https://aliand0810.github.io/Investissement-Pro/', t: 'investissementpro', ic: 'appro', c: ['#7c3aed', '#4c1d95'], tab: 'tab-btn-retours' },
+        { k: 'fin', sh: 'Finances', l: 'Finances Pro', s: 'Paiements · Dettes', url: 'https://aliand0810.github.io/Finances-Pro/', t: 'financespro', ic: 'fin', c: ['#dc2626', '#7c2d12'], tab: 'tab-btn-paiements' },
+        { k: 'hist', sh: 'Historique', l: 'Historique Pro', s: 'Tickets & ventes', url: 'https://aliand0810.github.io/Historique-Pro/', t: 'historiquepro', ic: 'hist', c: ['#2980b9', '#1e3a5c'], tab: 'tab-btn-historique' },
+        { k: 'clot', sh: 'Clôtures', l: 'Clôtures Pro', s: 'Caisse du jour', url: 'https://aliand0810.github.io/Cloture-COVO/', t: 'cloturespro', ic: 'clot', c: ['#1abc9c', '#1a3a5c'], tab: 'tab-btn-clotures' },
+        { k: 'adm', sh: 'Admin', l: 'Admin Pro', s: 'Administration', url: 'https://aliand0810.github.io/Admins-PRO/', t: 'adminpro', ic: 'admin', c: ['#f43f5e', '#9f1239'], admin: true }
+    ];
+    var LOGOUT = { k: 'logout', l: 'Déconnexion', ic: 'logout', c: ['#ef4444', '#b91c1c'] };
+    function admin() { try { return typeof isAdmin !== 'undefined' && !!isAdmin; } catch (e) { return false; } }
+    function byKey(list, k) { return list.filter(function (x) { return x.k === k; })[0] || null; }
+    function srcEl(a) { return a && a.sel ? document.querySelector(a.sel) : null; }
+    // Disponible = l'élément d'origine n'a pas été masqué par COVO Pro (droits, mode, état)
+    function avail(el) { return !!(el && el.style.display !== 'none' && !el.disabled); }
+    function cleanLabel(el, fallback) {
+        var t = (el && el.textContent || '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}]/gu, '').replace(/\s+/g, ' ').trim();
+        return t || fallback;
+    }
+    function actOk(a) {
+        if (!a.sel) return typeof window[a.fn] === 'function';
+        var el = srcEl(a);
+        if (a.k === 'save' || a.k === 'sync') return !el || el.style.display !== 'none';
+        if (a.k === 'expired' || a.k === 'masked') return avail(el) && (parseInt((el.textContent || '').replace(/\D/g, ''), 10) || 0) > 0;
+        return avail(el);
+    }
+    function satOk(s) {
+        if (s.admin) return admin() || avail($('admin-btn'));
+        if (s.all || admin()) return true;
+        var t = s.tab && $(s.tab); return !!(t && t.style.display !== 'none');
+    }
+    function itemOf(key) {
+        var p = String(key).split(':');
+        if (p[0] === 'a') { var a = byKey(ACTS, p[1]); return a && { key: key, kind: 'a', o: a, ok: actOk(a), l: labelOf(a), ic: IC[iconOf(a)], c: a.c }; }
+        if (p[0] === 's') { var s = byKey(SATS, p[1]); return s && { key: key, kind: 's', o: s, ok: satOk(s), l: s.l, ic: IC[s.ic], c: s.c }; }
+        if (key === 'x:logout') return { key: key, kind: 'x', o: LOGOUT, ok: true, l: LOGOUT.l, ic: IC.logout, c: LOGOUT.c };
+        return null;
+    }
+    function iconOf(a) { return a.k === 'full' && document.fullscreenElement ? 'unfull' : a.ic; }
+    function labelOf(a) {
+        var el = srcEl(a), lbl = a.l;
+        if (a.k === 'notifs') { var nn = typeof window._covoNotifCount === 'function' ? window._covoNotifCount() : 0; return nn ? 'Notifications (' + nn + ')' : 'Notifications'; }
+        if (!el) return lbl;
+        if (a.k === 'full') return document.fullscreenElement ? 'Quitter plein écran' : 'Plein écran';
+        if (a.k === 'cashier') { var t = cleanLabel(el, a.l); return /^caissier$/i.test(t) ? 'Mode caissier' : t; }
+        if (a.k === 'night') return cleanLabel(el, a.l);
+        if (a.k === 'autosave') return cleanLabel($('dev-autosave-chip-txt'), 'Auto-save');
+        if (a.k === 'master') { var n = parseInt((($('master-save-bar-count') || {}).textContent || '0'), 10) || 0; return n ? 'Tout sauvegarder (' + n + ')' : 'Tout sauvegarder'; }
+        if (a.k === 'expired') { var e = parseInt((el.textContent || '').replace(/\D/g, ''), 10) || 0; return e + ' expiré' + (e > 1 ? 's' : ''); }
+        if (a.k === 'masked') { var m = parseInt((el.textContent || '').replace(/\D/g, ''), 10) || 0; return m + ' masqué' + (m > 1 ? 's' : ''); }
+        return lbl;
+    }
+    function isOn(a) {
+        var el = srcEl(a); if (!el) return false;
+        if (a.k === 'full') return !!document.fullscreenElement;
+        if (a.k === 'night') return /\b(ON|AUTO)\b/.test(el.textContent || '');
+        if (a.k === 'theme') { var tp = $('covo-theme-panel'); return !!(tp && tp.style.display !== 'none'); }
+        if (a.k === 'autosave') return el.getAttribute('aria-checked') === 'true' || /\bON\b/.test(el.textContent || '');
+        return false;
+    }
+
+    /* ───────────── Épingles ───────────── */
+    var pins = ['a:scan', 'a:save', 's:caisse', 's:gest'];
+    try { var p0 = JSON.parse(localStorage.getItem(PINS) || 'null'); if (Array.isArray(p0)) pins = p0.filter(function (k) { return !!itemOf(k); }).slice(0, MAXPIN); } catch (e) {}
+    function savePins() { try { localStorage.setItem(PINS, JSON.stringify(pins)); } catch (e) {} }
+    function togglePin(key) {
+        var i = pins.indexOf(key), it = itemOf(key);
+        if (i >= 0) { pins.splice(i, 1); toast('📌 « ' + (it ? it.l : key) + ' » retiré des épingles', 'info'); }
+        else {
+            if (pins.length >= MAXPIN) { toast('📌 ' + MAXPIN + ' épingles au maximum — retirez-en une d’abord', 'info'); return; }
+            pins.push(key); toast('📌 « ' + (it ? it.l : key) + ' » épinglé autour de la bulle 🧰', 'success');
+        }
+        savePins(); sync();
+    }
+    window._tbaPins = function () { return pins.slice(); };
+
+    /* ───────────── Styles ───────────── */
+    var css = document.createElement('style');
+    css.id = 'tba-css';
+    css.textContent = [
+        /* Onglets de la boîte à outils */
+        '#covo-toolbox .tb-tabs.tba3{grid-template-columns:1fr 1fr 1fr;}',
+        '#covo-toolbox .tb-tabs button{font-size:.72rem;}',
+        '#covo-toolbox.tba-on .tb-pane-search,#covo-toolbox.tba-on .tb-pane-calc{display:none!important;}',
+        '#covo-toolbox:not(.tba-on) .tb-pane-act{display:none;}',
+        '#covo-toolbox.tba-on .tb-panel{width:min(332px,calc(100vw - 16px));}',
+        '#covo-toolbox .tb-pane-act{display:flex;flex-direction:column;gap:9px;max-height:min(60vh,560px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0 -4px;padding:6px 4px 2px;}',
+        /* Bandeau épingles */
+        '#covo-toolbox .tba-pinbar{display:flex;align-items:center;gap:8px;padding:7px 8px 7px 10px;border-radius:12px;background:var(--tb-soft);font-size:.66rem;font-weight:700;color:var(--tb-mute);line-height:1.3;}',
+        '#covo-toolbox .tba-pinbar b{color:var(--tb-ink);}',
+        '#covo-toolbox .tba-pinbar .pi{flex-shrink:0;width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,var(--tb-a),var(--tb-b));}',
+        '#covo-toolbox #tba-pininfo{flex:1;min-width:0;}',
+        '#covo-toolbox .tba-pinbar button{flex-shrink:0;border:1px solid var(--tb-line);background:var(--bg-card,#fff);color:var(--tb-ink);border-radius:9px;padding:5px 9px!important;font-size:.64rem;font-weight:800;cursor:pointer;}',
+        '#covo-toolbox.tba-edit .tba-pinbar button{background:var(--tb-a);color:#fff;border-color:var(--tb-a);}',
+        /* Sections */
+        '#covo-toolbox .tba-h{display:flex;align-items:center;gap:6px;font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.7px;color:var(--tb-mute);margin:2px 2px -2px;}',
+        '#covo-toolbox .tba-h::after{content:"";flex:1;height:1px;background:var(--tb-line);}',
+        '#covo-toolbox .tba-h .st{order:2;text-transform:none;letter-spacing:0;font-size:.64rem;font-weight:800;display:inline-flex;align-items:center;gap:4px;}',
+        '#covo-toolbox .tba-h .st i{width:7px;height:7px;border-radius:50%;background:#94a3b8;display:inline-block;}',
+        '#covo-toolbox .tba-h .st.ok{color:#16a34a;}#covo-toolbox .tba-h .st.ok i{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.2);}',
+        '#covo-toolbox .tba-h .st.warn{color:#d97706;}#covo-toolbox .tba-h .st.warn i{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2);}',
+        '#covo-toolbox .tba-h .st.bad{color:#dc2626;}#covo-toolbox .tba-h .st.bad i{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.2);}',
+        /* Tuiles */
+        '#covo-toolbox .tba-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}',
+        '#covo-toolbox .tba-cell{position:relative;min-width:0;}',
+        '#covo-toolbox .tba-cell[hidden]{display:none;}',
+        '#covo-toolbox .tba-t{position:relative;width:100%;display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 2px 7px!important;border-radius:13px;border:1px solid var(--tb-line);background:var(--bg-card,#fff);color:var(--tb-ink);cursor:pointer;transition:transform .12s,border-color .15s,box-shadow .15s;}',
+        '#covo-toolbox .tba-t:hover{transform:translateY(-2px);border-color:var(--c1);box-shadow:0 6px 16px rgba(15,23,42,.1)!important;}',
+        '#covo-toolbox .tba-t:active{transform:scale(.95);}',
+        '#covo-toolbox .tba-t:focus-visible,#covo-toolbox .tba-out:focus-visible,#covo-toolbox .tba-pin:focus-visible{outline:2px solid var(--tb-a);outline-offset:2px;}',
+        '#covo-toolbox .tba-t .ic{width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,var(--c1),var(--c2));box-shadow:0 4px 10px -3px var(--c2),inset 0 1px 0 rgba(255,255,255,.25);}',
+        '#covo-toolbox .tba-t .lb{font-size:.6rem;font-weight:800;letter-spacing:-.1px;line-height:1.15;text-align:center;max-width:100%;padding:0 1px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:1.4em;hyphens:auto;}',
+        '#covo-toolbox .tba-t.on{border-color:var(--c1);background:linear-gradient(180deg,color-mix(in srgb,var(--c1) 12%,transparent),transparent);}',
+        '#covo-toolbox .tba-t.on::after{content:"";position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--c1);box-shadow:0 0 0 3px color-mix(in srgb,var(--c1) 25%,transparent);}',
+        '#covo-toolbox .tba-t .ex{position:absolute;top:5px;right:5px;color:var(--tb-mute);opacity:.55;display:flex;}',
+        '#covo-toolbox .tba-t .ex svg{width:11px;height:11px;}',
+        '#covo-toolbox .tba-t:hover .ex{color:var(--c1);opacity:1;}',
+        /* Punaise */
+        '#covo-toolbox .tba-pin{position:absolute;top:-5px;left:-5px;z-index:2;width:22px;height:22px;padding:0!important;border-radius:50%;border:1px solid var(--tb-line);background:var(--bg-card,#fff);color:var(--tb-mute);display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transform:scale(.7);transition:opacity .15s,transform .15s,background .15s;box-shadow:0 2px 6px rgba(15,23,42,.15)!important;}',
+        '#covo-toolbox .tba-cell:hover .tba-pin,#covo-toolbox .tba-pin:focus-visible,#covo-toolbox.tba-edit .tba-pin{opacity:1;transform:none;}',
+        '#covo-toolbox .tba-pin.on{opacity:1;transform:none;background:linear-gradient(135deg,var(--tb-a),var(--tb-b));color:#fff;border-color:transparent;}',
+        '#covo-toolbox .tba-pin:hover{color:var(--tb-a);border-color:var(--tb-a);}',
+        '#covo-toolbox .tba-pin.on:hover{color:#fff;filter:brightness(1.1);}',
+        '#covo-toolbox.tba-edit .tba-t{animation:tbaWig .35s ease-in-out 1;}',
+        '@keyframes tbaWig{0%,100%{transform:none;}30%{transform:rotate(-1.5deg);}70%{transform:rotate(1.5deg);}}',
+        /* Compte */
+        '#covo-toolbox .tba-me{display:flex;align-items:center;gap:9px;padding:8px 8px 8px 10px;border-radius:13px;background:var(--tb-soft);position:relative;}',
+        '#covo-toolbox .tba-me .av{flex-shrink:0;width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--tb-a),var(--tb-b));color:#fff;font-weight:900;font-size:.8rem;display:flex;align-items:center;justify-content:center;}',
+        '#covo-toolbox .tba-me .tx{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.2;}',
+        '#covo-toolbox .tba-me .tx b{font-size:.76rem;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '#covo-toolbox .tba-me .tx small{font-size:.62rem;color:var(--tb-mute);font-weight:700;}',
+        '#covo-toolbox .tba-out{flex-shrink:0;display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 11px!important;border-radius:10px;border:none;background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff;font-weight:800;font-size:.7rem;cursor:pointer;}',
+        '#covo-toolbox .tba-out svg{width:15px;height:15px;}',
+        '#covo-toolbox .tba-me .tba-pin{top:-6px;left:auto;right:96px;}',
+        '#covo-toolbox .tba-me:hover .tba-pin{opacity:1;transform:none;}',
+        /* Recherche hors Produits */
+        '#covo-toolbox.tb-offprod.tb-search-tab .tb-pane-search > *{display:none!important;}',
+        '#covo-toolbox .tba-off{display:none;}',
+        '#covo-toolbox.tb-offprod .tb-pane-search > .tba-off{display:flex!important;flex-direction:column;align-items:center;gap:9px;text-align:center;padding:14px 8px;border-radius:13px;background:var(--tb-soft);font-size:.74rem;color:var(--tb-mute);font-weight:600;}',
+        '#covo-toolbox .tba-off button{border:none;border-radius:10px;padding:8px 14px!important;background:linear-gradient(135deg,var(--tb-a),var(--tb-b));color:#fff;font-weight:800;font-size:.74rem;cursor:pointer;}',
+        /* Bulle : indicateur d'épingles */
+        '#covo-toolbox .tb-bubble .tba-bdots{position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);display:flex;gap:3px;padding:2px 5px;border-radius:8px;background:rgba(15,23,42,.72);pointer-events:none;}',
+        '#covo-toolbox .tb-bubble .tba-bdots i{width:4px;height:4px;border-radius:50%;background:#fff;opacity:.9;}',
+        /* Commandes du haut et onglets-renvois intégrés à la boîte à outils : retirés de l’écran */
+        'body.tba-ready #scan-btn,body.tba-ready #retour-client-btn,body.tba-ready #fin-poste-btn,body.tba-ready #covo-theme-btn,body.tba-ready #fullscreen-btn,body.tba-ready #admin-btn,body.tba-ready #switch-cashier-btn,body.tba-ready #night-tariff-btn,body.tba-ready #main-header button[onclick^="_masterCheckLogout"]{display:none!important;}',
+        'body.tba-ready #badge-expired,body.tba-ready #badge-masked,body.tba-ready #gd-dev-dirty-badge,body.tba-ready #dev-autosave-chip,body.tba-ready #master-save-bar,body.tba-ready #all-users-save-btn,body.tba-ready #all-users-drive-btn{display:none!important;}',
+        'body.tba-ready #tab-btn-historique,body.tba-ready #tab-btn-clotures,body.tba-ready #tab-btn-paiements,body.tba-ready #tab-btn-gestionhub,body.tba-ready #tab-btn-fidelite{display:none!important;}',
+        /* Couronne de raccourcis épinglés autour de la bulle */
+        '#tba-ring{position:fixed;left:0;top:0;width:0;height:0;z-index:2147480000;pointer-events:none;}',
+        '#tba-ring .zone{position:absolute;border-radius:50%;pointer-events:none;background:radial-gradient(circle,rgba(41,128,185,.16) 0%,rgba(41,128,185,.07) 45%,rgba(41,128,185,0) 70%);opacity:0;transform:scale(.6);transition:opacity .22s,transform .3s cubic-bezier(.2,.9,.3,1.2);}',
+        '#tba-ring.show .zone{opacity:1;transform:none;pointer-events:auto;}',
+        '#tba-ring .orbit{position:absolute;border-radius:50%;border:1.5px dashed rgba(41,128,185,.35);opacity:0;transition:opacity .25s;pointer-events:none;}',
+        '#tba-ring.show .orbit{opacity:1;}',
+        '#tba-ring .it{position:absolute;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;border:3px solid #fff;padding:0;cursor:pointer;color:#fff;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,var(--c1),var(--c2));box-shadow:0 10px 24px -6px var(--c2),0 3px 8px rgba(15,23,42,.25);transform:translate(var(--fx),var(--fy)) scale(.3);opacity:0;pointer-events:none;transition:transform .32s cubic-bezier(.2,1.3,.4,1),opacity .2s,box-shadow .15s;transition-delay:calc(var(--i) * 28ms);font-family:inherit;}',
+        '#tba-ring.show .it{transform:translate(0,0) scale(1);opacity:1;pointer-events:auto;}',
+        '#tba-ring .it:hover,#tba-ring .it:focus-visible{transform:translate(0,0) scale(1.14)!important;transition-delay:0s;box-shadow:0 0 0 5px color-mix(in srgb,var(--c1) 30%,transparent),0 12px 26px -6px var(--c2);outline:none;z-index:2;}',
+        '#tba-ring .it.on::after{content:"";position:absolute;top:-2px;right:-2px;width:11px;height:11px;border-radius:50%;background:#22c55e;border:2px solid #fff;}',
+        '#tba-ring .it svg{width:22px;height:22px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25));}',
+        '#tba-ring .tip{position:absolute;white-space:nowrap;padding:5px 10px;border-radius:9px;background:rgba(15,23,42,.92);color:#fff;font-size:.72rem;font-weight:800;letter-spacing:.1px;pointer-events:none;opacity:0;transform:translateY(-50%) scale(.92);transition:opacity .14s,transform .14s;box-shadow:0 6px 18px rgba(0,0,0,.25);}',
+        '#tba-ring .tip small{display:block;font-size:.62rem;font-weight:600;opacity:.75;}',
+        '#tba-ring .tip.show{opacity:1;transform:translateY(-50%) scale(1);}',
+        '#tba-ring .empty{position:absolute;white-space:nowrap;padding:7px 11px;border-radius:10px;background:rgba(15,23,42,.9);color:#fff;font-size:.7rem;font-weight:700;opacity:0;transform:translateY(-50%);transition:opacity .2s;pointer-events:none;}',
+        '#tba-ring.show .empty{opacity:1;}',
+        '@media (prefers-reduced-motion: reduce){#tba-ring .it,#tba-ring .zone,#covo-toolbox .tba-t,#covo-toolbox .tba-pin{transition:none!important;animation:none!important;}}'
+    ].join('\n');
+
+    /* ───────────── Panneau « Raccourcis » ───────────── */
+    function cell(key, inner, title) {
+        return '<div class="tba-cell" data-cell="' + key + '"><button type="button" class="tba-pin" data-pin="' + key + '" aria-label="Épingler autour de la bulle" title="Épingler autour de la bulle">' + IC.pin + '</button>' + inner + '</div>';
+    }
+    function tile(a) {
+        return cell('a:' + a.k, '<button type="button" class="tba-t" data-tba="' + a.k + '" style="--c1:' + a.c[0] + ';--c2:' + a.c[1] + ';"><span class="ic">' + IC[a.ic] + '</span><span class="lb">' + esc(a.l) + '</span></button>');
+    }
+    function paneHTML() {
+        return '<div class="tba-pinbar"><span class="pi">' + IC.pin + '</span><span id="tba-pininfo"></span><button type="button" id="tba-edit" title="Afficher les punaises sur toutes les tuiles (écran tactile)">Épingler…</button></div>'
+            + '<div class="tba-h">Actions rapides</div>'
+            + '<div class="tba-grid">' + ACTS.filter(function (a) { return a.g === 'act'; }).map(tile).join('') + '</div>'
+            + '<div class="tba-h">Google Drive &amp; données <span class="st" id="tba-drv"><i></i><span>—</span></span></div>'
+            + '<div class="tba-grid">' + ACTS.filter(function (a) { return a.g === 'drive'; }).map(tile).join('') + '</div>'
+            + '<div class="tba-h">Applications COVO</div>'
+            + '<div class="tba-grid">' + SATS.map(function (s) {
+                return cell('s:' + s.k, '<button type="button" class="tba-t" data-sat="' + s.k + '" style="--c1:' + s.c[0] + ';--c2:' + s.c[1] + ';" title="Ouvrir ' + esc(s.l) + ' — ' + esc(s.s) + '" aria-label="Ouvrir ' + esc(s.l) + '"><span class="ic">' + IC[s.ic] + '</span><span class="lb">' + esc(s.sh) + '</span><span class="ex">' + IC.ext + '</span></button>');
+            }).join('') + '</div>'
+            + '<div class="tba-me"><span class="av" id="tba-av">?</span><span class="tx"><b id="tba-user">—</b><small id="tba-role">Connecté</small></span><button type="button" class="tba-pin" data-pin="x:logout" aria-label="Épingler Déconnexion" title="Épingler Déconnexion autour de la bulle">' + IC.pin + '</button><button type="button" class="tba-out" data-tba="logout" title="Se déconnecter">' + IC.logout + 'Déconnexion</button></div>';
+    }
+
+    /* ───────────── État (miroir permanent des commandes d'origine) ───────────── */
+    function sync() {
+        var root = $('covo-toolbox'); if (!root || !root.querySelector('.tb-pane-act')) return;
+        ACTS.forEach(function (a) {
+            var c = root.querySelector('[data-cell="a:' + a.k + '"]'); if (!c) return;
+            c.hidden = !actOk(a);
+            var t = c.querySelector('.tba-t'), el = srcEl(a);
+            t.querySelector('.ic').innerHTML = IC[iconOf(a)];
+            t.querySelector('.lb').textContent = labelOf(a);
+            t.classList.toggle('on', isOn(a));
+            t.title = (el && el.title) || labelOf(a);
+        });
+        SATS.forEach(function (s) { var c = root.querySelector('[data-cell="s:' + s.k + '"]'); if (c) c.hidden = !satOk(s); });
+        Array.prototype.forEach.call(root.querySelectorAll('[data-pin]'), function (b) {
+            var on = pins.indexOf(b.getAttribute('data-pin')) >= 0;
+            b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+            b.title = on ? 'Retirer des épingles' : 'Épingler autour de la bulle';
+        });
+        var pi = $('tba-pininfo');
+        if (pi) pi.innerHTML = pins.length ? '<b>' + pins.length + ' épinglé' + (pins.length > 1 ? 's' : '') + '</b> · survolez la bulle 🧰 fermée pour les afficher autour d’elle' : 'Épinglez vos raccourcis préférés : ils apparaîtront autour de la bulle 🧰';
+        // Drive
+        var lab = ($('gd-main-label') || {}).textContent || '', st = $('tba-drv');
+        if (st) {
+            var cls = /hors ligne|erreur|expir|déconnect|non connect/i.test(lab) ? 'bad' : (/pas à jour|attente|en cours|non synchro|…/i.test(lab) ? 'warn' : (/à jour|connecté|en ligne|synchronis|ok/i.test(lab) ? 'ok' : ''));
+            st.className = 'st ' + cls; st.querySelector('span').textContent = lab || 'Statut inconnu';
+        }
+        // Compte
+        var u = null; try { u = (typeof currentUser !== 'undefined' && currentUser) || JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {}
+        var name = (u && (u.username || u.name)) || cleanLabel($('user-display'), 'Utilisateur');
+        $('tba-user').textContent = name;
+        $('tba-av').textContent = String(name).trim().charAt(0).toUpperCase() || '?';
+        $('tba-role').textContent = u ? (u.isMaster ? 'Administrateur développeur' : u.role === 'admin' ? 'Administrateur' : u.role === 'manager' ? 'Responsable' : 'Caissier') : 'Connecté';
+        bubbleDots();
+    }
+    function bubbleDots() {
+        var b = $('tb-bubble'); if (!b) return;
+        var d = b.querySelector('.tba-bdots'); if (!d) { d = document.createElement('span'); d.className = 'tba-bdots'; d.setAttribute('aria-hidden', 'true'); b.appendChild(d); }
+        var n = pins.map(itemOf).filter(function (x) { return x && x.ok; }).length;
+        d.style.display = n ? '' : 'none';
+        d.innerHTML = new Array(Math.min(n, 8) + 1).join('<i></i>');
+        b.title = n ? 'Boîte à outils — survolez pour vos ' + n + ' raccourcis épinglés, cliquez pour ouvrir' : 'Boîte à outils — glisser pour déplacer, cliquer pour ouvrir';
+    }
+
+    /* ───────────── Exécution ───────────── */
+    function run(k) {
+        if (k === 'logout') { setTimeout(function () { if (typeof window._masterCheckLogout === 'function') window._masterCheckLogout(); }, 0); return; }
+        var a = byKey(ACTS, k); if (!a) return;
+        var el = srcEl(a);
+        setTimeout(function () {
+            if (el) el.click();
+            else if (a.fn && typeof window[a.fn] === 'function') window[a.fn]();
+            setTimeout(sync, 250);
+        }, 0);
+    }
+    function openSat(k) {
+        var s = byKey(SATS, k); if (!s) return;
+        window.open(s.url, s.t);
+        toast('↗️ Ouverture de ' + s.l + '…', 'info');
+    }
+    function runKey(key) {
+        var p = String(key).split(':');
+        if (p[0] === 'a') run(p[1]); else if (p[0] === 's') openSat(p[1]); else if (key === 'x:logout') run('logout');
+    }
+
+    /* ───────────── Couronne autour de la bulle ───────────── */
+    var ring = null, hideT = null, ringOn = false;
+    function buildRing() {
+        if (ring) return ring;
+        ring = document.createElement('div'); ring.id = 'tba-ring'; ring.setAttribute('role', 'menu'); ring.setAttribute('aria-label', 'Raccourcis épinglés');
+        document.body.appendChild(ring);
+        ring.addEventListener('pointerenter', function () { clearTimeout(hideT); }, true);
+        ring.addEventListener('pointerleave', function (e) { if (!ring.contains(e.relatedTarget) && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('#tb-bubble'))) hideRingSoon(); }, true);
+        ring.addEventListener('click', function (e) {
+            var it = e.target.closest('.it');
+            if (it) { var k = it.getAttribute('data-key'); hideRing(true); runKey(k); return; }
+            if (e.target.classList.contains('zone')) hideRing(true);
+        });
+        ring.addEventListener('mouseover', function (e) { var it = e.target.closest('.it'); tip(it); });
+        ring.addEventListener('focusin', function (e) { var it = e.target.closest('.it'); tip(it); });
+        ring.addEventListener('keydown', function (e) {
+            var its = Array.prototype.slice.call(ring.querySelectorAll('.it')), i = its.indexOf(document.activeElement);
+            if (e.key === 'Escape') { e.preventDefault(); hideRing(true); var b = $('tb-bubble'); if (b) b.focus(); }
+            else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); its[(i + 1) % its.length].focus(); }
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); its[(i - 1 + its.length) % its.length].focus(); }
+        });
+        return ring;
+    }
+    var lastPos = [];
+    function tip(it) {
+        var t = ring.querySelector('.tip'); if (!t) return;
+        if (!it) { t.classList.remove('show'); return; }
+        var i = +it.getAttribute('data-i'), p = lastPos[i]; if (!p) return;
+        t.innerHTML = esc(it.getAttribute('data-label')) + (it.getAttribute('data-sub') ? '<small>' + esc(it.getAttribute('data-sub')) + '</small>' : '');
+        var left = p.dx >= 0;
+        t.style.top = p.y + 'px';
+        t.style.left = left ? (p.x + 32) + 'px' : 'auto';
+        t.style.right = left ? 'auto' : (-p.x + 32) + 'px';
+        t.style.transformOrigin = left ? 'left center' : 'right center';
+        t.classList.add('show');
+    }
+    function showRing() {
+        var root = $('covo-toolbox'), b = $('tb-bubble');
+        if (!root || !b || !root.classList.contains('closed') || !root.classList.contains('show') || root.classList.contains('dragging')) return;
+        clearTimeout(hideT);
+        buildRing();
+        var items = pins.map(itemOf).filter(function (x) { return x && x.ok; });
+        var r = b.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        var z = parseInt(getComputedStyle(root).zIndex, 10); ring.style.zIndex = isFinite(z) ? z - 1 : 2147480000;   // juste sous la bulle : elle reste cliquable
+        ring.style.left = cx + 'px'; ring.style.top = cy + 'px';
+        var n = items.length, R = n <= 3 ? 76 : n <= 5 ? 84 : 96;
+        // Direction : vers l'intérieur de l'écran ; arc réparti autour de cette direction
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var base = Math.atan2(vh / 2 - cy, vw / 2 - cx);
+        var room = Math.min(cx, vw - cx, cy, vh - cy);
+        var spread = n <= 1 ? 0 : Math.min(room > R + 40 ? 2 * Math.PI * (n - 1) / n : Math.PI * 1.1, (n - 1) * 0.62 + (room > R + 40 ? 1.2 : 0));
+        if (room > R + 40 && n >= 6) spread = 2 * Math.PI * (n - 1) / n;
+        lastPos = [];
+        var html = '<div class="zone" style="left:' + (-(R + 44)) + 'px;top:' + (-(R + 44)) + 'px;width:' + (2 * (R + 44)) + 'px;height:' + (2 * (R + 44)) + 'px;"></div>'
+            + '<div class="orbit" style="left:' + (-R) + 'px;top:' + (-R) + 'px;width:' + (2 * R) + 'px;height:' + (2 * R) + 'px;"></div>';
+        items.forEach(function (x, i) {
+            var ang = n === 1 ? base : base - spread / 2 + spread * i / (n - 1);
+            var dx = Math.cos(ang) * R, dy = Math.sin(ang) * R;
+            // reste dans l'écran
+            var ax = Math.max(30, Math.min(vw - 30, cx + dx)) - cx, ay = Math.max(30, Math.min(vh - 30, cy + dy)) - cy;
+            lastPos.push({ x: ax, y: ay, dx: ax });
+            var on = x.kind === 'a' && isOn(x.o);
+            html += '<button type="button" class="it' + (on ? ' on' : '') + '" role="menuitem" data-i="' + i + '" data-key="' + esc(x.key) + '" data-label="' + esc(x.l) + '" data-sub="' + esc(x.kind === 's' ? x.o.s : '') + '" aria-label="' + esc(x.l) + '" style="left:' + ax + 'px;top:' + ay + 'px;--fx:' + (-ax) + 'px;--fy:' + (-ay) + 'px;--i:' + i + ';--c1:' + x.c[0] + ';--c2:' + x.c[1] + ';">' + x.ic + '</button>';
+        });
+        if (!n) {
+            var left = cx > vw / 2;
+            html += '<div class="empty" style="top:0;' + (left ? 'right:44px;' : 'left:44px;') + '">📌 Aucun raccourci épinglé — ouvrez la boîte à outils › Raccourcis</div>';
+        }
+        html += '<div class="tip"></div>';
+        ring.innerHTML = html;
+        void ring.offsetWidth;
+        ring.classList.add('show'); ringOn = true;
+        b.setAttribute('aria-haspopup', 'menu');
+    }
+    function hideRing(now) { clearTimeout(hideT); if (!ring) return; ring.classList.remove('show'); ringOn = false; if (now) { var t = ring.querySelector('.tip'); if (t) t.classList.remove('show'); } }
+    function hideRingSoon() { clearTimeout(hideT); hideT = setTimeout(function () { hideRing(); }, 380); }
+    function wireBubble() {
+        var b = $('tb-bubble'); if (!b || b._tbaRing) return; b._tbaRing = true;
+        var hoverT = null;
+        b.addEventListener('pointerenter', function (e) { if (e.pointerType === 'touch') return; clearTimeout(hoverT); hoverT = setTimeout(showRing, 120); });
+        b.addEventListener('pointerleave', function (e) { clearTimeout(hoverT); if (e.relatedTarget && ring && ring.contains(e.relatedTarget)) return; hideRingSoon(); });
+        b.addEventListener('pointerdown', function () { clearTimeout(hoverT); hideRing(true); });
+        b.addEventListener('keydown', function (e) {
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown') && !e.altKey) {
+                e.preventDefault(); showRing(); setTimeout(function () { var f = ring && ring.querySelector('.it'); if (f) f.focus(); }, 60);
+            }
+        });
+        window.addEventListener('scroll', function () { if (ringOn) hideRing(true); }, { passive: true });
+        window.addEventListener('resize', function () { if (ringOn) hideRing(true); });
+    }
+
+    /* ───────────── Onglets : Recherche · Raccourcis · Calcul ───────────── */
+    var on = false;
+    try { on = localStorage.getItem(PREF) === '1'; } catch (e) {}
+    function setAct(v, focus) {
+        var root = $('covo-toolbox'); if (!root) return;
+        on = !!v; try { localStorage.setItem(PREF, on ? '1' : '0'); } catch (e) {}
+        root.classList.toggle('tba-on', on);
+        var ta = $('tb-tab-a'), ts = $('tb-tab-s'), tc = $('tb-tab-c');
+        if (ta) { ta.classList.toggle('on', on); ta.setAttribute('aria-selected', String(on)); }
+        if (on) { [ts, tc].forEach(function (b) { if (b) { b.classList.remove('on'); b.setAttribute('aria-selected', 'false'); } }); sync(); if (focus) setTimeout(function () { var f = root.querySelector('.tb-pane-act .tba-cell:not([hidden]) .tba-t'); if (f) f.focus(); }, 30); }
+        else if (typeof window._tbCalcSetTab === 'function') window._tbCalcSetTab(root.classList.contains('tb-calc-on') ? 'calc' : 'search', false);
+        tabState();
+    }
+    function tabState() { var root = $('covo-toolbox'); if (root) root.classList.toggle('tb-search-tab', !on && !root.classList.contains('tb-calc-on')); }
+    window._tbActionsSetTab = setAct;
+
+    function install() {
+        var root = $('covo-toolbox'), tabs = root && root.querySelector('.tb-tabs'), body = root && root.querySelector('.tb-body');
+        if (!tabs || !body) return false;
+        if ($('tb-tab-a')) return true;
+        document.head.appendChild(css);
+        root.setAttribute('aria-label', 'Boîte à outils COVO Pro');
+        tabs.classList.add('tba3');
+        var ta = document.createElement('button');
+        ta.type = 'button'; ta.id = 'tb-tab-a'; ta.setAttribute('role', 'tab'); ta.title = 'Actions rapides, applications COVO et épingles';
+        ta.innerHTML = IC.bolt + ' Raccourcis';
+        tabs.insertBefore(ta, $('tb-tab-c'));
+        var pane = document.createElement('div');
+        pane.className = 'tb-pane tb-pane-act'; pane.setAttribute('role', 'tabpanel'); pane.setAttribute('aria-labelledby', 'tb-tab-a');
+        pane.innerHTML = paneHTML();
+        body.insertBefore(pane, body.querySelector('.tb-pane-calc') || body.querySelector('.tb-nav'));
+        var sp = body.querySelector('.tb-pane-search');
+        if (sp) {
+            var off = document.createElement('div'); off.className = 'tba-off';
+            off.innerHTML = '<span>🔍 La recherche filtre la liste des <b>Produits</b>.</span><button type="button">📦 Aller aux Produits</button>';
+            sp.appendChild(off);
+            off.querySelector('button').addEventListener('click', function () { if (typeof window.switchTab === 'function') window.switchTab('products'); setTimeout(function () { var q = $('tb-q'); if (q) q.focus(); }, 120); });
+        }
+        ta.addEventListener('click', function () { setAct(true, true); });
+        ['tb-tab-s', 'tb-tab-c'].forEach(function (id) { var b = $(id); if (b) b.addEventListener('click', function () { on = false; try { localStorage.setItem(PREF, '0'); } catch (e) {} root.classList.remove('tba-on'); ta.classList.remove('on'); ta.setAttribute('aria-selected', 'false'); setTimeout(tabState, 0); }); });
+        pane.addEventListener('click', function (e) {
+            var pb = e.target.closest('[data-pin]'); if (pb) { e.stopPropagation(); togglePin(pb.getAttribute('data-pin')); return; }
+            if (e.target.closest('#tba-edit')) { root.classList.toggle('tba-edit'); $('tba-edit').textContent = root.classList.contains('tba-edit') ? 'Terminé' : 'Épingler…'; return; }
+            var t = e.target.closest('[data-tba]'); if (t) { run(t.getAttribute('data-tba')); return; }
+            var s = e.target.closest('[data-sat]'); if (s) openSat(s.getAttribute('data-sat'));
+        });
+        // Clic droit sur une tuile = épingler / désépingler
+        pane.addEventListener('contextmenu', function (e) { var c = e.target.closest('[data-cell]'); if (!c) return; e.preventDefault(); togglePin(c.getAttribute('data-cell')); });
+        document.addEventListener('fullscreenchange', sync);
+        setInterval(function () { if (root.classList.contains('show')) sync(); offProd(); }, 1500);
+        setAct(on, false);
+        offProd();
+        wireBubble();
+        sync();
+        document.body.classList.add('tba-ready');   // tout est intégré : on retire les doublons du haut
+        return true;
+    }
+    function offProd() {
+        var root = $('covo-toolbox'); if (!root) return;
+        var tab = $('tab-products');
+        root.classList.toggle('tb-offprod', !(tab && tab.classList.contains('active')));
+        tabState();
+    }
+    var prevSwitch = window.switchTab;
+    if (typeof prevSwitch === 'function') window.switchTab = function () { var r = prevSwitch.apply(this, arguments); setTimeout(function () { offProd(); if (typeof window._covoToolboxRefresh === 'function') window._covoToolboxRefresh(); }, 60); return r; };
+    function boot(n) { if (!install() && n < 60) setTimeout(function () { boot(n + 1); }, 250); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { boot(0); }); else boot(0);
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — NOTIFICATIONS LISIBLES (connexion + utilisation)
+   • Pendant l'écran de connexion (chargement / synchronisation), les notifications partaient
+     en arrière-plan, derrière l'écran, et disparaissaient avant d'être lues : elles sont
+     désormais mises de côté puis présentées toutes ensemble sur la première interface, dans
+     un panneau « 🔔 Notifications de connexion » qui reste affiché jusqu'à « Tout lu »
+   • Ensuite, les notifications ne se superposent plus : elles s'empilent proprement au premier
+     plan, restent le temps de les lire (survol = pause, ✕ pour fermer)
+   • Historique de la session : bouton 🔔 Notifications dans la boîte à outils
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._cntInstalled) return;
+    window._cntInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    var TYPES = {
+        success: { c: '#16a34a', l: 'Succès', i: '✅' },
+        error: { c: '#dc2626', l: 'Erreur', i: '⛔' },
+        warning: { c: '#d97706', l: 'Attention', i: '⚠️' },
+        info: { c: '#2563eb', l: 'Information', i: 'ℹ️' }
+    };
+    function typeOf(el) {
+        var c = ' ' + (el.className || '') + ' ';
+        if (/ (error|danger) /.test(c)) return 'error';
+        if (/ (warning|warn) /.test(c)) return 'warning';
+        if (/ info /.test(c)) return 'info';
+        return 'success';
+    }
+    // Emoji en tête du message → icône ; reste → texte
+    var EMO = /^\s*((?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:️|‍(?:\p{Extended_Pictographic}))*)\s*/u;
+    function split(msg, type) {
+        var m = EMO.exec(msg || '');
+        return m ? { i: m[1], t: msg.slice(m[0].length) } : { i: TYPES[type].i, t: msg || '' };
+    }
+
+    var css = document.createElement('style');
+    css.id = 'cnt-css';
+    css.textContent = [
+        'body.cnt-ready .scan-toast{display:none!important;}',
+        /* Pile de notifications (premier plan) */
+        '#cnt-stack{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147482300;display:flex;flex-direction:column;align-items:center;gap:8px;width:min(520px,calc(100vw - 24px));pointer-events:none;}',
+        '#cnt-stack .tst{pointer-events:auto;position:relative;width:100%;box-sizing:border-box;display:flex;align-items:flex-start;gap:11px;padding:12px 40px 13px 14px;border-radius:14px;background:rgba(17,24,39,.94);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:#fff;box-shadow:0 14px 34px rgba(0,0,0,.32),inset 0 0 0 1px rgba(255,255,255,.08);border-left:5px solid var(--c);overflow:hidden;animation:cntIn .28s cubic-bezier(.2,1.2,.4,1);font-family:inherit;}',
+        '#cnt-stack .tst.out{animation:cntOut .22s ease forwards;}',
+        '#cnt-stack .tst .ic{flex-shrink:0;width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:1.05rem;background:color-mix(in srgb,var(--c) 22%,transparent);}',
+        '#cnt-stack .tst .tx{flex:1;min-width:0;font-size:.92rem;font-weight:700;line-height:1.4;word-wrap:break-word;padding-top:4px;}',
+        '#cnt-stack .tst .n{display:inline-block;margin-left:6px;padding:0 7px;border-radius:9px;background:rgba(255,255,255,.18);font-size:.72rem;font-weight:900;}',
+        '#cnt-stack .tst .x{position:absolute;top:9px;right:9px;width:24px;height:24px;border-radius:7px;border:none;background:rgba(255,255,255,.1);color:#fff;cursor:pointer;font-size:.8rem;line-height:24px;padding:0;}',
+        '#cnt-stack .tst .x:hover{background:rgba(255,255,255,.22);}',
+        '#cnt-stack .tst .bar{position:absolute;left:0;bottom:0;height:3px;background:var(--c);opacity:.85;transform-origin:left;animation:cntBar linear forwards;}',
+        '#cnt-stack .tst:hover .bar{animation-play-state:paused;}',
+        '@keyframes cntIn{from{opacity:0;transform:translateY(16px) scale(.97);}to{opacity:1;transform:none;}}',
+        '@keyframes cntOut{to{opacity:0;transform:translateY(10px) scale(.97);}}',
+        '@keyframes cntBar{from{transform:scaleX(1);}to{transform:scaleX(0);}}',
+        /* Panneau des notifications (connexion / historique) */
+        '#cnt-panel{position:fixed;top:76px;right:16px;z-index:2147482400;width:min(400px,calc(100vw - 24px));max-height:calc(100vh - 100px);display:none;flex-direction:column;border-radius:18px;overflow:hidden;background:var(--bg-card,#fff);color:var(--text-main,#1e2d3d);box-shadow:0 26px 60px rgba(15,23,42,.35),0 0 0 1px rgba(15,23,42,.08);font-family:inherit;animation:cntPanel .3s cubic-bezier(.2,1.1,.4,1);}',
+        '#cnt-panel.open{display:flex;}',
+        '@keyframes cntPanel{from{opacity:0;transform:translateY(-10px) scale(.98);}to{opacity:1;transform:none;}}',
+        '#cnt-panel .hd{display:flex;align-items:center;gap:11px;padding:14px 14px 13px 16px;background:linear-gradient(120deg,#1c3a5c,#2980b9 65%,#00b4d8);color:#fff;}',
+        '#cnt-panel .hd .bell{width:38px;height:38px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:1.25rem;position:relative;flex-shrink:0;}',
+        '#cnt-panel .hd .bell b{position:absolute;top:-6px;right:-7px;min-width:20px;height:20px;padding:0 5px;box-sizing:border-box;border-radius:10px;background:#ef4444;color:#fff;font-size:.68rem;font-weight:900;line-height:20px;text-align:center;border:2px solid #fff;}',
+        '#cnt-panel .hd .tt{flex:1;min-width:0;}',
+        '#cnt-panel .hd .tt b{display:block;font-size:.98rem;font-weight:900;}',
+        '#cnt-panel .hd .tt small{display:block;font-size:.72rem;opacity:.85;font-weight:600;}',
+        '#cnt-panel .hd button{border:none;background:rgba(255,255,255,.18);color:#fff;width:32px;height:32px;border-radius:10px;cursor:pointer;font-size:.95rem;flex-shrink:0;}',
+        '#cnt-panel .list{overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--bg-body,#f4f7f6);}',
+        '#cnt-panel .it{position:relative;display:flex;gap:11px;align-items:flex-start;padding:11px 38px 11px 12px;border-radius:13px;background:var(--bg-card,#fff);border:1px solid var(--border-color,#e5e7eb);border-left:5px solid var(--c);}',
+        '#cnt-panel .it.new{box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent);}',
+        '#cnt-panel .it .ic{flex-shrink:0;width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.05rem;background:color-mix(in srgb,var(--c) 14%,transparent);}',
+        '#cnt-panel .it .tx{flex:1;min-width:0;}',
+        '#cnt-panel .it .tx p{margin:0;font-size:.88rem;font-weight:700;line-height:1.42;word-wrap:break-word;}',
+        '#cnt-panel .it .tx small{display:flex;gap:6px;align-items:center;margin-top:4px;font-size:.68rem;font-weight:700;color:var(--text-muted,#7a8fa3);}',
+        '#cnt-panel .it .tx small i{font-style:normal;color:var(--c);text-transform:uppercase;letter-spacing:.4px;font-size:.62rem;font-weight:900;}',
+        '#cnt-panel .it .x{position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:7px;border:none;background:transparent;color:var(--text-muted,#7a8fa3);cursor:pointer;padding:0;font-size:.8rem;}',
+        '#cnt-panel .it .x:hover{background:var(--bg-body,#f1f5f9);color:var(--text-main,#1e2d3d);}',
+        '#cnt-panel .empty{padding:26px 16px;text-align:center;font-size:.85rem;color:var(--text-muted,#7a8fa3);font-weight:600;}',
+        '#cnt-panel .ft{display:flex;gap:8px;padding:11px 12px;border-top:1px solid var(--border-color,#e5e7eb);background:var(--bg-card,#fff);}',
+        '#cnt-panel .ft button{flex:1;border-radius:11px;padding:10px 12px;font-weight:800;font-size:.84rem;cursor:pointer;font-family:inherit;}',
+        '#cnt-panel .ft .ok{border:none;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;}',
+        '#cnt-panel .ft .cl{border:1.5px solid var(--border-color,#e5e7eb);background:transparent;color:var(--text-main,#1e2d3d);flex:0 0 auto;}',
+        '@media (max-width:520px){#cnt-panel{top:64px;right:12px;}#cnt-stack .tst .tx{font-size:.86rem;}}',
+        '@media (prefers-reduced-motion: reduce){#cnt-stack .tst,#cnt-panel{animation:none!important;}#cnt-stack .tst .bar{display:none;}}'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    /* ───────────── État ───────────── */
+    var hist = [];           // historique de la session { id, msg, i, t, type, at, boot }
+    var phase = 'live';      // 'boot' : écran de connexion affiché · 'settle' : premières secondes de l'interface
+    var bootQueue = [], settleT = null, uid = 0, bootPanel = 'none';
+    function visible(el) { return !!(el && el.style.display !== 'none' && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'); }
+    function bootScreen() { return visible($('login-splash')) || visible($('data-progress-overlay')); }
+
+    /* ───────────── Pile ───────────── */
+    var stack = null;
+    function getStack() { if (!stack) { stack = document.createElement('div'); stack.id = 'cnt-stack'; stack.setAttribute('aria-live', 'polite'); stack.setAttribute('role', 'status'); document.body.appendChild(stack); } return stack; }
+    function showToast(n) {
+        var st = getStack();
+        // même message encore affiché : on incrémente au lieu d'empiler un doublon
+        var same = Array.prototype.filter.call(st.children, function (x) { return x._msg === n.msg && !x.classList.contains('out'); })[0];
+        if (same) { same._count = (same._count || 1) + 1; var b = same.querySelector('.n'); if (!b) { b = document.createElement('span'); b.className = 'n'; same.querySelector('.tx').appendChild(b); } b.textContent = '×' + same._count; restart(same); return; }
+        var el = document.createElement('div');
+        el.className = 'tst'; el._msg = n.msg;
+        el.style.setProperty('--c', TYPES[n.type].c);
+        el.setAttribute('role', n.type === 'error' ? 'alert' : 'status');
+        el.innerHTML = '<span class="ic" aria-hidden="true">' + esc(n.i) + '</span><span class="tx">' + esc(n.t) + '</span><button type="button" class="x" aria-label="Fermer">✕</button><span class="bar"></span>';
+        el.querySelector('.x').onclick = function () { close(el); };
+        st.appendChild(el);
+        while (st.children.length > 4) close(st.firstElementChild, true);
+        restart(el);
+    }
+    function life(el) { var len = (el._msg || '').length; return Math.min(11000, 3800 + len * 45) + (/error/.test(el.getAttribute('role')) ? 2500 : 0); }
+    function restart(el) {
+        clearTimeout(el._t); var ms = life(el), bar = el.querySelector('.bar');
+        if (bar) { bar.style.animation = 'none'; void bar.offsetWidth; bar.style.animation = ''; bar.style.animationDuration = ms + 'ms'; }
+        var left = ms, start = Date.now();
+        function arm() { start = Date.now(); el._t = setTimeout(function () { close(el); }, left); }
+        el.onmouseenter = function () { clearTimeout(el._t); left -= Date.now() - start; };
+        el.onmouseleave = function () { arm(); };
+        arm();
+    }
+    function close(el, fast) { if (!el || el.classList.contains('out')) return; clearTimeout(el._t); if (fast) { el.remove(); return; } el.classList.add('out'); setTimeout(function () { el.remove(); }, 220); }
+
+    /* ───────────── Panneau ───────────── */
+    var panel = null, panelMode = 'boot';
+    function buildPanel() {
+        if (panel) return panel;
+        panel = document.createElement('div'); panel.id = 'cnt-panel';
+        panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'false'); panel.setAttribute('aria-labelledby', 'cnt-title');
+        panel.innerHTML = '<div class="hd"><span class="bell" aria-hidden="true">🔔<b id="cnt-count">0</b></span><span class="tt"><b id="cnt-title">Notifications</b><small id="cnt-sub"></small></span><button type="button" data-cnt="close" aria-label="Fermer" title="Fermer">✕</button></div>'
+            + '<div class="list" id="cnt-list"></div>'
+            + '<div class="ft"><button type="button" class="ok" data-cnt="read">✓ Tout lu</button><button type="button" class="cl" data-cnt="clear" title="Vider l’historique de la session">Effacer</button></div>';
+        document.body.appendChild(panel);
+        panel.addEventListener('click', function (e) {
+            var b = e.target.closest('[data-cnt]'); if (b) { var a = b.getAttribute('data-cnt'); if (a === 'close' || a === 'read') closePanel(); else if (a === 'clear') { hist = []; render(); } return; }
+            var x = e.target.closest('[data-del]'); if (x) { var id = +x.getAttribute('data-del'); hist = hist.filter(function (h) { return h.id !== id; }); render(); if (panelMode === 'boot' && !bootItems().length) closePanel(); }
+        });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && panel.classList.contains('open')) closePanel(); });
+        return panel;
+    }
+    function bootItems() { return hist.filter(function (h) { return h.boot && !h.read; }); }
+    function ago(t) { var s = Math.round((Date.now() - t) / 1000); if (s < 10) return 'à l’instant'; if (s < 60) return 'il y a ' + s + ' s'; var m = Math.round(s / 60); if (m < 60) return 'il y a ' + m + ' min'; return new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+    function render() {
+        if (!panel) return;
+        var items = panelMode === 'boot' ? bootItems() : hist.slice().reverse();
+        if (panelMode === 'boot') items = items.slice();
+        $('cnt-title').textContent = panelMode === 'boot' ? 'Notifications de connexion' : 'Notifications de la session';
+        $('cnt-sub').textContent = panelMode === 'boot' ? (items.length + ' message' + (items.length > 1 ? 's' : '') + ' reçu' + (items.length > 1 ? 's' : '') + ' pendant le chargement') : (hist.length ? hist.length + ' depuis la connexion' : 'Aucune notification');
+        $('cnt-count').textContent = items.length; $('cnt-count').style.display = items.length ? '' : 'none';
+        $('cnt-list').innerHTML = items.length ? items.map(function (h) {
+            return '<div class="it' + (panelMode === 'boot' ? ' new' : '') + '" style="--c:' + TYPES[h.type].c + ';"><span class="ic" aria-hidden="true">' + esc(h.i) + '</span><span class="tx"><p>' + esc(h.t) + (h.count > 1 ? ' <b style="opacity:.6;">×' + h.count + '</b>' : '') + '</p><small><i>' + TYPES[h.type].l + '</i>· ' + ago(h.at) + '</small></span><button type="button" class="x" data-del="' + h.id + '" aria-label="Retirer">✕</button></div>';
+        }).join('') : '<div class="empty">🔕 Aucune notification pour le moment.</div>';
+    }
+    function openPanel(mode) { buildPanel(); panelMode = mode || 'history'; render(); panel.classList.add('open'); clearInterval(panel._tick); panel._tick = setInterval(render, 15000); setTimeout(function () { var b = panel.querySelector('[data-cnt="read"]'); if (b) b.focus({ preventScroll: true }); }, 60); }
+    function closePanel() { if (!panel) return; if (panelMode === 'boot') { hist.forEach(function (h) { if (h.boot) h.read = true; }); bootPanel = 'done'; } panel.classList.remove('open'); clearInterval(panel._tick); }
+    window._covoNotifOpen = function () { openPanel('history'); };
+    window._covoNotifCount = function () { return hist.length; };
+
+    /* ───────────── Réception (toutes les notifications de COVO Pro passent par .scan-toast) ───────────── */
+    function receive(el) {
+        var msg = (el.innerText || el.textContent || '').trim(); if (!msg) return;
+        var type = typeOf(el), p = split(msg, type);
+        var last = hist[hist.length - 1];
+        var n;
+        if (last && last.msg === msg && Date.now() - last.at < 4000) { last.count = (last.count || 1) + 1; last.at = Date.now(); n = last; }
+        else { n = { id: ++uid, msg: msg, i: p.i, t: p.t, type: type, at: Date.now(), boot: phase === 'boot' }; hist.push(n); if (hist.length > 80) hist.shift(); }
+        if (phase === 'boot') { n.boot = true; bootQueue.push(n); return; }        // écran de connexion : mis de côté
+        if (phase === 'settle' && bootPanel === 'pending') { n.boot = true; return; }  // le panneau va s'ouvrir avec elle
+        if (phase === 'settle' && bootPanel === 'open' && panel && panel.classList.contains('open') && panelMode === 'boot') { n.boot = true; render(); return; }
+        showToast(n);
+    }
+    new MutationObserver(function (ms) {
+        ms.forEach(function (m) {
+            Array.prototype.forEach.call(m.addedNodes, function (nd) {
+                if (nd.nodeType === 1 && nd.classList && nd.classList.contains('scan-toast')) { try { receive(nd); } catch (e) {} }
+            });
+        });
+    }).observe(document.documentElement, { childList: true, subtree: true });
+    document.body ? document.body.classList.add('cnt-ready') : document.addEventListener('DOMContentLoaded', function () { document.body.classList.add('cnt-ready'); });
+
+    /* ───────────── Phases de la connexion ───────────── */
+    function check() {
+        var b = bootScreen();
+        if (b && phase !== 'boot') { phase = 'boot'; bootQueue = []; clearTimeout(settleT); }
+        else if (!b && phase === 'boot') {
+            phase = 'settle';
+            // Interface affichée : toutes les notifications reçues pendant le chargement, ensemble et lisibles
+            bootPanel = bootQueue.length ? 'pending' : 'none';
+            setTimeout(function () { if (bootPanel === 'pending') { if (bootItems().length) { openPanel('boot'); bootPanel = 'open'; } else bootPanel = 'none'; } }, 450);
+            clearTimeout(settleT); settleT = setTimeout(function () { phase = 'live'; }, 7000);
+        }
+    }
+    function watch() {
+        ['login-splash', 'data-progress-overlay'].forEach(function (id) { var el = $(id); if (el && !el._cntW) { el._cntW = true; new MutationObserver(check).observe(el, { attributes: true, attributeFilter: ['style', 'class'] }); } });
+        check();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
+    setInterval(check, 700);
 })();
 </script>
