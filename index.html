@@ -26737,12 +26737,16 @@ logout = function(skipConfirmation = false) {
             if (data.covo_real_balance)      localStorage.setItem('covo_real_balance',      JSON.stringify(data.covo_real_balance));
             if (data.covo_devis)             localStorage.setItem('covo_devis',             JSON.stringify(data.covo_devis));
             if (data.covo_inventaires)       localStorage.setItem('covo_inventaires',       JSON.stringify(data.covo_inventaires));
-            saveAll(); renderAll();
-            if (typeof renderCatalogueTab === 'function')     renderCatalogueTab();
-            if (typeof renderDisabledProducts === 'function') renderDisabledProducts();
-            if (typeof refreshRetours === 'function')         refreshRetours();
-            if (typeof _updateExpiryMarquee === 'function')   _updateExpiryMarquee();
-            if (typeof renderCloturesTab === 'function')      renderCloturesTab();
+            saveAll();
+            // Rafraîchissement de l'affichage : chaque écran isolément — un élément d'interface absent ne doit plus
+            // faire afficher « Erreur lors de la restauration » alors que les données sont bien restaurées.
+            [function(){ renderAll(); },
+             function(){ if (typeof renderCatalogueTab === 'function')     renderCatalogueTab(); },
+             function(){ if (typeof renderDisabledProducts === 'function') renderDisabledProducts(); },
+             function(){ if (typeof refreshRetours === 'function')         refreshRetours(); },
+             function(){ if (typeof _updateExpiryMarquee === 'function')   _updateExpiryMarquee(); },
+             function(){ if (typeof renderCloturesTab === 'function')      renderCloturesTab(); }
+            ].forEach(function(f){ try { f(); } catch(_uiErr) { console.warn('[Restauration] affichage', _uiErr); } });
             // Recaler l'horodatage local sur la date de la sauvegarde appliquée (les données locales = ce backup)
             try {
                 const _appliedAt = opts.backupTime || data._savedAt || new Date().toISOString();
@@ -45906,8 +45910,8 @@ function initAdminSections() {
     };
 
     // Fermer sur clic fond
-    document.getElementById('product-lookup-modal').addEventListener('click', function(e) {
-        if (e.target === this) this.style.display = 'none';
+    document.addEventListener('click', function(e) {
+        if (e.target && e.target.id === 'product-lookup-modal') e.target.style.display = 'none';
     });
     // Fermer sur Escape
     document.addEventListener('keydown', function(e) {
@@ -61879,14 +61883,14 @@ function covoQrPrint(o) {
         { k: 'masked', g: 'drive', sel: '#badge-masked', ic: 'eye', l: 'Masqués', c: ['#94a3b8', '#475569'] }
     ];
     var SATS = [
-        { k: 'caisse', sh: 'Caisse', l: 'Caisse Pro', s: 'Encaissement', url: 'https://aliand0810.github.io/Caisse-Pro/', t: 'caissepro', ic: 'caisse', c: ['#059669', '#047857'], all: true },
-        { k: 'fid', sh: 'Fidélité', l: 'Fidélité Pro', s: 'Clients & points', url: 'https://aliand0810.github.io/Fid-lit-Pro/', t: 'fidelitepro', ic: 'fid', c: ['#8b5cf6', '#6d28d9'], tab: 'tab-btn-fidelite' },
-        { k: 'gest', sh: 'Gestion', l: 'Gestion Pro', s: 'Heures · Inventaire · Stock · Factures', url: 'https://aliand0810.github.io/Gestion-Pro/', t: 'gestionpro', ic: 'gest', c: ['#475569', '#1f2937'], tab: 'tab-btn-gestionhub' },
-        { k: 'appro', sh: 'Appro.', l: 'Approvisionnement Pro', s: 'Achats fournisseurs', url: 'https://aliand0810.github.io/Investissement-Pro/', t: 'investissementpro', ic: 'appro', c: ['#7c3aed', '#4c1d95'], tab: 'tab-btn-retours' },
-        { k: 'fin', sh: 'Finances', l: 'Finances Pro', s: 'Paiements · Dettes', url: 'https://aliand0810.github.io/Finances-Pro/', t: 'financespro', ic: 'fin', c: ['#dc2626', '#7c2d12'], tab: 'tab-btn-paiements' },
-        { k: 'hist', sh: 'Historique', l: 'Historique Pro', s: 'Tickets & ventes', url: 'https://aliand0810.github.io/Historique-Pro/', t: 'historiquepro', ic: 'hist', c: ['#2980b9', '#1e3a5c'], tab: 'tab-btn-historique' },
-        { k: 'clot', sh: 'Clôtures', l: 'Clôtures Pro', s: 'Caisse du jour', url: 'https://aliand0810.github.io/Cloture-COVO/', t: 'cloturespro', ic: 'clot', c: ['#1abc9c', '#1a3a5c'], tab: 'tab-btn-clotures' },
-        { k: 'adm', sh: 'Admin', l: 'Admin Pro', s: 'Administration', url: 'https://aliand0810.github.io/Admins-PRO/', t: 'adminpro', ic: 'admin', c: ['#f43f5e', '#9f1239'], admin: true }
+        { k: 'caisse', pwa: 'caissepro', proto: 'web+covocaisse', sh: 'Caisse', l: 'Caisse Pro', s: 'Encaissement', url: 'https://aliand0810.github.io/Caisse-Pro/', t: 'caissepro', ic: 'caisse', c: ['#059669', '#047857'], all: true },
+        { k: 'fid', pwa: 'fidelitepro', proto: 'web+covofidelite', sh: 'Fidélité', l: 'Fidélité Pro', s: 'Clients & points', url: 'https://aliand0810.github.io/Fid-lit-Pro/', t: 'fidelitepro', ic: 'fid', c: ['#8b5cf6', '#6d28d9'], tab: 'tab-btn-fidelite' },
+        { k: 'gest', pwa: 'gestionpro', proto: 'web+covogestion', sh: 'Gestion', l: 'Gestion Pro', s: 'Heures · Inventaire · Stock · Factures', url: 'https://aliand0810.github.io/Gestion-Pro/', t: 'gestionpro', ic: 'gest', c: ['#475569', '#1f2937'], tab: 'tab-btn-gestionhub' },
+        { k: 'appro', pwa: 'investissementpro', proto: 'web+covoappro', sh: 'Appro.', l: 'Approvisionnement Pro', s: 'Achats fournisseurs', url: 'https://aliand0810.github.io/Investissement-Pro/', t: 'investissementpro', ic: 'appro', c: ['#7c3aed', '#4c1d95'], tab: 'tab-btn-retours' },
+        { k: 'fin', pwa: 'financespro', proto: 'web+covofinances', sh: 'Finances', l: 'Finances Pro', s: 'Paiements · Dettes', url: 'https://aliand0810.github.io/Finances-Pro/', t: 'financespro', ic: 'fin', c: ['#dc2626', '#7c2d12'], tab: 'tab-btn-paiements' },
+        { k: 'hist', pwa: 'historiquepro', proto: 'web+covohistorique', sh: 'Historique', l: 'Historique Pro', s: 'Tickets & ventes', url: 'https://aliand0810.github.io/Historique-Pro/', t: 'historiquepro', ic: 'hist', c: ['#2980b9', '#1e3a5c'], tab: 'tab-btn-historique' },
+        { k: 'clot', pwa: 'cloturespro', proto: 'web+covoclotures', sh: 'Clôtures', l: 'Clôtures Pro', s: 'Caisse du jour', url: 'https://aliand0810.github.io/Cloture-COVO/', t: 'cloturespro', ic: 'clot', c: ['#1abc9c', '#1a3a5c'], tab: 'tab-btn-clotures' },
+        { k: 'adm', pwa: 'adminpro', proto: 'web+covoadmin', sh: 'Admin', l: 'Admin Pro', s: 'Administration', url: 'https://aliand0810.github.io/Admins-PRO/', t: 'adminpro', ic: 'admin', c: ['#f43f5e', '#9f1239'], admin: true }
     ];
     var LOGOUT = { k: 'logout', l: 'Déconnexion', ic: 'logout', c: ['#ef4444', '#b91c1c'] };
     function admin() { try { return typeof isAdmin !== 'undefined' && !!isAdmin; } catch (e) { return false; } }
@@ -62119,11 +62123,69 @@ function covoQrPrint(o) {
             setTimeout(sync, 250);
         }, 0);
     }
+    /* Ouverture d'une application COVO :
+       • installée sur cet ordinateur (et capable de s'ouvrir directement) → lancement de l'application
+         installée via son protocole web+covo… (fenêtre de l'application, pas un onglet du navigateur)
+       • installée avec une ancienne version (protocole pas encore enregistré) → navigateur + conseil
+       • non installée → onglet du navigateur (fenêtre réutilisée si déjà ouverte) */
+    function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+    function satInstalled(s) { return lsGet('covo_pwa_installed_' + s.pwa) === '1'; }
+    function satLaunchable(s) { return lsGet('covo_pwa_proto_' + s.pwa) === '1'; }
+    function openWeb(s, quiet) {
+        var a = document.createElement('a');
+        a.href = s.url; a.target = s.t; a.rel = 'opener';
+        document.body.appendChild(a); a.click(); a.remove();
+        if (!quiet) toast('↗️ Ouverture de ' + s.l + '…', 'info');
+    }
     function openSat(k) {
         var s = byKey(SATS, k); if (!s) return;
-        window.open(s.url, s.t);
-        toast('↗️ Ouverture de ' + s.l + '…', 'info');
+        if (satInstalled(s) && satLaunchable(s)) { launchApp(s); return; }
+        openWeb(s);
+        if (satInstalled(s) && !satLaunchable(s)) setTimeout(function () { hint(s, 'old'); }, 600);
     }
+    function launchApp(s) {
+        var left = false;
+        function gone() { left = true; }
+        window.addEventListener('blur', gone, { once: true });
+        document.addEventListener('visibilitychange', function v() { if (document.hidden) gone(); document.removeEventListener('visibilitychange', v); });
+        var a = document.createElement('a');
+        a.href = s.proto + ':ouvrir'; a.rel = 'noopener';
+        document.body.appendChild(a); a.click(); a.remove();
+        toast('🚀 Ouverture de l’application ' + s.l + '…', 'info');
+        setTimeout(function () { window.removeEventListener('blur', gone); if (!left) hint(s, 'slow'); }, 4500);
+    }
+    var hintEl = null;
+    function hint(s, why) {
+        if (!hintEl) {
+            hintEl = document.createElement('div'); hintEl.id = 'tba-launch';
+            hintEl.setAttribute('role', 'status');
+            document.body.appendChild(hintEl);
+            var st = document.createElement('style');
+            st.textContent = '#tba-launch{position:fixed;right:18px;bottom:96px;z-index:2147482200;width:min(360px,calc(100vw - 24px));display:none;gap:11px;align-items:flex-start;padding:13px 14px;border-radius:15px;background:var(--bg-card,#fff);color:var(--text-main,#1e2d3d);box-shadow:0 18px 44px rgba(15,23,42,.3),0 0 0 1px rgba(15,23,42,.08);font-family:inherit;animation:cntIn .25s ease;}'
+                + '#tba-launch.show{display:flex;}#tba-launch .ic{flex-shrink:0;width:36px;height:36px;border-radius:11px;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,var(--c1),var(--c2));}'
+                + '#tba-launch .ic svg{width:19px;height:19px;}#tba-launch .tx{flex:1;min-width:0;font-size:.8rem;line-height:1.4;}#tba-launch .tx b{display:block;font-size:.86rem;margin-bottom:2px;}'
+                + '#tba-launch .bt{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap;}#tba-launch .bt button{border-radius:9px;padding:7px 11px;font-weight:800;font-size:.74rem;cursor:pointer;font-family:inherit;}'
+                + '#tba-launch .go{border:none;background:linear-gradient(135deg,var(--c1),var(--c2));color:#fff;}#tba-launch .no{border:1.5px solid var(--border-color,#e5e7eb);background:transparent;color:inherit;}';
+            document.head.appendChild(st);
+            hintEl.addEventListener('click', function (e) {
+                var b = e.target.closest('button'); if (!b) return;
+                var ss = byKey(SATS, hintEl.getAttribute('data-k'));
+                if (b.classList.contains('go') && ss) openWeb(ss);
+                if (b.hasAttribute('data-forget') && ss) { try { localStorage.removeItem('covo_pwa_proto_' + ss.pwa); } catch (er) {} }
+                hintEl.classList.remove('show');
+            });
+        }
+        hintEl.setAttribute('data-k', s.k);
+        hintEl.style.setProperty('--c1', s.c[0]); hintEl.style.setProperty('--c2', s.c[1]);
+        hintEl.innerHTML = '<span class="ic">' + IC[s.ic] + '</span><span class="tx">'
+            + (why === 'old'
+                ? '<b>' + esc(s.l) + ' ouvert dans le navigateur</b>L’application installée est une ancienne version : désinstallez-la puis réinstallez-la une fois (bouton 📲 Installer dans ' + esc(s.l) + ') pour qu’elle s’ouvre ensuite directement dans sa fenêtre.'
+                : '<b>' + esc(s.l) + ' ne s’est pas ouvert ?</b>Si le navigateur demande l’autorisation d’ouvrir l’application, acceptez (et cochez « Toujours autoriser »).')
+            + '<span class="bt">' + (why === 'old' ? '<button type="button" class="no">OK</button>' : '<button type="button" class="go">🌐 Ouvrir dans le navigateur</button><button type="button" class="no" data-forget="1" title="Ne plus essayer d’ouvrir l’application installée">Ne plus essayer</button><button type="button" class="no">✕</button>') + '</span></span>';
+        hintEl.classList.add('show');
+        clearTimeout(hintEl._t); hintEl._t = setTimeout(function () { hintEl.classList.remove('show'); }, 15000);
+    }
+    window._covoOpenSatellite = openSat;
     function runKey(key) {
         var p = String(key).split(':');
         if (p[0] === 'a') run(p[1]); else if (p[0] === 's') openSat(p[1]); else if (key === 'x:logout') run('logout');
