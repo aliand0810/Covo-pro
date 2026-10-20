@@ -65690,3 +65690,389 @@ function covoQrPrint(o) {
     window._histMore = function () { window._histLimit = (window._histLimit || 100) + 200; try { if (typeof renderHistory === 'function') renderHistory(); } catch (e) {} };
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — « 📊 VISITES DU SITE WEB » (nouvel affichage)
+   • Tableau de bord : période (aujourd'hui → tout), 8 indicateurs avec comparaison,
+     visites par jour (ou par heure), heures d'affluence, appareils, provenance, pages les plus vues, lieux
+   • 3 vues : Visites (fil par jour) · Adresses IP · Clients fidélité — recherche instantanée
+   • Fiche détaillée d'une visite : parcours page par page, appareil, réseau, autres visites de la même IP
+   • Export CSV, purge des visites de plus de 13 mois, aide « règle Firestore » en cas d'accès refusé
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._vxInstalled) return;
+    window._vxInstalled = true;
+    var V = { list: [], loaded: false, busy: false, err: '', period: '30', q: '', tab: 'visits', sel: null, at: 0, filter: '' };
+    try { var u0 = JSON.parse(localStorage.getItem('covo_visits_ui') || 'null'); if (u0) { V.period = u0.period || '30'; V.tab = u0.tab || 'visits'; } } catch (e) {}
+    function saveUi() { try { localStorage.setItem('covo_visits_ui', JSON.stringify({ period: V.period, tab: V.tab })); } catch (e) {} }
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function norm(s) { return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+    function toast(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); }
+    var MO = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'], WD = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+    function dec(v) { if (!v) return null; if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return +v.integerValue; if ('doubleValue' in v) return +v.doubleValue; if ('timestampValue' in v) return v.timestampValue; if ('booleanValue' in v) return v.booleanValue; if ('arrayValue' in v) return (v.arrayValue.values || []).map(dec); return null; }
+    function rowOf(d) { var f = d.fields || {}, o = { id: String(d.name || '').split('/').pop() }; Object.keys(f).forEach(function (k) { o[k] = dec(f[k]); }); o.t = Date.parse(o.at || '') || 0; o.tl = Date.parse(o.last || '') || o.t; o.pages = Array.isArray(o.pages) ? o.pages : []; o.np = +o.n || o.pages.length || 1; o.kind = devKind(o.dev); return o; }
+    function devKind(d) { d = String(d || ''); return /^Mobile/i.test(d) ? 'Mobile' : /^Tablette|^Tablet/i.test(d) ? 'Tablette' : /^Ordinateur|^PC|^Desktop|^Windows|^Mac|^Linux/i.test(d) ? 'Ordinateur' : (d ? d.split(' · ')[0] : 'Inconnu'); }
+    function pageName(x) { return String(x || '').replace(/^\d{1,2}:\d{2}(:\d{2})?\s+/, '') || '—'; }
+    function pageTime(x) { var m = String(x || '').match(/^(\d{1,2}:\d{2}(:\d{2})?)/); return m ? m[1] : ''; }
+    function fmtDT(t) { if (!t) return '—'; var d = new Date(t); return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' }) + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+    function hm(t) { return new Date(t).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+    function dur(ms) { var s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + ' s'; var m = Math.round(s / 60); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0'); }
+    function refName(r) { r = String(r || '').trim(); if (!r || r === '-' || /^direct/i.test(r)) return 'Accès direct / QR code'; var h = r.replace(/^https?:\/\//, '').split('/')[0].replace(/^www\./, ''); if (/google\./.test(h)) return 'Google'; if (/facebook|fb\.|m\.facebook/.test(h)) return 'Facebook'; if (/instagram/.test(h)) return 'Instagram'; if (/whatsapp|wa\.me/.test(h)) return 'WhatsApp'; if (/bing\./.test(h)) return 'Bing'; if (/tiktok/.test(h)) return 'TikTok'; return h || r; }
+    var DEVI = { Mobile: '📱', Tablette: '📲', Ordinateur: '💻', Inconnu: '❔' };
+
+    /* ───────────── Données ───────────── */
+    function load() {
+        if (V.busy) return; V.busy = true; V.err = ''; render();
+        if (typeof window._covoFs !== 'function') { V.busy = false; V.err = 'Module de synchronisation du site indisponible (ouvrez COVO Pro avec la connexion Google active).'; render(); return; }
+        var out = [], pages = 0;
+        function page(tok) {
+            return window._covoFs('GET', 'visits?orderBy=at%20desc&pageSize=300' + (tok ? '&pageToken=' + encodeURIComponent(tok) : '')).then(function (r) {
+                if (r.status === 403) throw new Error('Accès refusé : publiez la règle Firestore « visits » (voir l’aide ci-dessous).');
+                if (!r.ok) throw new Error('Erreur ' + r.status + ' lors du chargement.');
+                return r.json();
+            }).then(function (j) { (j.documents || []).forEach(function (d) { out.push(rowOf(d)); }); pages++; if (j.nextPageToken && pages < 25) return page(j.nextPageToken); });
+        }
+        page('').then(function () { V.list = out.sort(function (a, b) { return b.t - a.t; }); V.loaded = true; V.at = Date.now(); }).catch(function (e) { V.err = (e && e.message) || 'Erreur réseau'; })
+            .then(function () { V.busy = false; render(); });
+    }
+    function range() {
+        var now = Date.now(), d0 = new Date(); d0.setHours(0, 0, 0, 0);
+        if (V.period === '0') return { from: d0.getTime(), to: now, prevFrom: d0.getTime() - 864e5, prevTo: now - 864e5, label: 'aujourd’hui', hours: true };
+        if (V.period === 'all') return { from: 0, to: now, label: 'tout l’historique' };
+        var n = +V.period; return { from: d0.getTime() - (n - 1) * 864e5, to: now, prevFrom: d0.getTime() - (2 * n - 1) * 864e5, prevTo: d0.getTime() - (n - 1) * 864e5, label: n + ' derniers jours', days: n };
+    }
+    function match(v) {
+        var q = norm(V.q.trim());
+        if (V.filter === 'mobile' && v.kind !== 'Mobile' && v.kind !== 'Tablette') return false;
+        if (V.filter === 'pc' && v.kind !== 'Ordinateur') return false;
+        if (V.filter === 'client' && !v.client) return false;
+        if (V.filter === 'deep' && v.np < 3) return false;
+        if (!q) return true;
+        return norm([v.ip, v.city, v.country, v.isp, v.dev, v.client, v.ref, v.lang, (v.pages || []).join(' ')].join(' ')).indexOf(q) >= 0;
+    }
+    function inR(v, a, b) { return v.t >= a && v.t <= b; }
+
+    /* ───────────── Styles ───────────── */
+    var css = document.createElement('style');
+    css.id = 'vx-css';
+    css.textContent = [
+        '#vx-ov{--v-surface:#ffffff;--v-bg:#f3f5f9;--v-soft:#f4f6fa;--v-soft2:#eceff5;--v-line:rgba(15,23,42,.1);--v-ink:#0f172a;--v-ink2:#475063;--v-mute:#6b7280;--v-acc:#2a78d6;--v-accb:rgba(42,120,214,.12);--v-good:#0a8a0a;--v-crit:#d03b3b;--v-shadow:0 1px 2px rgba(15,23,42,.05),0 6px 18px rgba(15,23,42,.06);--v-c2:#eb6834;--v-c3:#1baf7a;--v-c4:#eda100;--v-c7:#6250d6;position:fixed;inset:0;z-index:100001;background:rgba(6,16,32,.62);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:12px;font-family:inherit;color:var(--v-ink);}',
+        'body.dark-mode #vx-ov{--v-surface:#1a1a19;--v-bg:#111110;--v-soft:#232322;--v-soft2:#2b2b29;--v-line:rgba(255,255,255,.1);--v-ink:#f0efec;--v-ink2:#c3c2b7;--v-mute:#9a9990;--v-acc:#3987e5;--v-accb:rgba(57,135,229,.2);--v-good:#3fbf3f;--v-crit:#e66767;--v-shadow:0 1px 2px rgba(0,0,0,.45);--v-c2:#d95926;--v-c3:#199e70;--v-c4:#c98500;--v-c7:#9085e9;}',
+        '#vx-ov *{box-sizing:border-box;}',
+        '#vx-ov.open{display:flex;}',
+        '#vx-box{width:min(1240px,100%);height:min(900px,100%);background:var(--v-bg);border-radius:22px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.45);animation:vxIn .28s cubic-bezier(.2,.9,.3,1);position:relative;}',
+        '@keyframes vxIn{from{opacity:0;transform:translateY(14px) scale(.985);}to{opacity:1;transform:none;}}',
+        '#vx-head{background:linear-gradient(120deg,#0b1f3a,#173b6c 50%,#1c55a0);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0;}',
+        '#vx-head h2{margin:0;font-size:1.12rem;font-weight:900;color:#fff!important;display:flex;align-items:center;gap:9px;}',
+        '#vx-head h2 i{font-style:normal;width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.16);display:inline-flex;align-items:center;justify-content:center;}',
+        '#vx-st{font-size:.72rem;color:rgba(255,255,255,.8);font-weight:700;margin-top:2px;}',
+        '#vx-head .sp{flex:1;}',
+        '.vx-seg{display:inline-flex;gap:2px;padding:3px;border-radius:11px;background:rgba(0,0,0,.22);}',
+        '.vx-seg button{border:none;background:transparent;color:rgba(255,255,255,.88);font-weight:800;font-size:.74rem;padding:6px 10px;border-radius:8px;cursor:pointer;font-family:inherit;white-space:nowrap;}',
+        '.vx-seg button.on{background:#fff;color:#0b1f3a;}',
+        '.vx-hb{border:none;background:rgba(255,255,255,.15);color:#fff;border-radius:10px;padding:8px 11px;font-size:.76rem;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}',
+        '.vx-hb:hover{background:rgba(255,255,255,.26);}',
+        '.vx-hb.x{width:36px;height:36px;padding:0;border-radius:50%;font-size:1rem;}',
+        '#vx-body{flex:1;overflow-y:auto;padding:14px 16px 20px;}',
+        '.vx-kpis{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:9px;margin-bottom:12px;}',
+        '.vx-k{background:var(--v-surface);border:1px solid var(--v-line);border-radius:14px;padding:9px 11px;box-shadow:var(--v-shadow);min-width:0;position:relative;overflow:hidden;}',
+        '.vx-k::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--a);}',
+        '.vx-k span{display:block;font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--v-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.vx-k b{display:block;font-size:1.3rem;font-weight:900;letter-spacing:-.4px;margin-top:1px;font-variant-numeric:tabular-nums;white-space:nowrap;}',
+        '.vx-k small{display:block;font-size:.64rem;font-weight:800;color:var(--v-mute);white-space:nowrap;}',
+        '.vx-k small.up{color:var(--v-good);}.vx-k small.dn{color:var(--v-crit);}',
+        '@media (max-width:1150px){.vx-kpis{grid-template-columns:repeat(4,minmax(0,1fr));}}',
+        '@media (max-width:560px){.vx-kpis{grid-template-columns:repeat(2,minmax(0,1fr));}}',
+        '.vx-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px;}',
+        '.vx-row.b{grid-template-columns:repeat(3,minmax(0,1fr));}',
+        '@media (max-width:1000px){.vx-row,.vx-row.b{grid-template-columns:minmax(0,1fr);}}',
+        '.vx-card{background:var(--v-surface);border:1px solid var(--v-line);border-radius:15px;box-shadow:var(--v-shadow);padding:12px 14px;min-width:0;}',
+        '.vx-card h4{margin:0 0 2px;font-size:.84rem;font-weight:900;color:var(--v-ink)!important;display:flex;align-items:center;gap:7px;}',
+        '.vx-card .sub{font-size:.68rem;color:var(--v-mute);font-weight:600;margin-bottom:8px;}',
+        '.vx-chart{position:relative;}.vx-chart svg{display:block;width:100%;overflow:visible;}',
+        '.vx-bar{transform-box:fill-box;transform-origin:50% 100%;animation:vxGrow .45s cubic-bezier(.2,.9,.3,1) both;}',
+        '@keyframes vxGrow{from{transform:scaleY(0);}to{transform:none;}}',
+        '.vx-hr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;font-size:.74rem;margin-bottom:7px;}',
+        '.vx-hr .n{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.vx-hr .v{font-weight:900;font-variant-numeric:tabular-nums;white-space:nowrap;}.vx-hr .v small{color:var(--v-mute);font-weight:700;margin-left:4px;}',
+        '.vx-hr .tr{grid-column:1/-1;height:6px;border-radius:0 3px 3px 0;background:var(--v-soft2);overflow:hidden;}',
+        '.vx-hr .tr i{display:block;height:100%;border-radius:0 3px 3px 0;background:var(--c,var(--v-acc));}',
+        '.vx-stack{display:flex;height:14px;gap:2px;border-radius:7px;overflow:hidden;margin:4px 0 10px;}',
+        '.vx-stack i{display:block;height:100%;}',
+        '.vx-tabs{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--v-surface);border:1px solid var(--v-line);border-radius:14px;padding:8px 10px;box-shadow:var(--v-shadow);margin-bottom:10px;}',
+        '.vx-tab{border:none;background:transparent;color:var(--v-ink2);font-family:inherit;font-weight:800;font-size:.8rem;padding:8px 12px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}',
+        '.vx-tab.on{background:var(--v-ink);color:var(--v-surface);}',
+        '.vx-tab em{font-style:normal;font-size:.66rem;background:var(--v-soft2);color:var(--v-ink2);border-radius:9px;padding:1px 7px;}.vx-tab.on em{background:rgba(255,255,255,.2);color:inherit;}',
+        '.vx-q{flex:1;min-width:180px;position:relative;}',
+        '.vx-q input{width:100%;padding:9px 12px 9px 32px;border-radius:11px;border:1.5px solid var(--v-line);background:var(--v-soft);color:var(--v-ink);font-size:.82rem;font-weight:600;font-family:inherit;outline:none;}',
+        '.vx-q input:focus{border-color:var(--v-acc);background:var(--v-surface);}',
+        '.vx-q::before{content:"🔎";position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:.78rem;opacity:.7;}',
+        '.vx-chip{border:1px solid var(--v-line);background:var(--v-surface);color:var(--v-ink2);border-radius:20px;padding:5px 10px;font-size:.7rem;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;}',
+        '.vx-chip.on{background:var(--v-acc);color:#fff;border-color:var(--v-acc);}',
+        '.vx-day{font-size:.68rem;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--v-mute);margin:12px 2px 6px;display:flex;justify-content:space-between;}',
+        '.vx-vis{display:grid;grid-template-columns:52px 38px minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.4fr) auto;gap:10px;align-items:center;background:var(--v-surface);border:1px solid var(--v-line);border-radius:13px;padding:9px 12px;margin-bottom:6px;cursor:pointer;transition:border-color .12s,transform .12s;content-visibility:auto;contain-intrinsic-size:auto 58px;}',
+        '.vx-vis:hover{border-color:var(--v-acc);transform:translateX(2px);}',
+        '.vx-vis.sel{border-color:var(--v-acc);box-shadow:0 0 0 2px var(--v-acc) inset;}',
+        '.vx-vis .tm{font-weight:900;font-size:.86rem;font-variant-numeric:tabular-nums;}',
+        '.vx-vis .dv{width:38px;height:38px;border-radius:11px;background:var(--v-soft);display:flex;align-items:center;justify-content:center;font-size:1.15rem;}',
+        '.vx-vis .ip{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:800;font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.vx-vis .ip small,.vx-vis .lo small,.vx-vis .pg small{display:block;font-family:inherit;font-size:.66rem;color:var(--v-mute);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.vx-vis .lo,.vx-vis .pg{font-size:.78rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.vx-vis .rt{display:flex;flex-direction:column;align-items:flex-end;gap:3px;}',
+        '.vx-pill{font-size:.64rem;font-weight:900;border-radius:9px;padding:2px 8px;white-space:nowrap;background:var(--v-soft2);color:var(--v-ink2);}',
+        '.vx-pill.cl{background:color-mix(in srgb,var(--v-c7) 16%,transparent);color:var(--v-c7);}.vx-pill.rv{background:color-mix(in srgb,var(--v-c3) 16%,transparent);color:var(--v-c3);}',
+        '@media (max-width:760px){.vx-vis{grid-template-columns:44px 34px minmax(0,1fr) auto;}.vx-vis .lo,.vx-vis .pg{display:none;}}',
+        '.vx-tbl{overflow:auto;border:1px solid var(--v-line);border-radius:13px;background:var(--v-surface);}',
+        '.vx-tbl table{width:100%;border-collapse:separate;border-spacing:0;font-size:.78rem;}',
+        '.vx-tbl th{position:sticky;top:0;background:var(--v-soft2);text-align:left;font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;color:var(--v-mute);font-weight:900;padding:9px 10px;white-space:nowrap;}',
+        '.vx-tbl td{padding:8px 10px;border-bottom:1px solid var(--v-line);vertical-align:top;}',
+        '.vx-tbl tbody tr{cursor:pointer;}.vx-tbl tbody tr:hover{background:var(--v-soft);}',
+        '.vx-tbl td.ip{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:800;}',
+        '.vx-tbl td small{display:block;color:var(--v-mute);font-weight:700;font-size:.66rem;}',
+        /* Fiche détaillée */
+        '#vx-drw{position:absolute;top:0;right:0;bottom:0;width:min(420px,100%);background:var(--v-surface);border-left:1px solid var(--v-line);box-shadow:-20px 0 50px rgba(0,0,0,.2);transform:translateX(105%);transition:transform .25s cubic-bezier(.2,.9,.3,1);display:flex;flex-direction:column;z-index:2;}',
+        '#vx-drw.open{transform:none;}',
+        '#vx-drw .dh{padding:14px 16px;border-bottom:1px solid var(--v-line);display:flex;gap:10px;align-items:flex-start;}',
+        '#vx-drw .dh h3{margin:0;font-size:1rem;font-weight:900;color:var(--v-ink)!important;font-family:ui-monospace,Menlo,Consolas,monospace;}',
+        '#vx-drw .dh p{margin:2px 0 0;font-size:.72rem;color:var(--v-mute);font-weight:700;}',
+        '#vx-drw .db{flex:1;overflow-y:auto;padding:12px 16px 18px;}',
+        '#vx-drw .x{margin-left:auto;border:none;background:var(--v-soft);color:var(--v-ink);width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:.95rem;flex-shrink:0;}',
+        '.vx-kv{display:grid;grid-template-columns:110px minmax(0,1fr);gap:6px 10px;font-size:.76rem;margin-bottom:14px;}',
+        '.vx-kv span{color:var(--v-mute);font-weight:800;}.vx-kv b{font-weight:800;word-break:break-word;}',
+        '.vx-h5{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:var(--v-mute);margin:6px 0 8px;}',
+        '.vx-path{position:relative;margin:0 0 14px;padding:0;list-style:none;}',
+        '.vx-path li{position:relative;padding:0 0 10px 22px;font-size:.78rem;font-weight:700;}',
+        '.vx-path li::before{content:"";position:absolute;left:4px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--v-acc);box-shadow:0 0 0 3px var(--v-accb);}',
+        '.vx-path li::after{content:"";position:absolute;left:8px;top:16px;bottom:-2px;width:2px;background:var(--v-line);}',
+        '.vx-path li:last-child::after{display:none;}',
+        '.vx-path li small{display:block;font-size:.66rem;color:var(--v-mute);font-weight:800;font-family:ui-monospace,Menlo,Consolas,monospace;}',
+        '.vx-other{display:flex;justify-content:space-between;gap:8px;font-size:.74rem;padding:7px 9px;border-radius:9px;background:var(--v-soft);margin-bottom:5px;cursor:pointer;}',
+        '.vx-other:hover{background:var(--v-accb);}',
+        '.vx-msg{margin:16px;padding:14px;border-radius:12px;font-size:.84rem;font-weight:700;}',
+        '.vx-msg.err{background:color-mix(in srgb,var(--v-crit) 12%,transparent);color:var(--v-crit);}',
+        '.vx-msg pre{white-space:pre-wrap;background:#0d2d5c;color:#dfe9f7;padding:10px;border-radius:8px;font-size:.72rem;margin-top:8px;font-weight:600;}',
+        '.vx-empty{padding:40px 16px;text-align:center;color:var(--v-mute);font-weight:700;background:var(--v-surface);border:1px dashed var(--v-line);border-radius:14px;}',
+        '.vx-empty b{display:block;font-size:2rem;margin-bottom:6px;}',
+        '.vx-load{padding:60px;text-align:center;color:var(--v-mute);font-weight:800;}',
+        '.vx-load i{display:inline-block;width:26px;height:26px;border-radius:50%;border:3px solid var(--v-line);border-top-color:var(--v-acc);animation:vxSpin .8s linear infinite;vertical-align:middle;margin-right:8px;}',
+        '@keyframes vxSpin{to{transform:rotate(360deg);}}',
+        '#vx-tip{position:fixed;z-index:100002;pointer-events:none;background:rgba(15,23,42,.95);color:#fff;border-radius:10px;padding:7px 10px;font-size:.72rem;font-weight:600;line-height:1.45;opacity:0;transition:opacity .1s;}',
+        '#vx-tip.show{opacity:1;}#vx-tip b{font-weight:900;}',
+        '@media (max-width:640px){#vx-ov{padding:0;}#vx-box{border-radius:0;height:100%;}#vx-head{padding:12px;}}',
+        '@media (prefers-reduced-motion: reduce){#vx-ov *{animation:none!important;transition:none!important;}}'
+    ].join('\n');
+
+    /* ───────────── Structure ───────────── */
+    function build() {
+        if ($('vx-ov')) return $('vx-ov');
+        if (!$('vx-css')) document.head.appendChild(css);
+        var ov = document.createElement('div'); ov.id = 'vx-ov';
+        ov.innerHTML = '<div id="vx-box" role="dialog" aria-modal="true" aria-labelledby="vx-t">'
+            + '<div id="vx-head"><div><h2 id="vx-t"><i>📊</i>Visites du site web</h2><div id="vx-st"></div></div><span class="sp"></span>'
+            + '<div class="vx-seg" role="group" aria-label="Période">' + [['0', 'Aujourd’hui'], ['7', '7 j'], ['30', '30 j'], ['90', '90 j'], ['365', '12 mois'], ['all', 'Tout']].map(function (p) { return '<button type="button" data-p="' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div>'
+            + '<button type="button" class="vx-hb" data-a="reload" title="Recharger depuis le site">🔄 Actualiser</button><button type="button" class="vx-hb" data-a="csv" title="Exporter les visites affichées">⬇️ CSV</button><button type="button" class="vx-hb" data-a="purge" title="Supprimer les visites de plus de 13 mois">🧹</button><button type="button" class="vx-hb x" data-a="close" aria-label="Fermer">✕</button></div>'
+            + '<div id="vx-body"></div>'
+            + '<aside id="vx-drw" aria-label="Détail de la visite"></aside></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener('click', function (e) { if (e.target === ov) close(); onClick(e); });
+        ov.addEventListener('input', function (e) { if (e.target.id === 'vx-q') { V.q = e.target.value; clearTimeout(build.t); build.t = setTimeout(function () { renderList(); }, 120); } });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && ov.classList.contains('open')) { if ($('vx-drw').classList.contains('open')) closeDrw(); else close(); } });
+        return ov;
+    }
+    function close() { var ov = $('vx-ov'); if (ov) ov.classList.remove('open'); hideTip(); }
+    function closeDrw() { V.sel = null; var d = $('vx-drw'); if (d) d.classList.remove('open'); Array.prototype.forEach.call(document.querySelectorAll('.vx-vis.sel'), function (x) { x.classList.remove('sel'); }); }
+    var tip = null;
+    function showTip(h, ev) { if (!tip) { tip = document.createElement('div'); tip.id = 'vx-tip'; document.body.appendChild(tip); } tip.innerHTML = h; tip.classList.add('show'); var w = tip.offsetWidth, hh = tip.offsetHeight, x = ev.clientX + 12, y = ev.clientY - hh - 10; if (x + w > innerWidth - 6) x = ev.clientX - w - 12; if (y < 6) y = ev.clientY + 14; tip.style.left = x + 'px'; tip.style.top = y + 'px'; }
+    function hideTip() { if (tip) tip.classList.remove('show'); }
+
+    /* ───────────── Rendu ───────────── */
+    function render() {
+        var ov = build(), body = $('vx-body');
+        Array.prototype.forEach.call(ov.querySelectorAll('[data-p]'), function (b) { b.classList.toggle('on', b.getAttribute('data-p') === V.period); });
+        $('vx-st').textContent = V.busy ? 'Actualisation…' : V.loaded ? V.list.length + ' visite' + (V.list.length > 1 ? 's' : '') + ' en historique · mis à jour à ' + hm(V.at) : '';
+        if (V.busy && !V.loaded) { body.innerHTML = '<div class="vx-load"><i></i>Chargement de l’historique des visites…</div>'; return; }
+        if (V.err) { body.innerHTML = '<div class="vx-msg err">⚠️ ' + esc(V.err) + '</div>' + help(); return; }
+        var R = range(), all = V.list.filter(function (v) { return inR(v, R.from, R.to); }), list = all.filter(match);
+        var prev = R.prevFrom != null ? V.list.filter(function (v) { return inR(v, R.prevFrom, R.prevTo); }) : null;
+        body.innerHTML = kpis(list, prev, R) + '<div class="vx-row"><div class="vx-card"><h4>📈 ' + (R.hours ? 'Visites par heure' : 'Visites par jour') + '</h4><div class="sub">' + esc(R.label) + ' · barres = visites, trait = visiteurs uniques</div><div class="vx-chart" id="vx-c1"></div></div>'
+            + '<div class="vx-card"><h4>🕐 Heures d’affluence</h4><div class="sub">Répartition des visites sur la journée</div><div class="vx-chart" id="vx-c2"></div></div>'
+            + '<div class="vx-card"><h4>📱 Appareils</h4><div class="sub">Type d’appareil des visiteurs</div>' + devices(list) + '</div></div>'
+            + '<div class="vx-row b"><div class="vx-card"><h4>📄 Pages les plus vues</h4><div class="sub">Toutes visites confondues</div>' + bars(countPages(list), 'var(--v-acc)', 7) + '</div>'
+            + '<div class="vx-card"><h4>🔗 Provenance</h4><div class="sub">D’où arrivent les visiteurs</div>' + bars(countBy(list, function (v) { return refName(v.ref); }), 'var(--v-c2)', 6) + '</div>'
+            + '<div class="vx-card"><h4>📍 Lieux</h4><div class="sub">Ville · pays (selon l’adresse IP)</div>' + bars(countBy(list, function (v) { return [v.city, v.country].filter(Boolean).join(' · ') || 'Inconnu'; }), 'var(--v-c3)', 6) + '</div></div>'
+            + '<div class="vx-tabs" id="vx-tabs"></div><div id="vx-list"></div>';
+        chartDays(list, R); chartHours(list);
+        renderList();
+    }
+    function delta(c, p) { if (p == null) return ''; if (!p) return c ? '<small class="up">▲ nouveau</small>' : '<small>—</small>'; var r = (c - p) / p; return '<small class="' + (Math.abs(r) < 0.005 ? '' : r > 0 ? 'up' : 'dn') + '">' + (r > 0 ? '▲ +' : r < 0 ? '▼ ' : '= ') + Math.round(Math.abs(r) * 100) + ' % vs avant</small>'; }
+    function kpis(L, P, R) {
+        var ips = {}, pv = 0, durS = 0, durN = 0, bounce = 0, mob = 0, cl = {};
+        L.forEach(function (v) { ips[v.ip || '?'] = (ips[v.ip || '?'] || 0) + 1; pv += v.np; if (v.tl > v.t) { durS += v.tl - v.t; durN++; } if (v.np <= 1) bounce++; if (v.kind === 'Mobile' || v.kind === 'Tablette') mob++; if (v.client) cl[v.client] = 1; });
+        var uniq = Object.keys(ips).length, back = Object.keys(ips).filter(function (k) { return ips[k] > 1; }).length;
+        var pIps = P ? Object.keys(P.reduce(function (a, v) { a[v.ip || '?'] = 1; return a; }, {})).length : null, pPv = P ? P.reduce(function (a, v) { return a + v.np; }, 0) : null;
+        var K = [
+            ['Visites', L.length, delta(L.length, P && P.length), '#2a78d6'],
+            ['Visiteurs uniques', uniq, delta(uniq, pIps), '#6250d6'],
+            ['Pages vues', pv, delta(pv, pPv), '#1baf7a'],
+            ['Pages / visite', L.length ? (pv / L.length).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : '0', '<small>' + (L.length ? Math.round(100 * bounce / L.length) : 0) + ' % ne voient qu’1 page</small>', '#eda100'],
+            ['Durée moyenne', durN ? dur(durS / durN) : '—', '<small>sur ' + durN + ' visite' + (durN > 1 ? 's' : '') + ' suivie' + (durN > 1 ? 's' : '') + '</small>', '#eb6834'],
+            ['Revenants', back, '<small>IP vues plusieurs fois</small>', '#0f766e'],
+            ['Sur mobile', L.length ? Math.round(100 * mob / L.length) + ' %' : '—', '<small>' + mob + ' visite' + (mob > 1 ? 's' : '') + '</small>', '#e87ba4'],
+            ['Clients fidélité', Object.keys(cl).length, '<small>connectés au site</small>', '#7c3aed']
+        ];
+        return '<div class="vx-kpis">' + K.map(function (k) { return '<div class="vx-k" style="--a:' + k[3] + '"><span>' + k[0] + '</span><b>' + k[1] + '</b>' + k[2] + '</div>'; }).join('') + '</div>';
+    }
+    function countBy(L, f) { var m = {}; L.forEach(function (v) { var k = f(v); m[k] = (m[k] || 0) + 1; }); return Object.keys(m).map(function (k) { return [k, m[k]]; }).sort(function (a, b) { return b[1] - a[1]; }); }
+    function countPages(L) { var m = {}; L.forEach(function (v) { (v.pages || []).forEach(function (p) { var k = pageName(p); m[k] = (m[k] || 0) + 1; }); }); return Object.keys(m).map(function (k) { return [k, m[k]]; }).sort(function (a, b) { return b[1] - a[1]; }); }
+    function bars(A, col, n) {
+        if (!A.length) return '<div class="sub">Aucune donnée</div>';
+        var tot = A.reduce(function (a, x) { return a + x[1]; }, 0), mx = A[0][1], rest = A.slice(n).reduce(function (a, x) { return a + x[1]; }, 0);
+        var B = A.slice(0, n); if (rest) B.push(['Autres (' + (A.length - n) + ')', rest]);
+        return B.map(function (x) { return '<div class="vx-hr" style="--c:' + col + '"><span class="n" title="' + esc(x[0]) + '">' + esc(x[0]) + '</span><span class="v">' + x[1] + '<small>' + Math.round(100 * x[1] / tot) + ' %</small></span><span class="tr"><i style="width:' + (100 * Math.min(x[1], mx) / mx).toFixed(0) + '%"></i></span></div>'; }).join('');
+    }
+    function devices(L) {
+        var A = countBy(L, function (v) { return v.kind; }), tot = L.length || 1, C = { Mobile: '#2a78d6', Tablette: '#6250d6', Ordinateur: '#1baf7a', Inconnu: '#9a9990' };
+        if (!A.length) return '<div class="sub">Aucune donnée</div>';
+        var br = countBy(L, function (v) { var p = String(v.dev || '').split(' · '); return p.length > 2 ? p[2] : p[1] || ''; }).filter(function (x) { return x[0]; }).slice(0, 3);
+        return '<div class="vx-stack">' + A.map(function (x) { return '<i style="flex-grow:' + x[1] + ';background:' + (C[x[0]] || '#eda100') + '" title="' + esc(x[0]) + ' : ' + x[1] + '"></i>'; }).join('') + '</div>'
+            + A.map(function (x) { return '<div class="vx-hr" style="--c:' + (C[x[0]] || '#eda100') + '"><span class="n">' + (DEVI[x[0]] || '•') + ' ' + esc(x[0]) + '</span><span class="v">' + x[1] + '<small>' + Math.round(100 * x[1] / tot) + ' %</small></span></div>'; }).join('')
+            + (br.length ? '<div class="sub" style="margin:8px 0 0">Navigateurs / systèmes : ' + br.map(function (x) { return esc(x[0]) + ' (' + x[1] + ')'; }).join(' · ') + '</div>' : '');
+    }
+    function chartDays(L, R) {
+        var host = $('vx-c1'); if (!host) return;
+        var B = [], i;
+        if (R.hours) { for (i = 0; i < 24; i++) B.push({ l: i + 'h', v: 0, u: {}, pv: 0, full: i + 'h – ' + (i + 1) + 'h' }); L.forEach(function (v) { var b = B[new Date(v.t).getHours()]; b.v++; b.u[v.ip] = 1; b.pv += v.np; }); }
+        else {
+            var n = R.days || Math.max(1, Math.min(365, Math.ceil((Date.now() - (L.length ? L[L.length - 1].t : Date.now())) / 864e5) + 1)), d0 = new Date(); d0.setHours(0, 0, 0, 0);
+            var weekly = n > 120;
+            if (weekly) { var w = Math.ceil(n / 7); for (i = w - 1; i >= 0; i--) { var ds = new Date(d0.getTime() - (i * 7 + 6) * 864e5); B.push({ s: ds.getTime(), l: ds.getDate() + ' ' + MO[ds.getMonth()], v: 0, u: {}, pv: 0, full: 'Semaine du ' + ds.toLocaleDateString('fr-FR') }); } }
+            else for (i = n - 1; i >= 0; i--) { var dd = new Date(d0.getTime() - i * 864e5); B.push({ s: dd.getTime(), l: n <= 14 ? WD[dd.getDay()] + ' ' + dd.getDate() : dd.getDate() + '/' + (dd.getMonth() + 1), v: 0, u: {}, pv: 0, full: dd.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) }); }
+            L.forEach(function (v) { for (var k = B.length - 1; k >= 0; k--) { if (v.t >= B[k].s) { B[k].v++; B[k].u[v.ip] = 1; B[k].pv += v.np; break; } } });
+        }
+        var w = Math.max(280, host.clientWidth), h = 190, pl = 34, pr = 6, pt = 12, pb = 22, n2 = B.length, mx = Math.max.apply(null, B.map(function (b) { return b.v; }).concat([1]));
+        var st = Math.max(1, Math.ceil(mx / 4)), max = st * 4, bw = (w - pl - pr) / n2, bar = Math.max(2, Math.min(26, bw * .66));
+        var X = function (k) { return pl + bw * (k + .5); }, Y = function (v) { return pt + (h - pt - pb) * (1 - v / max); };
+        var s = '';
+        for (i = 0; i <= 4; i++) s += '<line x1="' + pl + '" x2="' + (w - pr) + '" y1="' + Y(st * i) + '" y2="' + Y(st * i) + '" stroke="var(--v-line)"/><text x="' + (pl - 5) + '" y="' + (Y(st * i) + 3.5) + '" text-anchor="end" font-size="9.5" font-weight="700" fill="var(--v-mute)">' + st * i + '</text>';
+        var every = Math.max(1, Math.ceil(n2 / (w < 500 ? 6 : 12)));
+        B.forEach(function (b, k) { if (b.v) { var y = Y(b.v); s += '<rect class="vx-bar" x="' + (X(k) - bar / 2) + '" y="' + y + '" width="' + bar + '" height="' + (h - pb - y) + '" rx="' + Math.min(3, bar / 2) + '" fill="var(--v-acc)" fill-opacity=".85" style="animation-delay:' + Math.min(k * 12, 400) + 'ms"/>'; } if (k % every === 0) s += '<text x="' + X(k) + '" y="' + (h - 7) + '" text-anchor="middle" font-size="9.5" font-weight="700" fill="var(--v-mute)">' + esc(b.l) + '</text>'; s += '<rect class="hit" data-k="' + k + '" x="' + (pl + bw * k) + '" y="' + pt + '" width="' + bw + '" height="' + (h - pt - pb) + '" fill="transparent"/>'; });
+        var line = B.map(function (b, k) { return (k ? 'L' : 'M') + X(k).toFixed(1) + ' ' + Y(Object.keys(b.u).length).toFixed(1); }).join(' ');
+        s += '<path d="' + line + '" fill="none" stroke="var(--v-c2)" stroke-width="2" stroke-linejoin="round" pointer-events="none"/>';
+        host.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" height="' + h + '" role="img" aria-label="Visites">' + s + '</svg>';
+        var svg = host.querySelector('svg');
+        svg.addEventListener('mousemove', function (e) { var r = e.target.closest('.hit'); if (!r) return hideTip(); var b = B[+r.getAttribute('data-k')]; showTip('<b>' + esc(b.full) + '</b><br>' + b.v + ' visite' + (b.v > 1 ? 's' : '') + ' · ' + Object.keys(b.u).length + ' visiteur' + (Object.keys(b.u).length > 1 ? 's' : '') + '<br>' + b.pv + ' page' + (b.pv > 1 ? 's' : '') + ' vue' + (b.pv > 1 ? 's' : ''), e); });
+        svg.addEventListener('mouseleave', hideTip);
+    }
+    function chartHours(L) {
+        var host = $('vx-c2'); if (!host) return;
+        var H = new Array(24).fill(0); L.forEach(function (v) { H[new Date(v.t).getHours()]++; });
+        var w = Math.max(220, host.clientWidth), h = 170, pb = 20, pt = 14, bw = w / 24, mx = Math.max.apply(null, H.concat([1])), top = H.indexOf(mx);
+        var s = '';
+        H.forEach(function (v, i) { var bh = v ? Math.max(3, (h - pb - pt) * v / mx) : 2; s += '<rect class="vx-bar" x="' + (i * bw + bw * .15) + '" y="' + (h - pb - bh) + '" width="' + (bw * .7) + '" height="' + bh + '" rx="2" fill="' + (v ? 'var(--v-c7)' : 'var(--v-line)') + '" fill-opacity="' + (i === top ? 1 : .55) + '"/>'; if (i % 3 === 0) s += '<text x="' + (i * bw + bw / 2) + '" y="' + (h - 6) + '" text-anchor="middle" font-size="9" font-weight="700" fill="var(--v-mute)">' + i + 'h</text>'; s += '<rect class="hit" data-i="' + i + '" x="' + i * bw + '" y="0" width="' + bw + '" height="' + h + '" fill="transparent"/>'; });
+        if (mx > 0 && L.length) s += '<text x="' + (top * bw + bw / 2) + '" y="' + (h - pb - (h - pb - pt) - 2) + '" text-anchor="middle" font-size="9.5" font-weight="900" fill="var(--v-ink)">' + top + 'h</text>';
+        host.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" height="' + h + '" role="img" aria-label="Heures">' + s + '</svg>' + (L.length ? '<div class="sub" style="margin:4px 0 0">Pic : <b>' + top + 'h – ' + (top + 1) + 'h</b> (' + mx + ' visite' + (mx > 1 ? 's' : '') + ')</div>' : '');
+        var svg = host.querySelector('svg');
+        svg.addEventListener('mousemove', function (e) { var r = e.target.closest('.hit'); if (!r) return hideTip(); var i = +r.getAttribute('data-i'); showTip('<b>' + i + 'h – ' + (i + 1) + 'h</b><br>' + H[i] + ' visite' + (H[i] > 1 ? 's' : ''), e); });
+        svg.addEventListener('mouseleave', hideTip);
+    }
+    function ipStats() { var m = {}; V.list.forEach(function (v) { var k = v.ip || '?'; m[k] = (m[k] || 0) + 1; }); return m; }
+    function renderList() {
+        var tabs = $('vx-tabs'), host = $('vx-list'); if (!tabs || !host) return;
+        var R = range(), all = V.list.filter(function (v) { return inR(v, R.from, R.to); }), L = all.filter(match), IPC = ipStats();
+        var byIp = {}; L.forEach(function (v) { var k = v.ip || '?', g = byIp[k] || (byIp[k] = { ip: k, n: 0, pv: 0, first: v.t, last: v.tl, loc: [v.city, v.country].filter(Boolean).join(' · '), isp: v.isp, devs: {}, cls: {}, v: v }); g.n++; g.pv += v.np; g.first = Math.min(g.first, v.t); g.last = Math.max(g.last, v.tl); g.devs[v.kind] = 1; if (v.client) g.cls[v.client] = 1; });
+        var byCl = {}; L.forEach(function (v) { if (!v.client) return; var g = byCl[v.client] || (byCl[v.client] = { c: v.client, n: 0, pv: 0, last: 0, ips: {}, v: v }); g.n++; g.pv += v.np; g.last = Math.max(g.last, v.tl); g.ips[v.ip] = 1; });
+        var focus = document.activeElement && document.activeElement.id === 'vx-q', pos = focus ? document.activeElement.selectionStart : 0;
+        tabs.innerHTML = '<button type="button" class="vx-tab' + (V.tab === 'visits' ? ' on' : '') + '" data-t="visits">🧭 Visites <em>' + L.length + '</em></button><button type="button" class="vx-tab' + (V.tab === 'ip' ? ' on' : '') + '" data-t="ip">🌐 Adresses IP <em>' + Object.keys(byIp).length + '</em></button><button type="button" class="vx-tab' + (V.tab === 'cl' ? ' on' : '') + '" data-t="cl">💜 Clients fidélité <em>' + Object.keys(byCl).length + '</em></button>'
+            + '<div class="vx-q"><input id="vx-q" type="search" placeholder="IP, ville, client, appareil, page…" value="' + esc(V.q) + '"></div>'
+            + [['', 'Tous'], ['mobile', '📱 Mobile'], ['pc', '💻 Ordinateur'], ['client', '💜 Clients'], ['deep', '📄 3 pages et +']].map(function (f) { return '<button type="button" class="vx-chip' + (V.filter === f[0] ? ' on' : '') + '" data-f="' + f[0] + '">' + f[1] + '</button>'; }).join('');
+        if (focus) { var q = $('vx-q'); q.focus(); try { q.setSelectionRange(pos, pos); } catch (e) {} }
+        if (!L.length) { host.innerHTML = '<div class="vx-empty"><b>🔍</b>' + (all.length ? 'Aucune visite ne correspond à la recherche ou au filtre.' : 'Aucune visite sur la période choisie.') + '</div>'; return; }
+        if (V.tab === 'ip') {
+            var A = Object.keys(byIp).map(function (k) { return byIp[k]; }).sort(function (a, b) { return b.last - a.last; });
+            host.innerHTML = '<div class="vx-tbl"><table><thead><tr><th>Adresse IP</th><th>Lieu</th><th>Visites</th><th>Pages</th><th>Appareils</th><th>Client</th><th>Première</th><th>Dernière</th></tr></thead><tbody>'
+                + A.slice(0, 600).map(function (g) { return '<tr data-ip="' + esc(g.ip) + '"><td class="ip">' + esc(g.ip) + (IPC[g.ip] > 1 ? '<small>' + IPC[g.ip] + ' visites au total</small>' : '') + '</td><td>' + esc(g.loc || '—') + '<small>' + esc(g.isp || '') + '</small></td><td><b>' + g.n + '</b></td><td>' + g.pv + '</td><td>' + Object.keys(g.devs).map(function (d) { return (DEVI[d] || '•') + ' ' + esc(d); }).join('<br>') + '</td><td>' + (Object.keys(g.cls).map(esc).join(', ') || '—') + '</td><td>' + fmtDT(g.first) + '</td><td>' + fmtDT(g.last) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            return;
+        }
+        if (V.tab === 'cl') {
+            var C = Object.keys(byCl).map(function (k) { return byCl[k]; }).sort(function (a, b) { return b.last - a.last; });
+            host.innerHTML = C.length ? '<div class="vx-tbl"><table><thead><tr><th>Client fidélité</th><th>Visites</th><th>Pages vues</th><th>Adresses IP</th><th>Dernière visite</th></tr></thead><tbody>'
+                + C.map(function (g) { return '<tr data-vid="' + esc(g.v.id) + '"><td><b>💜 ' + esc(g.c) + '</b></td><td><b>' + g.n + '</b></td><td>' + g.pv + '</td><td class="ip">' + Object.keys(g.ips).map(esc).join('<br>') + '</td><td>' + fmtDT(g.last) + '</td></tr>'; }).join('') + '</tbody></table></div>'
+                : '<div class="vx-empty"><b>💜</b>Aucun client fidélité connecté au site sur la période.</div>';
+            return;
+        }
+        var out = '', lastDay = '', lim = Math.min(L.length, V.lim || 400);
+        L.slice(0, lim).forEach(function (v) {
+            var d = new Date(v.t), dk = d.toDateString();
+            if (dk !== lastDay) { lastDay = dk; var n = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5), cnt = L.filter(function (x) { return new Date(x.t).toDateString() === dk; }).length; out += '<div class="vx-day"><span>' + (n === 0 ? 'Aujourd’hui' : n === 1 ? 'Hier' : d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })) + '</span><span>' + cnt + ' visite' + (cnt > 1 ? 's' : '') + '</span></div>'; }
+            var pg = v.pages || [], last = pg.length ? pageName(pg[pg.length - 1]) : '—';
+            out += '<div class="vx-vis' + (V.sel === v.id ? ' sel' : '') + '" data-vid="' + esc(v.id) + '"><div class="tm">' + hm(v.t) + '</div><div class="dv" title="' + esc(v.dev || '') + '">' + (DEVI[v.kind] || '❔') + '</div>'
+                + '<div class="ip">' + esc(v.ip || '—') + '<small>' + esc(v.isp || '') + '</small></div>'
+                + '<div class="lo">📍 ' + esc([v.city, v.country].filter(Boolean).join(' · ') || 'Lieu inconnu') + '<small>' + esc(refName(v.ref)) + '</small></div>'
+                + '<div class="pg">📄 ' + v.np + ' page' + (v.np > 1 ? 's' : '') + (v.tl > v.t ? ' · ⏱️ ' + dur(v.tl - v.t) : '') + '<small>dernière : ' + esc(last) + '</small></div>'
+                + '<div class="rt">' + (v.client ? '<span class="vx-pill cl">💜 ' + esc(v.client) + '</span>' : '') + (IPC[v.ip] > 1 ? '<span class="vx-pill rv">↩︎ revenant · ' + IPC[v.ip] + '</span>' : '<span class="vx-pill">nouveau</span>') + '</div></div>';
+        });
+        if (L.length > lim) out += '<button type="button" class="vx-chip" data-a="more" style="width:100%;padding:10px;margin-top:6px">Afficher plus (' + (L.length - lim) + ' visites)</button>';
+        host.innerHTML = out;
+    }
+    function drawer(v) {
+        var d = $('vx-drw'); if (!d || !v) return;
+        V.sel = v.id;
+        Array.prototype.forEach.call(document.querySelectorAll('.vx-vis'), function (x) { x.classList.toggle('sel', x.getAttribute('data-vid') === v.id); });
+        var same = V.list.filter(function (x) { return x.ip === v.ip && x.id !== v.id; }).slice(0, 30);
+        var pg = v.pages || [];
+        d.innerHTML = '<div class="dh"><div><h3>' + esc(v.ip || '—') + '</h3><p>' + fmtDT(v.t) + (v.tl > v.t ? ' → ' + hm(v.tl) + ' · ' + dur(v.tl - v.t) : '') + '</p></div><button type="button" class="x" data-a="drw" aria-label="Fermer">✕</button></div>'
+            + '<div class="db"><div class="vx-kv">'
+            + '<span>📍 Lieu</span><b>' + esc([v.city, v.country].filter(Boolean).join(' · ') || '—') + '</b>'
+            + '<span>🛰️ Fournisseur</span><b>' + esc(v.isp || '—') + '</b>'
+            + '<span>' + (DEVI[v.kind] || '❔') + ' Appareil</span><b>' + esc(v.dev || '—') + '</b>'
+            + '<span>🖥️ Écran</span><b>' + esc(v.scr || '—') + '</b>'
+            + '<span>🌍 Langue</span><b>' + esc(v.lang || '—') + '</b>'
+            + '<span>🔗 Provenance</span><b>' + esc(refName(v.ref)) + (v.ref && refName(v.ref) !== v.ref ? '<br><small style="color:var(--v-mute)">' + esc(v.ref) + '</small>' : '') + '</b>'
+            + '<span>💜 Client</span><b>' + esc(v.client || 'non connecté') + '</b>'
+            + (v.ua ? '<span>🧾 Navigateur</span><b style="font-size:.68rem;color:var(--v-ink2)">' + esc(v.ua) + '</b>' : '')
+            + '</div><div class="vx-h5">🧭 Parcours sur le site · ' + v.np + ' page' + (v.np > 1 ? 's' : '') + '</div>'
+            + (pg.length ? '<ol class="vx-path">' + pg.map(function (p) { return '<li>' + esc(pageName(p)) + '<small>' + esc(pageTime(p)) + '</small></li>'; }).join('') + '</ol>' : '<div class="sub">Aucune page enregistrée</div>')
+            + '<div class="vx-h5">↩︎ Autres visites de cette adresse IP · ' + same.length + '</div>'
+            + (same.length ? same.map(function (x) { return '<div class="vx-other" data-vid="' + esc(x.id) + '"><span>' + fmtDT(x.t) + ' · ' + (DEVI[x.kind] || '') + ' ' + x.np + ' page' + (x.np > 1 ? 's' : '') + '</span><b>' + esc(x.client || '') + '</b></div>'; }).join('') : '<div class="sub">Première visite connue</div>')
+            + '</div>';
+        d.classList.add('open');
+    }
+    function help() {
+        var rule = ''; try { rule = typeof window._visitsRule === 'function' ? window._visitsRule() : ''; } catch (e) {}
+        return '<div class="vx-msg" style="background:var(--v-soft);color:var(--v-ink2)"><b>Règle Firestore à ajouter</b> (console Firebase → Firestore → Règles), à l’intérieur de <code>match /databases/{database}/documents</code> :' + (rule ? '<pre>' + esc(rule) + '</pre>' : '') + '</div>';
+    }
+    function csv() {
+        var R = range(), L = V.list.filter(function (v) { return inR(v, R.from, R.to); }).filter(match);
+        var rows = [['Date', 'Fin', 'Durée', 'Adresse IP', 'Ville', 'Pays', 'Fournisseur', 'Appareil', 'Écran', 'Langue', 'Provenance', 'Client', 'Nb pages', 'Pages']];
+        L.forEach(function (v) { rows.push([fmtDT(v.t), fmtDT(v.tl), v.tl > v.t ? dur(v.tl - v.t) : '', v.ip, v.city, v.country, v.isp, v.dev, v.scr, v.lang, refName(v.ref), v.client, v.np, (v.pages || []).join(' | ')]); });
+        var txt = '﻿' + rows.map(function (r) { return r.map(function (c) { c = String(c == null ? '' : c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); }).join('\r\n');
+        var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' })); a.download = 'visites_site_' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    }
+    function purge() {
+        var lim = Date.now() - 395 * 864e5, old = V.list.filter(function (v) { return v.t && v.t < lim; });
+        if (!old.length) { toast('Aucune visite de plus de 13 mois à supprimer', 'info'); return; }
+        if (!confirm('Supprimer définitivement ' + old.length + ' visite(s) de plus de 13 mois ?')) return;
+        var i = 0;
+        (function next() { if (i >= old.length) { V.list = V.list.filter(function (v) { return !(v.t && v.t < lim); }); render(); toast('🧹 ' + old.length + ' visite(s) anciennes supprimées', 'success'); return; } window._covoFs('DELETE', 'visits/' + old[i++].id).then(next, next); })();
+    }
+    function onClick(e) {
+        var b = e.target.closest('[data-p],[data-a],[data-t],[data-f],[data-vid],[data-ip]'); if (!b) return;
+        var x;
+        if ((x = b.getAttribute('data-p'))) { V.period = x; saveUi(); closeDrw(); render(); return; }
+        if ((x = b.getAttribute('data-t'))) { V.tab = x; saveUi(); renderList(); return; }
+        if (b.hasAttribute('data-f')) { V.filter = b.getAttribute('data-f'); renderList(); return; }
+        switch (b.getAttribute('data-a')) { case 'close': return close(); case 'reload': return load(); case 'csv': return csv(); case 'purge': return purge(); case 'drw': return closeDrw(); case 'more': V.lim = (V.lim || 400) + 400; return renderList(); }
+        if ((x = b.getAttribute('data-vid'))) { var v = V.list.filter(function (y) { return y.id === x; })[0]; if (v) drawer(v); return; }
+        if ((x = b.getAttribute('data-ip'))) { V.q = x; V.tab = 'visits'; saveUi(); renderList(); var f = V.list.filter(function (y) { return y.ip === x; })[0]; if (f) drawer(f); }
+    }
+
+    /* ───────────── Ouverture ───────────── */
+    function open() { var ov = build(); ov.classList.add('open'); closeDrw(); render(); if (!V.loaded || Date.now() - V.at > 60000) load(); }
+    window._visitsOpen = open;
+    window._visitsIp = function (ip) { open(); V.q = ip; V.tab = 'visits'; renderList(); };
+    window._vxRender = render;
+    var rt = null; window.addEventListener('resize', function () { var ov = $('vx-ov'); if (!ov || !ov.classList.contains('open') || !V.loaded) return; clearTimeout(rt); rt = setTimeout(function () { var R = range(), L = V.list.filter(function (v) { return inR(v, R.from, R.to); }).filter(match); chartDays(L, R); chartHours(L); }, 150); });
+})();
+</script>
