@@ -26018,9 +26018,12 @@ logout = function(skipConfirmation = false) {
         function calculateStockPredictions() {
         const predictions = [];
         const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        // Performance : les ventes des 30 derniers jours sont additionnées une seule fois (avant : une fois par produit)
+        const _qty30 = new Map();
+        salesHistory.forEach(s => { if (new Date(s.date) >= thirtyDaysAgo) (s.items || []).forEach(item => { _qty30.set(item.id, (_qty30.get(item.id) || 0) + item.quantity); }); });
         products.forEach(product => {
             if (product.stock <= 0 || !product.active) return;
-            const sales = salesHistory.filter(s => new Date(s.date) >= thirtyDaysAgo).flatMap(s => s.items).filter(item => item.id === product.id).reduce((sum, item) => sum + item.quantity, 0);
+            const sales = _qty30.get(product.id) || 0;
             const avgSalesPerDay = sales / 30;
             if (avgSalesPerDay > 0) predictions.push({ id: product.id, name: product.name, currentStock: product.stock, avgSalesPerDay, daysLeft: Math.max(0, Math.floor(product.stock / avgSalesPerDay)) });
         });
@@ -26491,7 +26494,9 @@ logout = function(skipConfirmation = false) {
         const sorted = [...salesHistory].reverse();
         // Stocker les ventes triées pour l'aperçu du ticket
         window._sortedSalesHistory = sorted;
-        list.innerHTML = sorted.length > 0 ? sorted.map((s, idx) => {
+        // Performance : affichage progressif (avant : TOUTES les ventes étaient dessinées à chaque vente)
+        const _histLim = window._histLimit || 100;
+        list.innerHTML = sorted.length > 0 ? sorted.slice(0, _histLim).map((s, idx) => {
             if (s.type === 'retour_article') return ''; // Masquer les entrées retour (déjà reflétées sur le ticket original)
             const isCancelled = s.cancelled === true;
             const hasRetours = !isCancelled && s.items && s.items.some(i => i.retourne);
@@ -26521,7 +26526,7 @@ logout = function(skipConfirmation = false) {
                 ${isCancelled && s.cancelledAt ? `<div style="font-size:0.72rem; color:#e74c3c; margin-top:3px;">Annulé le ${new Date(s.cancelledAt).toLocaleString('fr-FR')}</div>` : ''}
                 ${hasRetours ? `<div style="font-size:0.72rem; color:#e67e22; margin-top:3px;">↩️ ${s.items.filter(i=>i.retourne).length} article(s) retourné(s) · ${s.items.filter(i=>i.retourne).map(i=>i.name).join(', ')}</div>` : ''}
             </div>
-        `;}).join('') : '<p style="text-align:center; color:var(--gray);">Aucune vente enregistrée</p>';
+        `;}).join('') + (sorted.length > _histLim ? '<button type="button" onclick="window._histMore&&window._histMore()" style="display:block;width:100%;margin:6px 0 2px;padding:10px;border:1.5px dashed var(--border-color,#ccc);border-radius:8px;background:none;color:var(--text-main,#2c3e50);font-weight:700;cursor:pointer;">⬇️ Afficher plus (' + (sorted.length - _histLim) + ' ventes plus anciennes)</button>' : '') : '<p style="text-align:center; color:var(--gray);">Aucune vente enregistrée</p>';
     }
 
     // ===== EXPORT / IMPORT =====
@@ -65620,5 +65625,68 @@ function covoQrPrint(o) {
     function _phpShowSafe() { try { return _phpShow; } catch (e) { return null; } }
     window._pzhShow = show; window._pzhHide = hide;
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — OPTIMISATION DES PERFORMANCES
+   • Images en erreur : plus de boucle infinie de rechargement (hors ligne, lien cassé) →
+     une vignette locale est affichée une seule fois, sans réseau
+   • Les cartes hors de l'écran ne sont plus dessinées (content-visibility) : défilement fluide
+     même avec des centaines d'articles
+   • Effets coûteux retirés : flou d'arrière-plan sur chaque carte, animations décoratives
+     permanentes (halos des bandeaux, lueur « Nouveau », reflets)
+   • Animations et tâches graphiques suspendues quand COVO Pro n'est pas à l'écran
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._perfInstalled) return;
+    window._perfInstalled = true;
+
+    /* 1) Images : une seule tentative de remplacement, puis vignette locale (aucune requête) */
+    var PH = {};
+    function svgPh(text) {
+        var t = String(text || '•').replace(/[<>&"]/g, '').slice(0, 2).toUpperCase() || '•';
+        if (PH[t]) return PH[t];
+        return (PH[t] = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><rect width="160" height="160" rx="18" fill="#e8ecf3"/><text x="80" y="98" font-family="Arial,sans-serif" font-size="52" font-weight="700" text-anchor="middle" fill="#7a869a">' + t + '</text></svg>'));
+    }
+    window.addEventListener('error', function (e) {
+        var img = e.target;
+        if (!img || img.tagName !== 'IMG') return;
+        var n = (+img.getAttribute('data-perr') || 0) + 1;
+        img.setAttribute('data-perr', n);
+        var src = img.getAttribute('src') || '';
+        // 2e échec, ou échec d'une image « de remplacement » distante → on coupe la boucle
+        if (n >= 2 || /placehold\.co|placeholder|via\.placeholder|dummyimage/i.test(src)) {
+            img.onerror = null;
+            img.removeAttribute('onerror');
+            var label = img.getAttribute('alt') || '';
+            if (!label) { var m = src.match(/text=([^&]+)/); if (m) { try { label = decodeURIComponent(m[1]); } catch (er) { label = m[1]; } } }
+            if (src.indexOf('data:image/svg+xml') !== 0) img.src = svgPh(label);
+        }
+    }, true);
+
+    /* 2) Rendu : cartes hors écran ignorées, effets coûteux retirés */
+    var css = document.createElement('style');
+    css.id = 'perf-css';
+    css.textContent = [
+        '#product-list > .card,#disabled-products-cards > .card{content-visibility:auto;contain-intrinsic-size:auto 400px;}',
+        '#product-list.pz-compact > .card{contain-intrinsic-size:auto 280px;}#product-list.pz-list > .card{contain-intrinsic-size:auto 72px;}',
+        '.cvx-t{content-visibility:auto;contain-intrinsic-size:auto 330px;}.cvx-r{content-visibility:auto;contain-intrinsic-size:auto 60px;}',
+        '#history-list > div,#stats-history-list > div,.gx-item,.gx-ec,.gx-ev,.ivy-tbl tbody tr{content-visibility:auto;contain-intrinsic-size:auto 80px;}',
+        '#product-list .card *,#product-list .card{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;}',
+        '#pz-hero::before,#pz-hero::after,#cvx-hero::before,#cvx-hero::after,#gx-hero::before,#gx-hero::after,#pv-hero::before,#pv-hero::after{animation:none!important;}',
+        '.new-badge{animation:none!important;}',
+        '#progress-bar,#header-peek-bar{animation:none!important;}',
+        'body.perf-hidden *,body.perf-hidden *::before,body.perf-hidden *::after{animation-play-state:paused!important;}'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(css);
+
+    /* 3) COVO Pro en arrière-plan : on met les animations en pause */
+    function vis() { if (document.body) document.body.classList.toggle('perf-hidden', document.hidden); }
+    document.addEventListener('visibilitychange', vis);
+
+    /* 4) Liste des ventes (administration) : affichage progressif */
+    window._histMore = function () { window._histLimit = (window._histLimit || 100) + 200; try { if (typeof renderHistory === 'function') renderHistory(); } catch (e) {} };
 })();
 </script>
