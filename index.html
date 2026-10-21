@@ -11919,7 +11919,7 @@ function toggleInfoSection(headerElement) {
         nightEl.style.color = nightActive ? '#a78bfa' : '#27ae60';
 
         const goalEl = document.getElementById('aw-daily-goal');
-        goalEl.textContent = settings.dailyGoal ? settings.dailyGoal + ' €' : 'Non défini';
+        goalEl.textContent = (typeof window._covoGoalLabel === 'function') ? window._covoGoalLabel() : (settings.dailyGoal ? settings.dailyGoal + ' €' : 'Non défini');
 
         const darkEl = document.getElementById('aw-dark-mode');
         const darkActive = document.body.classList.contains('dark-mode');
@@ -48701,7 +48701,7 @@ body.dark-mode ._qahub-stat { border-color: rgba(255,255,255,0.08); }
       caToday += (typeof _devisTodayRegleHorsTicketDuJour === 'function') ? _devisTodayRegleHorsTicketDuJour() : 0;
 
       /* objectif */
-      var goal = parseFloat(localStorage.getItem('covo_delivery_goal')) || 150;
+      var goal = (typeof window._covoGoalToday === 'function' && window._covoGoalToday()) || parseFloat(localStorage.getItem('covo_delivery_goal')) || 150;
 
       /* produits */
       var products = JSON.parse(localStorage.getItem('covo_products') || '[]');
@@ -50753,7 +50753,7 @@ function _injectGoalBar(){
     // nulle part dans l'app (l'admin enregistre l'objectif dans 'covo_delivery_goal' via
     // updateDeliveryGoal()) — on retombe donc sur cette même clé si dailyGoal est absent.
     var s=JSON.parse(localStorage.getItem('covo_settings')||'{}');
-    var goal=parseFloat(s.dailyGoal)||parseFloat(localStorage.getItem('covo_delivery_goal'))||0;
+    var goal=(typeof window._covoGoalToday==='function'&&window._covoGoalToday())||parseFloat(s.dailyGoal)||parseFloat(localStorage.getItem('covo_delivery_goal'))||0;
     if(!goal) return;
     var allSales=typeof salesHistory!=='undefined'?salesHistory:JSON.parse(localStorage.getItem('covo_sales_history')||'[]');
     var today=new Date().toDateString();
@@ -66483,6 +66483,7 @@ function covoQrPrint(o) {
         '.vpv-url{flex:1;margin-left:8px;height:22px;border-radius:7px;background:#fff;color:#4b5563;font-size:.68rem;font-weight:700;display:flex;align-items:center;padding:0 10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-family:ui-monospace,Menlo,Consolas,monospace;}',
         'body.dark-mode .vpv-url{background:#1a1b1e;color:#c3c2b7;}',
         '.vpv-dev .scr{position:relative;overflow:hidden;background:#fff;}',
+        '.vpv-dev.phone.bare{padding:0;border-radius:16px;background:transparent;box-shadow:0 10px 30px rgba(0,0,0,.25);}.vpv-dev.phone.bare::before{display:none;}.vpv-dev.phone.bare .scr{border-radius:16px;}',
         '.vpv-dev .inner{position:absolute;left:0;top:0;transform-origin:0 0;}',
         '.vpv-dev iframe{border:0;display:block;width:100%;height:100%;background:#fff;}',
         '.vpv-load{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#fff;color:#5b6b82;font-weight:800;font-size:.85rem;z-index:2;transition:opacity .25s;}',
@@ -66629,7 +66630,7 @@ function covoQrPrint(o) {
         el = document.createElement('div'); el.id = 'vpv'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Parcours du visiteur');
         el.innerHTML = '<div id="vpv-head"><div><h2><i>👁️</i>Parcours du visiteur</h2><div class="sub" id="vpv-sub"></div></div><span class="sp"></span>'
             + '<div class="vpv-seg" id="vpv-mode"><button type="button" data-m="real" title="Le site en direct, tel que le client le voit">🌐 Page réelle</button><button type="button" data-m="quick" title="Reconstitution instantanée à partir du catalogue de la caisse">⚡ Aperçu rapide</button></div>'
-            + '<div class="vpv-seg" id="vpv-devs"><button type="button" data-d="phone">📱 Mobile</button><button type="button" data-d="pc">💻 Ordinateur</button></div>'
+            + '<div class="vpv-seg" id="vpv-devs"><button type="button" data-d="phone" title="Écran de téléphone">📱<span class="t"> Mobile</span></button><button type="button" data-d="pc" title="Écran d’ordinateur">💻<span class="t"> Ordinateur</span></button></div>'
             + '<a class="vpv-hb vpv-hide" id="vpv-ext" target="_blank" rel="noopener" title="Ouvrir cette page du site dans un nouvel onglet">↗ Ouvrir</a>'
             + '<button type="button" class="vpv-x" data-vpv="close" aria-label="Fermer">✕</button></div>'
             + '<div id="vpv-main"><div id="vpv-steps"></div><div id="vpv-stage"><div id="vpv-view"></div>'
@@ -66674,10 +66675,19 @@ function covoQrPrint(o) {
     }
     function fit() {
         var dev = document.querySelector('#vpv-view .vpv-dev'), view = $('vpv-view'); if (!dev || !view) return;
-        var vp = viewport(), pad = S.dev === 'phone' ? 24 : 0, bar = S.dev === 'pc' ? 34 : 0;
-        var aw = view.clientWidth - 36 - pad, ah = view.clientHeight - 36 - pad - bar, k = Math.min(1, aw / vp.w, ah / vp.h);
-        k = Math.max(0.2, k);
+        var vp = viewport(), small = window.innerWidth <= 640, bare = small && S.dev === 'phone';
+        dev.classList.toggle('bare', bare);
         var scr = dev.querySelector('.scr'), inner = dev.querySelector('.inner');
+        if (bare) {
+            // Sur téléphone : la page occupe tout l'écran disponible, à taille réelle (on fait défiler dans la page)
+            var bw = view.clientWidth - 16, bh = view.clientHeight - 16, kb = Math.min(1, bw / vp.w);
+            scr.style.width = Math.round(vp.w * kb) + 'px'; scr.style.height = bh + 'px';
+            inner.style.width = vp.w + 'px'; inner.style.height = Math.round(bh / kb) + 'px'; inner.style.transform = 'scale(' + kb + ')';
+            dev.style.width = ''; return;
+        }
+        var pad = S.dev === 'phone' ? 24 : 0, bar = S.dev === 'pc' ? 34 : 0, m = small ? 16 : 36;
+        var aw = view.clientWidth - m - pad, ah = view.clientHeight - m - pad - bar, k = Math.min(1, aw / vp.w, ah / vp.h);
+        k = Math.max(0.2, k);
         scr.style.width = Math.round(vp.w * k) + 'px'; scr.style.height = Math.round(vp.h * k) + 'px';
         inner.style.width = vp.w + 'px'; inner.style.height = vp.h + 'px'; inner.style.transform = 'scale(' + k + ')';
         if (S.dev === 'pc') dev.style.width = Math.round(vp.w * k) + 'px'; else dev.style.width = '';
@@ -66777,5 +66787,484 @@ function covoQrPrint(o) {
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
     window._vpvOpen = open;
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — 📊 VISITES DU SITE : VERSION TÉLÉPHONE
+   • En-tête compact (icônes), périodes en une ligne qui défile
+   • Bascule « 🧭 Visites | 📊 Statistiques » : la liste des visites tout de suite, les graphiques à part
+   • Visites en cartes complètes (heure, appareil, IP, lieu, pages, dernière page, client)
+   • Onglets Adresses IP / Clients fidélité en cartes (plus de tableau à faire défiler)
+   • Fiche d'une visite plein écran : résumé en 3 tuiles, barre du bas « 👁️ Voir les pages visitées »,
+     glisser vers la droite pour revenir à la liste
+   • Parcours du visiteur : en-tête compact, page affichée en grand, glisser pour changer de page
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._vxmInstalled) return;
+    window._vxmInstalled = true;
+    var MQ = window.matchMedia('(max-width:640px)');
+    function mob() { return MQ.matches; }
+    function $(id) { return document.getElementById(id); }
+    var view = 'list';
+    try { view = localStorage.getItem('covo_vxm_view') || 'list'; } catch (e) {}
+
+    var css = document.createElement('style');
+    css.id = 'vxm-css';
+    css.textContent = [
+        /* Valable partout : petit correctif d'affichage dans la fiche */
+        '#vx-drw .sub{font-size:.76rem;color:var(--v-mute);font-weight:700;margin-bottom:10px;}',
+        '.vxm-sw,.vxm-sum,.vxm-foot,.vxm-chips{display:none;}',
+        '@media (max-width:640px){',
+        /* En-tête */
+        '#vx-head{display:grid!important;grid-template-columns:minmax(0,1fr) auto auto auto auto auto;gap:6px!important;align-items:center;padding:10px 12px 10px!important;padding-top:max(10px,env(safe-area-inset-top))!important;}',
+        '#vx-head > div:first-child{min-width:0;}',
+        '#vx-head h2{font-size:.95rem!important;gap:7px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block!important;}#vx-head h2 i{display:inline-flex!important;vertical-align:middle;margin-right:6px;}',
+        '#vx-head h2 i{width:28px!important;height:28px!important;border-radius:8px!important;}',
+        '#vx-st{font-size:.64rem!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '#vx-head .sp{display:none;}',
+        '#vx-head .vx-seg{grid-column:1/-1;grid-row:2;display:flex!important;overflow-x:auto;scrollbar-width:none;}',
+        '#vx-head .vx-seg::-webkit-scrollbar{display:none;}',
+        '#vx-head .vx-seg button{flex:1 0 auto;padding:7px 10px!important;font-size:.74rem!important;}',
+        '#vx-head .vx-hb{width:34px;height:34px;padding:0!important;border-radius:50%!important;font-size:0!important;display:inline-flex;align-items:center;justify-content:center;}',
+        '#vx-head .vx-hb::before{font-size:.95rem;}',
+        '#vx-head .vx-hb[data-a="app"]::before{content:"📱";}#vx-head .vx-hb[data-a="reload"]::before{content:"🔄";}#vx-head .vx-hb[data-a="csv"]::before{content:"⬇️";}#vx-head .vx-hb[data-a="purge"]::before{content:"🧹";}#vx-head .vx-hb[data-a="close"]::before{content:"✕";}',
+        '#vx-body{padding:0 10px 18px!important;}',
+        /* Bascule Visites / Statistiques */
+        '.vxm-sw{display:flex;position:sticky;top:0;z-index:1;gap:3px;padding:8px 0;background:var(--v-bg);margin-bottom:2px;}',
+        '.vxm-sw div{display:flex;gap:3px;padding:3px;border-radius:12px;background:var(--v-soft2);flex:1;}',
+        '.vxm-sw button{flex:1;border:none;background:transparent;color:var(--v-ink2);font-weight:900;font-size:.82rem;padding:9px 6px;border-radius:9px;cursor:pointer;font-family:inherit;}',
+        '.vxm-sw button.on{background:var(--v-surface);color:var(--v-ink);box-shadow:0 1px 4px rgba(0,0,0,.18);}',
+        '.vxm-sw button em{font-style:normal;font-size:.66rem;background:var(--v-accb);color:var(--v-acc);border-radius:8px;padding:1px 6px;margin-left:4px;}',
+        /* Mode Visites : indicateurs en bande, graphiques masqués */
+        '#vx-box.vxm-l .vx-row{display:none!important;}',
+        '#vx-box.vxm-l .vx-kpis{display:flex!important;overflow-x:auto;scrollbar-width:none;gap:7px;margin:0 -10px 10px;padding:2px 10px 4px;scroll-snap-type:x proximity;}',
+        '#vx-box.vxm-l .vx-kpis::-webkit-scrollbar{display:none;}',
+        '#vx-box.vxm-l .vx-k{flex:0 0 128px;scroll-snap-align:start;padding:8px 10px;}',
+        '#vx-box.vxm-l .vx-k b{font-size:1.15rem;}',
+        /* Mode Statistiques : liste masquée */
+        '#vx-box.vxm-s #vx-tabs,#vx-box.vxm-s #vx-list{display:none!important;}',
+        '#vx-box.vxm-s .vx-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important;}',
+        '.vx-row,.vx-row.b{gap:10px!important;margin-bottom:10px!important;}',
+        /* Barre recherche / onglets */
+        '.vx-tabs{gap:8px!important;padding:8px!important;border-radius:14px!important;}',
+        '.vx-tabs .vx-tab{flex:1 1 0;justify-content:center;padding:8px 4px!important;font-size:.72rem!important;flex-direction:column;gap:2px!important;}',
+        '.vx-tabs .vx-q{flex:1 1 100%!important;min-width:0!important;}',
+        '.vx-tabs .vx-q input{font-size:16px!important;padding:10px 12px 10px 34px!important;}',
+        '.vx-tabs > .vx-chip{display:none!important;}',
+        '.vxm-chips{display:flex;flex:1 1 100%;gap:6px;overflow-x:auto;scrollbar-width:none;margin:0 -8px;padding:0 8px;}',
+        '.vxm-chips::-webkit-scrollbar{display:none;}',
+        '.vxm-chips .vx-chip{flex:0 0 auto;padding:7px 12px!important;font-size:.74rem!important;}',
+        /* Cartes de visite */
+        '.vx-vis{grid-template-columns:46px 36px minmax(0,1fr) auto!important;grid-template-rows:auto auto auto;row-gap:6px!important;column-gap:9px!important;padding:10px 11px!important;border-radius:14px!important;align-items:start!important;}',
+        '.vx-vis:hover{transform:none!important;}',
+        '.vx-vis .tm{grid-row:1;padding-top:8px;font-size:.84rem!important;}',
+        '.vx-vis .dv{grid-row:1;width:36px!important;height:36px!important;}',
+        '.vx-vis .ip{grid-row:1;padding-top:3px;}',
+        '.vx-vis .rt{grid-row:1;}',
+        '.vx-vis .lo,.vx-vis .pg{display:block!important;grid-column:2/-1;font-size:.76rem!important;white-space:normal!important;}',
+        '.vx-vis .lo{grid-row:2;}.vx-vis .pg{grid-row:3;padding:7px 9px;border-radius:10px;background:var(--v-soft);}',
+        '.vx-vis .lo small,.vx-vis .pg small{white-space:nowrap;}',
+        '.vx-day{margin:14px 2px 7px!important;}',
+        /* Tableaux → cartes */
+        '.vx-tbl{border:none!important;background:transparent!important;overflow:visible!important;}',
+        '.vx-tbl table,.vx-tbl tbody{display:block;}',
+        '.vx-tbl thead{display:none;}',
+        '.vx-tbl tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;background:var(--v-surface);border:1px solid var(--v-line);border-radius:14px;padding:11px 12px;margin-bottom:7px;}',
+        '.vx-tbl td{display:block;border:none!important;padding:0!important;font-size:.78rem;min-width:0;word-break:break-word;}',
+        '.vx-tbl td::before{content:attr(data-l);display:block;font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--v-mute);margin-bottom:1px;}',
+        '.vx-tbl td:first-child{grid-column:1/-1;font-size:.9rem;}.vx-tbl td:first-child::before{display:none;}',
+        /* Fiche d'une visite */
+        '#vx-drw{width:100%!important;border-left:none!important;}',
+        '#vx-drw .dh{padding:12px 14px!important;padding-top:max(12px,env(safe-area-inset-top))!important;}',
+        '#vx-drw .db{padding:12px 14px 20px!important;}',
+        '.vxm-sum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-bottom:12px;}',
+        '.vxm-sum div{background:var(--v-soft);border-radius:12px;padding:9px 10px;min-width:0;}',
+        '.vxm-sum span{display:block;font-size:.58rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--v-mute);}',
+        '.vxm-sum b{display:block;font-size:1rem;font-weight:900;color:var(--v-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.vx-kv{grid-template-columns:100px minmax(0,1fr)!important;background:var(--v-soft);border-radius:12px;padding:10px 12px;}',
+        '#vx-drw .db .vpv-open{display:none!important;}',
+        '.vxm-foot{display:flex;gap:8px;padding:10px 14px;padding-bottom:max(10px,env(safe-area-inset-bottom));border-top:1px solid var(--v-line);background:var(--v-surface);flex-shrink:0;}',
+        '.vxm-foot button{border:none;border-radius:12px;font-weight:900;font-size:.86rem;padding:12px 14px;cursor:pointer;font-family:inherit;}',
+        '.vxm-foot .bk{background:var(--v-soft2);color:var(--v-ink);}',
+        '.vxm-foot .go{flex:1;background:linear-gradient(120deg,#173b6c,#1c55a0);color:#fff;box-shadow:0 6px 16px rgba(28,85,160,.3);}',
+        '.vx-path li{padding-top:4px!important;padding-bottom:12px!important;}',
+        /* Parcours du visiteur */
+        '#vpv-head{display:grid!important;grid-template-columns:minmax(0,1fr) auto;gap:8px!important;padding:10px 12px!important;padding-top:max(10px,env(safe-area-inset-top))!important;}',
+        '#vpv-head h2{font-size:.95rem!important;}#vpv-head h2 i{width:28px!important;height:28px!important;}',
+        '#vpv-head .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.66rem!important;}',
+        '#vpv-head .sp{display:none;}',
+        '#vpv-head .vpv-x{grid-column:2;grid-row:1;}',
+        '#vpv-mode,#vpv-devs{grid-row:2;}#vpv-mode{grid-column:1;}#vpv-devs{grid-column:2;}',
+        '#vpv-head .vpv-seg button{padding:7px 8px!important;font-size:.72rem!important;}',
+        '#vpv-devs .t{display:none;}#vpv-devs button{padding:7px 10px!important;font-size:.9rem!important;}',
+        '#vpv-steps{padding:6px 8px!important;gap:6px!important;}',
+        '.vpv-st{flex:0 0 150px!important;padding:6px 7px!important;gap:7px!important;grid-template-columns:26px minmax(0,1fr)!important;}',
+        '.vpv-st .n{width:26px!important;height:26px!important;font-size:.85rem!important;}',
+        '.vpv-st b{font-size:.74rem!important;-webkit-line-clamp:1!important;}.vpv-st small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '#vpv-view{padding:8px!important;}',
+        '#vpv-ctl{padding:8px 12px!important;padding-bottom:max(8px,env(safe-area-inset-bottom))!important;gap:8px!important;}',
+        '#vpv-ctl .vpv-cap{order:-1;flex:1 1 100%;min-width:0!important;}',
+        '#vpv-ctl .vpv-play{flex:1;}',
+        '}'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    /* Bascule Visites / Statistiques */
+    function applyView() {
+        var box = $('vx-box'); if (!box) return;
+        var on = mob();
+        box.classList.toggle('vxm-l', on && view === 'list');
+        box.classList.toggle('vxm-s', on && view === 'stats');
+        Array.prototype.forEach.call(document.querySelectorAll('.vxm-sw [data-vw]'), function (b) { b.classList.toggle('on', b.getAttribute('data-vw') === view); });
+    }
+    function setView(v) {
+        view = v; try { localStorage.setItem('covo_vxm_view', v); } catch (e) {}
+        applyView();
+        var body = $('vx-body'); if (body) body.scrollTop = 0;
+        // les graphiques étaient masqués : on les redessine à la bonne largeur
+        if (v === 'stats') setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 30);
+    }
+    function decorateBody() {
+        var body = $('vx-body'); if (!body) return;
+        if (body.querySelector('.vx-kpis') && !body.querySelector('.vxm-sw')) {
+            var sw = document.createElement('div'); sw.className = 'vxm-sw';
+            sw.innerHTML = '<div><button type="button" data-vw="list">🧭 Visites<em id="vxm-n"></em></button><button type="button" data-vw="stats">📊 Statistiques</button></div>';
+            body.insertBefore(sw, body.firstChild);
+            sw.addEventListener('click', function (e) { var b = e.target.closest('[data-vw]'); if (b) { e.stopPropagation(); setView(b.getAttribute('data-vw')); } });
+        }
+        applyView();
+        decorateList();
+        if (mob() && view === 'stats') setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 30);
+    }
+    function decorateList() {
+        var tabs = $('vx-tabs');
+        if (tabs && !tabs.querySelector('.vxm-chips')) {
+            var chips = tabs.querySelectorAll(':scope > .vx-chip');
+            if (chips.length) {
+                var row = document.createElement('div'); row.className = 'vxm-chips';
+                Array.prototype.forEach.call(chips, function (c) { var cl = c.cloneNode(true); row.appendChild(cl); });
+                tabs.appendChild(row);
+            }
+        }
+        var t = tabs && tabs.querySelector('.vx-tab[data-t="visits"] em'), n = $('vxm-n'); if (n) n.textContent = t ? t.textContent : '';
+        // Tableaux → cartes : chaque case reçoit le nom de sa colonne
+        Array.prototype.forEach.call(document.querySelectorAll('#vx-list .vx-tbl table'), function (tb) {
+            if (tb.getAttribute('data-vxm')) return; tb.setAttribute('data-vxm', '1');
+            var H = Array.prototype.map.call(tb.querySelectorAll('thead th'), function (th) { return th.textContent.trim(); });
+            Array.prototype.forEach.call(tb.querySelectorAll('tbody tr'), function (tr) { Array.prototype.forEach.call(tr.children, function (td, i) { if (H[i]) td.setAttribute('data-l', H[i]); }); });
+        });
+    }
+    /* Fiche d'une visite : résumé + barre du bas */
+    function decorateDrawer() {
+        var d = $('vx-drw'); if (!d || !d.querySelector('.db') || d.querySelector('.vxm-sum')) return;
+        var db = d.querySelector('.db'), p = (d.querySelector('.dh p') || {}).textContent || '';
+        var durM = /·\s*([^·]+)$/.exec(p), np = d.querySelectorAll('.vx-path li').length;
+        var dev = '', kv = d.querySelector('.vx-kv');
+        if (kv) { for (var i = 0; i + 1 < kv.children.length; i += 2) { if (/Appareil/i.test(kv.children[i].textContent)) { dev = kv.children[i + 1].textContent.split('·')[0].trim(); break; } } }
+        var icon = /Mobile/i.test(dev) ? '📱' : /Tablette/i.test(dev) ? '📲' : /Ordinateur/i.test(dev) ? '💻' : '❔';
+        var sum = document.createElement('div'); sum.className = 'vxm-sum';
+        sum.innerHTML = '<div><span>⏱️ Durée</span><b>' + (durM && /\d/.test(durM[1]) && /s|min|h/.test(durM[1]) ? durM[1].trim() : '—') + '</b></div><div><span>📄 Pages</span><b>' + np + '</b></div><div><span>' + icon + ' Appareil</span><b>' + (dev || '—') + '</b></div>';
+        db.insertBefore(sum, db.firstChild);
+        var foot = document.createElement('div'); foot.className = 'vxm-foot';
+        foot.innerHTML = '<button type="button" class="bk" data-a="drw">‹ Visites</button>' + (np ? '<button type="button" class="go" data-vpv-open="0">👁️ Voir les ' + np + ' page' + (np > 1 ? 's' : '') + ' visitée' + (np > 1 ? 's' : '') + '</button>' : '');
+        d.appendChild(foot);
+    }
+    /* Glisser vers la droite = retour ; dans le parcours, glisser = page suivante / précédente */
+    function swipe(el, fn) {
+        var x0 = null, y0 = 0;
+        el.addEventListener('touchstart', function (e) { if (!mob() || e.touches.length !== 1) return; x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+        el.addEventListener('touchend', function (e) { if (x0 == null) return; var t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0; x0 = null; if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) fn(dx > 0 ? 1 : -1); }, { passive: true });
+    }
+
+    var hooked = false;
+    function boot() {
+        var body = $('vx-body'), d = $('vx-drw');
+        if (!body || !d) return setTimeout(boot, 900);
+        if (hooked) return; hooked = true;
+        // Lien vers l'appli satellite « Visites Pro » (même origine : session et réglages partagés)
+        var rl = document.querySelector('#vx-head [data-a="reload"]');
+        if (rl && !document.querySelector('#vx-head [data-a="app"]')) {
+            var a = document.createElement('a'); a.className = 'vx-hb'; a.setAttribute('data-a', 'app'); a.href = 'https://aliand0810.github.io/Visites-Pro/'; a.target = 'visitespro';
+            a.title = 'Ouvrir l’appli Visites Pro (téléphone)'; a.textContent = '📱 Visites Pro'; a.style.textDecoration = 'none';
+            rl.parentNode.insertBefore(a, rl);
+        }
+        new MutationObserver(decorateBody).observe(body, { childList: true });
+        var lst = null;
+        new MutationObserver(function () { var l = $('vx-list'); if (l && l !== lst) { lst = l; new MutationObserver(decorateList).observe(l, { childList: true }); } decorateList(); }).observe(body, { childList: true });
+        new MutationObserver(function () { setTimeout(decorateDrawer, 0); }).observe(d, { childList: true });
+        decorateBody(); decorateDrawer();
+        swipe(d, function (dir) { if (dir > 0) { var b = d.querySelector('[data-a="drw"]'); if (b) b.click(); } });
+        (MQ.addEventListener ? MQ.addEventListener.bind(MQ, 'change') : MQ.addListener.bind(MQ))(function () { applyView(); });
+        (function waitPv() { var c = $('vpv-ctl'); if (!c) return setTimeout(waitPv, 1000); swipe(c, function (dir) { var b = c.querySelector(dir > 0 ? '[data-vpv="prev"]' : '[data-vpv="next"]'); if (b && !b.disabled) b.click(); }); var st = $('vpv-steps'); if (st) swipe($('vpv-head'), function (dir) { if (dir > 0) { var x = document.querySelector('#vpv [data-vpv="close"]'); if (x) x.click(); } }); })();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — OBJECTIF DU JOUR CALCULÉ SUR LA PRÉVISION
+   • L'objectif du jour = la prévision du chiffre d'affaires d'aujourd'hui (mêmes jours de la
+     semaine des 8 dernières semaines, les plus récents comptant davantage, ajustés à la tendance)
+   • Repère « prévu à cette heure » sur la barre : en avance / en retard, en euros
+   • Reste à faire, en euros et en nombre de ventes (panier moyen)
+   • Les 7 derniers jours : objectif atteint ✓ ou non ✗, série de jours réussis
+   • Objectif atteint : le bandeau est encadré en vert, avec l'heure de réussite et le dépassement
+   • Mode « Objectif fixe » toujours possible (montant de l'administration)
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._goalInstalled) return;
+    window._goalInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function eur(v) { return (+v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function eur0(v) { return Math.round(+v || 0).toLocaleString('fr-FR') + ' €'; }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function sales() { try { if (typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) return salesHistory; } catch (e) {} try { return JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch (e) { return []; } }
+    function admin() { try { return !!isAdmin; } catch (e) { return false; } }
+    function manualGoal() { return parseFloat(localStorage.getItem('covo_delivery_goal')) || 150; }
+    function mode() { return localStorage.getItem('covo_goal_mode') || 'auto'; }
+    function key(d) { return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+    var JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+    function devisExtra() { try { return typeof _devisTodayRegleHorsTicketDuJour === 'function' ? (_devisTodayRegleHorsTicketDuJour() || 0) : 0; } catch (e) { return 0; } }
+
+    /* ───── Données : chiffre d'affaires par jour et heures des ventes ───── */
+    var C = { n: -1, day: '', tot: {}, times: {}, cnt: {} };
+    function data() {
+        var S = sales(), today = key(new Date());
+        if (C.n === S.length && C.day === today && Date.now() - C.at < 3000) return C;
+        var tot = {}, times = {}, cnt = {};
+        S.forEach(function (s) {
+            if (!s || s.cancelled || !s.date) return; var d = new Date(s.date); if (isNaN(d)) return;
+            var k = key(d), v = +s.total || 0;
+            tot[k] = (tot[k] || 0) + v; cnt[k] = (cnt[k] || 0) + 1;
+            (times[k] || (times[k] = [])).push([d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60, v]);
+        });
+        C = { n: S.length, day: today, at: Date.now(), tot: tot, times: times, cnt: cnt, F: {} };
+        return C;
+    }
+    function dayOff(d, n) { var x = new Date(d); x.setHours(12, 0, 0, 0); x.setDate(x.getDate() + n); return x; }
+
+    /* ───── Prévision du chiffre d'affaires d'un jour (uniquement avec les jours précédents) ───── */
+    function forecast(date) {
+        var D = data(), k0 = key(date); if (D.F[k0]) return D.F[k0];
+        var same = [], recent = [], older = [];
+        for (var w = 1; w <= 8; w++) { var d = dayOff(date, -7 * w), v = D.tot[key(d)] || 0; if (v > 0) same.push({ d: d, v: v, w: 9 - w }); }
+        for (var i = 1; i <= 42; i++) { var dd = dayOff(date, -i), vv = D.tot[key(dd)] || 0; if (vv > 0) (i <= 14 ? recent : older).push(vv); }
+        var last28 = []; for (var j = 1; j <= 28; j++) { var v2 = D.tot[key(dayOff(date, -j))] || 0; if (v2 > 0) last28.push(v2); }
+        var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; };
+        var base, how;
+        if (same.length >= 2) {
+            // on écarte un jour exceptionnel (plus de 2,5 fois la médiane des mêmes jours)
+            var sorted = same.map(function (x) { return x.v; }).sort(function (a, b) { return a - b; }), med = sorted[Math.floor(sorted.length / 2)];
+            var kept = same.filter(function (x) { return x.v <= med * 2.5 && x.v >= med / 4; }); if (kept.length < 2) kept = same;
+            var sw = 0, sv = 0; kept.forEach(function (x) { sw += x.w; sv += x.w * x.v; }); base = sv / sw; how = 'same';
+            same.forEach(function (x) { x.out = kept.indexOf(x) < 0; });
+        } else if (last28.length >= 5) { base = mean(last28); how = 'mean'; }
+        else { D.F[k0] = null; return null; }
+        var trend = recent.length >= 4 && older.length >= 4 ? mean(recent) / mean(older) : 1;
+        var tc = Math.max(0.85, Math.min(1.15, trend)), factor = 1 + (tc - 1) * 0.5;
+        var val = base * factor; val = val >= 100 ? Math.round(val / 5) * 5 : Math.max(1, Math.round(val));
+        var r = { value: val, base: base, how: how, same: same, trend: trend, factor: factor, n: last28.length };
+        D.F[k0] = r; return r;
+    }
+    /* Part du chiffre d'affaires habituellement réalisée à cette heure-ci (mêmes jours) */
+    function shareAt(date, minute) {
+        var D = data(), days = [];
+        for (var w = 1; w <= 8; w++) { var k = key(dayOff(date, -7 * w)); if (D.tot[k] > 0) days.push(k); }
+        if (days.length < 2) for (var i = 1; i <= 28; i++) { var k2 = key(dayOff(date, -i)); if (D.tot[k2] > 0) days.push(k2); }
+        if (!days.length) return null;
+        var s = 0; days.forEach(function (k) { var t = D.times[k] || [], done = 0; t.forEach(function (x) { if (x[0] <= minute) done += x[1]; }); s += D.tot[k] ? done / D.tot[k] : 0; });
+        return s / days.length;
+    }
+    function goalFor(date) { if (mode() !== 'auto') return { value: manualGoal(), auto: false }; var f = forecast(date); return f ? { value: f.value, auto: true, f: f } : { value: manualGoal(), auto: false, fallback: true }; }
+    window._covoGoalToday = function () { return goalFor(new Date()).value; };
+    window._covoGoalLabel = function () { var g = goalFor(new Date()); return eur(g.value) + (g.auto ? ' (prévision)' : ''); };
+
+    /* ───── Styles ───── */
+    var css = document.createElement('style');
+    css.id = 'goal-css';
+    css.textContent = [
+        '#delivery-goal.gd{--g-ok:#0ca30c;--g-warn:#e8920c;--g-bad:#d03b3b;--g-acc:#2a78d6;--g-mute:#6b7280;--g-soft:rgba(15,23,42,.05);cursor:pointer;position:relative;transition:box-shadow .3s,border-color .3s;padding:10px 14px!important;}',
+        'body.dark-mode #delivery-goal.gd{--g-mute:#9a9990;--g-soft:rgba(255,255,255,.06);--g-acc:#3987e5;}',
+        '#delivery-goal.gd:hover{box-shadow:0 4px 16px rgba(0,0,0,.1);}',
+        '.gd-top{display:flex;align-items:center;gap:12px;margin-bottom:18px;}@media (max-width:600px){.gd-top{margin-bottom:10px;}}',
+        '.gd-ic{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#2a78d6,#1c55a0);display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex-shrink:0;box-shadow:0 4px 10px rgba(42,120,214,.3);}',
+        '.gd-l{flex:1;min-width:0;}',
+        '.gd-l b{display:block;font-size:.92rem;font-weight:900;line-height:1.2;}',
+        '.gd-l b #goal-amount{color:var(--g-acc);}',
+        '.gd-l small{display:block;font-size:.7rem;font-weight:700;color:var(--g-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+        '.gd-r{text-align:right;flex-shrink:0;}',
+        '.gd-r b{display:block;font-size:1.25rem;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-.3px;line-height:1.1;}',
+        '.gd-r small{font-size:.7rem;font-weight:800;color:var(--g-mute);}',
+        '#delivery-goal.gd .progress-container{height:14px;border-radius:8px;overflow:visible;background:var(--g-soft);position:relative;}',
+        '#delivery-goal.gd #progress-bar{border-radius:8px;overflow:hidden;}',
+        '.gd-mark{position:absolute;top:-4px;bottom:-4px;width:3px;border-radius:2px;background:var(--text-main,#0f172a);opacity:.75;transform:translateX(-50%);transition:left .5s;pointer-events:none;}',
+        '.gd-mark::after{content:attr(data-l);position:absolute;top:-17px;left:50%;transform:translateX(-50%);font-size:.6rem;font-weight:900;white-space:nowrap;color:var(--g-mute);}',
+        '.gd-bot{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;margin-top:8px;font-size:.74rem;font-weight:800;}',
+        '.gd-st{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:9px;}',
+        '.gd-st.ok{background:rgba(12,163,12,.13);color:var(--g-ok);}.gd-st.warn{background:rgba(232,146,12,.15);color:#b86e00;}.gd-st.bad{background:rgba(208,59,59,.13);color:var(--g-bad);}',
+        'body.dark-mode .gd-st.warn{color:#f0b046;}body.dark-mode .gd-st.ok{color:#5fd65f;}body.dark-mode .gd-st.bad{color:#f08080;}',
+        '.gd-rest{color:var(--g-mute);}',
+        '.gd-days{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:var(--g-mute);}',
+        '.gd-days i{font-style:normal;width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.58rem;font-weight:900;color:#fff;}',
+        '.gd-days i.y{background:var(--g-ok);}.gd-days i.n{background:var(--g-bad);opacity:.8;}.gd-days i.z{background:var(--g-soft);color:var(--g-mute);}',
+        /* objectif atteint : encadré */
+        '#delivery-goal.gd.gd-win{border:2px solid var(--g-ok)!important;box-shadow:0 0 0 4px rgba(12,163,12,.16),0 8px 24px rgba(12,163,12,.18);animation:gdGlow 2.4s ease-in-out infinite;}',
+        '@keyframes gdGlow{50%{box-shadow:0 0 0 7px rgba(12,163,12,.08),0 8px 28px rgba(12,163,12,.28);}}',
+        '#delivery-goal.gd.gd-win .gd-ic{background:linear-gradient(135deg,#1baf7a,#0a8a0a);box-shadow:0 4px 10px rgba(12,163,12,.35);}',
+        '.gd-win-b{display:none;margin-top:8px;padding:8px 12px;border-radius:10px;background:linear-gradient(120deg,rgba(12,163,12,.16),rgba(12,163,12,.06));color:var(--g-ok);font-size:.8rem;font-weight:900;align-items:center;gap:8px;}',
+        'body.dark-mode .gd-win-b{color:#5fd65f;}',
+        '#delivery-goal.gd.gd-win .gd-win-b{display:flex;}',
+        '.gd-conf{position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:inherit;}',
+        '.gd-conf i{position:absolute;top:-10px;width:7px;height:10px;border-radius:2px;animation:gdFall 1.8s ease-in forwards;}',
+        '@keyframes gdFall{to{transform:translateY(140px) rotate(540deg);opacity:0;}}',
+        /* fenêtre de détail */
+        '#gd-pop{position:fixed;inset:0;z-index:99990;background:rgba(10,15,25,.55);display:none;align-items:center;justify-content:center;padding:14px;}',
+        '#gd-pop.open{display:flex;}',
+        '#gd-box{width:min(520px,100%);max-height:90vh;overflow-y:auto;background:var(--bg-card,#fff);color:var(--text-main,#0f172a);border-radius:20px;box-shadow:0 30px 80px rgba(0,0,0,.4);animation:gdIn .25s cubic-bezier(.2,.9,.3,1);}',
+        '@keyframes gdIn{from{opacity:0;transform:translateY(12px) scale(.98);}to{opacity:1;transform:none;}}',
+        '.gd-ph{background:linear-gradient(120deg,#0b1f3a,#173b6c 55%,#1c55a0);color:#fff;padding:16px 18px;border-radius:20px 20px 0 0;display:flex;align-items:center;gap:12px;}',
+        '.gd-ph h3{margin:0;font-size:1.05rem;font-weight:900;color:#fff!important;}.gd-ph p{margin:2px 0 0;font-size:.74rem;color:rgba(255,255,255,.8);font-weight:700;}',
+        '.gd-ph button{margin-left:auto;width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,.16);color:#fff;font-size:1rem;cursor:pointer;}',
+        '.gd-pb{padding:14px 18px 18px;}',
+        '.gd-k{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px;}',
+        '.gd-k div{border:1px solid var(--border-color,#e8ecf0);border-radius:12px;padding:9px 10px;}',
+        '.gd-k span{display:block;font-size:.6rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--g-mute,#6b7280);}',
+        '.gd-k b{display:block;font-size:1.05rem;font-weight:900;font-variant-numeric:tabular-nums;}',
+        '.gd-h{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;margin:12px 0 6px;}',
+        '.gd-tb{width:100%;border-collapse:collapse;font-size:.8rem;}',
+        '.gd-tb td{padding:6px 4px;border-top:1px solid var(--border-color,#e8ecf0);font-variant-numeric:tabular-nums;}',
+        '.gd-tb td.r{text-align:right;font-weight:800;}.gd-tb tr.out td{opacity:.45;text-decoration:line-through;}',
+        '.gd-why{font-size:.78rem;line-height:1.5;background:rgba(42,120,214,.08);border-radius:12px;padding:10px 12px;}',
+        '.gd-mode{display:flex;gap:6px;margin-top:6px;}',
+        '.gd-mode button{flex:1;border:1.5px solid var(--border-color,#dfe5ee);background:transparent;color:inherit;border-radius:11px;padding:10px 8px;font-weight:800;font-size:.8rem;cursor:pointer;font-family:inherit;}',
+        '.gd-mode button.on{border-color:#2a78d6;background:rgba(42,120,214,.12);color:#2a78d6;}',
+        '@media (max-width:600px){.gd-r b{font-size:1.05rem;}.gd-days{margin-left:0;width:100%;}.gd-mark::after{display:none;}}',
+        '@media (prefers-reduced-motion: reduce){#delivery-goal.gd.gd-win{animation:none;}.gd-conf{display:none;}}'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    /* ───── Construction du bandeau ───── */
+    function build() {
+        var el = $('delivery-goal'); if (!el) return null;
+        if (el.classList.contains('gd')) return el;
+        el.classList.add('gd');
+        el.setAttribute('title', 'Voir le détail de l’objectif du jour');
+        el.innerHTML = '<div class="gd-top"><div class="gd-ic" id="gd-ic">🎯</div><div class="gd-l"><b>Objectif du jour : <span id="goal-amount">—</span></b><small id="gd-src"></small></div>'
+            + '<div class="gd-r"><b id="progress-current">0,00 €</b><small><span id="progress-percent">0%</span> de l’objectif</small></div></div>'
+            + '<div class="progress-container"><div id="progress-bar"></div><i class="gd-mark" id="gd-mark" data-l=""></i></div>'
+            + '<div class="gd-bot"><span class="gd-st" id="gd-pace"></span><span class="gd-rest" id="gd-rest"></span><span class="gd-days" id="gd-days"></span></div>'
+            + '<div class="gd-win-b" id="gd-winb"></div>';
+        el.addEventListener('click', openPop);
+        return el;
+    }
+    function todayInfo() {
+        var now = new Date(), D = data(), k = key(now), g = goalFor(now);
+        var total = (D.tot[k] || 0) + devisExtra(), n = D.cnt[k] || 0;
+        var minute = now.getHours() * 60 + now.getMinutes(), share = shareAt(now, minute);
+        var expected = share != null ? g.value * share : null;
+        // heure à laquelle l'objectif a été atteint
+        var at = null; if (total >= g.value) { var t = (D.times[k] || []).slice().sort(function (a, b) { return a[0] - b[0]; }), c = devisExtra(); for (var i = 0; i < t.length; i++) { c += t[i][1]; if (c >= g.value) { at = t[i][0]; break; } } }
+        // panier moyen des 28 derniers jours
+        var sv = 0, sn = 0; for (var j = 1; j <= 28; j++) { var kk = key(dayOff(now, -j)); sv += D.tot[kk] || 0; sn += D.cnt[kk] || 0; }
+        return { g: g, total: total, n: n, expected: expected, share: share, minute: minute, at: at, basket: sn ? sv / sn : 0 };
+    }
+    function last7() {
+        var out = [], now = new Date(), D = data();
+        for (var i = 7; i >= 1; i--) { var d = dayOff(now, -i), k = key(d), v = D.tot[k] || 0, g = goalFor(d).value; out.push({ d: d, v: v, g: g, ok: v > 0 ? v >= g : null }); }
+        return out;
+    }
+    function streak(L, todayOk) { var s = todayOk ? 1 : 0; for (var i = L.length - 1; i >= 0; i--) { if (L[i].ok === true) s++; else if (L[i].ok === null) continue; else break; } return s; }
+    function hhmm(m) { var h = Math.floor(m / 60), mi = Math.floor(m % 60); return String(h).padStart(2, '0') + 'h' + String(mi).padStart(2, '0'); }
+
+    function update() {
+        var el = build(); if (!el) return;
+        var I = todayInfo(), g = I.g, pct = g.value ? I.total / g.value * 100 : 0, win = I.total >= g.value && g.value > 0;
+        try { deliveryGoal = g.value; } catch (e) {}
+        $('goal-amount').textContent = eur(g.value);
+        var f = g.f;
+        $('gd-src').textContent = g.auto ? '📈 Prévision du ' + JOURS[new Date().getDay()] + (f.how === 'same' ? ' · basée sur ' + f.same.length + ' ' + JOURS[new Date().getDay()] + 's' : ' · moyenne des 4 dernières semaines') + (Math.abs(f.factor - 1) >= 0.01 ? ' · tendance ' + (f.factor > 1 ? '+' : '') + Math.round((f.factor - 1) * 100) + ' %' : '')
+            : g.fallback ? '✋ Objectif fixe (pas encore assez d’historique pour une prévision)' : '✋ Objectif fixe défini par l’administrateur';
+        $('progress-current').textContent = eur(I.total);
+        $('progress-percent').textContent = Math.round(pct) + ' %';
+        var bar = $('progress-bar'); bar.style.width = Math.min(100, pct) + '%';
+        // repère « prévu à cette heure »
+        var mk = $('gd-mark');
+        if (I.expected != null && !win && I.share > 0.01 && I.share < 0.995) { mk.style.display = ''; mk.style.left = Math.min(100, I.share * 100) + '%'; mk.setAttribute('data-l', 'prévu ' + hhmm(I.minute)); mk.title = 'Prévu à ' + hhmm(I.minute) + ' : ' + eur(I.expected); }
+        else mk.style.display = 'none';
+        // avance / retard
+        var pace = $('gd-pace'), cls = 'ok', txt;
+        if (win) { txt = '🏆 Objectif atteint'; }
+        else if (I.expected == null || I.share <= 0.01) { cls = ''; txt = I.total > 0 ? '▶ Journée lancée' : '☀️ La journée commence'; }
+        else {
+            var diff = I.total - I.expected, rel = I.expected ? diff / I.expected : 0;
+            if (rel >= -0.05) { cls = 'ok'; txt = '✅ En avance de ' + eur0(Math.max(0, diff)) + ' sur le prévu (' + eur0(I.expected) + ' à ' + hhmm(I.minute) + ')'; if (diff < 1) txt = '✅ Dans les temps (' + eur0(I.expected) + ' prévus à ' + hhmm(I.minute) + ')'; }
+            else if (rel >= -0.25) { cls = 'warn'; txt = '⚠️ En retard de ' + eur0(-diff) + ' sur le prévu (' + eur0(I.expected) + ' à ' + hhmm(I.minute) + ')'; }
+            else { cls = 'bad'; txt = '📉 En retard de ' + eur0(-diff) + ' sur le prévu (' + eur0(I.expected) + ' à ' + hhmm(I.minute) + ')'; }
+        }
+        pace.className = 'gd-st ' + cls; pace.textContent = txt;
+        bar.style.background = win ? 'linear-gradient(90deg,#16a34a,#22c55e)' : cls === 'bad' ? 'linear-gradient(90deg,#c0392b,#e74c3c)' : cls === 'warn' ? 'linear-gradient(90deg,#e67e22,#f39c12)' : 'linear-gradient(90deg,#2a78d6,#1baf7a)';
+        var rest = Math.max(0, g.value - I.total);
+        $('gd-rest').textContent = win ? '+' + eur(I.total - g.value) + ' au-dessus de l’objectif' : 'Reste ' + eur(rest) + (I.basket > 0 ? ' · ≈ ' + Math.max(1, Math.ceil(rest / I.basket)) + ' vente' + (Math.ceil(rest / I.basket) > 1 ? 's' : '') + ' au panier moyen' : '');
+        var L = last7(), st = streak(L, win);
+        $('gd-days').innerHTML = '7 j : ' + L.map(function (x) { return '<i class="' + (x.ok === true ? 'y' : x.ok === false ? 'n' : 'z') + '" title="' + x.d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' }) + ' : ' + (x.ok === null ? 'fermé' : eur0(x.v) + ' / ' + eur0(x.g)) + '">' + (x.ok === true ? '✓' : x.ok === false ? '✗' : '·') + '</i>'; }).join('') + (st >= 2 ? ' <b style="color:var(--g-ok)">🔥 ' + st + ' jours d’affilée</b>' : '');
+        el.classList.toggle('gd-win', win);
+        $('gd-ic').textContent = win ? '🏆' : '🎯';
+        $('gd-winb').innerHTML = win ? '🏆 Objectif du jour atteint' + (I.at != null ? ' à ' + hhmm(I.at) : '') + ' · ' + Math.round(pct) + ' % · +' + eur(I.total - g.value) + (st >= 2 ? ' · 🔥 ' + st + ' jours d’affilée' : '') : '';
+        // célébration, une seule fois par jour
+        if (win) { var kd = key(new Date()); if (localStorage.getItem('covo_goal_cel') !== kd) { try { localStorage.setItem('covo_goal_cel', kd); } catch (e) {} celebrate(el); try { if (typeof showScanToast === 'function') showScanToast('🏆 Objectif du jour atteint : ' + eur(I.total) + ' / ' + eur(g.value), 'success'); } catch (e) {} } }
+        var cg = $('current-goal-display'); if (cg) cg.textContent = eur(g.value) + (g.auto ? ' (prévision auto)' : '');
+        var aw = $('aw-daily-goal'); if (aw) aw.textContent = window._covoGoalLabel();
+        if ($('gd-pop') && $('gd-pop').classList.contains('open')) fillPop();
+    }
+    function celebrate(el) {
+        var c = document.createElement('div'); c.className = 'gd-conf';
+        var cols = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#6250d6'];
+        for (var i = 0; i < 36; i++) { var p = document.createElement('i'); p.style.left = (Math.random() * 100) + '%'; p.style.background = cols[i % cols.length]; p.style.animationDelay = (Math.random() * .5) + 's'; c.appendChild(p); }
+        el.appendChild(c); setTimeout(function () { c.remove(); }, 2600);
+    }
+
+    /* ───── Détail de l'objectif ───── */
+    function openPop() {
+        var p = $('gd-pop');
+        if (!p) {
+            p = document.createElement('div'); p.id = 'gd-pop';
+            p.innerHTML = '<div id="gd-box" role="dialog" aria-label="Objectif du jour"><div class="gd-ph"><div style="font-size:1.6rem">🎯</div><div><h3>Objectif du jour</h3><p id="gd-pd"></p></div><button type="button" data-x="1" aria-label="Fermer">✕</button></div><div class="gd-pb" id="gd-pb"></div></div>';
+            document.body.appendChild(p);
+            p.addEventListener('click', function (e) {
+                if (e.target === p || e.target.closest('[data-x]')) { p.classList.remove('open'); return; }
+                var m = e.target.closest('[data-mode]'); if (m && admin()) { try { localStorage.setItem('covo_goal_mode', m.getAttribute('data-mode')); } catch (er) {} C.n = -1; update(); fillPop(); if (typeof window._gdTriggerAutoSave === 'function') try { window._gdTriggerAutoSave(); } catch (er) {} }
+            });
+            document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && p.classList.contains('open')) p.classList.remove('open'); });
+        }
+        fillPop(); p.classList.add('open');
+    }
+    function fillPop() {
+        var I = todayInfo(), g = I.g, f = forecast(new Date()), now = new Date(), wd = JOURS[now.getDay()];
+        $('gd-pd').textContent = now.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + (g.auto ? 'objectif calculé sur la prévision' : 'objectif fixe');
+        var h = '<div class="gd-k"><div><span>Objectif</span><b>' + eur(g.value) + '</b></div><div><span>Réalisé</span><b style="color:' + (I.total >= g.value ? '#0ca30c' : 'inherit') + '">' + eur(I.total) + '</b></div><div><span>' + (I.total >= g.value ? 'Dépassement' : 'Reste') + '</span><b>' + eur(Math.abs(g.value - I.total)) + '</b></div></div>';
+        if (I.expected != null && I.share > 0.01 && I.share < 0.995) h += '<div class="gd-k"><div><span>Prévu à ' + hhmm(I.minute) + '</span><b>' + eur(I.expected) + '</b></div><div><span>Écart</span><b style="color:' + (I.total >= I.expected ? '#0ca30c' : '#d03b3b') + '">' + (I.total >= I.expected ? '+' : '−') + eur(Math.abs(I.total - I.expected)) + '</b></div><div><span>Ventes</span><b>' + I.n + '</b></div></div>';
+        if (f) {
+            h += '<div class="gd-why">📈 <b>Comment la prévision est calculée :</b> ' + (f.how === 'same' ? 'moyenne des chiffres des ' + f.same.length + ' derniers ' + wd + 's (les plus récents comptent davantage, les journées exceptionnelles sont écartées)' : 'moyenne des journées ouvertes des 4 dernières semaines (pas encore assez de ' + wd + 's)') + ' = <b>' + eur(f.base) + '</b>, ajustée à la tendance des 2 dernières semaines (' + (f.factor >= 1 ? '+' : '') + Math.round((f.factor - 1) * 100) + ' %) → <b>' + eur(f.value) + '</b>.</div>';
+            if (f.how === 'same') h += '<div class="gd-h">Les ' + wd + 's précédents</div><table class="gd-tb">' + f.same.map(function (x) { return '<tr class="' + (x.out ? 'out' : '') + '"><td>' + x.d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) + (x.out ? ' · écarté' : '') + '</td><td class="r">' + eur(x.v) + '</td></tr>'; }).join('') + '</table>';
+        } else h += '<div class="gd-why">ℹ️ Pas encore assez de ventes enregistrées pour calculer une prévision (au moins 5 journées). L’objectif fixe de l’administration est utilisé.</div>';
+        var L = last7();
+        h += '<div class="gd-h">Les 7 derniers jours</div><table class="gd-tb">' + L.map(function (x) { return '<tr><td>' + (x.ok === true ? '✅' : x.ok === false ? '❌' : '⏸️') + ' ' + x.d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) + '</td><td class="r">' + (x.ok === null ? 'fermé' : eur0(x.v) + ' / ' + eur0(x.g)) + '</td><td class="r" style="color:' + (x.ok === true ? '#0ca30c' : x.ok === false ? '#d03b3b' : 'inherit') + '">' + (x.ok === null ? '' : Math.round(x.v / x.g * 100) + ' %') + '</td></tr>'; }).join('') + '</table>';
+        h += '<div class="gd-h">Mode de l’objectif</div><div class="gd-mode"><button type="button" data-mode="auto" class="' + (mode() === 'auto' ? 'on' : '') + '"' + (admin() ? '' : ' disabled') + '>📈 Prévision automatique</button><button type="button" data-mode="manual" class="' + (mode() !== 'auto' ? 'on' : '') + '"' + (admin() ? '' : ' disabled') + '>✋ Fixe : ' + eur0(manualGoal()) + '</button></div>'
+            + (admin() ? '<div style="font-size:.7rem;color:#6b7280;margin-top:6px;font-weight:700">Le montant fixe se règle dans l’administration (Objectif journalier).</div>' : '<div style="font-size:.7rem;color:#6b7280;margin-top:6px;font-weight:700">Seul un administrateur peut changer le mode.</div>');
+        $('gd-pb').innerHTML = h;
+    }
+
+    /* ───── Branchement : remplace l'affichage de la barre d'objectif ───── */
+    function boot() {
+        if (typeof window.updateProgress !== 'function' || !$('delivery-goal')) return setTimeout(boot, 500);
+        window.updateProgress = function () { try { update(); } catch (e) { console.warn('[Objectif]', e); } };
+        update();
+        setInterval(function () { if (!document.hidden) try { update(); } catch (e) {} }, 60000);   // repère « prévu à cette heure » qui avance
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) try { update(); } catch (e) {} });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
