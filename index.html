@@ -67592,3 +67592,352 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — FIN DE POSTE : ASSISTANT DE SAISIE EN 5 ÉTAPES
+   1. Résumé du jour (ce que la caisse a enregistré) + fond de caisse + prise de poste
+   2. Espèces : comptage billets/pièces avec boutons + / − (ou total direct),
+      le fond de caisse est déduit automatiquement → recette espèces, écart expliqué
+   3. Carte bancaire : total du ticket du terminal (TPE), bouton « = attendu »
+   4. Stocks à contrôler : résumé + recherche (ne bloque pas la clôture)
+   5. Vérifier & clôturer : récapitulatif, verdict en clair, note avec suggestions,
+      clôture intermédiaire ou finale expliquées
+   La clôture est enregistrée par la fonction d'origine (même historique, mêmes champs).
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._fpwInstalled) return;
+    window._fpwInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(v) { return (+v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function num(v) { if (v == null) return NaN; v = String(v).replace(/\s/g, '').replace(',', '.'); return v === '' ? NaN : parseFloat(v); }
+    function r2(v) { return Math.round(v * 100) / 100; }
+    var BILLS = [500, 200, 100, 50, 20, 10, 5], COINS = [2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01];
+    var STEPS = [['res', '📊', 'Résumé'], ['esp', '💵', 'Espèces'], ['cb', '💳', 'Carte'], ['stk', '📦', 'Stocks'], ['fin', '✅', 'Clôture']];
+    var W = null;   // état de l'assistant
+
+    /* ───────────── Styles ───────────── */
+    var css = document.createElement('style');
+    css.id = 'fpw-css';
+    css.textContent = [
+        '#fin-poste-modal .fpw-box{--w-acc:#2a78d6;--w-ok:#0a8a0a;--w-warn:#b86e00;--w-bad:#c62828;--w-mute:#6b7280;--w-soft:rgba(15,23,42,.045);--w-line:var(--border-color,#e5e9f0);}',
+        'body.dark-mode #fin-poste-modal .fpw-box{--w-acc:#3987e5;--w-ok:#4cc94c;--w-warn:#f0b046;--w-bad:#f07070;--w-mute:#9a9990;--w-soft:rgba(255,255,255,.06);--w-line:rgba(255,255,255,.1);}',
+        '#fin-poste-modal .fpw-box > .fpw-hide{display:none!important;}',
+        '.fpw-steps{display:flex;gap:4px;padding:10px 12px;border-bottom:1px solid var(--w-line);background:var(--bg-card,#fff);overflow-x:auto;scrollbar-width:none;flex-shrink:0;}',
+        '.fpw-steps::-webkit-scrollbar{display:none;}',
+        '.fpw-steps button{flex:1 0 auto;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:transparent;color:var(--w-mute);font-weight:800;font-size:.76rem;padding:7px 8px;border-radius:10px;cursor:pointer;font-family:inherit;white-space:nowrap;}',
+        '.fpw-steps button i{font-style:normal;width:22px;height:22px;border-radius:50%;background:var(--w-soft);display:inline-flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:900;color:var(--text-main,#0f172a);}',
+        '.fpw-steps button.done i{background:var(--w-ok);color:#fff;}',
+        '.fpw-steps button.on{background:rgba(42,120,214,.12);color:var(--w-acc);}.fpw-steps button.on i{background:var(--w-acc);color:#fff;}',
+        '.fpw-body{padding:16px 18px;overflow-y:auto;max-height:calc(90vh - 190px);display:flex;flex-direction:column;gap:12px;color:var(--text-main,#0f172a);}',
+        '.fpw-h,.fpw-done h3{font-size:1.05rem;font-weight:900;margin:0;color:var(--text-main,#0f172a)!important;}',
+        '.fpw-p{font-size:.82rem;line-height:1.5;color:var(--w-mute);margin:2px 0 0;}',
+        '.fpw-help{display:flex;gap:10px;align-items:flex-start;font-size:.8rem;line-height:1.5;background:rgba(42,120,214,.08);border-radius:12px;padding:10px 12px;}',
+        '.fpw-help b{font-weight:900;}',
+        '.fpw-kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}',
+        '.fpw-k{border:1px solid var(--w-line);border-radius:13px;padding:10px 12px;position:relative;overflow:hidden;}',
+        '.fpw-k::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--a,#2a78d6);}',
+        '.fpw-k span{display:block;font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--w-mute);}',
+        '.fpw-k b{display:block;font-size:1.25rem;font-weight:900;font-variant-numeric:tabular-nums;}',
+        '.fpw-k small{display:block;font-size:.68rem;font-weight:700;color:var(--w-mute);}',
+        '.fpw-card{border:1.5px solid var(--w-line);border-radius:14px;padding:12px 14px;}',
+        '.fpw-card > label,.fpw-lbl{display:block;font-size:.78rem;font-weight:900;margin-bottom:4px;}',
+        '.fpw-card .hint{font-size:.72rem;color:var(--w-mute);font-weight:600;margin:0 0 8px;line-height:1.45;}',
+        '.fpw-in{width:100%;box-sizing:border-box;padding:12px 14px;border:2px solid var(--w-line);border-radius:12px;font-size:1.25rem;font-weight:900;background:var(--input-bg,#fff);color:var(--text-main,#0f172a);font-variant-numeric:tabular-nums;outline:none;font-family:inherit;}',
+        '.fpw-in:focus{border-color:var(--w-acc);box-shadow:0 0 0 3px rgba(42,120,214,.15);}',
+        '.fpw-in.sm{font-size:1rem;padding:10px 12px;}',
+        '.fpw-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}',
+        '.fpw-chip{border:1.5px solid var(--w-line);background:transparent;color:var(--text-main,#0f172a);border-radius:20px;padding:6px 12px;font-size:.76rem;font-weight:800;cursor:pointer;font-family:inherit;}',
+        '.fpw-chip:hover,.fpw-chip.on{border-color:var(--w-acc);color:var(--w-acc);background:rgba(42,120,214,.08);}',
+        '.fpw-seg{display:flex;gap:3px;padding:3px;border-radius:12px;background:var(--w-soft);}',
+        '.fpw-seg button{flex:1;border:none;background:transparent;color:var(--w-mute);font-weight:800;font-size:.8rem;padding:9px 6px;border-radius:9px;cursor:pointer;font-family:inherit;}',
+        '.fpw-seg button.on{background:var(--bg-card,#fff);color:var(--text-main,#0f172a);box-shadow:0 1px 4px rgba(0,0,0,.15);}',
+        /* comptage */
+        '.fpw-den{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}',
+        '@media (min-width:520px){.fpw-den{grid-template-columns:repeat(3,minmax(0,1fr));}}',
+        '.fpw-d{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:6px;border:1.5px solid var(--w-line);border-radius:12px;padding:6px 7px;}',
+        '.fpw-d.has{border-color:var(--w-acc);background:rgba(42,120,214,.06);}',
+        '.fpw-face{min-width:50px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:900;color:#fff;cursor:pointer;user-select:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);}',
+        '.fpw-face.coin{min-width:34px;width:34px;border-radius:50%;font-size:.66rem;}',
+        '.fpw-q{display:flex;align-items:center;gap:3px;justify-content:flex-end;}',
+        '.fpw-q button{width:28px;height:28px;border-radius:8px;border:1.5px solid var(--w-line);background:transparent;color:var(--text-main,#0f172a);font-weight:900;font-size:1rem;cursor:pointer;line-height:1;padding:0;}',
+        '.fpw-q input{width:44px;text-align:center;padding:5px 2px;border:1.5px solid var(--w-line);border-radius:8px;font-weight:900;font-size:.9rem;background:var(--input-bg,#fff);color:var(--text-main,#0f172a);font-family:inherit;}',
+        '.fpw-d small{grid-column:1/-1;font-size:.66rem;font-weight:800;color:var(--w-mute);text-align:right;margin-top:-2px;}',
+        '.fpw-sub{font-size:.66rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--w-mute);margin:6px 0 4px;}',
+        '.fpw-sw{display:flex;align-items:center;gap:10px;font-size:.8rem;font-weight:800;cursor:pointer;margin-top:4px;}',
+        '.fpw-sw input{width:20px;height:20px;accent-color:#2a78d6;}',
+        /* résultat */
+        '.fpw-res{border-radius:14px;padding:12px 14px;border:2px solid var(--w-line);}',
+        '.fpw-res.ok{border-color:rgba(12,163,12,.5);background:rgba(12,163,12,.07);}.fpw-res.warn{border-color:rgba(232,146,12,.55);background:rgba(232,146,12,.08);}.fpw-res.bad{border-color:rgba(208,59,59,.5);background:rgba(208,59,59,.07);}',
+        '.fpw-calc{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;font-size:.84rem;font-variant-numeric:tabular-nums;}',
+        '.fpw-calc span{color:var(--w-mute);font-weight:700;}.fpw-calc b{text-align:right;font-weight:900;}',
+        '.fpw-calc .sep{grid-column:1/-1;border-top:1.5px dashed var(--w-line);margin:3px 0;}',
+        '.fpw-verdict{font-size:.92rem;font-weight:900;margin-top:8px;}',
+        '.fpw-res.ok .fpw-verdict{color:var(--w-ok);}.fpw-res.warn .fpw-verdict{color:var(--w-warn);}.fpw-res.bad .fpw-verdict{color:var(--w-bad);}',
+        /* stocks */
+        '.fpw-stk{display:flex;flex-direction:column;gap:5px;max-height:320px;overflow-y:auto;}',
+        '.fpw-sr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--w-line);border-left:4px solid var(--c);border-radius:9px;padding:7px 10px;}',
+        '.fpw-sr b{display:block;font-size:.82rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.fpw-sr small{font-size:.68rem;color:var(--w-mute);font-weight:700;}',
+        '.fpw-sr em{font-style:normal;font-weight:900;color:var(--c);white-space:nowrap;}',
+        /* récap */
+        '.fpw-tb{width:100%;border-collapse:collapse;font-size:.84rem;font-variant-numeric:tabular-nums;}',
+        '.fpw-tb th{font-size:.62rem;text-transform:uppercase;letter-spacing:.4px;color:var(--w-mute);text-align:right;padding:4px 6px;font-weight:900;}',
+        '.fpw-tb th:first-child,.fpw-tb td:first-child{text-align:left;}',
+        '.fpw-tb td{padding:8px 6px;border-top:1px solid var(--w-line);text-align:right;font-weight:800;}',
+        '.fpw-ex{border:1.5px solid var(--w-line);border-radius:12px;padding:10px 12px;font-size:.76rem;line-height:1.45;}',
+        '.fpw-ex b{display:block;font-size:.84rem;font-weight:900;margin-bottom:2px;}',
+        '.fpw-done{text-align:center;padding:18px 8px;}',
+        '.fpw-done .big{font-size:3rem;}',
+        '.fpw-done h3{margin:6px 0 4px!important;font-size:1.2rem!important;}',
+        '.fpw-hist summary{cursor:pointer;font-size:.72rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--w-mute);padding:4px 0;}',
+        /* pied */
+        '.fpw-foot{padding:12px 16px;border-top:1.5px solid var(--w-line);display:flex;gap:8px;align-items:center;background:var(--bg-body,#f4f7f6);border-radius:0 0 18px 18px;flex-shrink:0;}',
+        '.fpw-foot .sp{flex:1;}',
+        '.fpw-btn{border:none;border-radius:11px;padding:12px 16px;font-weight:900;font-size:.88rem;cursor:pointer;font-family:inherit;}',
+        '.fpw-btn.sec{background:var(--bg-card,#fff);color:var(--text-main,#0f172a);border:1.5px solid var(--w-line);}',
+        '.fpw-btn.pri{background:linear-gradient(135deg,#2a78d6,#1c55a0);color:#fff;box-shadow:0 6px 16px rgba(42,120,214,.3);}',
+        '.fpw-btn.mid{background:rgba(230,126,34,.12);color:#c56a00;border:1.5px solid rgba(230,126,34,.45);}',
+        'body.dark-mode .fpw-btn.mid{color:#f0a24a;}',
+        '.fpw-btn.fin{background:linear-gradient(135deg,#c0392b,#e74c3c);color:#fff;box-shadow:0 6px 16px rgba(192,57,43,.3);}',
+        '.fpw-btn:disabled{opacity:.5;cursor:default;}',
+        '.fpw-warn{font-size:.78rem;font-weight:800;color:var(--w-bad);}',
+        '@media (max-width:600px){#fin-poste-modal{padding:0!important;}#fin-poste-modal .fpw-box{width:100vw!important;min-height:100vh;border-radius:0!important;}#fin-poste-modal .fpw-box > div:first-child{border-radius:0!important;}.fpw-body{max-height:none;flex:1;padding:14px;}.fpw-foot{border-radius:0;position:sticky;bottom:0;padding-bottom:max(12px,env(safe-area-inset-bottom));flex-wrap:wrap;}.fpw-steps button span{display:none;}.fpw-steps button.on span{display:inline;}}'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    function faceColor(v) { return { 500: '#a35ec2', 200: '#d9a12a', 100: '#2f9e5b', 50: '#e07b2a', 20: '#2a78d6', 10: '#d34b4b', 5: '#7f8c8d' }[v] || (v >= 1 ? '#b08d2a' : v >= 0.1 ? '#c9a227' : '#b8743a'); }
+    function faceLbl(v) { return v >= 1 ? v + ' €' : Math.round(v * 100) + ' c'; }
+
+    /* ───────────── Construction ───────────── */
+    function build() {
+        var m = $('fin-poste-modal'); if (!m) return null;
+        var box = m.firstElementChild; if (!box) return null;
+        if (box.classList.contains('fpw-box')) return box;
+        box.classList.add('fpw-box');
+        var kids = Array.prototype.slice.call(box.children);   // [en-tête, corps d'origine, pied d'origine]
+        kids.slice(1).forEach(function (k) { k.classList.add('fpw-hide'); });
+        var steps = document.createElement('div'); steps.className = 'fpw-steps'; steps.id = 'fpw-steps';
+        var body = document.createElement('div'); body.className = 'fpw-body'; body.id = 'fpw-body';
+        var foot = document.createElement('div'); foot.className = 'fpw-foot'; foot.id = 'fpw-foot';
+        box.insertBefore(steps, kids[1] || null); box.insertBefore(body, kids[1] || null); box.insertBefore(foot, kids[1] || null);
+        box.addEventListener('click', onClick);
+        box.addEventListener('input', onInput);
+        box.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && W && W.step < 4) { e.preventDefault(); go(W.step + 1); } });
+        return box;
+    }
+    function lastFonds() {
+        var h = []; try { h = JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]'); } catch (e) {}
+        var out = []; h.forEach(function (x) { var f = +x.fondCaisse || 0; if (f > 0 && out.indexOf(f) < 0) out.push(f); });
+        return out.slice(0, 3);
+    }
+    function init() {
+        if (!build()) return;
+        var already = '';
+        var al = $('fp-alert'); if (al && al.style.display !== 'none' && /déjà|déjà/.test(al.textContent)) already = al.textContent;
+        W = {
+            step: 0, tEsp: +window._fpTheorEsp || 0, tCb: +window._fpTheorCb || 0, total: +window._fpTotalJour || 0, nTx: +window._fpNbTx || 0, nRet: +window._fpNbRetours || 0,
+            fond: num(($('fp-fond-caisse') || {}).value), prise: ($('fp-prise-poste') || {}).value || '',
+            mode: localStorage.getItem('covo_fpw_mode') || 'count', qty: {}, direct: '', fondIn: true, cb: '', note: '', already: already, done: null, confirmGap: false, stkQ: '', stkAll: false
+        };
+        if (isNaN(W.fond)) W.fond = 0;
+        go(0);
+    }
+
+    /* ───────────── Calculs ───────────── */
+    function counted() {
+        if (W.mode === 'direct') { var d = num(W.direct); return isNaN(d) ? null : d; }
+        var t = 0, any = false; BILLS.concat(COINS).forEach(function (v) { var q = W.qty[v] || 0; if (q) any = true; t += q * v; });
+        return any ? r2(t) : null;
+    }
+    function recEsp() { var c = counted(); if (c == null) return null; return r2(c - (W.fondIn ? W.fond : 0)); }
+    function cbVal() { var c = num(W.cb); return isNaN(c) ? null : r2(c); }
+    function gapCls(g) { return g == null ? '' : Math.abs(g) < 0.01 ? 'ok' : Math.abs(g) <= 2 ? 'warn' : 'bad'; }
+    function gapTxt(g, what) { if (g == null) return 'Non compté'; if (Math.abs(g) < 0.01) return '✅ Juste, aucun écart'; return g < 0 ? '⚠️ Il manque ' + eur(-g) + (what ? ' en ' + what : '') : '⚠️ Il y a ' + eur(g) + ' de trop' + (what ? ' en ' + what : ''); }
+
+    /* ───────────── Rendu des étapes ───────────── */
+    function go(i) {
+        if (!W) return; W.step = Math.max(0, Math.min(4, i));
+        $('fpw-steps').innerHTML = STEPS.map(function (s, k) { return '<button type="button" data-step="' + k + '" class="' + (W.done ? 'done' : k === W.step ? 'on' : k < W.step ? 'done' : '') + '"><i>' + (k < W.step || W.done ? '✓' : k + 1) + '</i><span>' + s[1] + ' ' + s[2] + '</span></button>'; }).join('');
+        var b = $('fpw-body'), HL = window._fpwHL || (window._fpwHL = $('fp-hist-list'));
+        if (HL && b.contains(HL)) { var hold = document.querySelector('#fin-poste-modal .fpw-hide'); if (hold) hold.appendChild(HL); }   // remis à l'abri avant de redessiner
+        b.innerHTML = W.done ? doneHtml() : [stepRes, stepEsp, stepCb, stepStk, stepFin][W.step]();
+        b.scrollTop = 0;
+        foot();
+        if (!W.done) { var f = b.querySelector('[data-focus]'); if (f && window.innerWidth > 600) setTimeout(function () { try { f.focus(); f.select && f.select(); } catch (e) {} }, 60); }
+        if (W.step === 4 && !W.done) { var host = $('fpw-hist'); if (HL && host) { host.appendChild(HL); try { window._renderCaisseHist(); } catch (e) {} } }
+    }
+    function foot() {
+        var f = $('fpw-foot'); if (!f) return;
+        if (W.done) { f.innerHTML = '<span class="sp"></span><button type="button" class="fpw-btn pri" data-act="close">Fermer</button>'; return; }
+        var next = STEPS[W.step + 1];
+        if (W.step < 4) f.innerHTML = (W.step ? '<button type="button" class="fpw-btn sec" data-act="prev">‹ Retour</button>' : '<button type="button" class="fpw-btn sec" data-act="close">Fermer</button>') + '<span class="sp"></span><button type="button" class="fpw-btn pri" data-act="next">Suivant : ' + next[1] + ' ' + next[2] + ' ›</button>';
+        else f.innerHTML = '<button type="button" class="fpw-btn sec" data-act="prev">‹ Retour</button><span class="sp"></span><button type="button" class="fpw-btn mid" data-act="mid">⏸️ Clôture intermédiaire</button><button type="button" class="fpw-btn fin" data-act="fin">🏁 Clôture finale</button>';
+    }
+    function stepRes() {
+        var fonds = lastFonds(), d = '';
+        return (W.already ? '<div class="fpw-res warn"><div class="fpw-verdict" style="margin:0">' + esc(W.already) + '</div></div>' : '')
+            + '<div><h3 class="fpw-h">📊 Ce que la caisse a enregistré</h3><p class="fpw-p">Vérifiez ces montants : ce sont ceux que vous devez retrouver dans le tiroir et sur le terminal de carte.</p></div>'
+            + '<div class="fpw-kpis"><div class="fpw-k" style="--a:#8e44ad"><span>Chiffre du jour</span><b>' + eur(W.total) + '</b><small>' + W.nTx + ' vente' + (W.nTx > 1 ? 's' : '') + (W.nRet ? ' · ' + W.nRet + ' retour(s)' : '') + '</small></div>'
+            + '<div class="fpw-k" style="--a:#16a085"><span>Espèces attendues</span><b>' + eur(W.tEsp) + '</b><small>ventes payées en espèces</small></div>'
+            + '<div class="fpw-k" style="--a:#2980b9"><span>Carte attendue</span><b>' + eur(W.tCb) + '</b><small>ventes payées par carte</small></div>'
+            + '<div class="fpw-k" style="--a:#eda100"><span>Tiroir attendu</span><b id="fpw-drawer">' + eur(W.tEsp + W.fond) + '</b><small>espèces + fond de caisse</small></div></div>'
+            + '<div class="fpw-card"><label for="fpw-fond">🪙 Fond de caisse</label><p class="hint">L’argent laissé dans le tiroir en début de journée pour rendre la monnaie. Il ne fait pas partie de la recette.</p>'
+            + '<input class="fpw-in" id="fpw-fond" data-focus inputmode="decimal" placeholder="0,00" value="' + (W.fond ? String(W.fond).replace('.', ',') : '') + '">'
+            + '<div class="fpw-chips">' + fonds.map(function (v) { return '<button type="button" class="fpw-chip" data-fond="' + v + '">↺ ' + eur(v) + ' (habituel)</button>'; }).join('') + [0, 50, 100, 150, 200].filter(function (v) { return fonds.indexOf(v) < 0; }).map(function (v) { return '<button type="button" class="fpw-chip" data-fond="' + v + '">' + (v ? eur(v) : 'Pas de fond') + '</button>'; }).join('') + '</div></div>'
+            + '<div class="fpw-card"><label for="fpw-prise">⏱️ Heure de prise de poste</label><p class="hint">L’heure à laquelle vous avez commencé à tenir la caisse.</p><input class="fpw-in sm" id="fpw-prise" type="time" value="' + esc(W.prise) + '" style="max-width:180px"></div>';
+    }
+    function denRow(v, coin) {
+        var q = W.qty[v] || 0;
+        return '<div class="fpw-d' + (q ? ' has' : '') + '" data-den="' + v + '"><div class="fpw-face' + (coin ? ' coin' : '') + '" style="background:' + faceColor(v) + '" data-plus="' + v + '" title="Toucher pour ajouter 1">' + faceLbl(v) + '</div>'
+            + '<div class="fpw-q"><button type="button" data-minus="' + v + '" aria-label="Retirer 1">−</button><input inputmode="numeric" data-qty="' + v + '" value="' + (q || '') + '" placeholder="0" aria-label="Nombre de ' + faceLbl(v) + '"><button type="button" data-plus="' + v + '" aria-label="Ajouter 1">+</button></div>'
+            + '<small data-subt="' + v + '">' + (q ? eur(q * v) : '') + '</small></div>';
+    }
+    function espResult() {
+        var c = counted(), r = recEsp(), g = r == null ? null : r2(r - W.tEsp), cls = gapCls(g);
+        if (c == null) return '<div class="fpw-res" id="fpw-espres"><div class="fpw-calc"><span>Espèces attendues (recette)</span><b>' + eur(W.tEsp) + '</b>' + (W.fond ? '<span>Avec le fond de caisse, le tiroir doit contenir</span><b>' + eur(W.tEsp + W.fond) + '</b>' : '') + '</div><div class="fpw-verdict" style="color:var(--w-mute)">Comptez le tiroir pour voir l’écart.</div></div>';
+        return '<div class="fpw-res ' + cls + '" id="fpw-espres"><div class="fpw-calc"><span>Compté dans le tiroir</span><b>' + eur(c) + '</b>'
+            + (W.fondIn && W.fond ? '<span>− Fond de caisse</span><b>− ' + eur(W.fond) + '</b>' : '')
+            + '<div class="sep"></div><span>= Recette espèces</span><b>' + eur(r) + '</b><span>Attendu par la caisse</span><b>' + eur(W.tEsp) + '</b>'
+            + '<div class="sep"></div><span>Écart</span><b>' + (g >= 0 ? '+' : '−') + eur(Math.abs(g)) + '</b></div><div class="fpw-verdict">' + gapTxt(g) + '</div></div>';
+    }
+    function stepEsp() {
+        var c = counted();
+        return '<div><h3 class="fpw-h">💵 Comptez les espèces du tiroir</h3><p class="fpw-p">Touchez un billet ou une pièce pour en ajouter un, ou tapez directement le nombre. Le total se calcule tout seul.</p></div>'
+            + '<div class="fpw-seg"><button type="button" data-mode="count" class="' + (W.mode === 'count' ? 'on' : '') + '">🧮 Compter billets et pièces</button><button type="button" data-mode="direct" class="' + (W.mode === 'direct' ? 'on' : '') + '">⌨️ Saisir le total</button></div>'
+            + (W.mode === 'count'
+                ? '<div><div class="fpw-sub">💶 Billets</div><div class="fpw-den">' + BILLS.map(function (v) { return denRow(v, false); }).join('') + '</div><div class="fpw-sub" style="margin-top:10px">🪙 Pièces</div><div class="fpw-den">' + COINS.map(function (v) { return denRow(v, true); }).join('') + '</div>'
+                    + '<div class="fpw-chips"><button type="button" class="fpw-chip" data-act="resetcount">↺ Tout remettre à zéro</button><span style="margin-left:auto;font-weight:900;font-size:.95rem;align-self:center" id="fpw-ctotal">Total compté : ' + eur(c || 0) + '</span></div></div>'
+                : '<div class="fpw-card"><label for="fpw-direct">Montant total compté dans le tiroir</label><p class="hint">Billets et pièces, fond de caisse compris si vous l’avez laissé dans le tiroir.</p><input class="fpw-in" id="fpw-direct" data-focus inputmode="decimal" placeholder="0,00" value="' + esc(W.direct) + '"></div>')
+            + (W.fond ? '<label class="fpw-sw"><input type="checkbox" id="fpw-fondin"' + (W.fondIn ? ' checked' : '') + '> Le fond de caisse (' + eur(W.fond) + ') est dans le tiroir : le déduire automatiquement</label>' : '')
+            + '<div id="fpw-esphost">' + espResult() + '</div>';
+    }
+    function cbResult() {
+        var v = cbVal(), g = v == null ? null : r2(v - W.tCb), cls = gapCls(g);
+        if (v == null) return '<div class="fpw-res"><div class="fpw-calc"><span>Carte attendue par la caisse</span><b>' + eur(W.tCb) + '</b></div><div class="fpw-verdict" style="color:var(--w-mute)">Saisissez le total du terminal pour voir l’écart (ou laissez vide si vous ne pouvez pas le vérifier).</div></div>';
+        return '<div class="fpw-res ' + cls + '"><div class="fpw-calc"><span>Total du terminal</span><b>' + eur(v) + '</b><span>Attendu par la caisse</span><b>' + eur(W.tCb) + '</b><div class="sep"></div><span>Écart</span><b>' + (g >= 0 ? '+' : '−') + eur(Math.abs(g)) + '</b></div><div class="fpw-verdict">' + gapTxt(g) + '</div></div>';
+    }
+    function stepCb() {
+        return '<div><h3 class="fpw-h">💳 Paiements par carte</h3><p class="fpw-p">Sur le terminal de paiement (TPE), lancez la « fin de journée » ou « télécollecte », puis reportez le total imprimé sur le ticket.</p></div>'
+            + '<div class="fpw-card"><label for="fpw-cb">Total du ticket du terminal</label><input class="fpw-in" id="fpw-cb" data-focus inputmode="decimal" placeholder="0,00" value="' + esc(W.cb) + '">'
+            + '<div class="fpw-chips"><button type="button" class="fpw-chip" data-cb="exact">= Montant attendu (' + eur(W.tCb) + ')</button>' + (W.tCb === 0 ? '<button type="button" class="fpw-chip" data-cb="0">Aucune carte aujourd’hui</button>' : '') + '<button type="button" class="fpw-chip" data-cb="clear">Effacer</button></div></div>'
+            + '<div id="fpw-cbhost">' + cbResult() + '</div>';
+    }
+    function stkRows() {
+        var rows = []; try { if (typeof getEndDayStockAlertProducts === 'function') rows = getEndDayStockAlertProducts(); } catch (e) {}
+        return rows;
+    }
+    function stepStk() {
+        var rows = stkRows(), out = rows.filter(function (r) { return r.stock <= 0; }).length, low = rows.length - out;
+        var q = (W.stkQ || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        var list = q ? rows.filter(function (r) { return String((r.product || {}).name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').indexOf(q) >= 0; }) : rows;
+        var lim = W.stkAll ? list.length : 25;
+        if (!rows.length) return '<div><h3 class="fpw-h">📦 Stocks</h3></div><div class="fpw-res ok"><div class="fpw-verdict" style="margin:0">✅ Aucun article en rupture ou presque épuisé.</div></div>';
+        return '<div><h3 class="fpw-h">📦 Stocks à contrôler</h3><p class="fpw-p">Pour information : ces articles sont en rupture ou presque. Cela n’empêche pas la clôture — notez ce qu’il faut commander.</p></div>'
+            + '<div class="fpw-kpis"><div class="fpw-k" style="--a:#d03b3b"><span>En rupture</span><b>' + out + '</b><small>stock à 0</small></div><div class="fpw-k" style="--a:#f97316"><span>Presque épuisés</span><b>' + low + '</b><small>sous le seuil d’alerte</small></div></div>'
+            + '<input class="fpw-in sm" id="fpw-stkq" placeholder="🔎 Chercher un article…" value="' + esc(W.stkQ) + '">'
+            + '<div class="fpw-stk">' + list.slice(0, lim).map(function (r) { var p = r.product || {}, kg = p.unitType === 'kg', c = r.stock <= 0 ? '#d03b3b' : '#f97316'; return '<div class="fpw-sr" style="--c:' + c + '"><div style="min-width:0"><b>' + esc(p.name || 'Article sans nom') + '</b><small>' + esc(p.category || 'Sans catégorie') + ' · ' + (r.stock <= 0 ? 'Rupture' : 'Presque épuisé') + '</small></div><em>' + (Math.round(r.stock * (kg ? 1000 : 1)) / (kg ? 1000 : 1)).toLocaleString('fr-FR') + (kg ? ' kg' : ' u.') + '</em></div>'; }).join('') + '</div>'
+            + '<div class="fpw-chips">' + (list.length > lim ? '<button type="button" class="fpw-chip" data-act="stkall">Afficher les ' + list.length + ' articles</button>' : '') + '<button type="button" class="fpw-chip" data-act="stkdetail">📋 Liste détaillée / impression</button></div>';
+    }
+    function stepFin() {
+        var r = recEsp(), ge = r == null ? null : r2(r - W.tEsp), c = cbVal(), gc = c == null ? null : r2(c - W.tCb);
+        var gaps = (ge != null && Math.abs(ge) >= 0.01) || (gc != null && Math.abs(gc) >= 0.01), missing = r == null || c == null;
+        var cls = gaps ? (Math.max(Math.abs(ge || 0), Math.abs(gc || 0)) > 2 ? 'bad' : 'warn') : missing ? 'warn' : 'ok';
+        var verdict = gaps ? [ge != null && Math.abs(ge) >= 0.01 ? gapTxt(ge, 'espèces') : '', gc != null && Math.abs(gc) >= 0.01 ? gapTxt(gc, 'carte') : ''].filter(Boolean).join(' · ') + ' — expliquez l’écart dans la note.' : missing ? 'ℹ️ ' + (r == null && c == null ? 'Espèces et carte non comptées' : r == null ? 'Espèces non comptées' : 'Carte non vérifiée') + ' : la clôture sera enregistrée sans contrôle de ce côté.' : '✅ Caisse juste : aucun écart.';
+        var row = function (l, t, v, g) { return '<tr><td>' + l + '</td><td>' + eur(t) + '</td><td>' + (v == null ? '—' : eur(v)) + '</td><td style="color:' + (g == null ? 'var(--w-mute)' : Math.abs(g) < 0.01 ? 'var(--w-ok)' : 'var(--w-bad)') + '">' + (g == null ? '—' : (g >= 0 ? '+' : '−') + eur(Math.abs(g))) + '</td></tr>'; };
+        var sugg = ['RAS', 'Erreur de rendu de monnaie', 'Paiement oublié en caisse', 'Remboursement client', 'Ticket annulé', 'Billet refusé / douteux', 'Achat payé avec la caisse'];
+        return '<div><h3 class="fpw-h">✅ Vérifier et clôturer</h3><p class="fpw-p">Contrôlez le récapitulatif, ajoutez une note si besoin, puis choisissez le type de clôture.</p></div>'
+            + '<table class="fpw-tb"><thead><tr><th></th><th>Attendu</th><th>Compté</th><th>Écart</th></tr></thead><tbody>' + row('💵 Espèces', W.tEsp, r, ge) + row('💳 Carte', W.tCb, c, gc) + '</tbody></table>'
+            + '<div style="font-size:.74rem;color:var(--w-mute);font-weight:700">🪙 Fond de caisse : ' + eur(W.fond) + (W.prise ? ' · ⏱️ prise de poste ' + esc(W.prise) : '') + ' · 📊 chiffre du jour ' + eur(W.total) + '</div>'
+            + '<div class="fpw-res ' + cls + '"><div class="fpw-verdict" style="margin:0">' + verdict + '</div></div>'
+            + '<div class="fpw-card"><label for="fpw-note">📝 Note' + (gaps ? ' <span class="fpw-warn">(recommandée : il y a un écart)</span>' : ' (facultative)') + '</label><textarea id="fpw-note" rows="2" class="fpw-in sm" style="font-size:.88rem;font-weight:600;resize:vertical" placeholder="Observations, incidents…">' + esc(W.note) + '</textarea>'
+            + '<div class="fpw-chips">' + sugg.map(function (s) { return '<button type="button" class="fpw-chip" data-note="' + esc(s) + '">+ ' + esc(s) + '</button>'; }).join('') + '</div></div>'
+            + '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><div class="fpw-ex"><b>⏸️ Clôture intermédiaire</b>Pause ou changement de caissier : on fait le point, la journée continue.</div><div class="fpw-ex"><b>🏁 Clôture finale</b>Fin de la journée : la caisse du jour est arrêtée et enregistrée.</div></div>'
+            + (W.confirmGap ? '<div class="fpw-res bad"><div class="fpw-verdict" style="margin:0">Il y a un écart sans explication. Ajoutez une note, ou cliquez à nouveau pour clôturer quand même.</div></div>' : '')
+            + '<details class="fpw-hist"><summary>📋 Dernières clôtures</summary><div id="fpw-hist"></div></details>';
+    }
+    function doneHtml() {
+        var d = W.done, r = recEsp(), ge = r == null ? null : r2(r - W.tEsp), c = cbVal(), gc = c == null ? null : r2(c - W.tCb);
+        return '<div class="fpw-done"><div class="big">' + (d.partiel ? '⏸️' : '🏁') + '</div><h3>' + (d.partiel ? 'Clôture intermédiaire enregistrée' : 'Clôture finale enregistrée') + '</h3><p class="fpw-p">' + d.at + (d.partiel ? ' · la journée continue, vous pourrez faire la clôture finale plus tard.' : ' · bonne fin de journée !') + '</p></div>'
+            + '<table class="fpw-tb"><thead><tr><th></th><th>Attendu</th><th>Compté</th><th>Écart</th></tr></thead><tbody>'
+            + '<tr><td>💵 Espèces</td><td>' + eur(W.tEsp) + '</td><td>' + (r == null ? '—' : eur(r)) + '</td><td>' + (ge == null ? '—' : (ge >= 0 ? '+' : '−') + eur(Math.abs(ge))) + '</td></tr>'
+            + '<tr><td>💳 Carte</td><td>' + eur(W.tCb) + '</td><td>' + (c == null ? '—' : eur(c)) + '</td><td>' + (gc == null ? '—' : (gc >= 0 ? '+' : '−') + eur(Math.abs(gc))) + '</td></tr></tbody></table>'
+            + (W.note ? '<div class="fpw-ex"><b>📝 Note</b>' + esc(W.note) + '</div>' : '');
+    }
+
+    /* ───────────── Mises à jour en direct (sans tout redessiner) ───────────── */
+    function refreshEsp() {
+        var h = $('fpw-esphost'); if (h) h.innerHTML = espResult();
+        var t = $('fpw-ctotal'); if (t) t.textContent = 'Total compté : ' + eur(counted() || 0);
+        BILLS.concat(COINS).forEach(function (v) { var row = document.querySelector('.fpw-d[data-den="' + v + '"]'); if (!row) return; var q = W.qty[v] || 0; row.classList.toggle('has', !!q); var s = row.querySelector('[data-subt]'); if (s) s.textContent = q ? eur(q * v) : ''; var i = row.querySelector('[data-qty]'); if (i && document.activeElement !== i) i.value = q || ''; });
+    }
+    function onInput(e) {
+        if (!W) return; var t = e.target, id = t.id;
+        if (id === 'fpw-fond') { var f = num(t.value); W.fond = isNaN(f) ? 0 : f; var d = $('fpw-drawer'); if (d) d.textContent = eur(W.tEsp + W.fond); return; }
+        if (id === 'fpw-prise') { W.prise = t.value; return; }
+        if (t.hasAttribute('data-qty')) { var v = +t.getAttribute('data-qty'), q = parseInt(String(t.value).replace(/\D/g, ''), 10) || 0; W.qty[v] = q; refreshEsp(); return; }
+        if (id === 'fpw-direct') { W.direct = t.value; refreshEsp(); return; }
+        if (id === 'fpw-fondin') { W.fondIn = t.checked; refreshEsp(); return; }
+        if (id === 'fpw-cb') { W.cb = t.value; var h = $('fpw-cbhost'); if (h) h.innerHTML = cbResult(); return; }
+        if (id === 'fpw-note') { W.note = t.value; W.confirmGap = false; return; }
+        if (id === 'fpw-stkq') { W.stkQ = t.value; var pos = t.selectionStart; go(3); var n = $('fpw-stkq'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (er) {} } return; }
+    }
+    function onClick(e) {
+        if (!W) return;
+        var b = e.target.closest('[data-step],[data-act],[data-fond],[data-mode],[data-plus],[data-minus],[data-cb],[data-note]'); if (!b || !$('fin-poste-modal').contains(b)) return;
+        if (b.closest('.fpw-hide')) return;
+        var x;
+        if ((x = b.getAttribute('data-step')) != null && !W.done) { go(+x); return; }
+        if ((x = b.getAttribute('data-fond')) != null) { W.fond = +x; go(0); return; }
+        if ((x = b.getAttribute('data-mode'))) { W.mode = x; try { localStorage.setItem('covo_fpw_mode', x); } catch (er) {} go(1); return; }
+        if ((x = b.getAttribute('data-plus'))) { W.qty[x] = (W.qty[x] || 0) + 1; refreshEsp(); return; }
+        if ((x = b.getAttribute('data-minus'))) { W.qty[x] = Math.max(0, (W.qty[x] || 0) - 1); refreshEsp(); return; }
+        if ((x = b.getAttribute('data-cb'))) { W.cb = x === 'exact' ? String(W.tCb.toFixed(2)).replace('.', ',') : x === 'clear' ? '' : '0'; go(2); return; }
+        if ((x = b.getAttribute('data-note'))) { W.note = (W.note ? W.note.replace(/\s+$/, '') + (/[.!?]$/.test(W.note.trim()) ? ' ' : ' · ') : '') + x; W.confirmGap = false; var n = $('fpw-note'); if (n) n.value = W.note; return; }
+        switch (b.getAttribute('data-act')) {
+            case 'next': return go(W.step + 1);
+            case 'prev': return go(W.step - 1);
+            case 'close': $('fin-poste-modal').style.display = 'none'; return;
+            case 'resetcount': W.qty = {}; refreshEsp(); return;
+            case 'stkall': W.stkAll = true; go(3); return;
+            case 'stkdetail': if (typeof window.openEndDayStockAlert === 'function') window.openEndDayStockAlert(true); return;
+            case 'mid': return validate(true);
+            case 'fin': return validate(false);
+        }
+    }
+
+    /* ───────────── Enregistrement (fonction d'origine) ───────────── */
+    function validate(partiel) {
+        var r = recEsp(), c = cbVal(), ge = r == null ? null : r2(r - W.tEsp), gc = c == null ? null : r2(c - W.tCb);
+        var gaps = (ge != null && Math.abs(ge) >= 0.01) || (gc != null && Math.abs(gc) >= 0.01);
+        if (!partiel && gaps && !W.note.trim() && !W.confirmGap) { W.confirmGap = true; go(4); var n = $('fpw-note'); if (n) n.focus(); return; }
+        var set = function (id, v) { var el = $(id); if (el) el.value = v; };
+        set('fp-recu-esp', r == null ? '' : r.toFixed(2));
+        set('fp-recu-cb', c == null ? '' : c.toFixed(2));
+        set('fp-fond-caisse', W.fond ? String(W.fond) : '');
+        set('fp-prise-poste', W.prise || '');
+        set('fp-note', W.note.trim());
+        if (typeof window._fpValider !== 'function') return;
+        window._fpValider(partiel);
+        // détail du comptage joint à la clôture (champs supplémentaires, ignorés ailleurs)
+        try {
+            var h = JSON.parse(localStorage.getItem('covo_caisse_historique') || '[]');
+            if (h[0] && h[0].date === window._fpTodayStr) {
+                h[0].tiroirCompte = counted(); h[0].fondDeduit = !!(W.fondIn && W.fond);
+                if (W.mode === 'count') { var dt = {}; Object.keys(W.qty).forEach(function (k) { if (W.qty[k]) dt[k] = W.qty[k]; }); h[0].detailEspeces = dt; }
+                localStorage.setItem('covo_caisse_historique', JSON.stringify(h));
+            }
+        } catch (e) {}
+        W.done = { partiel: partiel, at: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) };
+        go(4);
+    }
+
+    /* ───────────── Branchement ───────────── */
+    function boot() {
+        if (typeof window._openFinPoste !== 'function' || !$('fin-poste-modal')) return setTimeout(boot, 500);
+        var o = window._openFinPoste;
+        window._openFinPoste = function () { var r = o.apply(this, arguments); try { init(); } catch (e) { console.warn('[Fin de poste]', e); } return r; };
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
