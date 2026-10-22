@@ -67268,3 +67268,327 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — NOMS DES PRODUITS : « Première lettre en majuscule, le reste en minuscules »
+   • Au démarrage, tous les noms d'articles sont harmonisés automatiquement
+     (ex. « COCA-COLA 33CL » → « Coca-cola 33cl », « 300G TUB LT » → « 300g Tub lt »)
+   • Chaque nouvel article ou nom modifié est harmonisé à la saisie et à l'enregistrement
+   • Les anciens noms sont gardés : « Annuler » remet les noms d'origine et désactive l'automatisme
+   • Réglage : localStorage « covo_name_case » = 'on' (par défaut) | 'off'
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._caseInstalled) return;
+    window._caseInstalled = true;
+    var KEY = 'covo_name_case', BK = 'covo_names_before_case';
+    function on() { return localStorage.getItem(KEY) !== 'off'; }
+    function list() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} return null; }
+
+    /* Première lettre du nom en majuscule, tout le reste en minuscules.
+       Si le nom commence par un chiffre (« 300G TUB »), c'est le premier mot en lettres qui prend la majuscule. */
+    function fmt(n) {
+        if (typeof n !== 'string') return n;
+        var s = n.replace(/\s+/g, ' ').trim(); if (!s) return n;
+        s = s.toLocaleLowerCase('fr-FR');
+        var done = false;
+        s = s.replace(/(^|[^\p{L}\p{N}])(\p{L})/gu, function (m, a, b) { if (done) return m; done = true; return a + b.toLocaleUpperCase('fr-FR'); });
+        return s;
+    }
+    window._covoNameCase = fmt;
+
+    /* Harmonise la liste des produits en mémoire ; renvoie le nombre de noms modifiés */
+    function apply(keepBackup) {
+        var P = list(); if (!P || !on()) return 0;
+        var bk = null, n = 0;
+        P.forEach(function (p) {
+            if (!p || typeof p.name !== 'string') return;
+            var f = fmt(p.name); if (f === p.name) return;
+            if (keepBackup) { if (!bk) { try { bk = JSON.parse(localStorage.getItem(BK) || '{}') || {}; } catch (e) { bk = {}; } } if (!(String(p.id) in bk)) bk[String(p.id)] = p.name; }
+            p.name = f; n++;
+        });
+        if (bk) { try { localStorage.setItem(BK, JSON.stringify(bk)); } catch (e) {} }
+        return n;
+    }
+
+    /* Annuler : remet les noms d'origine et désactive l'harmonisation automatique */
+    window._covoNameCaseUndo = function () {
+        var P = list(), bk = {}; try { bk = JSON.parse(localStorage.getItem(BK) || '{}') || {}; } catch (e) {}
+        try { localStorage.setItem(KEY, 'off'); } catch (e) {}
+        var n = 0; if (P) P.forEach(function (p) { if (p && String(p.id) in bk) { p.name = bk[String(p.id)]; n++; } });
+        try { localStorage.removeItem(BK); } catch (e) {}
+        refresh(); if (typeof window.saveAll === 'function') try { window.saveAll(); } catch (e) {}
+        toast('↩️ ' + n + ' nom' + (n > 1 ? 's' : '') + ' remis comme avant · harmonisation automatique désactivée', 0);
+    };
+    window._covoNameCaseEnable = function () { try { localStorage.setItem(KEY, 'on'); } catch (e) {} run(true); };
+
+    function refresh() {
+        ['renderProducts', 'renderCatalogue'].forEach(function (f) { if (typeof window[f] === 'function') { try { window[f](); } catch (e) {} } });
+    }
+    var tEl = null, tT = 0;
+    function toast(msg, undo) {
+        if (!tEl) {
+            tEl = document.createElement('div'); tEl.id = 'case-toast';
+            tEl.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100050;background:rgba(15,23,42,.96);color:#fff;border-radius:14px;padding:12px 14px;font:700 .86rem system-ui,sans-serif;display:flex;align-items:center;gap:12px;box-shadow:0 14px 40px rgba(0,0,0,.35);width:min(540px,92vw);box-sizing:border-box;transition:opacity .2s;';
+            document.body.appendChild(tEl);
+        }
+        tEl.innerHTML = '<span style="flex:1;line-height:1.35">' + msg + '</span>' + (undo ? '<button type="button" style="border:none;background:#fff;color:#0f172a;border-radius:10px;padding:8px 12px;font-weight:900;cursor:pointer;white-space:nowrap">Annuler</button>' : '');
+        tEl.style.opacity = '1'; tEl.style.display = 'flex';
+        var b = tEl.querySelector('button'); if (b) b.onclick = function () { tEl.style.display = 'none'; window._covoNameCaseUndo(); };
+        clearTimeout(tT); tT = setTimeout(function () { tEl.style.opacity = '0'; setTimeout(function () { tEl.style.display = 'none'; }, 250); }, undo ? 12000 : 5000);
+    }
+    function run(announce) {
+        var n = apply(true);
+        if (n) {
+            refresh();
+            if (typeof window.saveAll === 'function') { try { window.saveAll(); } catch (e) {} }
+            if (announce) toast('✏️ ' + n + ' nom' + (n > 1 ? 's' : '') + ' de produit' + (n > 1 ? 's' : '') + ' harmonisé' + (n > 1 ? 's' : '') + ' : première lettre en majuscule, le reste en minuscules.', true);
+        }
+        return n;
+    }
+
+    /* Saisie : le nom est mis en forme dès qu'on quitte le champ (fiche produit, création, modification caissier) */
+    var FIELDS = /^(pem-name|edit-name|new-product-name|np-name|quick-name|qp-name)$/;
+    document.addEventListener('blur', function (e) {
+        var t = e.target; if (!on() || !t || !t.id || !FIELDS.test(t.id) || typeof t.value !== 'string') return;
+        var f = fmt(t.value); if (f !== t.value && t.value.trim()) { t.value = f; try { t.dispatchEvent(new Event('input', { bubbles: true })); } catch (er) {} }
+    }, true);
+
+    function boot() {
+        if (!list() || typeof window.saveAll !== 'function') return setTimeout(boot, 500);
+        // Toute sauvegarde passe d'abord par l'harmonisation (ajouts, imports, modifications, synchronisations…)
+        var o = window.saveAll;
+        window.saveAll = function () { try { apply(true); } catch (e) {} return o.apply(this, arguments); };
+        if (typeof window.saveProductEditModal === 'function') {
+            var sp = window.saveProductEditModal;
+            window.saveProductEditModal = function () { var el = document.getElementById('pem-name'); if (on() && el && el.value.trim()) el.value = fmt(el.value); return sp.apply(this, arguments); };
+        }
+        setTimeout(function () { run(true); }, 1800);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — SYNCHRONISATION RÉUNIE : SITE WEB + CATALOGUE FIDÉLITÉ
+   • Un seul bouton « 🔄 Synchroniser » dans l'onglet Catalogue, avec l'état des deux envois
+   • Synchroniser le site envoie aussi le catalogue fidélité (Portail fidélité des clients)
+   • Le catalogue fidélité était envoyé uniquement depuis Fidélité Pro (« 🛒 Sync catalogue ») :
+     il part maintenant d'ici, même contenu (document Firestore public/catalogue)
+   • Automatique : le portail fidélité est remis à jour dès qu'un changement est détecté
+     (contrôle toutes les 10 min), le site web reste à 24 h
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._lsxInstalled) return;
+    window._lsxInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function lsJ(k, d) { try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (e) { return d; } }
+    function lsS(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+    function toast(m, t) { try { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); } catch (e) {} }
+    function whenTxt(t) {
+        if (!t) return 'jamais';
+        var d = new Date(t), now = new Date(), y = new Date(); y.setDate(now.getDate() - 1);
+        var hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        if (Date.now() - t < 60000) return 'à l’instant';
+        if (d.toDateString() === now.toDateString()) return 'aujourd’hui ' + hm;
+        if (d.toDateString() === y.toDateString()) return 'hier ' + hm;
+        return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' ' + hm;
+    }
+
+    /* ───────────── Catalogue fidélité (Portail fidélité) ───────────── */
+    var K_AT = 'covo_lty_cat_at', K_HASH = 'covo_lty_cat_hash', K_N = 'covo_lty_cat_n', K_ERR = 'covo_lty_cat_err';
+    function hash(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + '.' + s.length; }
+    /* Même contenu que « 🛒 Sync catalogue » de Fidélité Pro : jamais le prix d'achat ni le stock exact,
+       pas d'images enregistrées dans l'appareil (trop lourdes), seulement les liens d'images */
+    function payload() {
+        var raw = lsJ('covo_products', []); if (!Array.isArray(raw)) raw = [];
+        var cats = lsJ('covo_ech_categories', null); if (!Array.isArray(cats) || !cats.length) cats = lsJ('covo_categories', []); if (!Array.isArray(cats)) cats = [];
+        cats = cats.slice();
+        var autoHide = localStorage.getItem('covo_cat_auto_hide_oos') === '1', hidden = 0, autoHidden = 0;
+        var produits = raw.filter(function (p) {
+            if (!p || p.active === false || !p.name) return false;
+            if (p.hiddenFromPortal) { hidden++; return false; }
+            if (autoHide && (+(p.stock || 0)) <= 0) { autoHidden++; return false; }
+            return true;
+        }).map(function (p) {
+            var kg = p.unitType === 'kg', img = (p.img && String(p.img).indexOf('data:') !== 0) ? p.img : '';
+            return { id: p.id, name: p.name, category: p.category || 'Général', unitType: kg ? 'kg' : 'unit', price: +(kg ? (p.pricePerKg || 0) : (p.price || 0)), promo: +(p.promo || 0), available: (+(p.stock || 0)) > 0, img: img, barcode: p.barcode ? String(p.barcode).trim() : '', createdAt: p.dateCreated || p.createdAt || '', desc: p.description ? String(p.description).slice(0, 400) : '', brand: p.brand || '' };
+        });
+        produits.forEach(function (p) { if (cats.indexOf(p.category) === -1) cats.push(p.category); });
+        var wa = ((lsJ('covo_loyalty', {}) || {}).settings || {}).whatsappOrderNumber || '';
+        return { produits: produits, categories: cats, whatsapp: wa, hidden: hidden, autoHidden: autoHidden };
+    }
+    function enc(v) {
+        if (v === null || v === undefined) return { nullValue: null };
+        if (typeof v === 'boolean') return { booleanValue: v };
+        if (typeof v === 'number') return isFinite(v) ? (Number.isInteger(v) && Math.abs(v) < 9e15 ? { integerValue: String(v) } : { doubleValue: v }) : { nullValue: null };
+        if (typeof v === 'string') return { stringValue: v };
+        if (Array.isArray(v)) return { arrayValue: { values: v.map(enc) } };
+        if (typeof v === 'object') { var f = {}; Object.keys(v).forEach(function (k) { f[k] = enc(v[k]); }); return { mapValue: { fields: f } }; }
+        return { stringValue: String(v) };
+    }
+    var L = { busy: false, err: localStorage.getItem(K_ERR) || '' };
+    function ltyHash(P) { return hash(JSON.stringify([P.produits, P.categories, P.whatsapp])); }
+    var PC = { at: 0, v: false };
+    function ltyPending(fresh) {
+        if (localStorage.getItem('covo_catalogue_dirty') === '1') return true;
+        if (!fresh && Date.now() - PC.at < 20000) return PC.v;   // calcul mis en cache (la liste des produits peut être lourde)
+        PC = { at: Date.now(), v: ltyHash(payload()) !== localStorage.getItem(K_HASH) }; return PC.v;
+    }
+    function ltySync(manual) {
+        if (L.busy) return Promise.resolve('busy');
+        if (!navigator.onLine) { if (manual) toast('📵 Hors ligne — le catalogue fidélité sera envoyé au retour du réseau', 'warning'); return Promise.resolve('offline'); }
+        if (typeof window._covoFs !== 'function') { L.err = 'module de synchronisation indisponible'; ui(); return Promise.resolve('nofs'); }
+        var P = payload(), h = ltyHash(P);
+        if (!P.produits.length) { if (manual) toast('⚠️ Aucun produit à envoyer au portail fidélité', 'warning'); return Promise.resolve('empty'); }
+        if (!manual && h === localStorage.getItem(K_HASH) && localStorage.getItem('covo_catalogue_dirty') !== '1') return Promise.resolve('same');
+        L.busy = true; ui();
+        var body = { fields: { produits: enc(P.produits), categories: enc(P.categories), whatsapp: enc(P.whatsapp), updatedAt: enc(new Date().toISOString()), count: enc(P.produits.length) } };
+        if (JSON.stringify(body).length > 1000000) { L.busy = false; L.err = 'catalogue trop volumineux (plus de 1 Mo)'; lsS(K_ERR, L.err); ui(); if (manual) toast('❌ Catalogue fidélité trop volumineux pour être envoyé', 'error'); return Promise.resolve('big'); }
+        return window._covoFs('PATCH', 'public/catalogue', body).then(function (r) {
+            if (!r.ok) return r.text().then(function (t) { throw new Error(r.status === 403 ? 'accès refusé (règle Firestore « public »)' : 'HTTP ' + r.status + ' ' + String(t).slice(0, 120)); });
+            L.err = ''; try { localStorage.removeItem(K_ERR); localStorage.removeItem('covo_catalogue_dirty'); } catch (e) {}
+            lsS(K_AT, String(Date.now())); lsS(K_HASH, h); lsS(K_N, String(P.produits.length)); PC = { at: Date.now(), v: false };
+            if (manual) toast('✅ Catalogue fidélité : ' + P.produits.length + ' produits envoyés au Portail fidélité' + (P.hidden ? ' · ' + P.hidden + ' masqué(s)' : '') + (P.autoHidden ? ' · ' + P.autoHidden + ' en rupture masqué(s)' : '') + (P.whatsapp ? '' : ' · ⚠️ aucun numéro WhatsApp de commande'), 'success');
+            return 'ok';
+        }).catch(function (e) {
+            L.err = (e && e.message) || 'erreur réseau'; lsS(K_ERR, L.err);
+            if (manual) toast('❌ Catalogue fidélité non envoyé : ' + L.err, 'error');
+            return 'err';
+        }).then(function (r) { L.busy = false; ui(); return r; });
+    }
+    window._ltyCatSync = ltySync;
+
+    /* Synchroniser le site = synchroniser aussi le catalogue fidélité */
+    function siteAt() { return +localStorage.getItem('covo_site_sync_at') || 0; }
+    function siteBusy() { try { return /⏳/.test(window._siteSyncLabel()); } catch (e) { return false; } }
+    function siteErr() { try { return /échec/.test(window._siteSyncLabel()); } catch (e) { return false; } }
+    function syncAll() {
+        if (typeof window._siteSyncNow === 'function') window._siteSyncNow(true); else ltySync(true);
+        ui(); setTimeout(ui, 600);
+    }
+    window._covoSyncAll = syncAll;
+
+    /* ───────────── Interface : bouton unique + fenêtre d'explication ───────────── */
+    var css = document.createElement('style');
+    css.id = 'lsx-css';
+    css.textContent = [
+        '#cvx-hero #cat-site-sync{display:none!important;}',
+        '#lsx-btn{display:inline-flex;align-items:center;gap:7px;}',
+        '#lsx-btn .d{width:8px;height:8px;border-radius:50%;background:#0ca30c;box-shadow:0 0 0 3px rgba(12,163,12,.25);}',
+        '#lsx-btn .d.w{background:#fab219;box-shadow:0 0 0 3px rgba(250,178,25,.28);}#lsx-btn .d.e{background:#ec5b5b;box-shadow:0 0 0 3px rgba(236,91,91,.3);}#lsx-btn .d.b{background:#7cc4ff;animation:lsxP 1s infinite;}',
+        '@keyframes lsxP{50%{opacity:.35;}}',
+        '#lsx-st{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}',
+        '#lsx-st span{font-size:.68rem;font-weight:800;color:rgba(255,255,255,.9);background:rgba(0,0,0,.18);border-radius:8px;padding:3px 8px;white-space:nowrap;cursor:pointer;}',
+        '#lsx-pop{position:fixed;inset:0;z-index:99995;background:rgba(10,15,25,.55);display:none;align-items:center;justify-content:center;padding:14px;}',
+        '#lsx-pop.open{display:flex;}',
+        '#lsx-box{width:min(560px,100%);max-height:92vh;overflow-y:auto;background:var(--bg-card,#fff);color:var(--text-main,#0f172a);border-radius:20px;box-shadow:0 30px 80px rgba(0,0,0,.4);animation:lsxIn .25s cubic-bezier(.2,.9,.3,1);}',
+        '@keyframes lsxIn{from{opacity:0;transform:translateY(12px) scale(.98);}to{opacity:1;transform:none;}}',
+        '.lsx-h{background:linear-gradient(120deg,#0b1f3a,#173b6c 55%,#1c55a0);color:#fff;padding:16px 18px;border-radius:20px 20px 0 0;display:flex;align-items:center;gap:12px;}',
+        '.lsx-h h3{margin:0;font-size:1.05rem;font-weight:900;color:#fff!important;}.lsx-h p{margin:2px 0 0;font-size:.74rem;color:rgba(255,255,255,.82);font-weight:700;}',
+        '.lsx-h .x{margin-left:auto;width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,.16);color:#fff;font-size:1rem;cursor:pointer;flex-shrink:0;}',
+        '.lsx-b{padding:14px 16px 18px;}',
+        '.lsx-c{border:1px solid var(--border-color,#e5e9f0);border-radius:15px;padding:12px 14px;margin-bottom:10px;position:relative;}',
+        '.lsx-c .t{display:flex;align-items:center;gap:10px;}',
+        '.lsx-c .t i{font-style:normal;width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.15rem;flex-shrink:0;}',
+        '.lsx-c .t b{display:block;font-size:.92rem;font-weight:900;}.lsx-c .t small{display:block;font-size:.7rem;font-weight:700;color:#6b7280;}',
+        '.lsx-c p{margin:8px 0 8px;font-size:.78rem;line-height:1.5;color:var(--text-main,#334155);opacity:.9;}',
+        '.lsx-c ul{margin:0 0 8px 18px;padding:0;font-size:.76rem;line-height:1.55;}',
+        '.lsx-s{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.74rem;font-weight:800;}',
+        '.lsx-s .p{border-radius:9px;padding:3px 9px;}',
+        '.lsx-s .p.ok{background:rgba(12,163,12,.13);color:#0a8a0a;}.lsx-s .p.w{background:rgba(250,178,25,.18);color:#9a6400;}.lsx-s .p.e{background:rgba(208,59,59,.13);color:#c03030;}.lsx-s .p.b{background:rgba(42,120,214,.14);color:#1c55a0;}',
+        'body.dark-mode .lsx-s .p.ok{color:#5fd65f;}body.dark-mode .lsx-s .p.w{color:#f0c050;}body.dark-mode .lsx-s .p.e{color:#f08080;}body.dark-mode .lsx-s .p.b{color:#7cb6f5;}body.dark-mode .lsx-c .t small{color:#9a9990;}',
+        '.lsx-s button{margin-left:auto;border:1.5px solid var(--border-color,#dfe5ee);background:transparent;color:inherit;border-radius:10px;padding:7px 11px;font-weight:800;font-size:.76rem;cursor:pointer;font-family:inherit;}',
+        '.lsx-all{width:100%;border:none;border-radius:14px;padding:14px;font-size:.95rem;font-weight:900;color:#fff;background:linear-gradient(120deg,#2a78d6,#1c55a0);box-shadow:0 10px 24px rgba(42,120,214,.3);cursor:pointer;font-family:inherit;margin-top:4px;}',
+        '.lsx-all:disabled{opacity:.6;cursor:default;}',
+        '.lsx-n{font-size:.7rem;color:#6b7280;font-weight:700;line-height:1.5;margin-top:10px;text-align:center;}'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    function state() {
+        var sAt = siteAt(), lAt = +localStorage.getItem(K_AT) || 0, lp = ltyPending();
+        var s = siteBusy() ? 'b' : siteErr() ? 'e' : sAt ? 'ok' : 'w';
+        var l = L.busy ? 'b' : L.err ? 'e' : (!lAt || lp) ? 'w' : 'ok';
+        return { sAt: sAt, lAt: lAt, lp: lp, s: s, l: l, n: +localStorage.getItem(K_N) || 0 };
+    }
+    function btnHtml(S) {
+        var worst = (S.s === 'b' || S.l === 'b') ? 'b' : (S.s === 'e' || S.l === 'e') ? 'e' : (S.s === 'w' || S.l === 'w') ? 'w' : '';
+        return '<span class="d ' + worst + '"></span>' + (worst === 'b' ? '⏳ Synchronisation…' : '🔄 Synchroniser') + (worst === 'w' ? ' · changements à envoyer' : worst === 'e' ? ' · ⚠️ échec' : worst === '' ? ' · à jour' : '');
+    }
+    function stTxt(code, at, extra) { return code === 'b' ? '⏳ en cours' : code === 'e' ? '⚠️ échec' : code === 'w' ? (at ? '🟡 changements à envoyer' : '🟡 jamais envoyé') : '✅ ' + whenTxt(at) + (extra || ''); }
+    function ui() {
+        var S = state();
+        var btns = document.querySelector('#cvx-hero .cvx-web .btns');
+        if (btns && !$('lsx-btn')) {
+            var b = document.createElement('button'); b.type = 'button'; b.className = 'cvx-hb'; b.id = 'lsx-btn'; b.title = 'Envoyer le catalogue au site web ET au Portail fidélité';
+            b.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+            btns.appendChild(b);
+            var st = document.createElement('div'); st.id = 'lsx-st'; btns.parentNode.insertBefore(st, btns.nextSibling);
+            st.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+        }
+        if ($('lsx-btn')) $('lsx-btn').innerHTML = btnHtml(S);
+        if ($('lsx-st')) $('lsx-st').innerHTML = '<span title="Site web catalogue">🌐 Site : ' + stTxt(S.s, S.sAt) + '</span><span title="Catalogue du Portail fidélité">💜 Fidélité : ' + stTxt(S.l, S.lAt, S.n ? ' · ' + S.n + ' art.' : '') + '</span>';
+        if ($('lsx-pop') && $('lsx-pop').classList.contains('open')) fill();
+    }
+    function open() {
+        var p = $('lsx-pop');
+        if (!p) {
+            p = document.createElement('div'); p.id = 'lsx-pop';
+            p.innerHTML = '<div id="lsx-box" role="dialog" aria-label="Synchronisation du catalogue"><div class="lsx-h"><div style="font-size:1.6rem">🔄</div><div><h3>Synchroniser le catalogue</h3><p>Site web et catalogue fidélité, au même endroit</p></div><button type="button" class="x" data-x="1" aria-label="Fermer">✕</button></div><div class="lsx-b" id="lsx-body"></div></div>';
+            document.body.appendChild(p);
+            p.addEventListener('click', function (e) {
+                if (e.target === p || e.target.closest('[data-x]')) { p.classList.remove('open'); return; }
+                var b = e.target.closest('[data-do]'); if (!b) return;
+                var d = b.getAttribute('data-do');
+                if (d === 'all') syncAll();
+                else if (d === 'site') { if (window._siteSyncOnly) window._siteSyncOnly(); }
+                else if (d === 'lty') ltySync(true);
+                setTimeout(ui, 100);
+            });
+            document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && p.classList.contains('open')) p.classList.remove('open'); });
+        }
+        PC.at = 0; fill(); p.classList.add('open');
+    }
+    function pill(code, at, extra) { return '<span class="p ' + code + '">' + stTxt(code, at, extra) + '</span>'; }
+    function fill() {
+        var S = state(), P = payload(), busy = S.s === 'b' || S.l === 'b';
+        var site = (lsJ('covo_settings', {}) || {}).siteUrl || localStorage.getItem('covo_site_url') || 'catalogue.covo-trv.fr';
+        $('lsx-body').innerHTML =
+            '<div class="lsx-c"><div class="t"><i style="background:rgba(42,120,214,.14)">🌐</i><div><b>Site web catalogue</b><small>' + esc(String(site).replace(/^https?:\/\//, '').replace(/\/$/, '')) + ' · ouvert à tous</small></div></div>'
+            + '<p>La vitrine publique du magasin : tous les visiteurs voient les rayons, les photos, les promotions et la disponibilité. Les <b>prix</b> ne s’affichent qu’aux clients fidélité connectés.</p>'
+            + '<div class="lsx-s">Dernier envoi : ' + pill(S.s, S.sAt) + '<button type="button" data-do="site">Site seulement</button></div></div>'
+            + '<div class="lsx-c"><div class="t"><i style="background:rgba(98,80,214,.14)">💜</i><div><b>Catalogue fidélité</b><small>Portail fidélité · espace des clients fidélité</small></div></div>'
+            + '<p>La liste des produits que vos <b>clients fidélité</b> voient dans leur espace personnel :</p>'
+            + '<ul><li>onglet <b>Produits</b> avec les prix et les promotions,</li><li>panier envoyé au magasin par <b>WhatsApp</b>' + (P.whatsapp ? '' : ' <span style="color:#c03030;font-weight:800">(⚠️ aucun numéro de commande enregistré)</span>') + ',</li><li><b>scanner</b> d’articles (par le code-barres) et bandeau « Nouvel arrivage ».</li></ul>'
+            + '<p style="margin-top:0">Ne sont pas envoyés : les articles masqués du portail (👁️)' + (localStorage.getItem('covo_cat_auto_hide_oos') === '1' ? ', les articles en rupture (🤖 masquage auto. activé)' : '') + ', le prix d’achat et le stock exact. À envoyer maintenant : <b>' + P.produits.length + ' produits</b>' + (P.hidden ? ' · ' + P.hidden + ' masqué(s)' : '') + (P.autoHidden ? ' · ' + P.autoHidden + ' en rupture' : '') + '.</p>'
+            + '<div class="lsx-s">Dernier envoi : ' + pill(S.l, S.lAt, S.n ? ' · ' + S.n + ' produits' : '') + (L.err ? '<span style="color:#c03030">' + esc(L.err) + '</span>' : '') + '<button type="button" data-do="lty">Fidélité seulement</button></div></div>'
+            + '<button type="button" class="lsx-all" data-do="all"' + (busy ? ' disabled' : '') + '>' + (busy ? '⏳ Synchronisation en cours…' : '🔄 Tout synchroniser (site + catalogue fidélité)') + '</button>'
+            + '<div class="lsx-n">Automatique : le site web est mis à jour toutes les 24 h, le catalogue fidélité dès qu’un changement est détecté (vérification toutes les 10 minutes). Synchroniser le site envoie toujours aussi le catalogue fidélité. Le bouton « 🛒 Sync catalogue » de Fidélité Pro fait le même envoi et reste utilisable.</div>';
+    }
+
+    /* ───────────── Branchement ───────────── */
+    function boot() {
+        if (typeof window._siteSyncNow !== 'function') return setTimeout(boot, 600);
+        var siteOnly = window._siteSyncNow;
+        window._siteSyncOnly = function () { return siteOnly.call(window, true); };
+        window._siteSyncNow = function (manual) {
+            var r = siteOnly.apply(this, arguments);
+            ltySync(!!manual);
+            setTimeout(ui, 100);
+            return r;
+        };
+        // l'interface suit les changements (onglet Catalogue reconstruit, synchro en cours…)
+        setInterval(function () { if (!document.hidden && document.querySelector('#cvx-hero')) ui(); }, 2000);
+        // automatique : catalogue fidélité renvoyé quand il a changé (au plus toutes les 10 min)
+        function auto() { if (document.hidden || !navigator.onLine || L.busy) return; try { if (ltyPending(true)) ltySync(false); } catch (e) {} }
+        setTimeout(auto, 30000);
+        setInterval(auto, 10 * 60000);
+        window.addEventListener('online', function () { setTimeout(auto, 4000); });
+        window.addEventListener('storage', function (e) { if (e.key === 'covo_catalogue_dirty' || e.key === K_AT) ui(); });
+        ui();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
