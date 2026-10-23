@@ -67941,3 +67941,102 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — RÉGLAGES INJECTÉS PAR LICENCE PRO
+   • Onglets désactivés par la licence (Catalogue, Statistiques, Prédictions, Gestion…) :
+     masqués partout (menu, raccourcis) et impossibles à ouvrir, même pour l'administrateur.
+     Les onglets reliés à un module satellite non inclus dans la licence sont aussi masqués.
+   • Client ID Google + compte Google associé : installés automatiquement dans la
+     sauvegarde Google Drive (champ verrouillé « fourni par votre licence »).
+   Source : localStorage « licData_COVO Pro » + événement « licence:data » (licence_check.js)
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._licxInstalled) return;
+    window._licxInstalled = true;
+    var KEY = 'licData_COVO Pro';
+    var NAMES = { catalogue: 'Catalogue', stats: 'Statistiques', predictions: 'Prédictions', retours: 'Gestion', gestionhub: 'Gestion Pro', historique: 'Historique', clotures: 'Clôtures', paiements: 'Paiements', fidelite: 'Fidélité' };
+    var ALL = ['catalogue', 'stats', 'predictions', 'retours', 'gestionhub', 'historique', 'clotures', 'paiements'];
+    var BY_MOD = { 'Gestion': ['gestionhub', 'workhours', 'inventaire', 'stockhist'], 'Historique': ['historique'], 'Clôtures': ['clotures'], 'Finances': ['paiements'], 'Fidélité': ['fidelite'] };
+    var data = null, OFF = {}, sig = '';
+
+    function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
+    function compute(d) {
+        var off = {};
+        if (d && Array.isArray(d.onglets)) ALL.forEach(function (k) { if (d.onglets.indexOf(k) < 0) off[k] = 1; });
+        if (d && Array.isArray(d.modules)) Object.keys(BY_MOD).forEach(function (m) { if (d.modules.indexOf(m) < 0) BY_MOD[m].forEach(function (k) { off[k] = 1; }); });
+        return off;
+    }
+    function toast(m) { if (typeof window.showScanToast === 'function') { try { window.showScanToast(m, 'info'); return; } catch (e) {} } }
+
+    /* ── Onglets : CSS !important (plus fort que les styles posés par les autres scripts) ── */
+    function css() {
+        var el = document.getElementById('licx-css');
+        if (!el) { el = document.createElement('style'); el.id = 'licx-css'; document.head.appendChild(el); }
+        var r = Object.keys(OFF).map(function (k) {
+            return '#tab-btn-' + k + ',#tab-' + k + ',[onclick*="switchTab(\'' + k + '\')"],[onclick*="switchTab(\\"' + k + '\\")"]{display:none!important}';
+        });
+        el.textContent = r.join('\n');
+    }
+    function activeOff() {
+        var a = document.querySelector('.tab-content.active');
+        if (!a || !a.id) return false;
+        return !!OFF[a.id.replace(/^tab-/, '')];
+    }
+    function apply() {
+        data = load();
+        var off = compute(data), s = JSON.stringify(off);
+        if (s !== sig) {
+            sig = s; OFF = off; css();
+            if (activeOff() && typeof window.switchTab === 'function') { try { window.switchTab('products'); } catch (e) {} }
+        }
+        google();
+    }
+
+    /* Toute ouverture d'un onglet désactivé est bloquée (menu, raccourcis, restauration…) */
+    function hook() {
+        if (typeof window.switchTab !== 'function') return setTimeout(hook, 300);
+        if (window.switchTab._licx) return;
+        var orig = window.switchTab;
+        var w = function (name) {
+            if (name && OFF[name]) { toast('🔒 L\'onglet « ' + (NAMES[name] || name) + ' » n\'est pas inclus dans votre licence'); return; }
+            return orig.apply(this, arguments);
+        };
+        w._licx = true; window.switchTab = w;
+        if (activeOff()) { try { w('products'); } catch (e) {} }
+    }
+
+    /* ── Google Drive : Client ID et compte associés à la licence ── */
+    function google() {
+        var g = (data && data.google) || {};
+        var ci = document.getElementById('gdrive-client-id'), em = document.getElementById('gdrive-hint-email');
+        if (ci) {
+            if (g.clientId) {
+                if (ci.value !== g.clientId) ci.value = g.clientId;
+                ci.readOnly = true; ci.title = 'Client ID fourni par votre licence COVO Pro';
+                ci.style.background = '#f1f5f9'; ci.style.color = '#334155';
+                note(ci, 'licx-gnote', '🔑 Client ID Google fourni par votre licence — rien à saisir.');
+            } else if (ci.readOnly && ci.title.indexOf('licence') >= 0) {
+                ci.readOnly = false; ci.title = ''; ci.style.background = ''; ci.style.color = '';
+                var n = document.getElementById('licx-gnote'); if (n) n.remove();
+            }
+        }
+        if (em && g.email && !em.value) em.value = g.email;
+        if (em && g.email) note(em, 'licx-enote', '📧 Compte Google associé à votre licence : ' + g.email);
+    }
+    function note(input, id, txt) {
+        var n = document.getElementById(id), host = input.parentElement;
+        if (!host) return;
+        if (!n) { n = document.createElement('div'); n.id = id; n.style.cssText = 'flex-basis:100%;width:100%;font-size:.74rem;font-weight:700;color:#0f766e;margin-top:2px;'; host.appendChild(n); }
+        if (n.textContent !== txt) n.textContent = txt;
+    }
+
+    window.addEventListener('licence:data', apply);
+    window.addEventListener('storage', function (e) { if (!e.key || e.key === KEY) apply(); });
+    window._covoLicenceTabsOff = function () { return Object.keys(OFF); };
+    apply(); hook();
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { apply(); hook(); });
+    setInterval(google, 4000);
+})();
+</script>
