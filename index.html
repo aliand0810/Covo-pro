@@ -68041,11 +68041,11 @@ function covoQrPrint(o) {
 })();
 </script>
 <script>
-/* ═══ SERVICE CLIENT / SAV — demandes envoyées depuis le site web (Firestore « sav »).
-   Boîte de réception : filtres, fiche détaillée (client, achat, photos), réponse visible par le client
-   dans son compte, changement de statut, appel / WhatsApp / e-mail, impression de la fiche. ═══ */
+/* ═══ SERVICE CLIENT / SAV — onglet « 🛟 SAV » de COVO Pro.
+   Demandes envoyées depuis le site web (Firestore « sav ») : ouvrir, répondre (visible par le client dans
+   son compte), changer le statut, archiver / désarchiver, appeler / WhatsApp / e-mail, imprimer la fiche. ═══ */
 (function () {
-    var V = { list: [], loaded: false, busy: false, err: '', f: 'todo', q: '', cur: null, full: {}, seen: null };
+    var V = { list: [], loaded: false, busy: false, err: '', f: 'todo', q: '', cur: null, full: {}, first: true, at: 0 };
     var ST = { nouveau: ['Nouvelle', '#1c55a0', '#e8f0fb'], encours: ['En cours', '#a1520f', '#fff4e5'], attente: ['Attente client', '#a11c1c', '#fdecec'], resolu: ['Résolue', '#1c7a43', '#e6f5ec'], clos: ['Close', '#5b6b82', '#eef1f5'] };
     var KEY_SEEN = 'covo_sav_seen';
     function el(id) { return document.getElementById(id); }
@@ -68067,7 +68067,7 @@ function covoQrPrint(o) {
         if (Array.isArray(x)) return { arrayValue: { values: x.map(enc) } };
         var f = {}; Object.keys(x).forEach(function (k) { f[k] = enc(x[k]); }); return { mapValue: { fields: f } };
     }
-    function rowOf(d) { var f = d.fields || {}, o = { id: d.name.split('/').pop() }; Object.keys(f).forEach(function (k) { o[k] = dec(f[k]); }); o.t = Date.parse(o.at || '') || 0; o.replies = (o.replies || []).filter(Boolean); return o; }
+    function rowOf(d) { var f = d.fields || {}, o = { id: d.name.split('/').pop() }; Object.keys(f).forEach(function (k) { o[k] = dec(f[k]); }); o.t = Date.parse(o.at || '') || 0; o.replies = (o.replies || []).filter(Boolean); o.archived = !!o.archived; return o; }
     function fmtD(t, short) { if (!t) return '—'; var d = new Date(t); return short ? d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }) + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
     function cashier() {
         var u = null;
@@ -68081,42 +68081,16 @@ function covoQrPrint(o) {
         return null;
     }
     function seenGet() { try { return JSON.parse(localStorage.getItem(KEY_SEEN) || '[]'); } catch (e) { return []; } }
-    function seenAdd(id) { var s = seenGet(); if (s.indexOf(id) < 0) { s.push(id); try { localStorage.setItem(KEY_SEEN, JSON.stringify(s.slice(-500))); } catch (e) {} } }
-    function isTodo(d) { return d.status === 'nouveau' || d.status === 'encours' || d.status === 'attente'; }
+    function seenAdd(id) { var s = seenGet(); if (s.indexOf(id) < 0) { s.push(id); try { localStorage.setItem(KEY_SEEN, JSON.stringify(s.slice(-800))); } catch (e) {} } }
+    function isTodo(d) { return !d.archived && (d.status === 'nouveau' || d.status === 'encours' || d.status === 'attente'); }
+    function bucket(d) { return d.archived ? 'arch' : isTodo(d) ? 'todo' : 'done'; }
+    function nNew() { return V.list.filter(function (d) { return !d.archived && d.status === 'nouveau'; }).length; }
+    function pill(n) { return n ? '<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#e53935;color:#fff;font-size:.68rem;font-weight:800;margin-left:5px;line-height:1;">' + n + '</span>' : ''; }
     function badge() {
-        var n = V.list.filter(function (d) { return d.status === 'nouveau'; }).length, b = el('cat-sav');
-        if (b) b.innerHTML = '🛟 SAV' + (n ? ' <span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#e53935;color:#fff;font-size:.7rem;margin-left:4px;">' + n + '</span>' : '');
+        var n = nNew(), t = el('tab-btn-sav'), c = el('cat-sav');
+        if (t) t.innerHTML = '🛟 SAV' + pill(n);
+        if (c) c.innerHTML = '🛟 SAV' + pill(n);
     }
-    function load(silent) {
-        if (V.busy || typeof window._covoFs !== 'function') return Promise.resolve();
-        V.busy = true; if (!silent) render();
-        var out = [], n = 0;
-        var mask = ['ref', 'at', 'status', 'motif', 'motifLabel', 'wish', 'article', 'articleId', 'ticket', 'buyDate', 'company', 'msg', 'name', 'phone', 'email', 'contact', 'client', 'uid', 'replies', 'updatedAt', 'nPhotos'].map(function (f) { return '&mask.fieldPaths=' + f; }).join('');
-        function page(tok) {
-            return window._covoFs('GET', 'sav?orderBy=at%20desc&pageSize=200' + mask + (tok ? '&pageToken=' + encodeURIComponent(tok) : '')).then(function (r) {
-                if (r.status === 403) throw new Error('Accès refusé : ajoutez la règle Firestore « sav » (voir ci-dessous).');
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            }).then(function (j) { (j.documents || []).forEach(function (d) { out.push(rowOf(d)); }); n++; if (j.nextPageToken && n < 10) return page(j.nextPageToken); });
-        }
-        return page('').then(function () {
-            var before = V.seen; V.list = out; V.loaded = true; V.err = '';
-            var fresh = out.filter(function (d) { return d.status === 'nouveau' && seenGet().indexOf(d.id) < 0; });
-            if (before !== null && fresh.length) toastMsg('🛟 ' + fresh.length + ' nouvelle(s) demande(s) au service client — ' + (fresh[0].name || '') + ' : ' + (fresh[0].motifLabel || ''), 'info');
-            V.seen = out.length; fresh.forEach(function (d) { seenAdd(d.id); });
-        }).catch(function (e) { V.err = (e && e.message) || 'Erreur réseau'; })
-            .then(function () { V.busy = false; badge(); render(); });
-    }
-    function filtered() {
-        var q = V.q.trim().toLowerCase();
-        return V.list.filter(function (d) {
-            if (V.f === 'todo' && !isTodo(d)) return false;
-            if (V.f === 'done' && isTodo(d)) return false;
-            if (!q) return true;
-            return [d.ref, d.name, d.client, d.phone, d.email, d.article, d.ticket, d.motifLabel, d.msg].join(' ').toLowerCase().indexOf(q) >= 0;
-        });
-    }
-    function chip(s) { var x = ST[s] || ST.nouveau; return '<span style="display:inline-block;font-size:.68rem;font-weight:800;padding:3px 8px;border-radius:999px;color:' + x[1] + ';background:' + x[2] + ';white-space:nowrap;">' + x[0] + '</span>'; }
     var RULE = 'match /sav/{id} {\n'
         + '  allow create: if request.resource.data.keys().hasOnly([\'ref\',\'at\',\'status\',\'motif\',\'motifLabel\',\'wish\',\'article\',\'articleId\',\'ticket\',\'buyDate\',\'company\',\'msg\',\'name\',\'phone\',\'email\',\'contact\',\'client\',\'uid\',\'photos\'])\n'
         + '    && request.resource.data.status == \'nouveau\'\n'
@@ -68126,41 +68100,86 @@ function covoQrPrint(o) {
         + '  allow read: if request.auth != null && (request.auth.uid == "nQA35joNjlbIxHrXipTPuGFBGrq1" || resource.data.uid == request.auth.uid);\n'
         + '  allow update, delete: if request.auth != null && request.auth.uid == "nQA35joNjlbIxHrXipTPuGFBGrq1";\n'
         + '}';
+    function load(silent) {
+        if (V.busy || typeof window._covoFs !== 'function') return Promise.resolve();
+        V.busy = true; if (!silent) { var s = el('sav-sync'); if (s) s.textContent = 'Actualisation…'; }
+        var out = [], n = 0;
+        var mask = ['ref', 'at', 'status', 'motif', 'motifLabel', 'wish', 'article', 'articleId', 'ticket', 'buyDate', 'company', 'msg', 'name', 'phone', 'email', 'contact', 'client', 'uid', 'replies', 'updatedAt', 'nPhotos', 'archived', 'archivedAt', 'archivedBy'].map(function (f) { return '&mask.fieldPaths=' + f; }).join('');
+        function page(tok) {
+            return window._covoFs('GET', 'sav?orderBy=at%20desc&pageSize=200' + mask + (tok ? '&pageToken=' + encodeURIComponent(tok) : '')).then(function (r) {
+                if (r.status === 403) throw new Error('Accès refusé : la règle Firestore « sav » est absente ou incorrecte.');
+                if (!r.ok) throw new Error('Erreur ' + r.status + ' du serveur');
+                return r.json();
+            }).then(function (j) { (j.documents || []).forEach(function (d) { out.push(rowOf(d)); }); n++; if (j.nextPageToken && n < 15) return page(j.nextPageToken); });
+        }
+        return page('').then(function () {
+            var seen = seenGet(), fresh = out.filter(function (d) { return d.status === 'nouveau' && !d.archived && seen.indexOf(d.id) < 0; });
+            if (!V.first && fresh.length) {
+                toastMsg('🛟 ' + (fresh.length > 1 ? fresh.length + ' nouvelles demandes SAV' : 'Nouvelle demande SAV de ' + (fresh[0].name || 'un client')) + ' — ' + (fresh[0].motifLabel || ''), 'info');
+                try { var ctx = new (window.AudioContext || window.webkitAudioContext)(), o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = 880; g.gain.value = .06; o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + .18); } catch (e) {}
+            }
+            V.first = false; fresh.forEach(function (d) { seenAdd(d.id); });
+            V.list = out; V.loaded = true; V.err = ''; V.at = Date.now();
+        }).catch(function (e) { V.err = (e && e.message) || 'Erreur réseau'; })
+            .then(function () { V.busy = false; badge(); render(); });
+    }
+    function filtered() {
+        var q = V.q.trim().toLowerCase();
+        return V.list.filter(function (d) {
+            if (V.f !== 'all' && bucket(d) !== V.f) return false;
+            if (V.f === 'all' && d.archived) return false;
+            if (!q) return true;
+            return [d.ref, d.name, d.client, d.phone, d.email, d.article, d.ticket, d.motifLabel, d.msg].join(' ').toLowerCase().indexOf(q) >= 0;
+        });
+    }
+    function chip(d) { var x = ST[d.status] || ST.nouveau; return (d.archived ? '<span style="display:inline-block;font-size:.66rem;font-weight:800;padding:3px 7px;border-radius:999px;color:#5b6b82;background:#eef1f5;margin-right:4px;">📦 Archivée</span>' : '') + '<span style="display:inline-block;font-size:.68rem;font-weight:800;padding:3px 8px;border-radius:999px;color:' + x[1] + ';background:' + x[2] + ';white-space:nowrap;">' + x[0] + '</span>'; }
     function render() {
         var L = el('sav-list'), D = el('sav-det'); if (!L || !D) return;
-        var cnt = { todo: 0, done: 0, all: V.list.length }; V.list.forEach(function (d) { cnt[isTodo(d) ? 'todo' : 'done']++; });
-        ['todo', 'done', 'all'].forEach(function (k) { var b = el('sav-f-' + k); if (b) { b.style.background = V.f === k ? '#fff' : 'transparent'; b.style.color = V.f === k ? '#0d2d5c' : '#fff'; b.textContent = { todo: 'À traiter', done: 'Traitées', all: 'Toutes' }[k] + ' (' + cnt[k] + ')'; } });
-        if (V.err) { L.innerHTML = ''; D.innerHTML = '<div style="padding:18px;"><div style="padding:14px;border-radius:12px;background:#fdecec;color:#a11c1c;font-weight:700;font-size:.86rem;">⚠️ ' + esc(V.err) + '</div><div style="margin-top:14px;font-size:.8rem;color:#33415a;line-height:1.5;"><b>Règle Firestore à ajouter</b> (console Firebase → Firestore → Règles), à côté des autres blocs <code>match</code> :<pre style="white-space:pre-wrap;background:#0d2d5c;color:#dfe9f7;padding:10px;border-radius:8px;font-size:.72rem;margin-top:8px;">' + esc(RULE) + '</pre></div></div>'; return; }
-        if (!V.loaded) { L.innerHTML = '<div style="padding:30px;text-align:center;color:#5b6b82;font-weight:700;">Chargement…</div>'; D.innerHTML = ''; return; }
+        var cnt = { todo: 0, done: 0, arch: 0, all: 0 }; V.list.forEach(function (d) { cnt[bucket(d)]++; if (!d.archived) cnt.all++; });
+        [['todo', 'À traiter'], ['done', 'Traitées'], ['arch', '📦 Archives'], ['all', 'Toutes']].forEach(function (k) { var b = el('sav-f-' + k[0]); if (b) { var on = V.f === k[0]; b.style.background = on ? '#fff' : 'transparent'; b.style.color = on ? '#0d2d5c' : '#fff'; b.innerHTML = k[1] + ' <span style="opacity:.75;">' + cnt[k[0]] + '</span>'; } });
+        var s = el('sav-sync'); if (s) s.textContent = V.busy ? 'Actualisation…' : V.at ? 'À jour à ' + new Date(V.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ' · actualisation automatique' : '';
+        var ab = el('sav-arch-all'); if (ab) ab.style.display = (V.f === 'done' && cnt.done) ? '' : 'none';
+        if (V.err) {
+            L.innerHTML = ''; D.innerHTML = '<div style="padding:18px;"><div style="padding:14px;border-radius:12px;background:#fdecec;color:#a11c1c;font-weight:700;font-size:.86rem;">⚠️ ' + esc(V.err) + '</div><div style="margin-top:14px;font-size:.8rem;color:#33415a;line-height:1.5;"><b>Règle Firestore attendue</b> (console Firebase → Firestore → Règles) :<pre style="white-space:pre-wrap;background:#0d2d5c;color:#dfe9f7;padding:10px;border-radius:8px;font-size:.72rem;margin-top:8px;">' + esc(RULE) + '</pre></div></div>';
+            return;
+        }
+        if (!V.loaded) { L.innerHTML = '<div style="padding:30px;text-align:center;color:#5b6b82;font-weight:700;">Chargement des demandes…</div>'; D.innerHTML = ''; return; }
         var list = filtered();
         L.innerHTML = list.length ? list.map(function (d) {
-            var on = V.cur === d.id, last = d.replies.length ? d.replies[d.replies.length - 1] : null;
-            return '<button onclick="window._savPick(\'' + esc(d.id) + '\')" style="display:block;width:100%;text-align:left;border:none;border-bottom:1px solid #e9eef5;border-left:4px solid ' + (on ? '#e8822e' : d.status === 'nouveau' ? '#1c55a0' : 'transparent') + ';background:' + (on ? '#fff7ef' : '#fff') + ';padding:11px 12px;cursor:pointer;font:inherit;color:#0e1a2b;">'
-                + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><b style="font-size:.86rem;' + (d.status === 'nouveau' ? '' : 'font-weight:700;') + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.name || 'Client') + (d.client ? ' · ' + esc(d.client) : '') + '</b>' + chip(d.status) + '</div>'
+            var on = V.cur === d.id, last = d.replies.length ? d.replies[d.replies.length - 1] : null, nw = d.status === 'nouveau' && !d.archived;
+            return '<button onclick="window._savPick(\'' + esc(d.id) + '\')" style="display:block;width:100%;text-align:left;border:none;border-bottom:1px solid #e9eef5;border-left:4px solid ' + (on ? '#e8822e' : nw ? '#1c55a0' : 'transparent') + ';background:' + (on ? '#fff7ef' : nw ? '#f5f9ff' : '#fff') + ';padding:11px 12px;cursor:pointer;font:inherit;color:#0e1a2b;">'
+                + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><b style="font-size:.86rem;font-weight:' + (nw ? 900 : 700) + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.name || 'Client') + (d.client ? ' · ' + esc(d.client) : '') + '</b><span style="flex-shrink:0;">' + chip(d) + '</span></div>'
                 + '<div style="font-size:.76rem;font-weight:700;color:#1c55a0;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.motifLabel || '') + '</div>'
                 + '<div style="font-size:.74rem;color:#5b6b82;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(last ? '↪ ' + last.text : d.msg) + '</div>'
-                + '<div style="font-size:.68rem;color:#8593a8;margin-top:3px;">' + esc(d.ref) + ' · ' + fmtD(d.t, true) + (d.nPhotos ? ' · 📷' : '') + '</div></button>';
-        }).join('') : '<div style="padding:30px 16px;text-align:center;color:#5b6b82;font-weight:700;font-size:.86rem;">' + (V.f === 'todo' ? '✅ Aucune demande à traiter.' : 'Aucune demande.') + '</div>';
+                + '<div style="font-size:.68rem;color:#8593a8;margin-top:3px;">' + esc(d.ref) + ' · ' + fmtD(d.t, true) + (d.replies.length ? ' · 💬 ' + d.replies.length : '') + '</div></button>';
+        }).join('') : '<div style="padding:34px 16px;text-align:center;color:#5b6b82;font-weight:700;font-size:.86rem;">' + ({ todo: '✅ Aucune demande à traiter.', done: 'Aucune demande traitée.', arch: 'Aucune demande archivée.', all: 'Aucune demande.' }[V.f]) + '</div>';
         var d = V.list.filter(function (x) { return x.id === V.cur; })[0];
-        if (!d) { D.innerHTML = '<div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5b6b82;gap:8px;padding:30px;text-align:center;"><div style="font-size:2.6rem;">🛟</div><b>Sélectionnez une demande</b><span style="font-size:.84rem;">Les demandes envoyées depuis le site (page « Service client ») arrivent ici.</span></div>'; return; }
+        if (!d) { V._sig = ''; D.innerHTML = '<div style="height:100%;min-height:320px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5b6b82;gap:8px;padding:30px;text-align:center;"><div style="font-size:2.6rem;">🛟</div><b>Sélectionnez une demande pour l\'ouvrir</b><span style="font-size:.84rem;max-width:380px;">Les demandes envoyées depuis la page « Service client » du site arrivent ici automatiquement. Une demande traitée peut être archivée ; elle reste consultable dans « 📦 Archives ».</span></div>'; return; }
+        // On ne redessine la fiche que si la demande a changé : la réponse en cours de saisie n'est jamais perdue
+        var sig = d.id + '|' + d.status + '|' + d.archived + '|' + d.replies.length + '|' + ((V.full[d.id] || {}).photos || []).length;
+        if (V._sig === sig && el('sav-rep')) return;
+        var keep = el('sav-rep') ? el('sav-rep').value : '', keepSt = el('sav-rep-st') ? el('sav-rep-st').value : '', same = V._keepFor === d.id;
         D.innerHTML = detailHTML(d);
-        var th = el('sav-thread'); if (th) th.scrollTop = th.scrollHeight;
+        if (same && el('sav-rep')) { if (keep) el('sav-rep').value = keep; if (keepSt) el('sav-rep-st').value = keepSt; }
+        V._keepFor = d.id; V._sig = sig;
     }
     function waNum(p) { var d = String(p || '').replace(/\D/g, ''); if (!d) return ''; if (typeof window._waIntl === 'function') return window._waIntl(p); if (d.length === 10 && d.charAt(0) === '0') d = '33' + d.slice(1); return d; }
     function detailHTML(d) {
         var B = 'border:none;border-radius:9px;padding:8px 12px;font-weight:800;font-size:.8rem;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;';
         var box = 'background:#fff;border:1px solid #e3e9f2;border-radius:12px;padding:12px 14px;';
-        var lb = 'font-size:.68rem;font-weight:800;color:#5b6b82;text-transform:none;';
-        var p = prod(d.articleId, d.article), full = V.full[d.id], wa = waNum(d.phone);
+        var lb = 'font-size:.68rem;font-weight:800;color:#5b6b82;letter-spacing:.02em;';
+        var p = prod(d.articleId, d.article), full = V.full[d.id], wa = waNum(d.phone), x = ST[d.status] || ST.nouveau;
         var waTxt = encodeURIComponent('Bonjour ' + (d.name || '') + ', c\'est le service client COVO au sujet de votre demande ' + d.ref + '. ');
-        var h = '<div style="padding:14px 16px;border-bottom:1px solid #e3e9f2;background:#fff;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">'
-            + '<div style="flex:1;min-width:200px;"><div style="font-size:1.05rem;font-weight:900;">' + esc(d.motifLabel || 'Demande') + '</div><div style="font-size:.76rem;color:#5b6b82;font-weight:600;margin-top:2px;">' + esc(d.ref) + ' · reçue le ' + fmtD(d.t) + '</div></div>'
-            + '<select onchange="window._savStatus(\'' + esc(d.id) + '\',this.value)" style="padding:8px 10px;border-radius:9px;border:1.5px solid ' + (ST[d.status] || ST.nouveau)[1] + ';color:' + (ST[d.status] || ST.nouveau)[1] + ';font-weight:800;background:' + (ST[d.status] || ST.nouveau)[2] + ';">'
-            + Object.keys(ST).map(function (k) { return '<option value="' + k + '"' + (d.status === k ? ' selected' : '') + '>' + ST[k][0] + '</option>'; }).join('') + '</select>'
+        var h = '<div style="padding:14px 16px;border-bottom:1px solid #e3e9f2;background:#fff;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">'
+            + '<div style="flex:1;min-width:200px;"><div style="font-size:1.05rem;font-weight:900;">' + esc(d.motifLabel || 'Demande') + '</div><div style="font-size:.76rem;color:#5b6b82;font-weight:600;margin-top:2px;">' + esc(d.ref) + ' · reçue le ' + fmtD(d.t) + (d.archived ? ' · 📦 archivée' + (d.archivedBy ? ' par ' + esc(d.archivedBy) : '') : '') + '</div></div>'
+            + '<label style="display:flex;align-items:center;gap:6px;font-size:.74rem;font-weight:800;color:#5b6b82;">Statut <select onchange="window._savStatus(\'' + esc(d.id) + '\',this.value)" style="padding:7px 9px;border-radius:9px;border:1.5px solid ' + x[1] + ';color:' + x[1] + ';font-weight:800;background:' + x[2] + ';">'
+            + Object.keys(ST).map(function (k) { return '<option value="' + k + '"' + (d.status === k ? ' selected' : '') + '>' + ST[k][0] + '</option>'; }).join('') + '</select></label>'
+            + (d.archived ? '<button onclick="window._savArchive(\'' + esc(d.id) + '\',false)" style="' + B + 'background:#e8f0fb;color:#1c55a0;">↩️ Désarchiver</button><button onclick="window._savDelete(\'' + esc(d.id) + '\')" style="' + B + 'background:#fdecec;color:#a11c1c;">🗑️ Supprimer</button>'
+                : '<button onclick="window._savArchive(\'' + esc(d.id) + '\',true)" style="' + B + 'background:#eef1f5;color:#33415a;">📦 Archiver</button>')
             + '<button onclick="window._savPrint(\'' + esc(d.id) + '\')" style="' + B + 'background:#eef3fb;color:#1c55a0;">🖨️ Imprimer</button></div>';
         h += '<div style="padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;">';
         h += '<div style="' + box + '"><div style="' + lb + '">CLIENT</div><div style="font-weight:900;font-size:.95rem;margin-top:3px;">' + esc(d.name || '—') + '</div>'
-            + (d.client ? '<div style="font-size:.8rem;font-weight:700;color:#1c7a43;">Fidélité ' + esc(d.client) + (d.uid ? ' · connecté' : '') + '</div>' : '<div style="font-size:.78rem;color:#8593a8;">Pas de compte fidélité indiqué</div>')
+            + (d.client ? '<div style="font-size:.8rem;font-weight:700;color:#1c7a43;">Fidélité ' + esc(d.client) + (d.uid ? ' · envoyé depuis son compte' : '') + '</div>' : '<div style="font-size:.78rem;color:#8593a8;">Pas de compte fidélité indiqué</div>')
             + (d.company ? '<div style="font-size:.8rem;margin-top:2px;">🏢 ' + esc(d.company) + '</div>' : '')
             + '<div style="font-size:.82rem;margin-top:6px;line-height:1.6;">' + (d.phone ? '📞 ' + esc(d.phone) + '<br>' : '') + (d.email ? '✉️ ' + esc(d.email) + '<br>' : '') + '<span style="color:#5b6b82;">Préfère : <b>' + esc(d.contact || '—') + '</b></span></div>'
             + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'
@@ -68175,69 +68194,88 @@ function covoQrPrint(o) {
                 + (d.wish ? '<div style="margin-top:6px;display:inline-block;padding:4px 10px;border-radius:999px;background:#0d2d5c;color:#fff;font-size:.76rem;font-weight:800;">Souhait : ' + esc(d.wish) + '</div>' : '') + '</div>';
         }
         h += '</div>';
-        if (d.nPhotos || (full && full.photos && full.photos.length)) {
-            h += '<div style="padding:0 16px 12px;"><div style="' + lb + 'margin-bottom:6px;">PHOTOS DU CLIENT</div><div style="display:flex;gap:8px;flex-wrap:wrap;">'
-                + (full ? (full.photos || []).map(function (src, i) { return '<a href="javascript:void 0" onclick="window._savPhoto(\'' + esc(d.id) + '\',' + i + ')" style="display:block;width:96px;height:96px;border-radius:10px;overflow:hidden;border:1px solid #e3e9f2;"><img src="' + src + '" style="width:100%;height:100%;object-fit:cover;" alt=""></a>'; }).join('') : '<span style="font-size:.8rem;color:#5b6b82;">Chargement des photos…</span>') + '</div></div>';
-        }
-        h += '<div id="sav-thread" style="padding:4px 16px 12px;display:flex;flex-direction:column;gap:10px;">'
+        if (full && full.photos && full.photos.length) h += '<div style="padding:0 16px 12px;"><div style="' + lb + 'margin-bottom:6px;">PHOTOS DU CLIENT</div><div style="display:flex;gap:8px;flex-wrap:wrap;">' + full.photos.map(function (src, i) { return '<a href="javascript:void 0" onclick="window._savPhoto(\'' + esc(d.id) + '\',' + i + ')" style="display:block;width:96px;height:96px;border-radius:10px;overflow:hidden;border:1px solid #e3e9f2;"><img src="' + src + '" style="width:100%;height:100%;object-fit:cover;" alt=""></a>'; }).join('') + '</div></div>';
+        h += '<div style="padding:4px 16px 12px;display:flex;flex-direction:column;gap:10px;"><div style="' + lb + '">ÉCHANGES</div>'
             + '<div style="align-self:flex-start;max-width:85%;"><div style="background:#fff;border:1px solid #e3e9f2;border-radius:14px 14px 14px 4px;padding:10px 13px;font-size:.88rem;white-space:pre-wrap;line-height:1.45;">' + esc(d.msg) + '</div><div style="font-size:.7rem;color:#8593a8;margin-top:3px;">' + esc(d.name || 'Client') + ' · ' + fmtD(d.t, true) + '</div></div>'
             + d.replies.map(function (r) { return '<div style="align-self:flex-end;max-width:85%;"><div style="background:#1c55a0;color:#fff;border-radius:14px 14px 4px 14px;padding:10px 13px;font-size:.88rem;white-space:pre-wrap;line-height:1.45;">' + esc(r.text) + '</div><div style="font-size:.7rem;color:#8593a8;margin-top:3px;text-align:right;">' + esc(r.by || 'Le magasin') + (r.byId ? ' (ID ' + esc(r.byId) + ')' : '') + ' · ' + fmtD(Date.parse(r.at), true) + '</div></div>'; }).join('')
             + '</div>';
-        h += '<div style="padding:12px 16px 16px;border-top:1px solid #e3e9f2;background:#fff;position:sticky;bottom:0;">'
-            + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">' + [
+        h += '<div style="padding:12px 16px 16px;border-top:1px solid #e3e9f2;background:#fff;">'
+            + '<div style="' + lb + 'margin-bottom:6px;">RÉPONDRE AU CLIENT</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">' + [
                 ['Bien reçu', 'Bonjour ' + (d.name || '').split(' ')[0] + ', nous avons bien reçu votre demande et nous nous en occupons. Nous revenons vers vous très vite.'],
                 ['Passez en magasin', 'Bonjour, vous pouvez passer à l\'accueil du magasin avec votre ticket de caisse et l\'article : nous procéderons au ' + (d.wish && /chang/i.test(d.wish) ? 'change' : 'remboursement') + '.'],
                 ['Remboursé', 'Bonjour, c\'est réglé : le remboursement / l\'avoir a été effectué. Merci de votre confiance.'],
                 ['Info manquante', 'Bonjour, pour traiter votre demande, pourriez-vous nous préciser le numéro de ticket et la date d\'achat ?']
             ].map(function (t) { return '<button onclick="var a=document.getElementById(\'sav-rep\');a.value=' + esc(JSON.stringify(t[1])) + ';a.focus();" style="' + B + 'background:#f3f6fb;color:#33415a;padding:6px 10px;font-size:.74rem;">' + esc(t[0]) + '</button>'; }).join('') + '</div>'
-            + '<textarea id="sav-rep" rows="3" placeholder="Écrire une réponse au client (visible dans son compte sur le site)…" style="box-sizing:border-box;width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #c9d5e6;font:inherit;font-size:.9rem;resize:vertical;"></textarea>'
+            + '<textarea id="sav-rep" rows="3" placeholder="Votre réponse au client…" style="box-sizing:border-box;width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #c9d5e6;font:inherit;font-size:.9rem;resize:vertical;background:#fff;color:#0e1a2b;"></textarea>'
             + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;"><select id="sav-rep-st" style="padding:8px 10px;border-radius:9px;border:1.5px solid #c9d5e6;font-weight:700;background:#fff;color:#0e1a2b;">'
-            + '<option value="encours">et passer « En cours »</option><option value="attente">et attendre le client</option><option value="resolu">et marquer « Résolue »</option><option value="">sans changer le statut</option></select>'
+            + '<option value="encours">et passer « En cours »</option><option value="attente">et attendre le client</option><option value="resolu">et marquer « Résolue »</option><option value="resolu+arch">et marquer « Résolue » + archiver</option><option value="">sans changer le statut</option></select>'
             + '<button onclick="window._savReply(\'' + esc(d.id) + '\')" id="sav-rep-btn" style="' + B + 'background:#e8822e;color:#fff;padding:10px 16px;">Envoyer la réponse</button>'
-            + (d.uid ? '<span style="font-size:.74rem;color:#1c7a43;font-weight:700;">Le client la verra dans « Mon compte »</span>' : '<span style="font-size:.74rem;color:#a1520f;font-weight:700;">Client non connecté : prévenez-le aussi par ' + esc((d.contact || 'téléphone').toLowerCase()) + '</span>') + '</div></div>';
+            + (d.uid ? '<span style="font-size:.74rem;color:#1c7a43;font-weight:700;">Visible par le client dans « Mon compte » sur le site</span>' : '<span style="font-size:.74rem;color:#a1520f;font-weight:700;">Client sans compte : prévenez-le aussi par ' + esc((d.contact || 'téléphone').toLowerCase()) + '</span>') + '</div></div>';
         return h;
     }
+    function find(id) { return V.list.filter(function (x) { return x.id === id; })[0]; }
     function patch(d, obj) {
-        var fields = {}, mask = Object.keys(obj).map(function (k) { fields[k] = k === 'updatedAt' ? { timestampValue: obj[k] } : enc(obj[k]); return 'updateMask.fieldPaths=' + k; }).join('&');
+        var fields = {}, mask = Object.keys(obj).map(function (k) { fields[k] = (k === 'updatedAt' || k === 'archivedAt') && obj[k] ? { timestampValue: obj[k] } : enc(obj[k]); return 'updateMask.fieldPaths=' + k; }).join('&');
         return window._covoFs('PATCH', 'sav/' + d.id + '?' + mask + '&currentDocument.exists=true', { fields: fields }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); Object.keys(obj).forEach(function (k) { d[k] = obj[k]; }); });
     }
     window._savStatus = function (id, st, quiet) {
-        var d = V.list.filter(function (x) { return x.id === id; })[0]; if (!d) return;
-        patch(d, { status: st, updatedAt: new Date().toISOString() }).then(function () { if (!quiet) toastMsg('✅ Demande ' + d.ref + ' : ' + ST[st][0], 'success'); badge(); render(); })
+        var d = find(id); if (!d) return;
+        patch(d, { status: st, updatedAt: new Date().toISOString() }).then(function () { if (!quiet) toastMsg('✅ ' + d.ref + ' : ' + ST[st][0], 'success'); badge(); render(); })
             .catch(function () { toastMsg('⚠️ Statut non enregistré (connexion ?)', 'error'); render(); });
     };
+    window._savArchive = function (id, on) {
+        var d = find(id); if (!d) return;
+        var me = cashier(), o = { archived: !!on, archivedAt: on ? new Date().toISOString() : null, archivedBy: on ? me.name : '', updatedAt: new Date().toISOString() };
+        if (on && isTodo(d)) o.status = 'clos';
+        patch(d, o).then(function () { toastMsg(on ? '📦 ' + d.ref + ' archivée — retrouvez-la dans « Archives »' : '↩️ ' + d.ref + ' remise dans la liste', 'success'); if (on && V.f !== 'arch') V.cur = null; badge(); render(); })
+            .catch(function () { toastMsg('⚠️ Archivage impossible (connexion ?)', 'error'); });
+    };
+    window._savArchiveDone = function () {
+        var todo = V.list.filter(function (d) { return bucket(d) === 'done'; });
+        if (!todo.length || !confirm('Archiver les ' + todo.length + ' demande(s) traitée(s) ?')) return;
+        var me = cashier(), i = 0;
+        (function next() { if (i >= todo.length) { toastMsg('📦 ' + todo.length + ' demande(s) archivée(s)', 'success'); V.cur = null; render(); return; } var d = todo[i++]; patch(d, { archived: true, archivedAt: new Date().toISOString(), archivedBy: me.name }).then(next, next); })();
+    };
+    window._savDelete = function (id) {
+        var d = find(id); if (!d) return;
+        if (!confirm('Supprimer définitivement la demande ' + d.ref + ' ? Elle ne sera plus visible, ni ici ni dans le compte du client.')) return;
+        window._covoFs('DELETE', 'sav/' + d.id).then(function (r) { if (!r.ok) throw 0; V.list = V.list.filter(function (x) { return x.id !== id; }); V.cur = null; toastMsg('🗑️ ' + d.ref + ' supprimée', 'success'); badge(); render(); })
+            .catch(function () { toastMsg('⚠️ Suppression impossible', 'error'); });
+    };
     window._savReply = function (id) {
-        var d = V.list.filter(function (x) { return x.id === id; })[0], ta = el('sav-rep'); if (!d || !ta) return;
+        var d = find(id), ta = el('sav-rep'); if (!d || !ta) return;
         var txt = ta.value.trim(); if (!txt) { ta.focus(); return; }
-        var st = (el('sav-rep-st') || {}).value, me = cashier(), btn = el('sav-rep-btn');
-        var reps = d.replies.concat([{ at: new Date().toISOString(), by: me.name, byId: me.id, text: txt }]);
-        var o = { replies: reps, updatedAt: new Date().toISOString() }; if (st) o.status = st;
+        var st = (el('sav-rep-st') || {}).value, arch = /\+arch$/.test(st); st = st.replace('+arch', '');
+        var me = cashier(), btn = el('sav-rep-btn');
+        var o = { replies: d.replies.concat([{ at: new Date().toISOString(), by: me.name, byId: me.id, text: txt }]), updatedAt: new Date().toISOString() };
+        if (st) o.status = st;
+        if (arch) { o.archived = true; o.archivedAt = new Date().toISOString(); o.archivedBy = me.name; }
         btn.disabled = true; btn.textContent = 'Envoi…';
-        patch(d, o).then(function () { toastMsg('✅ Réponse envoyée — ' + d.ref, 'success'); badge(); render(); })
+        patch(d, o).then(function () { ta.value = ''; V._sig = ''; toastMsg('✅ Réponse envoyée — ' + d.ref + (arch ? ' (archivée)' : ''), 'success'); if (arch) V.cur = null; badge(); render(); })
             .catch(function () { toastMsg('⚠️ Réponse non envoyée (connexion ?)', 'error'); btn.disabled = false; btn.textContent = 'Envoyer la réponse'; });
     };
     window._savPick = function (id) {
-        V.cur = id; render();
-        var d = V.list.filter(function (x) { return x.id === id; })[0];
-        if (d && d.status === 'nouveau') window._savStatus(id, 'encours', true);
+        V.cur = id; render(); layout();
+        var d = find(id);
+        if (d && d.status === 'nouveau' && !d.archived) window._savStatus(id, 'encours', true);
         if (!V.full[id]) window._covoFs('GET', 'sav/' + id + '?mask.fieldPaths=photos').then(function (r) { return r.ok ? r.json() : {}; }).then(function (j) {
-            var ph = dec(((j.fields || {}).photos)) || []; V.full[id] = { photos: ph }; if (d && ph.length) d.nPhotos = ph.length; if (V.cur === id) render();
+            V.full[id] = { photos: dec(((j.fields || {}).photos)) || [] }; if (V.cur === id) render();
         }).catch(function () {});
-        if (window.innerWidth < 760) { var D = el('sav-det'), L = el('sav-list'); if (D && L) { L.style.display = 'none'; D.style.display = 'block'; var bk = el('sav-back'); if (bk) bk.style.display = ''; } }
+        var D = el('sav-det'); if (D) D.scrollTop = 0;
     };
-    window._savBack = function () { var D = el('sav-det'), L = el('sav-list'), bk = el('sav-back'); if (L) L.style.display = ''; if (D) D.style.display = ''; if (bk) bk.style.display = 'none'; V.cur = null; layout(); render(); };
+    window._savBack = function () { V.cur = null; layout(); render(); };
     window._savPhoto = function (id, i) {
         var src = ((V.full[id] || {}).photos || [])[i]; if (!src) return;
         var ov = document.createElement('div'); ov.style.cssText = 'position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out;';
         ov.innerHTML = '<img src="' + src + '" style="max-width:100%;max-height:100%;border-radius:10px;">'; ov.onclick = function () { ov.remove(); }; document.body.appendChild(ov);
     };
     window._savPrint = function (id) {
-        var d = V.list.filter(function (x) { return x.id === id; })[0]; if (!d) return;
+        var d = find(id); if (!d) return;
         var ph = (V.full[id] || {}).photos || [];
         var w = window.open('', '_blank'); if (!w) { toastMsg('⚠️ Autorisez les fenêtres pour imprimer', 'error'); return; }
         var row = function (k, v) { return v ? '<tr><th>' + k + '</th><td>' + esc(v) + '</td></tr>' : ''; };
         w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(d.ref) + '</title><style>body{font-family:Arial,sans-serif;color:#111;margin:14mm;}h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:18px 0 6px;border-bottom:2px solid #111;padding-bottom:3px;}table{border-collapse:collapse;width:100%;font-size:13px;}th{text-align:left;width:150px;color:#555;padding:5px 8px 5px 0;vertical-align:top;}td{padding:5px 0;}.msg{white-space:pre-wrap;border:1px solid #ccc;border-radius:6px;padding:10px;font-size:13px;}.r{margin-top:8px;}.r b{font-size:12px;color:#555;}img{width:46mm;height:46mm;object-fit:cover;margin:0 6px 6px 0;border:1px solid #ccc;}.sig{display:flex;gap:30px;margin-top:30px;font-size:12px;}.sig div{flex:1;border-top:1px solid #111;padding-top:4px;}</style></head><body>'
-            + '<h1>Fiche SAV ' + esc(d.ref) + '</h1><div style="font-size:12px;color:#555;">Reçue le ' + fmtD(d.t) + ' · statut : ' + ST[d.status][0] + '</div>'
+            + '<h1>Fiche SAV ' + esc(d.ref) + '</h1><div style="font-size:12px;color:#555;">Reçue le ' + fmtD(d.t) + ' · statut : ' + (ST[d.status] || ST.nouveau)[0] + (d.archived ? ' · archivée' : '') + '</div>'
             + '<h2>Client</h2><table>' + row('Nom', d.name) + row('Compte fidélité', d.client) + row('Entreprise', d.company) + row('Téléphone', d.phone) + row('E-mail', d.email) + row('Recontacter par', d.contact) + '</table>'
             + '<h2>Demande</h2><table>' + row('Motif', d.motifLabel) + row('Article', d.article) + row('Ticket', d.ticket ? 'N°' + d.ticket : '') + row('Date d\'achat', d.buyDate ? new Date(d.buyDate).toLocaleDateString('fr-FR') : '') + row('Souhait', d.wish) + '</table>'
             + '<h2>Message du client</h2><div class="msg">' + esc(d.msg) + '</div>'
@@ -68248,48 +68286,60 @@ function covoQrPrint(o) {
         w.document.close();
     };
     function layout() {
-        var L = el('sav-list'), D = el('sav-det'); if (!L || !D) return;
-        var narrow = window.innerWidth < 760;
-        L.style.width = narrow ? '100%' : '330px'; L.style.borderRight = narrow ? 'none' : '1px solid #e3e9f2';
-        if (narrow) { D.style.display = V.cur ? 'block' : 'none'; L.style.display = V.cur ? 'none' : ''; var bk = el('sav-back'); if (bk) bk.style.display = V.cur ? '' : 'none'; }
-        else { D.style.display = 'block'; L.style.display = ''; var bk2 = el('sav-back'); if (bk2) bk2.style.display = 'none'; }
+        var L = el('sav-list'), D = el('sav-det'), bk = el('sav-back'); if (!L || !D) return;
+        var narrow = window.innerWidth < 800;
+        L.style.width = narrow ? '100%' : '340px'; L.style.borderRight = narrow ? 'none' : '1px solid #e3e9f2';
+        if (narrow) { D.style.display = V.cur ? 'block' : 'none'; L.style.display = V.cur ? 'none' : 'block'; if (bk) bk.style.display = V.cur ? '' : 'none'; }
+        else { D.style.display = 'block'; L.style.display = 'block'; if (bk) bk.style.display = 'none'; }
     }
-    window._savOpen = function () {
-        var ov = el('sav-ov');
-        if (!ov) {
-            ov = document.createElement('div'); ov.id = 'sav-ov';
-            ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(6,16,32,.62);display:flex;align-items:center;justify-content:center;padding:10px;';
-            ov.addEventListener('click', function (e) { if (e.target === ov) ov.style.display = 'none'; });
-            var b = 'border:none;border-radius:9px;padding:7px 11px;font-weight:800;font-size:.78rem;cursor:pointer;white-space:nowrap;';
-            ov.innerHTML = '<div role="dialog" aria-modal="true" style="background:#f7f9fc;color:#0e1a2b;border-radius:18px;width:min(1220px,100%);height:min(880px,100%);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.4);">'
-                + '<div style="background:linear-gradient(135deg,#0d2d5c,#1c55a0);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
-                + '<button id="sav-back" onclick="window._savBack()" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;display:none;">‹ Liste</button>'
-                + '<div style="flex:1;min-width:160px;font-size:1.05rem;font-weight:900;">🛟 Service client — SAV</div>'
-                + '<div style="display:flex;gap:3px;background:rgba(0,0,0,.18);padding:3px;border-radius:10px;"><button id="sav-f-todo" onclick="window._savF(\'todo\')" style="' + b + '"></button><button id="sav-f-done" onclick="window._savF(\'done\')" style="' + b + '"></button><button id="sav-f-all" onclick="window._savF(\'all\')" style="' + b + '"></button></div>'
-                + '<input id="sav-q" type="search" oninput="window._savQ(this.value)" placeholder="🔎 Nom, n° SAV, ticket, article…" style="flex:1;min-width:150px;max-width:280px;padding:8px 11px;border-radius:9px;border:none;font-weight:600;">'
-                + '<button onclick="window._savLoad()" title="Actualiser" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;">🔄</button>'
-                + '<button onclick="document.getElementById(\'sav-ov\').style.display=\'none\'" aria-label="Fermer" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;">✕</button></div>'
-                + '<div style="flex:1;display:flex;min-height:0;"><div id="sav-list" style="overflow-y:auto;background:#fff;flex-shrink:0;"></div><div id="sav-det" style="flex:1;overflow-y:auto;min-width:0;"></div></div></div>';
-            document.body.appendChild(ov);
-            window.addEventListener('resize', layout);
-        }
-        ov.style.display = 'flex'; layout(); render(); load();
-    };
     window._savF = function (f) { V.f = f; render(); };
     window._savQ = function (q) { V.q = q; render(); };
     window._savLoad = function () { load(); };
     window._savRule = function () { return RULE; };
-    // Bouton « 🛟 SAV » dans la barre du catalogue + vérification toutes les 2 minutes
-    function addBtn() {
+    // ── Onglet « 🛟 SAV » dans la barre principale (après Catalogue) ──
+    function panelHTML() {
+        var b = 'border:none;border-radius:9px;padding:7px 11px;font-weight:800;font-size:.78rem;cursor:pointer;white-space:nowrap;';
+        return '<div style="background:linear-gradient(135deg,#0d2d5c,#1c55a0);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-radius:0 0 16px 16px;">'
+            + '<button id="sav-back" onclick="window._savBack()" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;display:none;">‹ Liste</button>'
+            + '<div style="flex:1;min-width:180px;"><div style="font-size:1.1rem;font-weight:900;">🛟 Service client — SAV</div><div id="sav-sync" style="font-size:.72rem;opacity:.8;font-weight:600;"></div></div>'
+            + '<div style="display:flex;gap:3px;background:rgba(0,0,0,.18);padding:3px;border-radius:10px;flex-wrap:wrap;"><button id="sav-f-todo" onclick="window._savF(\'todo\')" style="' + b + '"></button><button id="sav-f-done" onclick="window._savF(\'done\')" style="' + b + '"></button><button id="sav-f-arch" onclick="window._savF(\'arch\')" style="' + b + '"></button><button id="sav-f-all" onclick="window._savF(\'all\')" style="' + b + '"></button></div>'
+            + '<input id="sav-q" type="search" oninput="window._savQ(this.value)" placeholder="🔎 Nom, n° SAV, ticket, article…" style="flex:1;min-width:150px;max-width:280px;padding:8px 11px;border-radius:9px;border:none;font-weight:600;background:#fff;color:#0e1a2b;">'
+            + '<button id="sav-arch-all" onclick="window._savArchiveDone()" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;display:none;">📦 Archiver les traitées</button>'
+            + '<button onclick="window._savLoad()" title="Actualiser" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;">🔄 Actualiser</button></div>'
+            + '<div id="sav-wrap" style="display:flex;margin:12px;background:#f7f9fc;color:#0e1a2b;border:1px solid #e3e9f2;border-radius:14px;overflow:hidden;height:calc(100vh - 230px);min-height:460px;color-scheme:light;">'
+            + '<div id="sav-list" style="overflow-y:auto;background:#fff;color:#0e1a2b;flex-shrink:0;"></div><div id="sav-det" style="flex:1;overflow-y:auto;min-width:0;background:#f7f9fc;color:#0e1a2b;"></div></div>'
+            + '<style>#sav-wrap,#sav-wrap div,#sav-wrap b,#sav-wrap span:not([style*="color"]),#sav-wrap label{color:inherit;}#sav-wrap textarea,#sav-wrap select,#sav-wrap input{color-scheme:light;}</style>';
+    }
+    function injectTab() {
+        if (el('tab-btn-sav')) return true;
+        var after = el('tab-btn-catalogue'); if (!after || !after.parentNode) return false;
+        var bt = document.createElement('button'); bt.className = 'tab'; bt.id = 'tab-btn-sav'; bt.type = 'button';
+        bt.setAttribute('onclick', "switchTab('sav')"); bt.textContent = '🛟 SAV';
+        after.parentNode.insertBefore(bt, after.nextSibling);
+        var ref = el('tab-catalogue');
+        if (ref && !el('tab-sav')) { var c = document.createElement('div'); c.className = 'tab-content'; c.id = 'tab-sav'; c.style.cssText = 'padding:0;background:var(--bg-body,#f4f7f6);'; c.innerHTML = panelHTML(); ref.parentNode.insertBefore(c, ref.nextSibling); }
+        badge(); return true;
+    }
+    function isOpen() { var t = el('tab-sav'); return !!(t && t.classList.contains('active')); }
+    window._savOpen = function () { if (typeof switchTab === 'function' && el('tab-btn-sav')) switchTab('sav'); };
+    var _prev = window.switchTab;
+    if (typeof _prev === 'function') window.switchTab = function (name) { _prev.apply(this, arguments); if (name === 'sav') { injectTab(); layout(); render(); load(); } };
+    // Bouton raccourci dans la barre du Catalogue
+    function addCatBtn() {
         if (el('cat-sav')) return;
         var ref = el('cat-site-visits') || el('cat-site-cfg'); if (!ref || !ref.parentNode) return;
-        var bt = document.createElement('button'); bt.id = 'cat-sav'; bt.type = 'button'; bt.title = 'Service client : demandes envoyées depuis le site web';
+        var bt = document.createElement('button'); bt.id = 'cat-sav'; bt.type = 'button'; bt.title = 'Ouvrir l\'onglet Service client / SAV';
         bt.onclick = function () { window._savOpen(); };
-        bt.style.cssText = ref.style.cssText || 'padding:8px 12px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;';
-        ref.parentNode.insertBefore(bt, ref); badge();
+        bt.style.cssText = ref.style.cssText; ref.parentNode.insertBefore(bt, ref); badge();
     }
-    new MutationObserver(function () { if (!el('cat-sav')) addBtn(); }).observe(document.documentElement, { childList: true, subtree: true });
-    setTimeout(function () { load(true); }, 20000);
-    setInterval(function () { if (!document.hidden && navigator.onLine) load(true); }, 120000);
+    var _mo = new MutationObserver(function () { if (!el('tab-btn-sav')) injectTab(); if (!el('cat-sav')) addCatBtn(); });
+    _mo.observe(document.documentElement, { childList: true, subtree: true });
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectTab); else injectTab();
+    window.addEventListener('resize', layout);
+    // Actualisation : toutes les 30 s quand l'onglet SAV est ouvert, sinon toutes les 90 s
+    setTimeout(function () { load(true); }, 8000);
+    var _last = 0;
+    setInterval(function () { if (document.hidden || !navigator.onLine) return; var gap = isOpen() ? 30000 : 90000; if (Date.now() - _last >= gap) { _last = Date.now(); load(true); } }, 10000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden && isOpen()) load(true); });
 })();
 </script>
