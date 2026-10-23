@@ -68040,3 +68040,256 @@ function covoQrPrint(o) {
     setInterval(google, 4000);
 })();
 </script>
+<script>
+/* ═══ SERVICE CLIENT / SAV — demandes envoyées depuis le site web (Firestore « sav »).
+   Boîte de réception : filtres, fiche détaillée (client, achat, photos), réponse visible par le client
+   dans son compte, changement de statut, appel / WhatsApp / e-mail, impression de la fiche. ═══ */
+(function () {
+    var V = { list: [], loaded: false, busy: false, err: '', f: 'todo', q: '', cur: null, full: {}, seen: null };
+    var ST = { nouveau: ['Nouvelle', '#1c55a0', '#e8f0fb'], encours: ['En cours', '#a1520f', '#fff4e5'], attente: ['Attente client', '#a11c1c', '#fdecec'], resolu: ['Résolue', '#1c7a43', '#e6f5ec'], clos: ['Close', '#5b6b82', '#eef1f5'] };
+    var KEY_SEEN = 'covo_sav_seen';
+    function el(id) { return document.getElementById(id); }
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toastMsg(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'info'); else if (typeof toast === 'function') toast(m, t); }
+    function dec(v) {
+        if (!v) return null;
+        if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return +v.integerValue; if ('doubleValue' in v) return +v.doubleValue;
+        if ('booleanValue' in v) return v.booleanValue; if ('timestampValue' in v) return v.timestampValue; if ('nullValue' in v) return null;
+        if ('arrayValue' in v) return (v.arrayValue.values || []).map(dec);
+        if ('mapValue' in v) { var o = {}, f = v.mapValue.fields || {}; Object.keys(f).forEach(function (k) { o[k] = dec(f[k]); }); return o; }
+        return null;
+    }
+    function enc(x) {
+        if (x === null || x === undefined) return { nullValue: null };
+        if (typeof x === 'boolean') return { booleanValue: x };
+        if (typeof x === 'number') return Number.isInteger(x) ? { integerValue: String(x) } : { doubleValue: x };
+        if (typeof x === 'string') return { stringValue: x };
+        if (Array.isArray(x)) return { arrayValue: { values: x.map(enc) } };
+        var f = {}; Object.keys(x).forEach(function (k) { f[k] = enc(x[k]); }); return { mapValue: { fields: f } };
+    }
+    function rowOf(d) { var f = d.fields || {}, o = { id: d.name.split('/').pop() }; Object.keys(f).forEach(function (k) { o[k] = dec(f[k]); }); o.t = Date.parse(o.at || '') || 0; o.replies = (o.replies || []).filter(Boolean); return o; }
+    function fmtD(t, short) { if (!t) return '—'; var d = new Date(t); return short ? d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }) + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+    function cashier() {
+        var u = null;
+        try { if (typeof currentUser !== 'undefined' && currentUser) u = currentUser; } catch (e) {}
+        if (!u) try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {}
+        return { name: (u && (u.name || u.displayName || u.username)) || 'Le magasin', id: (u && (u.username || u.login || u.id)) || '' };
+    }
+    function prod(id, name) {
+        var list = []; try { list = (typeof products !== 'undefined' && Array.isArray(products)) ? products : JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch (e) {}
+        for (var i = 0; i < list.length; i++) if ((id && String(list[i].id) === String(id)) || (!id && name && list[i].name === name)) return list[i];
+        return null;
+    }
+    function seenGet() { try { return JSON.parse(localStorage.getItem(KEY_SEEN) || '[]'); } catch (e) { return []; } }
+    function seenAdd(id) { var s = seenGet(); if (s.indexOf(id) < 0) { s.push(id); try { localStorage.setItem(KEY_SEEN, JSON.stringify(s.slice(-500))); } catch (e) {} } }
+    function isTodo(d) { return d.status === 'nouveau' || d.status === 'encours' || d.status === 'attente'; }
+    function badge() {
+        var n = V.list.filter(function (d) { return d.status === 'nouveau'; }).length, b = el('cat-sav');
+        if (b) b.innerHTML = '🛟 SAV' + (n ? ' <span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#e53935;color:#fff;font-size:.7rem;margin-left:4px;">' + n + '</span>' : '');
+    }
+    function load(silent) {
+        if (V.busy || typeof window._covoFs !== 'function') return Promise.resolve();
+        V.busy = true; if (!silent) render();
+        var out = [], n = 0;
+        var mask = ['ref', 'at', 'status', 'motif', 'motifLabel', 'wish', 'article', 'articleId', 'ticket', 'buyDate', 'company', 'msg', 'name', 'phone', 'email', 'contact', 'client', 'uid', 'replies', 'updatedAt', 'nPhotos'].map(function (f) { return '&mask.fieldPaths=' + f; }).join('');
+        function page(tok) {
+            return window._covoFs('GET', 'sav?orderBy=at%20desc&pageSize=200' + mask + (tok ? '&pageToken=' + encodeURIComponent(tok) : '')).then(function (r) {
+                if (r.status === 403) throw new Error('Accès refusé : ajoutez la règle Firestore « sav » (voir ci-dessous).');
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            }).then(function (j) { (j.documents || []).forEach(function (d) { out.push(rowOf(d)); }); n++; if (j.nextPageToken && n < 10) return page(j.nextPageToken); });
+        }
+        return page('').then(function () {
+            var before = V.seen; V.list = out; V.loaded = true; V.err = '';
+            var fresh = out.filter(function (d) { return d.status === 'nouveau' && seenGet().indexOf(d.id) < 0; });
+            if (before !== null && fresh.length) toastMsg('🛟 ' + fresh.length + ' nouvelle(s) demande(s) au service client — ' + (fresh[0].name || '') + ' : ' + (fresh[0].motifLabel || ''), 'info');
+            V.seen = out.length; fresh.forEach(function (d) { seenAdd(d.id); });
+        }).catch(function (e) { V.err = (e && e.message) || 'Erreur réseau'; })
+            .then(function () { V.busy = false; badge(); render(); });
+    }
+    function filtered() {
+        var q = V.q.trim().toLowerCase();
+        return V.list.filter(function (d) {
+            if (V.f === 'todo' && !isTodo(d)) return false;
+            if (V.f === 'done' && isTodo(d)) return false;
+            if (!q) return true;
+            return [d.ref, d.name, d.client, d.phone, d.email, d.article, d.ticket, d.motifLabel, d.msg].join(' ').toLowerCase().indexOf(q) >= 0;
+        });
+    }
+    function chip(s) { var x = ST[s] || ST.nouveau; return '<span style="display:inline-block;font-size:.68rem;font-weight:800;padding:3px 8px;border-radius:999px;color:' + x[1] + ';background:' + x[2] + ';white-space:nowrap;">' + x[0] + '</span>'; }
+    var RULE = 'match /sav/{id} {\n'
+        + '  allow create: if request.resource.data.keys().hasOnly([\'ref\',\'at\',\'status\',\'motif\',\'motifLabel\',\'wish\',\'article\',\'articleId\',\'ticket\',\'buyDate\',\'company\',\'msg\',\'name\',\'phone\',\'email\',\'contact\',\'client\',\'uid\',\'photos\'])\n'
+        + '    && request.resource.data.status == \'nouveau\'\n'
+        + '    && request.resource.data.msg is string && request.resource.data.msg.size() <= 3000\n'
+        + '    && request.resource.data.photos.size() <= 3\n'
+        + '    && (request.resource.data.uid == \'\' || (request.auth != null && request.resource.data.uid == request.auth.uid));\n'
+        + '  allow read: if request.auth != null && (request.auth.uid == "nQA35joNjlbIxHrXipTPuGFBGrq1" || resource.data.uid == request.auth.uid);\n'
+        + '  allow update, delete: if request.auth != null && request.auth.uid == "nQA35joNjlbIxHrXipTPuGFBGrq1";\n'
+        + '}';
+    function render() {
+        var L = el('sav-list'), D = el('sav-det'); if (!L || !D) return;
+        var cnt = { todo: 0, done: 0, all: V.list.length }; V.list.forEach(function (d) { cnt[isTodo(d) ? 'todo' : 'done']++; });
+        ['todo', 'done', 'all'].forEach(function (k) { var b = el('sav-f-' + k); if (b) { b.style.background = V.f === k ? '#fff' : 'transparent'; b.style.color = V.f === k ? '#0d2d5c' : '#fff'; b.textContent = { todo: 'À traiter', done: 'Traitées', all: 'Toutes' }[k] + ' (' + cnt[k] + ')'; } });
+        if (V.err) { L.innerHTML = ''; D.innerHTML = '<div style="padding:18px;"><div style="padding:14px;border-radius:12px;background:#fdecec;color:#a11c1c;font-weight:700;font-size:.86rem;">⚠️ ' + esc(V.err) + '</div><div style="margin-top:14px;font-size:.8rem;color:#33415a;line-height:1.5;"><b>Règle Firestore à ajouter</b> (console Firebase → Firestore → Règles), à côté des autres blocs <code>match</code> :<pre style="white-space:pre-wrap;background:#0d2d5c;color:#dfe9f7;padding:10px;border-radius:8px;font-size:.72rem;margin-top:8px;">' + esc(RULE) + '</pre></div></div>'; return; }
+        if (!V.loaded) { L.innerHTML = '<div style="padding:30px;text-align:center;color:#5b6b82;font-weight:700;">Chargement…</div>'; D.innerHTML = ''; return; }
+        var list = filtered();
+        L.innerHTML = list.length ? list.map(function (d) {
+            var on = V.cur === d.id, last = d.replies.length ? d.replies[d.replies.length - 1] : null;
+            return '<button onclick="window._savPick(\'' + esc(d.id) + '\')" style="display:block;width:100%;text-align:left;border:none;border-bottom:1px solid #e9eef5;border-left:4px solid ' + (on ? '#e8822e' : d.status === 'nouveau' ? '#1c55a0' : 'transparent') + ';background:' + (on ? '#fff7ef' : '#fff') + ';padding:11px 12px;cursor:pointer;font:inherit;color:#0e1a2b;">'
+                + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><b style="font-size:.86rem;' + (d.status === 'nouveau' ? '' : 'font-weight:700;') + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.name || 'Client') + (d.client ? ' · ' + esc(d.client) : '') + '</b>' + chip(d.status) + '</div>'
+                + '<div style="font-size:.76rem;font-weight:700;color:#1c55a0;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.motifLabel || '') + '</div>'
+                + '<div style="font-size:.74rem;color:#5b6b82;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(last ? '↪ ' + last.text : d.msg) + '</div>'
+                + '<div style="font-size:.68rem;color:#8593a8;margin-top:3px;">' + esc(d.ref) + ' · ' + fmtD(d.t, true) + (d.nPhotos ? ' · 📷' : '') + '</div></button>';
+        }).join('') : '<div style="padding:30px 16px;text-align:center;color:#5b6b82;font-weight:700;font-size:.86rem;">' + (V.f === 'todo' ? '✅ Aucune demande à traiter.' : 'Aucune demande.') + '</div>';
+        var d = V.list.filter(function (x) { return x.id === V.cur; })[0];
+        if (!d) { D.innerHTML = '<div style="height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5b6b82;gap:8px;padding:30px;text-align:center;"><div style="font-size:2.6rem;">🛟</div><b>Sélectionnez une demande</b><span style="font-size:.84rem;">Les demandes envoyées depuis le site (page « Service client ») arrivent ici.</span></div>'; return; }
+        D.innerHTML = detailHTML(d);
+        var th = el('sav-thread'); if (th) th.scrollTop = th.scrollHeight;
+    }
+    function waNum(p) { var d = String(p || '').replace(/\D/g, ''); if (!d) return ''; if (typeof window._waIntl === 'function') return window._waIntl(p); if (d.length === 10 && d.charAt(0) === '0') d = '33' + d.slice(1); return d; }
+    function detailHTML(d) {
+        var B = 'border:none;border-radius:9px;padding:8px 12px;font-weight:800;font-size:.8rem;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;';
+        var box = 'background:#fff;border:1px solid #e3e9f2;border-radius:12px;padding:12px 14px;';
+        var lb = 'font-size:.68rem;font-weight:800;color:#5b6b82;text-transform:none;';
+        var p = prod(d.articleId, d.article), full = V.full[d.id], wa = waNum(d.phone);
+        var waTxt = encodeURIComponent('Bonjour ' + (d.name || '') + ', c\'est le service client COVO au sujet de votre demande ' + d.ref + '. ');
+        var h = '<div style="padding:14px 16px;border-bottom:1px solid #e3e9f2;background:#fff;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">'
+            + '<div style="flex:1;min-width:200px;"><div style="font-size:1.05rem;font-weight:900;">' + esc(d.motifLabel || 'Demande') + '</div><div style="font-size:.76rem;color:#5b6b82;font-weight:600;margin-top:2px;">' + esc(d.ref) + ' · reçue le ' + fmtD(d.t) + '</div></div>'
+            + '<select onchange="window._savStatus(\'' + esc(d.id) + '\',this.value)" style="padding:8px 10px;border-radius:9px;border:1.5px solid ' + (ST[d.status] || ST.nouveau)[1] + ';color:' + (ST[d.status] || ST.nouveau)[1] + ';font-weight:800;background:' + (ST[d.status] || ST.nouveau)[2] + ';">'
+            + Object.keys(ST).map(function (k) { return '<option value="' + k + '"' + (d.status === k ? ' selected' : '') + '>' + ST[k][0] + '</option>'; }).join('') + '</select>'
+            + '<button onclick="window._savPrint(\'' + esc(d.id) + '\')" style="' + B + 'background:#eef3fb;color:#1c55a0;">🖨️ Imprimer</button></div>';
+        h += '<div style="padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;">';
+        h += '<div style="' + box + '"><div style="' + lb + '">CLIENT</div><div style="font-weight:900;font-size:.95rem;margin-top:3px;">' + esc(d.name || '—') + '</div>'
+            + (d.client ? '<div style="font-size:.8rem;font-weight:700;color:#1c7a43;">Fidélité ' + esc(d.client) + (d.uid ? ' · connecté' : '') + '</div>' : '<div style="font-size:.78rem;color:#8593a8;">Pas de compte fidélité indiqué</div>')
+            + (d.company ? '<div style="font-size:.8rem;margin-top:2px;">🏢 ' + esc(d.company) + '</div>' : '')
+            + '<div style="font-size:.82rem;margin-top:6px;line-height:1.6;">' + (d.phone ? '📞 ' + esc(d.phone) + '<br>' : '') + (d.email ? '✉️ ' + esc(d.email) + '<br>' : '') + '<span style="color:#5b6b82;">Préfère : <b>' + esc(d.contact || '—') + '</b></span></div>'
+            + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">'
+            + (d.phone ? '<a href="tel:' + esc(String(d.phone).replace(/\s/g, '')) + '" style="' + B + 'background:#eef3fb;color:#1c55a0;">📞 Appeler</a>' : '')
+            + (wa ? '<a href="https://wa.me/' + esc(wa) + '?text=' + waTxt + '" target="_blank" rel="noopener" style="' + B + 'background:#e6f5ec;color:#1c7a43;">💬 WhatsApp</a>' : '')
+            + (d.email ? '<a href="mailto:' + esc(d.email) + '?subject=' + encodeURIComponent('Votre demande ' + d.ref + ' — service client COVO') + '" style="' + B + 'background:#fff4e5;color:#a1520f;">✉️ E-mail</a>' : '') + '</div></div>';
+        if (d.article || d.ticket || d.buyDate || d.wish) {
+            h += '<div style="' + box + '"><div style="' + lb + '">ACHAT CONCERNÉ</div>'
+                + (d.article ? '<div style="font-weight:900;font-size:.92rem;margin-top:3px;">' + esc(d.article) + '</div>' : '')
+                + (p ? '<div style="font-size:.78rem;color:#5b6b82;">' + esc(p.category || '') + ' · stock ' + (+p.stock || 0) + (p.price != null ? ' · ' + (+p.price).toFixed(2).replace('.', ',') + ' €' : '') + '</div>' : (d.article ? '<div style="font-size:.76rem;color:#8593a8;">Article non retrouvé au catalogue</div>' : ''))
+                + '<div style="font-size:.82rem;margin-top:6px;line-height:1.6;">' + (d.ticket ? '🧾 Ticket N°<b>' + esc(d.ticket) + '</b><br>' : '') + (d.buyDate ? '📅 Acheté le ' + esc(new Date(d.buyDate).toLocaleDateString('fr-FR')) + '<br>' : '') + '</div>'
+                + (d.wish ? '<div style="margin-top:6px;display:inline-block;padding:4px 10px;border-radius:999px;background:#0d2d5c;color:#fff;font-size:.76rem;font-weight:800;">Souhait : ' + esc(d.wish) + '</div>' : '') + '</div>';
+        }
+        h += '</div>';
+        if (d.nPhotos || (full && full.photos && full.photos.length)) {
+            h += '<div style="padding:0 16px 12px;"><div style="' + lb + 'margin-bottom:6px;">PHOTOS DU CLIENT</div><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+                + (full ? (full.photos || []).map(function (src, i) { return '<a href="javascript:void 0" onclick="window._savPhoto(\'' + esc(d.id) + '\',' + i + ')" style="display:block;width:96px;height:96px;border-radius:10px;overflow:hidden;border:1px solid #e3e9f2;"><img src="' + src + '" style="width:100%;height:100%;object-fit:cover;" alt=""></a>'; }).join('') : '<span style="font-size:.8rem;color:#5b6b82;">Chargement des photos…</span>') + '</div></div>';
+        }
+        h += '<div id="sav-thread" style="padding:4px 16px 12px;display:flex;flex-direction:column;gap:10px;">'
+            + '<div style="align-self:flex-start;max-width:85%;"><div style="background:#fff;border:1px solid #e3e9f2;border-radius:14px 14px 14px 4px;padding:10px 13px;font-size:.88rem;white-space:pre-wrap;line-height:1.45;">' + esc(d.msg) + '</div><div style="font-size:.7rem;color:#8593a8;margin-top:3px;">' + esc(d.name || 'Client') + ' · ' + fmtD(d.t, true) + '</div></div>'
+            + d.replies.map(function (r) { return '<div style="align-self:flex-end;max-width:85%;"><div style="background:#1c55a0;color:#fff;border-radius:14px 14px 4px 14px;padding:10px 13px;font-size:.88rem;white-space:pre-wrap;line-height:1.45;">' + esc(r.text) + '</div><div style="font-size:.7rem;color:#8593a8;margin-top:3px;text-align:right;">' + esc(r.by || 'Le magasin') + (r.byId ? ' (ID ' + esc(r.byId) + ')' : '') + ' · ' + fmtD(Date.parse(r.at), true) + '</div></div>'; }).join('')
+            + '</div>';
+        h += '<div style="padding:12px 16px 16px;border-top:1px solid #e3e9f2;background:#fff;position:sticky;bottom:0;">'
+            + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">' + [
+                ['Bien reçu', 'Bonjour ' + (d.name || '').split(' ')[0] + ', nous avons bien reçu votre demande et nous nous en occupons. Nous revenons vers vous très vite.'],
+                ['Passez en magasin', 'Bonjour, vous pouvez passer à l\'accueil du magasin avec votre ticket de caisse et l\'article : nous procéderons au ' + (d.wish && /chang/i.test(d.wish) ? 'change' : 'remboursement') + '.'],
+                ['Remboursé', 'Bonjour, c\'est réglé : le remboursement / l\'avoir a été effectué. Merci de votre confiance.'],
+                ['Info manquante', 'Bonjour, pour traiter votre demande, pourriez-vous nous préciser le numéro de ticket et la date d\'achat ?']
+            ].map(function (t) { return '<button onclick="var a=document.getElementById(\'sav-rep\');a.value=' + esc(JSON.stringify(t[1])) + ';a.focus();" style="' + B + 'background:#f3f6fb;color:#33415a;padding:6px 10px;font-size:.74rem;">' + esc(t[0]) + '</button>'; }).join('') + '</div>'
+            + '<textarea id="sav-rep" rows="3" placeholder="Écrire une réponse au client (visible dans son compte sur le site)…" style="box-sizing:border-box;width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #c9d5e6;font:inherit;font-size:.9rem;resize:vertical;"></textarea>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;"><select id="sav-rep-st" style="padding:8px 10px;border-radius:9px;border:1.5px solid #c9d5e6;font-weight:700;background:#fff;color:#0e1a2b;">'
+            + '<option value="encours">et passer « En cours »</option><option value="attente">et attendre le client</option><option value="resolu">et marquer « Résolue »</option><option value="">sans changer le statut</option></select>'
+            + '<button onclick="window._savReply(\'' + esc(d.id) + '\')" id="sav-rep-btn" style="' + B + 'background:#e8822e;color:#fff;padding:10px 16px;">Envoyer la réponse</button>'
+            + (d.uid ? '<span style="font-size:.74rem;color:#1c7a43;font-weight:700;">Le client la verra dans « Mon compte »</span>' : '<span style="font-size:.74rem;color:#a1520f;font-weight:700;">Client non connecté : prévenez-le aussi par ' + esc((d.contact || 'téléphone').toLowerCase()) + '</span>') + '</div></div>';
+        return h;
+    }
+    function patch(d, obj) {
+        var fields = {}, mask = Object.keys(obj).map(function (k) { fields[k] = k === 'updatedAt' ? { timestampValue: obj[k] } : enc(obj[k]); return 'updateMask.fieldPaths=' + k; }).join('&');
+        return window._covoFs('PATCH', 'sav/' + d.id + '?' + mask + '&currentDocument.exists=true', { fields: fields }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); Object.keys(obj).forEach(function (k) { d[k] = obj[k]; }); });
+    }
+    window._savStatus = function (id, st, quiet) {
+        var d = V.list.filter(function (x) { return x.id === id; })[0]; if (!d) return;
+        patch(d, { status: st, updatedAt: new Date().toISOString() }).then(function () { if (!quiet) toastMsg('✅ Demande ' + d.ref + ' : ' + ST[st][0], 'success'); badge(); render(); })
+            .catch(function () { toastMsg('⚠️ Statut non enregistré (connexion ?)', 'error'); render(); });
+    };
+    window._savReply = function (id) {
+        var d = V.list.filter(function (x) { return x.id === id; })[0], ta = el('sav-rep'); if (!d || !ta) return;
+        var txt = ta.value.trim(); if (!txt) { ta.focus(); return; }
+        var st = (el('sav-rep-st') || {}).value, me = cashier(), btn = el('sav-rep-btn');
+        var reps = d.replies.concat([{ at: new Date().toISOString(), by: me.name, byId: me.id, text: txt }]);
+        var o = { replies: reps, updatedAt: new Date().toISOString() }; if (st) o.status = st;
+        btn.disabled = true; btn.textContent = 'Envoi…';
+        patch(d, o).then(function () { toastMsg('✅ Réponse envoyée — ' + d.ref, 'success'); badge(); render(); })
+            .catch(function () { toastMsg('⚠️ Réponse non envoyée (connexion ?)', 'error'); btn.disabled = false; btn.textContent = 'Envoyer la réponse'; });
+    };
+    window._savPick = function (id) {
+        V.cur = id; render();
+        var d = V.list.filter(function (x) { return x.id === id; })[0];
+        if (d && d.status === 'nouveau') window._savStatus(id, 'encours', true);
+        if (!V.full[id]) window._covoFs('GET', 'sav/' + id + '?mask.fieldPaths=photos').then(function (r) { return r.ok ? r.json() : {}; }).then(function (j) {
+            var ph = dec(((j.fields || {}).photos)) || []; V.full[id] = { photos: ph }; if (d && ph.length) d.nPhotos = ph.length; if (V.cur === id) render();
+        }).catch(function () {});
+        if (window.innerWidth < 760) { var D = el('sav-det'), L = el('sav-list'); if (D && L) { L.style.display = 'none'; D.style.display = 'block'; var bk = el('sav-back'); if (bk) bk.style.display = ''; } }
+    };
+    window._savBack = function () { var D = el('sav-det'), L = el('sav-list'), bk = el('sav-back'); if (L) L.style.display = ''; if (D) D.style.display = ''; if (bk) bk.style.display = 'none'; V.cur = null; layout(); render(); };
+    window._savPhoto = function (id, i) {
+        var src = ((V.full[id] || {}).photos || [])[i]; if (!src) return;
+        var ov = document.createElement('div'); ov.style.cssText = 'position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out;';
+        ov.innerHTML = '<img src="' + src + '" style="max-width:100%;max-height:100%;border-radius:10px;">'; ov.onclick = function () { ov.remove(); }; document.body.appendChild(ov);
+    };
+    window._savPrint = function (id) {
+        var d = V.list.filter(function (x) { return x.id === id; })[0]; if (!d) return;
+        var ph = (V.full[id] || {}).photos || [];
+        var w = window.open('', '_blank'); if (!w) { toastMsg('⚠️ Autorisez les fenêtres pour imprimer', 'error'); return; }
+        var row = function (k, v) { return v ? '<tr><th>' + k + '</th><td>' + esc(v) + '</td></tr>' : ''; };
+        w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(d.ref) + '</title><style>body{font-family:Arial,sans-serif;color:#111;margin:14mm;}h1{font-size:20px;margin:0 0 4px;}h2{font-size:14px;margin:18px 0 6px;border-bottom:2px solid #111;padding-bottom:3px;}table{border-collapse:collapse;width:100%;font-size:13px;}th{text-align:left;width:150px;color:#555;padding:5px 8px 5px 0;vertical-align:top;}td{padding:5px 0;}.msg{white-space:pre-wrap;border:1px solid #ccc;border-radius:6px;padding:10px;font-size:13px;}.r{margin-top:8px;}.r b{font-size:12px;color:#555;}img{width:46mm;height:46mm;object-fit:cover;margin:0 6px 6px 0;border:1px solid #ccc;}.sig{display:flex;gap:30px;margin-top:30px;font-size:12px;}.sig div{flex:1;border-top:1px solid #111;padding-top:4px;}</style></head><body>'
+            + '<h1>Fiche SAV ' + esc(d.ref) + '</h1><div style="font-size:12px;color:#555;">Reçue le ' + fmtD(d.t) + ' · statut : ' + ST[d.status][0] + '</div>'
+            + '<h2>Client</h2><table>' + row('Nom', d.name) + row('Compte fidélité', d.client) + row('Entreprise', d.company) + row('Téléphone', d.phone) + row('E-mail', d.email) + row('Recontacter par', d.contact) + '</table>'
+            + '<h2>Demande</h2><table>' + row('Motif', d.motifLabel) + row('Article', d.article) + row('Ticket', d.ticket ? 'N°' + d.ticket : '') + row('Date d\'achat', d.buyDate ? new Date(d.buyDate).toLocaleDateString('fr-FR') : '') + row('Souhait', d.wish) + '</table>'
+            + '<h2>Message du client</h2><div class="msg">' + esc(d.msg) + '</div>'
+            + (d.replies.length ? '<h2>Réponses du magasin</h2>' + d.replies.map(function (r) { return '<div class="r"><b>' + esc(r.by || '') + ' · ' + fmtD(Date.parse(r.at), true) + '</b><div class="msg">' + esc(r.text) + '</div></div>'; }).join('') : '')
+            + (ph.length ? '<h2>Photos</h2>' + ph.map(function (s) { return '<img src="' + s + '">'; }).join('') : '')
+            + '<h2>Suite donnée en magasin</h2><div class="msg" style="min-height:60px;"></div><div class="sig"><div>Date et signature du client</div><div>Visa du magasin</div></div>'
+            + '<script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script></body></html>');
+        w.document.close();
+    };
+    function layout() {
+        var L = el('sav-list'), D = el('sav-det'); if (!L || !D) return;
+        var narrow = window.innerWidth < 760;
+        L.style.width = narrow ? '100%' : '330px'; L.style.borderRight = narrow ? 'none' : '1px solid #e3e9f2';
+        if (narrow) { D.style.display = V.cur ? 'block' : 'none'; L.style.display = V.cur ? 'none' : ''; var bk = el('sav-back'); if (bk) bk.style.display = V.cur ? '' : 'none'; }
+        else { D.style.display = 'block'; L.style.display = ''; var bk2 = el('sav-back'); if (bk2) bk2.style.display = 'none'; }
+    }
+    window._savOpen = function () {
+        var ov = el('sav-ov');
+        if (!ov) {
+            ov = document.createElement('div'); ov.id = 'sav-ov';
+            ov.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(6,16,32,.62);display:flex;align-items:center;justify-content:center;padding:10px;';
+            ov.addEventListener('click', function (e) { if (e.target === ov) ov.style.display = 'none'; });
+            var b = 'border:none;border-radius:9px;padding:7px 11px;font-weight:800;font-size:.78rem;cursor:pointer;white-space:nowrap;';
+            ov.innerHTML = '<div role="dialog" aria-modal="true" style="background:#f7f9fc;color:#0e1a2b;border-radius:18px;width:min(1220px,100%);height:min(880px,100%);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.4);">'
+                + '<div style="background:linear-gradient(135deg,#0d2d5c,#1c55a0);color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+                + '<button id="sav-back" onclick="window._savBack()" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;display:none;">‹ Liste</button>'
+                + '<div style="flex:1;min-width:160px;font-size:1.05rem;font-weight:900;">🛟 Service client — SAV</div>'
+                + '<div style="display:flex;gap:3px;background:rgba(0,0,0,.18);padding:3px;border-radius:10px;"><button id="sav-f-todo" onclick="window._savF(\'todo\')" style="' + b + '"></button><button id="sav-f-done" onclick="window._savF(\'done\')" style="' + b + '"></button><button id="sav-f-all" onclick="window._savF(\'all\')" style="' + b + '"></button></div>'
+                + '<input id="sav-q" type="search" oninput="window._savQ(this.value)" placeholder="🔎 Nom, n° SAV, ticket, article…" style="flex:1;min-width:150px;max-width:280px;padding:8px 11px;border-radius:9px;border:none;font-weight:600;">'
+                + '<button onclick="window._savLoad()" title="Actualiser" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;">🔄</button>'
+                + '<button onclick="document.getElementById(\'sav-ov\').style.display=\'none\'" aria-label="Fermer" style="' + b + 'background:rgba(255,255,255,.16);color:#fff;">✕</button></div>'
+                + '<div style="flex:1;display:flex;min-height:0;"><div id="sav-list" style="overflow-y:auto;background:#fff;flex-shrink:0;"></div><div id="sav-det" style="flex:1;overflow-y:auto;min-width:0;"></div></div></div>';
+            document.body.appendChild(ov);
+            window.addEventListener('resize', layout);
+        }
+        ov.style.display = 'flex'; layout(); render(); load();
+    };
+    window._savF = function (f) { V.f = f; render(); };
+    window._savQ = function (q) { V.q = q; render(); };
+    window._savLoad = function () { load(); };
+    window._savRule = function () { return RULE; };
+    // Bouton « 🛟 SAV » dans la barre du catalogue + vérification toutes les 2 minutes
+    function addBtn() {
+        if (el('cat-sav')) return;
+        var ref = el('cat-site-visits') || el('cat-site-cfg'); if (!ref || !ref.parentNode) return;
+        var bt = document.createElement('button'); bt.id = 'cat-sav'; bt.type = 'button'; bt.title = 'Service client : demandes envoyées depuis le site web';
+        bt.onclick = function () { window._savOpen(); };
+        bt.style.cssText = ref.style.cssText || 'padding:8px 12px;border-radius:9px;border:1.5px solid rgba(255,255,255,0.35);background:rgba(255,255,255,0.12);color:#fff;font-size:0.82rem;font-weight:800;cursor:pointer;white-space:nowrap;';
+        ref.parentNode.insertBefore(bt, ref); badge();
+    }
+    new MutationObserver(function () { if (!el('cat-sav')) addBtn(); }).observe(document.documentElement, { childList: true, subtree: true });
+    setTimeout(function () { load(true); }, 20000);
+    setInterval(function () { if (!document.hidden && navigator.onLine) load(true); }, 120000);
+})();
+</script>
