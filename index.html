@@ -64578,15 +64578,15 @@ function covoQrPrint(o) {
     }
 
     /* ───────────── Calculs ───────────── */
-    function priceOf(name, ref) {
+    function priceOf(name, ref, pid) {
         var P = prods(), rk = norm(ref).trim(), nk = norm(name).trim();
-        var p = (rk ? P.filter(function (x) { return norm(x.barcode).trim() === rk; })[0] : null) || (nk ? P.filter(function (x) { return norm(x.name).trim() === nk; })[0] : null);
+        var p = (pid != null ? P.filter(function (x) { return String(x.id) === String(pid); })[0] : null) || (rk ? P.filter(function (x) { return norm(x.barcode).trim() === rk; })[0] : null) || (nk ? P.filter(function (x) { return norm(x.name).trim() === nk; })[0] : null);
         if (!p) return { p: null, price: 0, stock: null };
         return { p: p, price: +(p.unitType === 'kg' ? (p.pricePerKg || p.price) : p.price) || 0, stock: +p.stock || 0 };
     }
     function echRows() {
         return L('echeances').map(function (e) {
-            var r = priceOf(e.article, e.ref), stock = r.stock != null ? r.stock : (+e.stock || 0), n = days(e.date);
+            var r = priceOf(e.article, e.ref, e.pid), stock = r.stock != null ? r.stock : (+e.stock || 0), n = days(e.date);
             var b = n == null ? 'none' : n < 0 ? 'exp' : n <= 3 ? 'urg' : n <= 7 ? 'week' : n <= 30 ? 'month' : 'later';
             return { e: e, id: e.id, name: e.article || 'Article', cat: e.categorie || '-', ref: e.ref || '', place: e.emplacement || '', note: e.remarque || '', date: e.date, n: n, b: b, stock: stock, value: Math.max(0, stock) * r.price, pid: r.p ? r.p.id : null, img: r.p && /^(data:image|https?:)/.test(r.p.img || '') ? r.p.img : '' };
         });
@@ -68418,7 +68418,9 @@ function covoQrPrint(o) {
     function dlcCol(n) { return n == null ? '#64748b' : n < 0 ? '#d03b3b' : n <= 3 ? '#e8590c' : n <= 7 ? '#d48806' : n <= 30 ? '#2a78d6' : '#0ca30c'; }
 
     /* ───────── 1) Synchronisation catalogue → échéances ───────── */
-    function ignored() { try { return JSON.parse(localStorage.getItem(IGN) || '[]') || []; } catch (e) { return []; } }
+    /* articles retirés à la main : { idProduit: DLC au moment du retrait } — ils reviennent si la DLC du produit change */
+    function ignored() { var v; try { v = JSON.parse(localStorage.getItem(IGN) || '{}'); } catch (e) { v = {}; } if (Array.isArray(v)) { var m = {}; v.forEach(function (x) { m[String(x)] = ''; }); return m; } return v && typeof v === 'object' ? v : {}; }
+    function setIgnored(m) { try { localStorage.setItem(IGN, JSON.stringify(m)); } catch (e) {} }
     function uid() { return 'EC-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase(); }
     var busy = false;
     function sync(opts) {
@@ -68427,7 +68429,7 @@ function covoQrPrint(o) {
         var R = { added: 0, dated: 0, fixed: 0, linked: 0, prodFix: 0, skipped: 0, total: 0 };
         try {
             var prods = P(), list = LD('echeances'); if (!Array.isArray(list)) list = [];
-            var ign = opts.all ? [] : ignored(), ignS = {}; ign.forEach(function (x) { ignS[String(x)] = 1; });
+            var ignS = opts.all ? {} : ignored();
             // produits déjà connus : la synchro silencieuse n'ajoute que les NOUVEAUX produits du catalogue
             var known = null; try { known = JSON.parse(localStorage.getItem(KNOWN) || 'null'); } catch (e) {}
             var knS = {}, firstRun = !Array.isArray(known); (known || []).forEach(function (x) { knS[String(x)] = 1; });
@@ -68457,7 +68459,7 @@ function covoQrPrint(o) {
                 var r = norm(e.ref); if (r && r !== '-') (byRef[r] = byRef[r] || []).push(i);
                 var n = norm(e.article); if (n) (byName[n] = byName[n] || []).push(i);
             });
-            var pidSet = {}; prods.forEach(function (p) { if (p && p.id != null) pidSet[String(p.id)] = 1; });
+            var pidSet = {}, bcSet = {}; prods.forEach(function (p) { if (p && p.id != null) pidSet[String(p.id)] = 1; var b = norm(p && p.barcode); if (b) bcSet[b] = 1; });
             function take(arr, ok) { if (!arr) return -1; for (var k = 0; k < arr.length; k++) { var i = arr[k]; if (claimed[i]) continue; var e = list[i]; if (e.pid != null && pidSet[String(e.pid)] && !ok(e)) continue; if (ok(e)) return i; } return -1; }
             prods.forEach(function (p) {
                 if (!p || p.id == null) return;
@@ -68466,6 +68468,8 @@ function covoQrPrint(o) {
                 var i = take(byPid[pid], function (e) { return String(e.pid) === pid; });
                 if (i < 0 && bc) i = take(byRef[bc], function (e) { return e.pid == null || String(e.pid) === pid; });
                 if (i < 0) i = take(byName[norm(name)], function (e) { return (e.pid == null || String(e.pid) === pid) && (!norm(e.ref) || norm(e.ref) === '-' || norm(e.ref) === bc); });
+                // référence périmée (code-barres changé ou mal saisi) : même nom et référence qui ne correspond à aucun produit
+                if (i < 0) i = take(byName[norm(name)], function (e) { return e.pid == null && !bcSet[norm(e.ref)]; });
                 var dlc = prodDlc(p), stock = p.unitType === 'kg' ? (parseFloat(p.stock) || 0) : (parseInt(p.stock, 10) || 0);
                 if (i >= 0) {
                     claimed[i] = 1; var e = list[i];
@@ -68473,12 +68477,16 @@ function covoQrPrint(o) {
                     if ((!e.ref || e.ref === '-') && p.barcode) e.ref = String(p.barcode);
                     if ((!e.categorie || e.categorie === '-') && p.category) e.categorie = p.category;
                     var pl = String(p.emplacement || p.location || '').trim(); if (pl && e.emplacement !== pl && (!e.emplacement || e._auto)) { e.emplacement = pl; R.linked++; }
-                    if (dlc && (!e.date || (e._auto && e.date !== dlc))) { e.date = dlc; delete e._rawDate; R.dated++; }
+                    // la DLC de la fiche produit fait foi dès qu'elle change (ou si l'échéance n'a pas de date)
+                    if (dlc && (!e.date || e._pdlc !== dlc)) { if (e.date !== dlc) { e.date = dlc; delete e._rawDate; R.dated++; } if (e._pdlc !== dlc) { e._pdlc = dlc; R.fixed++; } }
                     e.stock = stock;
                     return;
                 }
-                if (ignS[pid] || (!addAll && (firstRun || knS[pid]))) { R.skipped++; return; }
-                list.push({ id: uid(), pid: p.id, article: name || String(p.barcode), date: dlc, ref: p.barcode ? String(p.barcode) : '', categorie: p.category || '-', stock: stock, emplacement: p.emplacement || p.location || '', remarque: '', _auto: true });
+                // retiré à la main : revient seulement si la DLC du produit a changé depuis
+                if (Object.prototype.hasOwnProperty.call(ignS, pid) && (!dlc || ignS[pid] === dlc)) { R.skipped++; return; }
+                // un produit avec une DLC est toujours suivi ; sans DLC, seulement à l'import ou s'il est nouveau
+                if (!dlc && !addAll && (firstRun || knS[pid])) { R.skipped++; return; }
+                list.push({ id: uid(), pid: p.id, _pdlc: dlc || undefined, article: name || String(p.barcode), date: dlc, ref: p.barcode ? String(p.barcode) : '', categorie: p.category || '-', stock: stock, emplacement: p.emplacement || p.location || '', remarque: '', _auto: true });
                 R.added++; if (dlc) R.dated++;
             });
             R.total = list.length;
@@ -68510,7 +68518,7 @@ function covoQrPrint(o) {
     function hookDel() {
         var o = window.delEch; if (typeof o !== 'function' || o._ecx) return;
         var w = function (id) {
-            try { var e = LD('echeances').filter(function (x) { return x.id === id; })[0]; if (e) { var pid = e.pid; if (pid == null) { var pr = findProd(e.ref, e.article); if (pr) pid = pr.id; } if (pid != null) { var L2 = ignored(); if (L2.indexOf(String(pid)) < 0) { L2.push(String(pid)); localStorage.setItem(IGN, JSON.stringify(L2)); } } } } catch (er) {}
+            try { var e = LD('echeances').filter(function (x) { return x.id === id; })[0]; if (e) { var pid = e.pid; if (pid == null) { var pr = findProd(e.ref, e.article); if (pr) pid = pr.id; } if (pid != null) { var L2 = ignored(), pp = findProd(null, null, pid); L2[String(pid)] = pp ? prodDlc(pp) : ''; setIgnored(L2); } } } catch (er) {}
             return o.apply(this, arguments);
         };
         w._ecx = true; window.delEch = w;
@@ -68780,9 +68788,9 @@ function covoQrPrint(o) {
         e.emplacement = ($('e-emplacement').value || '').trim(); e.remarque = ($('e-remarque').value || '').trim();
         delete e._rawDate;
         if (p && e.emplacement && !String(p.emplacement || p.location || '').trim()) { p.emplacement = e.emplacement; try { localStorage.setItem('covo_products', JSON.stringify(P())); } catch (er) {} }
-        if (p) { e.pid = p.id; var upd = $('ecx-upd'); if (upd && upd.checked) { if (p.expiryDate !== d) { p.expiryDate = d; delete p.dlc; try { if (typeof window.saveAll === 'function') window.saveAll(); else localStorage.setItem('covo_products', JSON.stringify(P())); } catch (er) {} } e._auto = true; } else e._auto = false; }
+        if (p) { e.pid = p.id; var upd = $('ecx-upd'); if (upd && upd.checked) { if (p.expiryDate !== d) { p.expiryDate = d; delete p.dlc; try { if (typeof window.saveAll === 'function') window.saveAll(); else localStorage.setItem('covo_products', JSON.stringify(P())); } catch (er) {} } e._auto = true; } else e._auto = false; e._pdlc = prodDlc(p) || undefined; }
         // retire le produit de la liste « ignorés » s'il y était
-        if (e.pid != null) { var ig = ignored(), ix = ig.indexOf(String(e.pid)); if (ix >= 0) { ig.splice(ix, 1); localStorage.setItem(IGN, JSON.stringify(ig)); } }
+        if (e.pid != null) { var ig = ignored(); if (Object.prototype.hasOwnProperty.call(ig, String(e.pid))) { delete ig[String(e.pid)]; setIgnored(ig); } }
         SV('echeances', list);
         try { addRetourHist(isEdit ? 'modified' : 'created', 'echeance', (isEdit ? '✏️ Échéance modifiée : ' : 'Échéance : ') + a, 'DLC : ' + fmtD(d) + (p && $('ecx-upd') && $('ecx-upd').checked ? ' · fiche produit mise à jour' : '')); } catch (er) {}
         window._editingEchId = null;
@@ -68918,6 +68926,9 @@ function covoQrPrint(o) {
             return r;
         };
         hookDel();
+        // à chaque ouverture / actualisation de la Gestion : échéances alignées sur les fiches produits
+        var oRR = window.refreshRetours;
+        if (typeof oRR === 'function' && !oRR._ecx) { var wr = function () { try { sync({}); } catch (e) {} return oRR.apply(this, arguments); }; wr._ecx = true; window.refreshRetours = wr; }
         // synchronisation automatique : au démarrage puis à chaque enregistrement du catalogue
         var oSA = window.saveAll;
         if (typeof oSA === 'function' && !oSA._ecx) { var w = function () { var r = oSA.apply(this, arguments); later(); return r; }; w._ecx = true; window.saveAll = w; }
