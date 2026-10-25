@@ -1,6 +1,498 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
+<script id="covo-pack">
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PACK — sauvegardes Google Drive compressées, SANS PERTE
+   • À l'envoi d'une sauvegarde complète (covo_backup_… / covo_params_… / covo_parametres) :
+       – retire la copie en double des tickets (covo_sales_history = salesHistory, la restauration lit salesHistory)
+       – écrit le fichier en JSON compact puis le compresse (gzip, ~7× plus léger)
+       – contrôle : le fichier est décompressé et comparé octet par octet AVANT l'envoi ;
+         au moindre doute, la sauvegarde part telle qu'avant (non compressée)
+   • À la lecture d'un fichier Drive : décompression automatique si le fichier est compressé
+     (les anciennes sauvegardes .json restent lues normalement)
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window.__covoPack) return;
+    var HAS_CS = typeof CompressionStream === 'function', HAS_DS = typeof DecompressionStream === 'function';
+    /* décompression de secours (navigateurs sans DecompressionStream) — tiny-inflate, licence MIT © Devon Govett */
+    var inflate = (function () {
+var TINF_OK = 0;
+var TINF_DATA_ERROR = -3;
+
+function Tree() {
+  this.table = new Uint16Array(16);   /* table of code length counts */
+  this.trans = new Uint16Array(288);  /* code -> symbol translation table */
+}
+
+function Data(source, dest) {
+  this.source = source;
+  this.sourceIndex = 0;
+  this.tag = 0;
+  this.bitcount = 0;
+  
+  this.dest = dest;
+  this.destLen = 0;
+  
+  this.ltree = new Tree();  /* dynamic length/symbol tree */
+  this.dtree = new Tree();  /* dynamic distance tree */
+}
+
+/* --------------------------------------------------- *
+ * -- uninitialized global data (static structures) -- *
+ * --------------------------------------------------- */
+
+var sltree = new Tree();
+var sdtree = new Tree();
+
+/* extra bits and base tables for length codes */
+var length_bits = new Uint8Array(30);
+var length_base = new Uint16Array(30);
+
+/* extra bits and base tables for distance codes */
+var dist_bits = new Uint8Array(30);
+var dist_base = new Uint16Array(30);
+
+/* special ordering of code length codes */
+var clcidx = new Uint8Array([
+  16, 17, 18, 0, 8, 7, 9, 6,
+  10, 5, 11, 4, 12, 3, 13, 2,
+  14, 1, 15
+]);
+
+/* used by tinf_decode_trees, avoids allocations every call */
+var code_tree = new Tree();
+var lengths = new Uint8Array(288 + 32);
+
+/* ----------------------- *
+ * -- utility functions -- *
+ * ----------------------- */
+
+/* build extra bits and base tables */
+function tinf_build_bits_base(bits, base, delta, first) {
+  var i, sum;
+
+  /* build bits table */
+  for (i = 0; i < delta; ++i) bits[i] = 0;
+  for (i = 0; i < 30 - delta; ++i) bits[i + delta] = i / delta | 0;
+
+  /* build base table */
+  for (sum = first, i = 0; i < 30; ++i) {
+    base[i] = sum;
+    sum += 1 << bits[i];
+  }
+}
+
+/* build the fixed huffman trees */
+function tinf_build_fixed_trees(lt, dt) {
+  var i;
+
+  /* build fixed length tree */
+  for (i = 0; i < 7; ++i) lt.table[i] = 0;
+
+  lt.table[7] = 24;
+  lt.table[8] = 152;
+  lt.table[9] = 112;
+
+  for (i = 0; i < 24; ++i) lt.trans[i] = 256 + i;
+  for (i = 0; i < 144; ++i) lt.trans[24 + i] = i;
+  for (i = 0; i < 8; ++i) lt.trans[24 + 144 + i] = 280 + i;
+  for (i = 0; i < 112; ++i) lt.trans[24 + 144 + 8 + i] = 144 + i;
+
+  /* build fixed distance tree */
+  for (i = 0; i < 5; ++i) dt.table[i] = 0;
+
+  dt.table[5] = 32;
+
+  for (i = 0; i < 32; ++i) dt.trans[i] = i;
+}
+
+/* given an array of code lengths, build a tree */
+var offs = new Uint16Array(16);
+
+function tinf_build_tree(t, lengths, off, num) {
+  var i, sum;
+
+  /* clear code length count table */
+  for (i = 0; i < 16; ++i) t.table[i] = 0;
+
+  /* scan symbol lengths, and sum code length counts */
+  for (i = 0; i < num; ++i) t.table[lengths[off + i]]++;
+
+  t.table[0] = 0;
+
+  /* compute offset table for distribution sort */
+  for (sum = 0, i = 0; i < 16; ++i) {
+    offs[i] = sum;
+    sum += t.table[i];
+  }
+
+  /* create code->symbol translation table (symbols sorted by code) */
+  for (i = 0; i < num; ++i) {
+    if (lengths[off + i]) t.trans[offs[lengths[off + i]]++] = i;
+  }
+}
+
+/* ---------------------- *
+ * -- decode functions -- *
+ * ---------------------- */
+
+/* get one bit from source stream */
+function tinf_getbit(d) {
+  /* check if tag is empty */
+  if (!d.bitcount--) {
+    /* load next tag */
+    d.tag = d.source[d.sourceIndex++];
+    d.bitcount = 7;
+  }
+
+  /* shift bit out of tag */
+  var bit = d.tag & 1;
+  d.tag >>>= 1;
+
+  return bit;
+}
+
+/* read a num bit value from a stream and add base */
+function tinf_read_bits(d, num, base) {
+  if (!num)
+    return base;
+
+  while (d.bitcount < 24) {
+    d.tag |= d.source[d.sourceIndex++] << d.bitcount;
+    d.bitcount += 8;
+  }
+
+  var val = d.tag & (0xffff >>> (16 - num));
+  d.tag >>>= num;
+  d.bitcount -= num;
+  return val + base;
+}
+
+/* given a data stream and a tree, decode a symbol */
+function tinf_decode_symbol(d, t) {
+  while (d.bitcount < 24) {
+    d.tag |= d.source[d.sourceIndex++] << d.bitcount;
+    d.bitcount += 8;
+  }
+  
+  var sum = 0, cur = 0, len = 0;
+  var tag = d.tag;
+
+  /* get more bits while code value is above sum */
+  do {
+    cur = 2 * cur + (tag & 1);
+    tag >>>= 1;
+    ++len;
+
+    sum += t.table[len];
+    cur -= t.table[len];
+  } while (cur >= 0);
+  
+  d.tag = tag;
+  d.bitcount -= len;
+
+  return t.trans[sum + cur];
+}
+
+/* given a data stream, decode dynamic trees from it */
+function tinf_decode_trees(d, lt, dt) {
+  var hlit, hdist, hclen;
+  var i, num, length;
+
+  /* get 5 bits HLIT (257-286) */
+  hlit = tinf_read_bits(d, 5, 257);
+
+  /* get 5 bits HDIST (1-32) */
+  hdist = tinf_read_bits(d, 5, 1);
+
+  /* get 4 bits HCLEN (4-19) */
+  hclen = tinf_read_bits(d, 4, 4);
+
+  for (i = 0; i < 19; ++i) lengths[i] = 0;
+
+  /* read code lengths for code length alphabet */
+  for (i = 0; i < hclen; ++i) {
+    /* get 3 bits code length (0-7) */
+    var clen = tinf_read_bits(d, 3, 0);
+    lengths[clcidx[i]] = clen;
+  }
+
+  /* build code length tree */
+  tinf_build_tree(code_tree, lengths, 0, 19);
+
+  /* decode code lengths for the dynamic trees */
+  for (num = 0; num < hlit + hdist;) {
+    var sym = tinf_decode_symbol(d, code_tree);
+
+    switch (sym) {
+      case 16:
+        /* copy previous code length 3-6 times (read 2 bits) */
+        var prev = lengths[num - 1];
+        for (length = tinf_read_bits(d, 2, 3); length; --length) {
+          lengths[num++] = prev;
+        }
+        break;
+      case 17:
+        /* repeat code length 0 for 3-10 times (read 3 bits) */
+        for (length = tinf_read_bits(d, 3, 3); length; --length) {
+          lengths[num++] = 0;
+        }
+        break;
+      case 18:
+        /* repeat code length 0 for 11-138 times (read 7 bits) */
+        for (length = tinf_read_bits(d, 7, 11); length; --length) {
+          lengths[num++] = 0;
+        }
+        break;
+      default:
+        /* values 0-15 represent the actual code lengths */
+        lengths[num++] = sym;
+        break;
+    }
+  }
+
+  /* build dynamic trees */
+  tinf_build_tree(lt, lengths, 0, hlit);
+  tinf_build_tree(dt, lengths, hlit, hdist);
+}
+
+/* ----------------------------- *
+ * -- block inflate functions -- *
+ * ----------------------------- */
+
+/* given a stream and two trees, inflate a block of data */
+function tinf_inflate_block_data(d, lt, dt) {
+  while (1) {
+    var sym = tinf_decode_symbol(d, lt);
+
+    /* check for end of block */
+    if (sym === 256) {
+      return TINF_OK;
+    }
+
+    if (sym < 256) {
+      d.dest[d.destLen++] = sym;
+    } else {
+      var length, dist, offs;
+      var i;
+
+      sym -= 257;
+
+      /* possibly get more bits from length code */
+      length = tinf_read_bits(d, length_bits[sym], length_base[sym]);
+
+      dist = tinf_decode_symbol(d, dt);
+
+      /* possibly get more bits from distance code */
+      offs = d.destLen - tinf_read_bits(d, dist_bits[dist], dist_base[dist]);
+
+      /* copy match */
+      for (i = offs; i < offs + length; ++i) {
+        d.dest[d.destLen++] = d.dest[i];
+      }
+    }
+  }
+}
+
+/* inflate an uncompressed block of data */
+function tinf_inflate_uncompressed_block(d) {
+  var length, invlength;
+  var i;
+  
+  /* unread from bitbuffer */
+  while (d.bitcount > 8) {
+    d.sourceIndex--;
+    d.bitcount -= 8;
+  }
+
+  /* get length */
+  length = d.source[d.sourceIndex + 1];
+  length = 256 * length + d.source[d.sourceIndex];
+
+  /* get one's complement of length */
+  invlength = d.source[d.sourceIndex + 3];
+  invlength = 256 * invlength + d.source[d.sourceIndex + 2];
+
+  /* check length */
+  if (length !== (~invlength & 0x0000ffff))
+    return TINF_DATA_ERROR;
+
+  d.sourceIndex += 4;
+
+  /* copy block */
+  for (i = length; i; --i)
+    d.dest[d.destLen++] = d.source[d.sourceIndex++];
+
+  /* make sure we start next block on a byte boundary */
+  d.bitcount = 0;
+
+  return TINF_OK;
+}
+
+/* inflate stream from source to dest */
+function tinf_uncompress(source, dest) {
+  var d = new Data(source, dest);
+  var bfinal, btype, res;
+
+  do {
+    /* read final block flag */
+    bfinal = tinf_getbit(d);
+
+    /* read block type (2 bits) */
+    btype = tinf_read_bits(d, 2, 0);
+
+    /* decompress block */
+    switch (btype) {
+      case 0:
+        /* decompress uncompressed block */
+        res = tinf_inflate_uncompressed_block(d);
+        break;
+      case 1:
+        /* decompress block with fixed huffman trees */
+        res = tinf_inflate_block_data(d, sltree, sdtree);
+        break;
+      case 2:
+        /* decompress block with dynamic huffman trees */
+        tinf_decode_trees(d, d.ltree, d.dtree);
+        res = tinf_inflate_block_data(d, d.ltree, d.dtree);
+        break;
+      default:
+        res = TINF_DATA_ERROR;
+    }
+
+    if (res !== TINF_OK)
+      throw new Error('Data error');
+
+  } while (!bfinal);
+
+  if (d.destLen < d.dest.length) {
+    if (typeof d.dest.slice === 'function')
+      return d.dest.slice(0, d.destLen);
+    else
+      return d.dest.subarray(0, d.destLen);
+  }
+  
+  return d.dest;
+}
+
+/* -------------------- *
+ * -- initialization -- *
+ * -------------------- */
+
+/* build fixed huffman trees */
+tinf_build_fixed_trees(sltree, sdtree);
+
+/* build extra bits and base tables */
+tinf_build_bits_base(length_bits, length_base, 4, 3);
+tinf_build_bits_base(dist_bits, dist_base, 2, 1);
+
+/* fix a special case */
+length_bits[28] = 0;
+length_base[28] = 258;
+
+return tinf_uncompress;
+
+    })();
+    function isGz(u) { return u && u.length > 18 && u[0] === 0x1f && u[1] === 0x8b && u[2] === 8; }
+    function gunzipJs(u) {
+        var flg = u[3], p = 10;
+        if (flg & 4) p += 2 + (u[p] | (u[p + 1] << 8));
+        if (flg & 8) { while (u[p++]) {} }
+        if (flg & 16) { while (u[p++]) {} }
+        if (flg & 2) p += 2;
+        var n = u.length, size = (u[n - 4] | (u[n - 3] << 8) | (u[n - 2] << 16) | (u[n - 1] << 24)) >>> 0;
+        var out = new Uint8Array(size), r = inflate(u.subarray(p, n - 8), out);
+        return new TextDecoder('utf-8').decode(r);
+    }
+    function gunzip(u) {
+        if (HAS_DS) return new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('gzip'))).text().catch(function () { return gunzipJs(u); });
+        try { return Promise.resolve(gunzipJs(u)); } catch (e) { return Promise.reject(e); }
+    }
+    function gzip(str) { return new Response(new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer().then(function (b) { return new Uint8Array(b); }); }
+    window.__covoPack = { gzip: gzip, gunzip: gunzip, isGz: isGz, stats: { sent: 0, saved: 0, last: null } };
+
+    /* ── LECTURE : Response.text() / .json() décompressent les fichiers Drive compressés ── */
+    var RP = Response.prototype, _text = RP.text, _json = RP.json;
+    function isDrive(r) { var u = r && r.url || ''; return !u || /googleapis\.com\//.test(u); }
+    RP.text = function () {
+        if (!isDrive(this)) return _text.call(this);
+        return this.arrayBuffer().then(function (b) { var u = new Uint8Array(b); return isGz(u) ? gunzip(u) : new TextDecoder('utf-8').decode(u); });
+    };
+    RP.json = function () {
+        if (!isDrive(this)) return _json.call(this);
+        return RP.text.call(this).then(function (t) { return JSON.parse(t); });
+    };
+
+    /* fichier local « covo_backup_….json.gz » (téléchargé depuis Drive) : décompressé à la lecture */
+    var _btext = Blob.prototype.text;
+    if (_btext) Blob.prototype.text = function () {
+        if (!(typeof File === 'function' && this instanceof File && /\.gz$/i.test(this.name || ''))) return _btext.call(this);
+        return this.arrayBuffer().then(function (b) { var u = new Uint8Array(b); return isGz(u) ? gunzip(u) : new TextDecoder('utf-8').decode(u); });
+    };
+
+    /* ── ENVOI : compression des sauvegardes complètes ── */
+    var NAME_TS = /^covo_(backup|params)_\d{4}-\d{2}-\d{2}_[\d-]+\.json$/;
+    function off() { try { return localStorage.getItem('covo_pack_off') === '1'; } catch (e) { return false; } }
+    function hdr(h, k) {
+        if (!h) return '';
+        if (typeof h.get === 'function') return h.get(k) || '';
+        for (var x in h) if (x.toLowerCase() === k.toLowerCase()) return h[x];
+        return '';
+    }
+    function part(seg) {   // « \r\nContent-Type: …\r\n\r\n<contenu>\r\n »
+        if (seg.slice(0, 2) === '\r\n') seg = seg.slice(2);
+        var i = seg.indexOf('\r\n\r\n'); if (i < 0) return null;
+        var head = seg.slice(0, i), body = seg.slice(i + 4);
+        if (body.slice(-2) === '\r\n') body = body.slice(0, -2);
+        return { head: head, body: body };
+    }
+    function pack(init) {
+        var ct = hdr(init.headers, 'Content-Type'), m = /boundary=("?)([^";]+)\1/i.exec(ct || '');
+        if (!m || !/multipart\/related/i.test(ct)) return Promise.reject('type');
+        var b = m[2], segs = init.body.split('--' + b);
+        if (segs.length !== 4 || segs[0] !== '' || !/^--\s*$/.test(segs[3])) return Promise.reject('structure');
+        var p1 = part(segs[1]), p2 = part(segs[2]); if (!p1 || !p2) return Promise.reject('parties');
+        if (!/application\/json/i.test(p2.head)) return Promise.reject('media');
+        var meta = JSON.parse(p1.body || '{}'), raw = p2.body;
+        if (raw.charAt(0) !== '{') return Promise.reject('pas un objet');
+        var name = meta.name || '';
+        if (name && !NAME_TS.test(name) && name !== 'covo_parametres.json') return Promise.reject('autre fichier');
+        var obj = JSON.parse(raw);
+        if (!obj || !Array.isArray(obj.products) || !(Array.isArray(obj.salesHistory) || Array.isArray(obj.covo_sales_history))) return Promise.reject('pas une sauvegarde complète');
+        // copie en double des tickets : retirée seulement si elle est STRICTEMENT identique à salesHistory
+        if (Array.isArray(obj.covo_sales_history) && Array.isArray(obj.salesHistory) && obj.salesHistory.length &&
+            JSON.stringify(obj.covo_sales_history) === JSON.stringify(obj.salesHistory)) delete obj.covo_sales_history;
+        var compact = JSON.stringify(obj);
+        return gzip(compact).then(function (gz) {
+            return gunzip(gz).then(function (back) {
+                if (back !== compact) throw 'contrôle';
+                var chk = JSON.parse(back);   // contrôle de cohérence des comptes
+                if ((chk.products || []).length !== obj.products.length || (chk.salesHistory || []).length !== (obj.salesHistory || []).length) throw 'comptes';
+                if (name && NAME_TS.test(name)) meta.name = name + '.gz';
+                if (meta.name) meta.mimeType = 'application/json';
+                var body = new Blob(['--' + b + '\r\n' + p1.head + '\r\n\r\n' + JSON.stringify(meta) + '\r\n--' + b + '\r\n' + p2.head + '\r\n\r\n', gz, '\r\n--' + b + '--'], { type: 'multipart/related; boundary=' + b });
+                window.__covoPack.stats.sent++; window.__covoPack.stats.saved += Math.max(0, raw.length - gz.length);
+                window.__covoPack.stats.last = { name: meta.name || '(mise à jour)', before: new Blob([raw]).size, after: gz.length, at: Date.now() };
+                if (meta.name) { try { localStorage.setItem('covo_pack_last', JSON.stringify(window.__covoPack.stats.last)); } catch (e) {} }
+                return Object.assign({}, init, { body: body });
+            });
+        });
+    }
+    var _fetch = window.fetch;
+    window.fetch = function (input, init) {
+        try {
+            var url = typeof input === 'string' ? input : (input && input.url) || '';
+            if (HAS_CS && init && typeof init.body === 'string' && init.body.length > 4096 && /\/upload\/drive\/v3\/files/.test(url) && /uploadType=multipart/.test(url) && !off()) {
+                var self = this, args = arguments;
+                return pack(init).then(function (ni) { return _fetch.call(window, input, ni); }, function () { return _fetch.apply(window, args); });
+            }
+        } catch (e) {}
+        return _fetch.apply(window, arguments);
+    };
+})();
+</script>
 <script>
 (function(){
     if (window._cpReadOnlyGuardInstalled) return;
@@ -5488,6 +5980,34 @@ button, .btn, .retours-btn {
                     <div id="gd-manual-cat-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:200px;overflow-y:auto;margin-top:7px;"></div>
                     <div id="gd-manual-status" style="font-size:0.76rem;font-weight:700;color:#0e6655;margin-top:7px;min-height:16px;"></div>
                   </div>
+                  <div id="gd-pack-info" style="margin-top:10px;padding:8px 10px;border-radius:7px;background:#ecfdf5;border:1px solid #a7f3d0;font-size:0.76rem;color:#065f46;font-weight:600;"></div>
+                  <div style="margin-top:10px;padding:10px;border-radius:8px;background:#fff5f5;border:1px solid #fecaca;">
+                    <div style="font-weight:800;font-size:0.84rem;color:#991b1b;margin-bottom:4px;">&#128465;&#65039; Corbeille Google Drive &mdash; sauvegardes COVO</div>
+                    <div style="font-size:0.72rem;color:#7f1d1d;margin-bottom:8px;line-height:1.4;">Le nettoyage met les anciennes sauvegardes &agrave; la corbeille de Drive : elles y occupent encore de l&rsquo;espace pendant 30 jours. Seuls les fichiers cr&eacute;&eacute;s par COVO Pro sont concern&eacute;s (vos autres fichiers ne sont jamais touch&eacute;s).</div>
+                    <div id="gd-trash-info" style="font-size:0.78rem;color:#444;margin-bottom:8px;min-height:18px;">Touchez &laquo;&nbsp;Analyser&nbsp;&raquo; pour voir la place occup&eacute;e par la corbeille.</div>
+                    <div style="display:flex;gap:8px;">
+                      <button type="button" onclick="window._gdBackupRotation && window._gdBackupRotation.trashEmpty(false)"
+                        style="flex:1;padding:9px 10px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-weight:800;font-size:0.84rem;cursor:pointer;">
+                        &#128465;&#65039; Vider la corbeille COVO
+                      </button>
+                      <button type="button" onclick="window._gdBackupRotation && window._gdBackupRotation.trashScan()"
+                        style="padding:9px 16px;background:#f4f4f4;color:#111;border:1.5px solid #ccc;border-radius:8px;font-weight:700;font-size:0.82rem;cursor:pointer;">
+                        &#128269; Analyser
+                      </button>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                      <label for="gd-trash-days" style="font-size:0.76rem;font-weight:800;color:#7f1d1d;">Vider automatiquement&nbsp;:</label>
+                      <select id="gd-trash-days" onchange="window._gdBackupRotation && window._gdBackupRotation.setTrashDays(this.value)"
+                        style="padding:6px 9px;border:1.5px solid #ccc;border-radius:7px;font-size:0.8rem;font-weight:700;background:#fff;color:#111;">
+                        <option value="0">Jamais (je vide moi-m&ecirc;me)</option>
+                        <option value="1">apr&egrave;s 1 jour</option>
+                        <option value="3">apr&egrave;s 3 jours</option>
+                        <option value="7">apr&egrave;s 7 jours</option>
+                        <option value="15">apr&egrave;s 15 jours</option>
+                      </select>
+                    </div>
+                    <div id="gd-trash-status" style="font-size:0.72rem;color:#888;font-style:italic;margin-top:6px;min-height:14px;"></div>
+                  </div>
                   <div id="gd-rot-scan-result" style="display:none;padding:10px;background:#fff;border:1px solid #e0e0e0;border-radius:7px;font-size:0.78rem;max-height:180px;overflow-y:auto;margin-top:8px;"></div>
                 </div>
 
@@ -6189,6 +6709,7 @@ button, .btn, .retours-btn {
                     });
                     var cb = document.getElementById('gd-rot-auto');
                     if (cb) cb.checked = auto;
+                    try { this._trashUI(cfg); } catch (e) {}
                     var badge = document.getElementById('gd-rot-badge');
                     if (badge) badge.textContent = this._label();
                     var st = document.getElementById('gd-rot-status');
@@ -6213,7 +6734,7 @@ button, .btn, .retours-btn {
                     );
                     var resp = await fetchFn(
                         'https://www.googleapis.com/drive/v3/files?q=' + q
-                        + '&fields=files(id,name,modifiedTime)&orderBy=modifiedTime+desc&pageSize=500'
+                        + '&fields=files(id,name,modifiedTime,size)&orderBy=modifiedTime+desc&pageSize=500'
                     );
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     var data = await resp.json();
@@ -6245,21 +6766,22 @@ button, .btn, .retours-btn {
                             return;
                         }
                         var MIN_KEEP = this._minKeep();
-                        var toDeleteCount = 0;
+                        var toDeleteCount = 0, totSize = 0, delSize = 0, fmt = window._gdBackupRotation._fmt;
                         var html = '';
                         files.forEach(function(f, idx) {
                             var willDelete = idx >= MIN_KEEP && f._old;
-                            if (willDelete) toDeleteCount++;
+                            totSize += parseInt(f.size) || 0;
+                            if (willDelete) { toDeleteCount++; delSize += parseInt(f.size) || 0; }
                             var col  = willDelete ? '#dc2626' : '#16a34a';
                             var icon = willDelete ? '🗑' : (idx < MIN_KEEP ? '🔒' : '✅');
                             html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
                                 + '<span>' + icon + '</span>'
                                 + '<span style="flex:1;font-family:monospace;font-size:0.74rem;color:' + col + ';">' + f.name + '</span>'
-                                + '<span style="font-size:0.7rem;color:#888;">' + (f._date ? f._date.toLocaleDateString('fr-FR') : '?') + '</span>'
+                                + '<span style="font-size:0.7rem;color:#888;white-space:nowrap;">' + (f.size ? fmt(f.size) + ' · ' : '') + (f._date ? f._date.toLocaleDateString('fr-FR') : '?') + '</span>'
                                 + '</div>';
                         });
                         var header = '<div style="margin-bottom:8px;font-weight:800;font-size:0.82rem;">'
-                            + files.length + ' fichier(s) — <span style="color:#dc2626;">' + toDeleteCount + ' à mettre à la corbeille</span>'
+                            + files.length + ' fichier(s) · ' + fmt(totSize) + ' sur Drive — <span style="color:#dc2626;">' + toDeleteCount + ' à mettre à la corbeille' + (delSize ? ' (' + fmt(delSize) + ' libérés)' : '') + '</span>'
                             + ' — <span style="color:#16a34a;">🔒 ' + Math.min(MIN_KEEP, files.length) + ' plus récents toujours conservés</span></div>';
                         resEl.innerHTML = header + html;
                     } catch(e) {
@@ -6309,8 +6831,119 @@ button, .btn, .retours-btn {
                 },
 
                 autoRun: async function() {
-                    var cfg = this.get();
-                    if (cfg.autoClean !== false) await this.run(true);
+                    var cfg = this.get(), n = 0;
+                    if (cfg.autoClean !== false) n = await this.run(true);
+                    try { await this._trashAuto(); } catch (e) { console.warn('Corbeille COVO auto :', e); }
+                    return n;
+                },
+
+                // ── CORBEILLE COVO ─────────────────────────────────────────────────────────
+                // Le nettoyage met les anciennes sauvegardes à la corbeille Drive (récupérables ~30 jours),
+                // mais elles y occupent encore de l'espace. Ici : suppression DÉFINITIVE des seuls fichiers
+                // COVO (covo_backup_… / covo_params_…) déjà dans la corbeille. COVO Pro n'a accès qu'aux
+                // fichiers qu'il a créés : vos autres fichiers Drive ne sont jamais visibles ni touchés.
+                _fmt: function(b) {
+                    b = parseInt(b) || 0;
+                    return b >= 1073741824 ? (b / 1073741824).toFixed(2).replace('.', ',') + ' Go'
+                         : b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo'
+                         : Math.max(1, Math.round(b / 1024)) + ' Ko';
+                },
+                _trashList: async function() {
+                    var fetchFn = window._gdFetchPublic || window.fetch, out = [], tok = '';
+                    var q = encodeURIComponent("trashed=true and (name contains 'covo_backup' or name contains 'covo_params')");
+                    for (var n = 0; n < 20; n++) {
+                        var r = await fetchFn('https://www.googleapis.com/drive/v3/files?q=' + q
+                            + '&fields=nextPageToken,files(id,name,size,trashed,trashedTime,modifiedTime)&pageSize=1000'
+                            + (tok ? '&pageToken=' + encodeURIComponent(tok) : ''));
+                        if (!r.ok) throw new Error('HTTP ' + r.status);
+                        var j = await r.json();
+                        (j.files || []).forEach(function(f) {
+                            // double sécurité : uniquement des fichiers réellement à la corbeille et nommés par COVO
+                            if (f && f.trashed !== false && /^covo_(backup|params)_/.test(f.name || '')) out.push(f);
+                        });
+                        tok = j.nextPageToken; if (!tok) break;
+                    }
+                    return out;
+                },
+                _trashUI: function(cfg) {
+                    cfg = cfg || this.get();
+                    var sel = document.getElementById('gd-trash-days');
+                    if (sel) sel.value = String(parseInt(cfg.trashDays) || 0);
+                    var st = document.getElementById('gd-trash-status');
+                    if (st) st.textContent = cfg.trashLast
+                        ? 'Dernier vidage : ' + new Date(cfg.trashLast).toLocaleString('fr-FR') + ' — ' + (cfg.trashCount || 0) + ' fichier(s) supprimé(s) · ' + this._fmt(cfg.trashFreed || 0) + ' libérés'
+                        : '';
+                    var pk = document.getElementById('gd-pack-info');
+                    if (pk) {
+                        var L = null; try { L = JSON.parse(localStorage.getItem('covo_pack_last') || 'null'); } catch (e) {}
+                        var on = typeof CompressionStream === 'function' && localStorage.getItem('covo_pack_off') !== '1';
+                        pk.innerHTML = on
+                            ? '📦 Compression des sauvegardes : <b>active</b>' + (L && L.before ? ' — dernière : ' + this._fmt(L.before) + ' → <b>' + this._fmt(L.after) + '</b> (' + new Date(L.at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ')' : ' — appliquée à la prochaine sauvegarde')
+                            : '📦 Compression des sauvegardes : indisponible sur ce navigateur (sauvegardes envoyées sans compression)';
+                    }
+                },
+                trashScan: async function() {
+                    var el = document.getElementById('gd-trash-info'); if (!el) return;
+                    var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
+                    if (!gdState.connected) { el.innerHTML = '<span style="color:#e74c3c;">⚠ Google Drive non connecté.</span>'; return; }
+                    el.innerHTML = '<em style="color:#888;">⏳ Analyse de la corbeille…</em>';
+                    try {
+                        var files = await this._trashList(), tot = 0;
+                        files.forEach(function(f) { tot += parseInt(f.size) || 0; });
+                        el.innerHTML = files.length
+                            ? '🗑️ <b>' + files.length + '</b> sauvegarde(s) COVO dans la corbeille · <b>' + this._fmt(tot) + '</b> encore occupés sur Drive'
+                            : '✅ La corbeille ne contient aucune sauvegarde COVO.';
+                    } catch (e) { el.innerHTML = '<span style="color:#e74c3c;">Erreur : ' + e.message + '</span>'; }
+                },
+                trashEmpty: async function(silent, olderThanDays) {
+                    var gdState = (typeof window._gdGetState === 'function') ? window._gdGetState() : {};
+                    if (!gdState.connected) { if (!silent && typeof showScanToast === 'function') showScanToast('⚠️ Google Drive non connecté', 'warning'); return 0; }
+                    if (this._trashBusy) return 0;
+                    this._trashBusy = true;
+                    var fetchFn = window._gdFetchPublic || window.fetch, done = 0, freed = 0, self = this;
+                    try {
+                        var files = await this._trashList();
+                        if (olderThanDays) {
+                            var lim = Date.now() - olderThanDays * 864e5;
+                            files = files.filter(function(f) { var t = new Date(f.trashedTime || f.modifiedTime).getTime(); return t && t < lim; });
+                        }
+                        if (!files.length) {
+                            if (!silent && typeof showScanToast === 'function') showScanToast('✅ Aucune sauvegarde COVO dans la corbeille', 'success');
+                            this.trashScan(); return 0;
+                        }
+                        var tot = 0; files.forEach(function(f) { tot += parseInt(f.size) || 0; });
+                        if (!silent && !confirm('Supprimer DÉFINITIVEMENT ' + files.length + ' sauvegarde(s) COVO de la corbeille Google Drive (' + this._fmt(tot) + ') ?\n\n'
+                            + 'Elles ne pourront plus être récupérées.\nVos sauvegardes actives (hors corbeille) ne sont pas touchées.')) return 0;
+                        var el = document.getElementById('gd-trash-info');
+                        var queue = files.slice();
+                        var worker = async function() {
+                            while (queue.length) {
+                                var f = queue.shift();
+                                try {
+                                    var r = await fetchFn('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(f.id), { method: 'DELETE' });
+                                    if (r.ok || r.status === 204 || r.status === 404) { done++; freed += parseInt(f.size) || 0; }
+                                } catch (e) {}
+                                if (el) el.innerHTML = '<em style="color:#888;">⏳ Suppression… ' + done + ' / ' + files.length + '</em>';
+                            }
+                        };
+                        await Promise.all([worker(), worker(), worker(), worker()]);
+                        this.save({ trashLast: new Date().toISOString(), trashCount: done, trashFreed: freed });
+                        if (typeof showScanToast === 'function' && (!silent || done))
+                            showScanToast('🗑️ Corbeille COVO vidée : ' + done + ' fichier(s) supprimé(s) · ' + this._fmt(freed) + ' libérés', 'success');
+                    } catch (e) {
+                        console.error('Corbeille COVO :', e);
+                        if (!silent && typeof showScanToast === 'function') showScanToast('❌ Corbeille : ' + e.message, 'error');
+                    } finally { this._trashBusy = false; }
+                    setTimeout(function() { self.trashScan(); }, 300);
+                    return done;
+                },
+                setTrashDays: function(d) { this.save({ trashDays: parseInt(d) || 0 }); },
+                _trashAuto: async function() {
+                    var cfg = this.get(), d = parseInt(cfg.trashDays) || 0;
+                    if (!d) return 0;
+                    if (Date.now() - (+cfg.trashAutoAt || 0) < 6 * 3600 * 1000) return 0;   // au plus toutes les 6 h
+                    this.save({ trashAutoAt: Date.now() });
+                    return this.trashEmpty(true, d);
                 }
             };
 
@@ -16779,7 +17412,7 @@ function toggleInfoSection(headerElement) {
                     _mProds  = JSON.parse(localStorage.getItem('covo_products')      || '[]').length;
                     _mVentes = JSON.parse(localStorage.getItem('covo_sales_history') || '[]').length;
                 } catch(e) {}
-                var _mShort = _manualRestoreFile.replace('covo_backup_','').replace('.json','');
+                var _mShort = _manualRestoreFile.replace('covo_backup_','').replace(/\.json(\.gz)?$/,'');
                 _dpoSet(3, 'done', _mShort);
                 _dpoProgress(98, _mProds + ' produits · ' + _mVentes + ' ventes — ' + _mShort);
                 await _splashDelay(200);
@@ -16932,7 +17565,7 @@ function toggleInfoSection(headerElement) {
         }
 
         // Afficher : nb total de fichiers trouvés + nom du plus récent
-        var _shortName = _latestFile.name.replace('covo_backup_', '').replace('.json', '');
+        var _shortName = _latestFile.name.replace('covo_backup_', '').replace(/\.json(\.gz)?$/, '');
         var _totalLabel = (typeof _totalFiles !== 'undefined' && _totalFiles > 1)
             ? _totalFiles + ' saves'
             : _shortName;
@@ -26898,7 +27531,7 @@ logout = function(skipConfirmation = false) {
 
     function loadBackupFiles(event) {
         const files = Array.from(event.target.files);
-        const jsonFiles = files.filter(f => f.name.endsWith('.json') && f.name.startsWith('covo_backup_'));
+        const jsonFiles = files.filter(f => (f.name.endsWith('.json') || f.name.endsWith('.json.gz')) && f.name.startsWith('covo_backup_'));
         
         if (jsonFiles.length === 0) {
             showScanToast('❌ Aucun fichier de sauvegarde COVO trouvé dans ce dossier');
@@ -26924,7 +27557,7 @@ logout = function(skipConfirmation = false) {
         </div>`;
         
         container.innerHTML = headerHtml + files.map((file, index) => {
-            const fileDate = file.name.replace('covo_backup_', '').replace('.json', '');
+            const fileDate = file.name.replace('covo_backup_', '').replace(/\.json(\.gz)?$/, '');
             const size = (file.size / 1024).toFixed(2);
             // AMELIORATION: badge "Plus récent" sur le premier fichier
             const isNewest = index === 0;
@@ -41076,7 +41709,7 @@ function initAdminSections() {
             var pl = function(n, one, many) { return n.toLocaleString('fr-FR') + ' ' + (Math.abs(n) > 1 ? many : one); };
             var t = [pl(I(fp, 'nProducts'), 'produit', 'produits'),
                      pl(I(fp, 'nSales'), 'vente', 'ventes'),
-                     I(fp, 'nAppro').toLocaleString('fr-FR') + ' appro.'];
+                     (I(fp, 'nAppro') || 0).toLocaleString('fr-FR') + ' appro.'];
             if (F(fp, 'stockU') !== null) t.push('stock ' + nfmt(F(fp, 'stockU')) + ' u');
             if (F(fp, 'apT') !== null) t.push('achats ' + eur(F(fp, 'apT')));
             if (F(fp, 'caT') !== null) t.push('CA ' + eur(F(fp, 'caT')));
@@ -42038,7 +42671,7 @@ function initAdminSections() {
                     +     '<span style="font-weight:700;font-size:0.84rem;color:var(--text-main,#333);">'+dateStr+' '+timeStr+'</span>'
                     +     (isLatest ? '<span style="background:'+accentColor+';color:white;font-size:0.62rem;padding:1px 7px;border-radius:10px;font-weight:700;">Dernière</span>' : '')
                     +   '</div>'
-                    +   '<div style="font-size:0.72rem;color:var(--gray,#888);">'+(f.name||'').replace(/^covo_backup_/,'').replace(/\.json$/,'')+' · '+sizeKb+'</div>'
+                    +   '<div style="font-size:0.72rem;color:var(--gray,#888);">'+(f.name||'').replace(/^covo_backup_/,'').replace(/\.json(\.gz)?$/,'')+' · '+sizeKb+'</div>'
                     + '</div>'
                     + '<button onclick="gdriveRestoreFile(\''+f.id+'\',\''+safeName+'\')"'
                     +   ' style="background:'+accentColor+';color:white;padding:6px 13px;border-radius:7px;'
@@ -43118,7 +43751,7 @@ function initAdminSections() {
                     files.forEach(function(f){
                         var col  = f._old ? '#dc2626' : '#16a34a';
                         var icon = f._old ? '🗑' : '✅';
-                        var nm   = (f.name || '').replace(/^covo_params_/, '').replace(/\.json$/, '');
+                        var nm   = (f.name || '').replace(/^covo_params_/, '').replace(/\.json(\.gz)?$/, '');
                         html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #f0f0f0;">'
                             + '<span>' + icon + '</span>'
                             + '<span style="flex:1;font-family:monospace;font-size:0.72rem;color:' + col + ';">' + nm + '</span>'
