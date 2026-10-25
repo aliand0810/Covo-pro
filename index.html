@@ -69224,3 +69224,93 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — SAV DANS L'ONGLET CATALOGUE
+   • L'onglet principal « 🛟 SAV » disparaît de la barre : il est rangé dans « 🗂️ Catalogue »
+   • En haut du Catalogue : deux sous-onglets « 🗂️ Catalogue » et « 🛟 SAV »
+     (pastille rouge = nouvelles demandes, reprise aussi sur l'onglet Catalogue)
+   • Tout le fonctionnement du SAV est conservé (liste, réponses, statuts, actualisation)
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._svcInstalled) return;
+    window._svcInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    var CSS = [
+        'body.svc-on #tab-btn-sav,body.svc-on #cat-sav{display:none!important;}',
+        'body.svc-on #tab-btn-catalogue{position:relative;}',
+        '#svc-badge{display:none;position:absolute;top:5px;right:8px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#e53935;color:#fff;font-size:.66rem;font-weight:900;line-height:18px;text-align:center;box-shadow:0 0 0 2px var(--bg-card,#fff);}',
+        '#svc-badge.on{display:block;}',
+        '.svc-sub{display:flex;gap:4px;padding:4px;margin:12px 14px 12px;border-radius:14px;background:var(--bg-card,#fff);border:1px solid var(--border-color,#e3e8ef);box-shadow:0 1px 3px rgba(15,23,42,.06);}',
+        'body.dark-mode .svc-sub{background:#171b22;border-color:#2c323d;}',
+        '.svc-sub button{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;border:none;background:transparent;color:var(--text-muted,#64748b);border-radius:11px;padding:11px 14px;font-size:.92rem;font-weight:900;cursor:pointer;font-family:inherit;transition:background .15s,color .15s;}',
+        '.svc-sub button:hover{background:rgba(42,120,214,.08);color:var(--text-main,#0f172a);}',
+        'body.dark-mode .svc-sub button{color:#8b96a8;}body.dark-mode .svc-sub button:hover{color:#e8edf5;}',
+        '.svc-sub button.on{background:linear-gradient(135deg,#1c55a0,#2a78d6);color:#fff!important;box-shadow:0 4px 12px rgba(42,120,214,.3);}',
+        '.svc-sub button small{font-size:.7rem;font-weight:700;opacity:.8;}',
+        '.svc-sub .pl{display:none;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#e53935;color:#fff;font-size:.68rem;font-weight:900;line-height:18px;}',
+        '.svc-sub .pl.on{display:inline-block;}',
+        '.svc-sub button.on .pl{background:#fff;color:#e53935;}',
+        '@media (max-width:560px){.svc-sub{margin:8px 10px;}.svc-sub button{padding:10px 8px;font-size:.86rem;}.svc-sub button small{display:none;}}'
+    ].join('\n');
+
+    function catOff() { try { return typeof window._covoLicenceTabsOff === 'function' && window._covoLicenceTabsOff().indexOf('catalogue') >= 0; } catch (e) { return false; } }
+    function nSav() { var t = $('tab-btn-sav'), m = t && t.textContent.match(/(\d+)\s*$/); return m ? +m[1] : 0; }
+    function nArt() { try { return (typeof products !== 'undefined' && Array.isArray(products)) ? products.filter(function (p) { return p && p.active !== false; }).length : 0; } catch (e) { return 0; } }
+    function nav(host, which) {
+        if (!host) return null;
+        var n = host.querySelector(':scope > .svc-sub');
+        if (!n) {
+            n = document.createElement('div'); n.className = 'svc-sub'; n.setAttribute('role', 'tablist');
+            n.innerHTML = '<button type="button" role="tab" data-svc="catalogue">🗂️ Catalogue <small class="ct"></small></button><button type="button" role="tab" data-svc="sav">🛟 SAV <span class="pl"></span><small>service client</small></button>';
+            host.insertBefore(n, host.firstChild);
+            n.addEventListener('click', function (e) {
+                var b = e.target.closest('[data-svc]'); if (!b) return;
+                var to = b.getAttribute('data-svc'); if (to === which) return;
+                if (typeof window.switchTab === 'function') window.switchTab(to);
+                try { window.scrollTo({ top: 0 }); } catch (er) {}
+            });
+        }
+        n.querySelectorAll('[data-svc]').forEach(function (b) { var on = b.getAttribute('data-svc') === which; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+        return n;
+    }
+    function badges() {
+        var k = nSav();
+        document.querySelectorAll('.svc-sub .pl').forEach(function (p) { p.textContent = k || ''; p.classList.toggle('on', k > 0); });
+        var ct = document.querySelectorAll('.svc-sub .ct'), a = nArt(); ct.forEach(function (c) { c.textContent = a ? a + ' articles' : ''; });
+        var cb = $('tab-btn-catalogue'); if (!cb) return;
+        var bd = $('svc-badge'); if (!bd) { bd = document.createElement('span'); bd.id = 'svc-badge'; bd.title = 'Nouvelles demandes SAV'; cb.appendChild(bd); }
+        bd.textContent = k || ''; bd.classList.toggle('on', k > 0 && document.body.classList.contains('svc-on'));
+    }
+    function apply() {
+        var on = !catOff();
+        document.body.classList.toggle('svc-on', on);
+        if (!on) { document.querySelectorAll('.svc-sub').forEach(function (n) { n.style.display = 'none'; }); return; }
+        document.querySelectorAll('.svc-sub').forEach(function (n) { n.style.display = ''; });
+        nav($('tab-catalogue'), 'catalogue'); nav($('tab-sav'), 'sav');
+        // l'onglet « Catalogue » reste allumé quand le SAV est ouvert
+        var sav = $('tab-sav'), cb = $('tab-btn-catalogue');
+        if (sav && cb && sav.classList.contains('active')) cb.classList.add('active');
+        badges();
+    }
+    function boot() {
+        if (typeof window.switchTab !== 'function' || !$('tab-catalogue') || !$('tab-btn-catalogue')) return setTimeout(boot, 400);
+        if (!$('tab-sav') || !$('tab-btn-sav')) { if ((boot.n = (boot.n || 0) + 1) < 40) return setTimeout(boot, 400); }
+        if (!$('svc-css')) { var s = document.createElement('style'); s.id = 'svc-css'; s.textContent = CSS; document.head.appendChild(s); }
+        var o = window.switchTab;
+        window.switchTab = function (name) {
+            var r = o.apply(this, arguments);
+            try { apply(); if (name === 'sav' && document.body.classList.contains('svc-on')) { var cb = $('tab-btn-catalogue'); if (cb) cb.classList.add('active'); } } catch (e) {}
+            return r;
+        };
+        apply();
+        var t = $('tab-btn-sav'); if (t) new MutationObserver(badges).observe(t, { childList: true, subtree: true, characterData: true });
+        // si le SAV recrée ses éléments, la barre est remise en place
+        var q = 0; new MutationObserver(function () { if (q) return; q = setTimeout(function () { q = 0; if ((!$('tab-catalogue') || !$('tab-catalogue').querySelector(':scope > .svc-sub')) || ($('tab-sav') && !$('tab-sav').querySelector(':scope > .svc-sub'))) apply(); }, 200); }).observe(document.body, { childList: true });
+        window.addEventListener('licence:data', function () { setTimeout(apply, 50); });
+        setInterval(badges, 15000);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
