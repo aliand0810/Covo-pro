@@ -62798,13 +62798,18 @@ function covoQrPrint(o) {
     }
     function openSat(k) {
         var s = byKey(SATS, k); if (!s) return;
-        if (satInstalled(s) && satLaunchable(s)) { launchApp(s); return; }
+        // Ouverture directe dès que l'application est connue comme installée OU ouvrable par son lien
+        // (avant : il fallait les DEUX repères ; un seul manquant suffisait à ouvrir la page web)
+        if (satLaunchable(s) || satInstalled(s)) { launchApp(s, !satLaunchable(s)); return; }
         openWeb(s);
-        if (satInstalled(s) && !satLaunchable(s)) setTimeout(function () { hint(s, 'old'); }, 600);
+        // Pas encore de repère sur cet ordinateur : proposer d'ouvrir l'application installée (au plus 1 fois / jour / appli)
+        var hk = 'covo_pwa_hintweb_' + s.pwa, last = +(lsGet(hk) || 0);
+        if (Date.now() - last > 864e5) { try { localStorage.setItem(hk, String(Date.now())); } catch (e) {} setTimeout(function () { hint(s, 'web'); }, 700); }
     }
-    function launchApp(s) {
+    function learnApp(s) { try { localStorage.setItem('covo_pwa_installed_' + s.pwa, '1'); localStorage.setItem('covo_pwa_proto_' + s.pwa, '1'); } catch (e) {} }
+    function launchApp(s, learn) {
         var left = false;
-        function gone() { left = true; }
+        function gone() { left = true; if (learn) learnApp(s); }
         window.addEventListener('blur', gone, { once: true });
         document.addEventListener('visibilitychange', function v() { if (document.hidden) gone(); document.removeEventListener('visibilitychange', v); });
         var a = document.createElement('a');
@@ -62830,17 +62835,22 @@ function covoQrPrint(o) {
                 var b = e.target.closest('button'); if (!b) return;
                 var ss = byKey(SATS, hintEl.getAttribute('data-k'));
                 if (b.classList.contains('go') && ss) openWeb(ss);
-                if (b.hasAttribute('data-forget') && ss) { try { localStorage.removeItem('covo_pwa_proto_' + ss.pwa); } catch (er) {} }
+                if (b.classList.contains('app') && ss) { hintEl.classList.remove('show'); launchApp(ss, true); return; }
+                if (b.hasAttribute('data-forget') && ss) { try { localStorage.removeItem('covo_pwa_proto_' + ss.pwa); localStorage.removeItem('covo_pwa_installed_' + ss.pwa); } catch (er) {} }
                 hintEl.classList.remove('show');
             });
         }
         hintEl.setAttribute('data-k', s.k);
         hintEl.style.setProperty('--c1', s.c[0]); hintEl.style.setProperty('--c2', s.c[1]);
         hintEl.innerHTML = '<span class="ic">' + IC[s.ic] + '</span><span class="tx">'
-            + (why === 'old'
+            + (why === 'web'
+                ? '<b>' + esc(s.l) + ' ouvert dans le navigateur</b>Si l’application ' + esc(s.l) + ' est installée sur cet ordinateur, ouvrez-la d’ici : COVO Pro s’en souviendra et l’ouvrira ensuite directement dans sa fenêtre.'
+                : why === 'old'
                 ? '<b>' + esc(s.l) + ' ouvert dans le navigateur</b>L’application installée est une ancienne version : désinstallez-la puis réinstallez-la une fois (bouton 📲 Installer dans ' + esc(s.l) + ') pour qu’elle s’ouvre ensuite directement dans sa fenêtre.'
                 : '<b>' + esc(s.l) + ' ne s’est pas ouvert ?</b>Si le navigateur demande l’autorisation d’ouvrir l’application, acceptez (et cochez « Toujours autoriser »).')
-            + '<span class="bt">' + (why === 'old' ? '<button type="button" class="no">OK</button>' : '<button type="button" class="go">🌐 Ouvrir dans le navigateur</button><button type="button" class="no" data-forget="1" title="Ne plus essayer d’ouvrir l’application installée">Ne plus essayer</button><button type="button" class="no">✕</button>') + '</span></span>';
+            + '<span class="bt">' + (why === 'web' ? '<button type="button" class="go app">🚀 Ouvrir l’application installée</button><button type="button" class="no">✕</button>'
+                : why === 'old' ? '<button type="button" class="no">OK</button>'
+                : '<button type="button" class="go">🌐 Ouvrir dans le navigateur</button><button type="button" class="no" data-forget="1" title="L’application n’est pas installée sur cet ordinateur : ouvrir désormais dans le navigateur">Pas installée ici</button><button type="button" class="no">✕</button>') + '</span></span>';
         hintEl.classList.add('show');
         clearTimeout(hintEl._t); hintEl._t = setTimeout(function () { hintEl.classList.remove('show'); }, 15000);
     }
