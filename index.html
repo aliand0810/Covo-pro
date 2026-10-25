@@ -69314,3 +69314,223 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — ÉCHÉANCES ARTICLES : APERÇU RAPIDE + PROMOTION + ÉTIQUETTE PROMO
+   • Clic sur une fiche d'échéance (ou « 👁️ Aperçu ») : aperçu de l'article sans quitter la liste
+     (photo, DLC et jours restants, stock, valeur, emplacement, prix, promotion en cours)
+   • Mettre l'article en promotion en 1 clic : remise suggérée selon la date limite,
+     choix du % ou du prix promo, nouveau prix calculé comme en caisse (jamais sous le prix d'achat)
+   • Imprimer l'étiquette promo (petit format ou A4) ou une affiche promo pleine page
+   • Arrêter la promotion, ouvrir la fiche complète, modifier la DLC
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._ecpInstalled) return;
+    window._ecpInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function norm(s) { return String(s == null ? '' : s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(); }
+    function P() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} return []; }
+    function LD() { try { return rLoad('echeances') || []; } catch (e) { try { return JSON.parse(localStorage.getItem('covo_echeances') || '[]') || []; } catch (e2) { return []; } } }
+    function eur(v) { return (+v || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function toast(m, t) { try { if (typeof window.showScanToast === 'function') return window.showScanToast(m, t || 'success'); } catch (e) {} }
+    var MO = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+    function nd(s) { return typeof window._covoNormDate === 'function' ? window._covoNormDate(s) : (String(s || '').match(/^\d{4}-\d{2}-\d{2}/) || [''])[0]; }
+    function daysTo(s) { var d = nd(s); if (!d) return null; var a = d.split('-'), t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((new Date(+a[0], +a[1] - 1, +a[2]) - t) / 864e5); }
+    function fmtD(s) { var d = nd(s); if (!d) return '—'; var a = d.split('-'); return (+a[2]) + ' ' + MO[+a[1] - 1] + ' ' + a[0]; }
+    function dTxt(n) { return n == null ? 'sans date limite' : n < 0 ? 'expirée depuis ' + (-n) + ' jour' + (-n > 1 ? 's' : '') : n === 0 ? 'expire aujourd’hui' : n === 1 ? 'expire demain' : 'expire dans ' + n + ' jours'; }
+    function dCol(n) { return n == null ? '#64748b' : n < 0 ? '#d03b3b' : n <= 3 ? '#e8590c' : n <= 7 ? '#d48806' : n <= 30 ? '#2a78d6' : '#0ca30c'; }
+    function base(p) { return +(p.unitType === 'kg' ? (p.pricePerKg || p.price) : p.price) || 0; }
+    function unit(p) { return p.unitType === 'kg' ? ' €/kg' : ' €'; }
+    function promoPrice(p, pct) { var b = base(p); return typeof window._promoPrice === 'function' ? window._promoPrice(b, pct, p.costPrice) : b * (1 - pct / 100); }
+    /* % à enregistrer pour obtenir un prix promo donné (même règle que la caisse) */
+    function pctFor(p, target) { var b = base(p), c = parseFloat(p.costPrice); if (!b || !(target < b)) return 0; var pct = (!isNaN(c) && c >= 0 && c < b) ? (b - target) / (b - c) * 100 : (1 - target / b) * 100; return Math.max(0, Math.min(99, Math.round(pct * 10) / 10)); }
+    function suggest(n) { return n == null ? 0 : n < 0 ? 0 : n <= 1 ? 50 : n <= 3 ? 40 : n <= 7 ? 30 : n <= 15 ? 20 : 10; }
+    function find(e) {
+        var ps = P(), x;
+        if (e.pid != null) { x = ps.filter(function (p) { return String(p.id) === String(e.pid); })[0]; if (x) return x; }
+        var r = norm(e.ref), n = norm(e.article);
+        if (r && r !== '-') { x = ps.filter(function (p) { return norm(p.barcode) === r; })[0]; if (x) return x; }
+        return n ? ps.filter(function (p) { return norm(p.name) === n; })[0] || null : null;
+    }
+
+    var CSS = [
+        '#ecp-ov{position:fixed;inset:0;z-index:100030;background:rgba(2,6,23,.55);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;--q-bg:#fff;--q-soft:#f4f6fa;--q-line:#e2e7ef;--q-ink:#0f172a;--q-ink2:#475569;--q-mute:#64748b;--q-acc:#2a78d6;--q-red:#d03b3b;}',
+        'body.dark-mode #ecp-ov{--q-bg:#171b22;--q-soft:#1f242d;--q-line:#2c323d;--q-ink:#e8edf5;--q-ink2:#b6c0cf;--q-mute:#8b96a8;--q-acc:#5b9cf0;--q-red:#f07171;}',
+        '#ecp-ov.on{display:flex;}',
+        '#ecp{width:560px;max-width:100%;max-height:calc(100vh - 32px);display:flex;flex-direction:column;background:var(--q-bg);color:var(--q-ink);border:1px solid var(--q-line);border-radius:20px;box-shadow:0 30px 80px rgba(2,6,23,.45);overflow:hidden;font-family:inherit;}',
+        '#ecp .hd{position:relative;display:grid;grid-template-columns:84px minmax(0,1fr) auto;gap:14px;align-items:center;padding:16px 16px 14px;border-bottom:1px solid var(--q-line);}',
+        '#ecp .hd::before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:var(--c);}',
+        '#ecp .im{width:84px;height:84px;border-radius:16px;background:var(--q-soft) center/contain no-repeat;border:1px solid var(--q-line);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:900;color:var(--q-mute);}',
+        '#ecp h3{margin:0;font-size:1.08rem;font-weight:900;line-height:1.2;color:var(--q-ink)!important;}',
+        '#ecp .meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}',
+        '#ecp .meta span{font-size:.7rem;font-weight:800;border-radius:8px;padding:3px 8px;background:var(--q-soft);color:var(--q-ink2);white-space:nowrap;}',
+        '#ecp .x{align-self:start;width:36px;height:36px;border-radius:10px;border:1px solid var(--q-line);background:var(--q-soft);color:var(--q-ink2);cursor:pointer;font-size:1rem;}',
+        '#ecp .bd{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}',
+        '#ecp .dl{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;background:color-mix(in srgb,var(--c) 10%,var(--q-bg));border:1px solid color-mix(in srgb,var(--c) 35%,var(--q-line));}',
+        '#ecp .dl .n{min-width:62px;text-align:center;color:var(--c);}',
+        '#ecp .dl .n b{display:block;font-size:1.6rem;font-weight:900;line-height:1;}',
+        '#ecp .dl .n small{font-size:.62rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;}',
+        '#ecp .dl .t b{display:block;font-size:.95rem;font-weight:900;color:var(--q-ink);}',
+        '#ecp .dl .t small{display:block;font-size:.76rem;font-weight:700;color:var(--q-ink2);margin-top:2px;}',
+        '#ecp .kp{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}',
+        '#ecp .kp div{border:1px solid var(--q-line);border-radius:12px;padding:9px 11px;background:var(--q-bg);}',
+        '#ecp .kp span{display:block;font-size:.64rem;font-weight:900;text-transform:uppercase;letter-spacing:.4px;color:var(--q-mute);}',
+        '#ecp .kp b{display:block;font-size:1.05rem;font-weight:900;margin-top:2px;font-variant-numeric:tabular-nums;}',
+        '#ecp .kp small{display:block;font-size:.68rem;font-weight:700;color:var(--q-ink2);}',
+        '#ecp .pr{border:1.5px solid color-mix(in srgb,var(--q-red) 35%,var(--q-line));border-radius:16px;padding:12px 14px;background:color-mix(in srgb,var(--q-red) 4%,var(--q-bg));}',
+        '#ecp .pr h4{margin:0 0 2px;font-size:.9rem;font-weight:900;color:var(--q-ink)!important;display:flex;align-items:center;gap:8px;}',
+        '#ecp .pr h4 em{margin-left:auto;font-style:normal;font-size:.68rem;font-weight:900;color:#fff;background:var(--q-red);border-radius:8px;padding:2px 8px;}',
+        '#ecp .pr .sub{font-size:.74rem;color:var(--q-ink2);font-weight:600;margin-bottom:10px;}',
+        '#ecp .chips{display:flex;flex-wrap:wrap;gap:6px;}',
+        '#ecp .chip{border:1.5px solid var(--q-line);background:var(--q-bg);color:var(--q-ink2);border-radius:999px;padding:7px 12px;font-size:.8rem;font-weight:900;cursor:pointer;font-family:inherit;position:relative;}',
+        '#ecp .chip:hover{border-color:var(--q-red);color:var(--q-ink);}',
+        '#ecp .chip.on{background:var(--q-red);border-color:var(--q-red);color:#fff;}',
+        '#ecp .chip.sg::after{content:"conseillé";position:absolute;top:-8px;right:-4px;font-size:.52rem;font-weight:900;background:#0ca30c;color:#fff;border-radius:6px;padding:1px 5px;}',
+        '#ecp .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;}',
+        '#ecp .row label{font-size:.74rem;font-weight:800;color:var(--q-ink2);}',
+        '#ecp .row input{width:110px;padding:9px 10px;border:1.5px solid var(--q-line);border-radius:10px;background:var(--q-bg);color:var(--q-ink);font-size:.92rem;font-weight:800;font-family:inherit;}',
+        '#ecp .row input:focus{outline:none;border-color:var(--q-red);}',
+        '#ecp .res{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--q-bg);border:1px dashed var(--q-line);}',
+        '#ecp .res s{color:var(--q-mute);font-weight:700;font-size:.92rem;}',
+        '#ecp .res b{font-size:1.5rem;font-weight:900;color:var(--q-red);}',
+        '#ecp .res span{font-size:.74rem;font-weight:800;color:var(--q-ink2);}',
+        '#ecp .warn{font-size:.76rem;font-weight:800;color:var(--q-red);margin-top:8px;}',
+        '#ecp .ft{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;border-top:1px solid var(--q-line);background:var(--q-soft);}',
+        '#ecp .ft button{border:1px solid var(--q-line);background:var(--q-bg);color:var(--q-ink);border-radius:11px;padding:10px 13px;font-weight:800;font-size:.82rem;cursor:pointer;font-family:inherit;}',
+        '#ecp .ft .go{background:var(--q-red);border-color:var(--q-red);color:#fff;flex:1;min-width:190px;}',
+        '#ecp .ft .pt{background:#f39c12;border-color:#f39c12;color:#fff;}',
+        '#ecp .ft .gh{margin-left:auto;}',
+        '#ecp .ft button:disabled{opacity:.45;cursor:not-allowed;}',
+        '#gx-s-ech .gx-ec{cursor:pointer;}#gx-s-ech .gx-ec:hover{border-color:var(--c);}',
+        '@media (max-width:640px){#ecp-ov{padding:0;align-items:flex-end;}#ecp{max-height:94vh;border-radius:20px 20px 0 0;}#ecp .hd{grid-template-columns:64px minmax(0,1fr) auto;}#ecp .im{width:64px;height:64px;}#ecp .kp{grid-template-columns:1fr 1fr;}#ecp .ft .gh{margin-left:0;}#ecp .ft button{flex:1;}}'
+    ].join('\n');
+
+    var S = { e: null, p: null, pct: 0 };
+    function build() {
+        if ($('ecp-ov')) return;
+        if (!$('ecp-css')) { var s = document.createElement('style'); s.id = 'ecp-css'; s.textContent = CSS; document.head.appendChild(s); }
+        var ov = document.createElement('div'); ov.id = 'ecp-ov';
+        ov.innerHTML = '<div id="ecp" role="dialog" aria-modal="true" aria-label="Aperçu de l’article"></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener('click', function (ev) {
+            if (ev.target === ov) return close();
+            var b = ev.target.closest('[data-a],[data-pct]'); if (!b) return;
+            if (b.hasAttribute('data-pct')) { S.pct = +b.getAttribute('data-pct'); var pi = $('ecp-price'); if (pi) pi.value = S.pct ? promoPrice(S.p, S.pct).toFixed(2) : ''; return upd(); }
+            var a = b.getAttribute('data-a');
+            if (a === 'close') return close();
+            if (a === 'apply') return apply(false);
+            if (a === 'applyPrint') return apply(true);
+            if (a === 'print') return printLbl();
+            if (a === 'poster') { if (typeof window._promoPrintFull === 'function') window._promoPrintFull(S.p.id); return; }
+            if (a === 'stop') return stop();
+            if (a === 'fiche') { var id = S.p.id; close(); if (typeof window.openProductEditModal === 'function') window.openProductEditModal(id); return; }
+            if (a === 'dlc') { var eid = S.e.id; close(); if (typeof window.editEch === 'function') window.editEch(eid); return; }
+        });
+        ov.addEventListener('input', function (ev) {
+            if (ev.target.id === 'ecp-pct') { var v = parseFloat(String(ev.target.value).replace(',', '.')); S.pct = isNaN(v) ? 0 : Math.max(0, Math.min(99, v)); var pi = $('ecp-price'); if (pi) pi.value = S.pct ? promoPrice(S.p, S.pct).toFixed(2) : ''; upd(true); }
+            if (ev.target.id === 'ecp-price') { var t = parseFloat(String(ev.target.value).replace(',', '.')); S.pct = isNaN(t) ? 0 : pctFor(S.p, t); var pc = $('ecp-pct'); if (pc) pc.value = S.pct || ''; upd(true); }
+        });
+        document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && $('ecp-ov').classList.contains('on') && !document.getElementById('lbl-fmt-chooser')) close(); });
+    }
+    function close() { var o = $('ecp-ov'); if (o) o.classList.remove('on'); }
+
+    function open(eid) {
+        var e = LD().filter(function (x) { return x.id === eid; })[0]; if (!e) return false;
+        var p = find(e);
+        if (!p) { if (typeof window.editEch === 'function') window.editEch(eid); return true; }
+        build(); S.e = e; S.p = p;
+        var cur = parseFloat(p.promo) || 0, n = daysTo(e.date || p.expiryDate);
+        S.pct = cur > 0 ? cur : suggest(n);
+        render(); $('ecp-ov').classList.add('on');
+        return true;
+    }
+    function render() {
+        var e = S.e, p = S.p, date = e.date || p.expiryDate, n = daysTo(date), col = dCol(n), st = +p.stock || 0, kg = p.unitType === 'kg';
+        var b = base(p), cur = parseFloat(p.promo) || 0, curP = cur > 0 ? promoPrice(p, cur) : b, sg = suggest(n);
+        var im = /^(data:image|https?:)/.test(p.img || '') ? p.img : '', loc = String(p.emplacement || p.location || e.emplacement || '').trim();
+        var types = []; try { if (typeof promoTypes !== 'undefined' && Array.isArray(promoTypes)) types = promoTypes.filter(function (x) { return +x > 0; }).map(Number); } catch (er) {}
+        [10, 20, 30, 40, 50].forEach(function (x) { if (types.indexOf(x) < 0) types.push(x); }); if (sg && types.indexOf(sg) < 0) types.push(sg);
+        types = types.filter(function (x, i, a) { return a.indexOf(x) === i; }).sort(function (a, c) { return a - c; }).slice(0, 10);
+        var big = n == null ? '?' : n < 0 ? String(-n) : String(n), lbl = n == null ? 'sans DLC' : n < 0 ? 'j. dépassés' : n === 0 ? 'aujourd’hui' : n === 1 ? 'jour' : 'jours';
+        var sgTxt = n == null ? 'Pas de date limite connue pour cet article.' : n < 0 ? '⛔ Date dépassée : l’article ne doit plus être vendu — retirez-le du rayon (une promotion n’est pas possible).' : 'Remise conseillée pour écouler le stock avant la date limite : <b>-' + sg + ' %</b>.';
+        $('ecp').style.setProperty('--c', col);
+        $('ecp').innerHTML = '<div class="hd" style="--c:' + col + '"><span class="im"' + (im ? ' style="background-image:url(\'' + esc(im) + '\')"' : '') + '>' + (im ? '' : esc(String(p.name || '?').trim().slice(0, 2).toUpperCase())) + '</span>'
+            + '<div style="min-width:0"><h3>' + esc(p.name) + '</h3><div class="meta">' + (p.category ? '<span>🏷️ ' + esc(p.category) + '</span>' : '') + (p.barcode ? '<span>▮▮ ' + esc(p.barcode) + '</span>' : '') + (loc ? '<span>📍 ' + esc(loc) + '</span>' : '') + (cur > 0 ? '<span style="background:var(--q-red);color:#fff">🔥 En promo -' + cur + ' %</span>' : '') + '</div></div>'
+            + '<button type="button" class="x" data-a="close" aria-label="Fermer">✕</button></div>'
+            + '<div class="bd">'
+            + '<div class="dl" style="--c:' + col + '"><div class="n"><b>' + big + '</b><small>' + lbl + '</small></div><div class="t"><b>📅 ' + (date ? esc(fmtD(date)) : 'Date limite non renseignée') + '</b><small>' + esc(dTxt(n)) + (e.remarque ? ' · 💬 ' + esc(e.remarque) : '') + '</small></div></div>'
+            + '<div class="kp"><div><span>Stock</span><b>' + (Math.round(st * 1000) / 1000).toLocaleString('fr-FR') + (kg ? ' kg' : '') + '</b><small>' + (st > 0 ? 'en rayon' : 'épuisé') + '</small></div>'
+            + '<div><span>Prix actuel</span><b' + (cur > 0 ? ' style="color:var(--q-red)"' : '') + '>' + eur(curP) + '</b><small>' + (cur > 0 ? 'au lieu de ' + eur(b) : 'prix normal') + (kg ? ' /kg' : '') + '</small></div>'
+            + '<div><span>Valeur en jeu</span><b>' + eur(st * curP) + '</b><small>' + (p.costPrice ? 'achat ' + eur(st * (+p.costPrice || 0)) : 'au prix de vente') + '</small></div></div>'
+            + '<div class="pr"><h4>🏷️ Mettre en promotion' + (cur > 0 ? '<em>déjà -' + cur + ' %</em>' : '') + '</h4><div class="sub">' + sgTxt + '</div>'
+            + '<div class="chips">' + types.map(function (x) { return '<button type="button" class="chip' + (x === sg ? ' sg' : '') + '" data-pct="' + x + '">-' + x + ' %</button>'; }).join('') + '</div>'
+            + '<div class="row"><label for="ecp-pct">Remise</label><input id="ecp-pct" type="number" min="0" max="99" step="1" inputmode="decimal" placeholder="%"><label for="ecp-price">ou prix promo</label><input id="ecp-price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="' + b.toFixed(2) + '"></div>'
+            + '<div class="res" id="ecp-res"></div><div class="warn" id="ecp-warn"></div></div>'
+            + '</div>'
+            + '<div class="ft"><button type="button" class="go" data-a="applyPrint" id="ecp-ap">🏷️ Mettre en promo et imprimer l’étiquette</button><button type="button" data-a="apply" id="ecp-a1">✓ Appliquer</button>'
+            + '<button type="button" class="pt" data-a="print" title="Imprimer l’étiquette avec le prix actuel">🖨️ Étiquette</button>' + (cur > 0 ? '<button type="button" data-a="poster" title="Affiche promo pleine page A4">📄 Affiche A4</button><button type="button" data-a="stop">✖ Arrêter la promo</button>' : '')
+            + '<button type="button" class="gh" data-a="dlc">📅 Modifier la DLC</button><button type="button" data-a="fiche">✏️ Fiche complète</button></div>';
+        var pc = $('ecp-pct'), pi = $('ecp-price'); if (pc) pc.value = S.pct || ''; if (pi) pi.value = S.pct ? promoPrice(p, S.pct).toFixed(2) : '';
+        upd();
+    }
+    function upd(fromInput) {
+        var p = S.p, b = base(p), pct = S.pct, np = pct ? promoPrice(p, pct) : b, real = b ? Math.round((1 - np / b) * 1000) / 10 : 0, n = daysTo(S.e.date || p.expiryDate), u = unit(p);
+        document.querySelectorAll('#ecp .chip').forEach(function (c) { c.classList.toggle('on', +c.getAttribute('data-pct') === pct); });
+        var r = $('ecp-res'), w = $('ecp-warn');
+        if (r) r.innerHTML = pct ? '<s>' + eur(b) + '</s><b>' + eur(np) + '</b><span>soit ' + real.toLocaleString('fr-FR') + ' % de moins · −' + eur(b - np) + (u === ' €/kg' ? ' /kg' : '') + '</span>' : '<span>Choisissez une remise ou saisissez le prix promo.</span>';
+        var c = parseFloat(p.costPrice), msg = '';
+        if (n != null && n < 0) msg = '⛔ Article périmé : promotion impossible.';
+        else if (!b) msg = 'Ce produit n’a pas de prix de vente.';
+        else if (pct && !isNaN(c) && c > 0 && np <= c + 0.005) msg = 'ℹ️ Prix plancher atteint : la promotion ne descend jamais sous le prix d’achat (' + eur(c) + ').';
+        if (w) w.textContent = msg;
+        var block = (n != null && n < 0) || !b || !pct, ap = $('ecp-ap'), a1 = $('ecp-a1');
+        if (ap) ap.disabled = block; if (a1) a1.disabled = block;
+        if (ap && !block) ap.textContent = '🏷️ Promo -' + (Math.round(pct * 10) / 10).toLocaleString('fr-FR') + ' % et imprimer l’étiquette';
+    }
+    function save(msg) {
+        try { if (typeof window.saveAll === 'function') window.saveAll(); else localStorage.setItem('covo_products', JSON.stringify(P())); } catch (e) {}
+        try { if (typeof window.renderProducts === 'function') window.renderProducts(); } catch (e) {}
+        try { if (typeof addRetourHist === 'function') addRetourHist('modified', 'echeance', msg, 'DLC : ' + fmtD(S.e.date || S.p.expiryDate)); } catch (e) {}
+        try { if (typeof window.refreshRetours === 'function') window.refreshRetours(); } catch (e) {}
+    }
+    function apply(andPrint) {
+        var p = S.p, pct = Math.round(S.pct * 10) / 10; if (!pct) return;
+        var n = daysTo(S.e.date || p.expiryDate); if (n != null && n < 0) return;
+        p.promo = pct; p._promoDlc = nd(S.e.date || p.expiryDate) || undefined;
+        save('🏷️ Promotion -' + pct + ' % : ' + p.name);
+        toast('🔥 ' + p.name + ' en promotion : ' + eur(promoPrice(p, pct)) + ' au lieu de ' + eur(base(p)));
+        render();
+        if (andPrint) printLbl();
+    }
+    function stop() {
+        var p = S.p; if (!(parseFloat(p.promo) > 0)) return;
+        p.promo = 0; delete p._promoDlc;
+        save('✖ Fin de promotion : ' + p.name);
+        toast('Promotion arrêtée — ' + p.name + ' revient à ' + eur(base(p)), 'info');
+        S.pct = suggest(daysTo(S.e.date || p.expiryDate)); render();
+    }
+    function printLbl() {
+        var id = S.p.id;
+        if (typeof window._printLabel === 'function') { window._printLabel(id); var ch = $('lbl-fmt-chooser'); if (ch) ch.style.zIndex = '100040'; }
+        else if (typeof window._promoPrintFull === 'function') window._promoPrintFull(id);
+    }
+    window._covoEchPreview = open;
+
+    function boot() {
+        if (typeof window._echOpenProduct !== 'function' || !window._gxInstalled) return setTimeout(boot, 400);
+        var o = window._echOpenProduct;
+        window._echOpenProduct = function (eid) { if (open(eid)) return; return o.apply(this, arguments); };
+        // clic sur la fiche d'une échéance (hors boutons) → aperçu
+        document.addEventListener('click', function (ev) {
+            var card = ev.target.closest && ev.target.closest('#gx-s-ech .gx-ec'); if (!card || ev.target.closest('button,a,input')) return;
+            var b = card.querySelector('[data-ece]'); if (b) open(b.getAttribute('data-ece'));
+        });
+        // libellé du bouton de la fiche
+        var rel = function () { document.querySelectorAll('#gx-s-ech .gx-ec button[onclick*="_echOpenProduct"]').forEach(function (b) { if (b.textContent.indexOf('Aperçu') < 0) { b.textContent = '👁️ Aperçu'; b.title = 'Aperçu, promotion et étiquette'; } }); };
+        var t = 0, host = $('tab-retours') || document.body; new MutationObserver(function () { clearTimeout(t); t = setTimeout(rel, 30); }).observe(host, { childList: true, subtree: true }); rel();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
