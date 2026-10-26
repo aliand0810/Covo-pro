@@ -62721,7 +62721,7 @@ function covoQrPrint(o) {
             + '<div class="tba-grid">' + ACTS.filter(function (a) { return a.g === 'act'; }).map(tile).join('') + '</div>'
             + '<div class="tba-h">Google Drive &amp; données <span class="st" id="tba-drv"><i></i><span>—</span></span></div>'
             + '<div class="tba-grid">' + ACTS.filter(function (a) { return a.g === 'drive'; }).map(tile).join('') + '</div>'
-            + '<div class="tba-h">Applications COVO</div>'
+            + '<div class="tba-h">Applications COVO <button type="button" id="tba-oapp" title="Réglages d’ouverture des applications (application installée ou navigateur)" style="margin-left:auto;border:none;background:transparent;color:inherit;opacity:.75;cursor:pointer;font:inherit;font-size:.7rem;font-weight:800;padding:0 2px;">⚙️ Ouverture</button></div>'
             + '<div class="tba-grid">' + SATS.map(function (s) {
                 return cell('s:' + s.k, '<button type="button" class="tba-t" data-sat="' + s.k + '" style="--c1:' + s.c[0] + ';--c2:' + s.c[1] + ';" title="Ouvrir ' + esc(s.l) + ' — ' + esc(s.s) + '" aria-label="Ouvrir ' + esc(s.l) + '"><span class="ic">' + IC[s.ic] + '</span><span class="lb">' + esc(s.sh) + '</span><span class="ex">' + IC.ext + '</span></button>');
             }).join('') + '</div>'
@@ -62800,13 +62800,19 @@ function covoQrPrint(o) {
         var s = byKey(SATS, k); if (!s) return;
         // Ouverture directe dès que l'application est connue comme installée OU ouvrable par son lien
         // (avant : il fallait les DEUX repères ; un seul manquant suffisait à ouvrir la page web)
-        if (satLaunchable(s) || satInstalled(s)) { launchApp(s, !satLaunchable(s)); return; }
-        openWeb(s);
-        // Pas encore de repère sur cet ordinateur : proposer d'ouvrir l'application installée (au plus 1 fois / jour / appli)
-        var hk = 'covo_pwa_hintweb_' + s.pwa, last = +(lsGet(hk) || 0);
-        if (Date.now() - last > 864e5) { try { localStorage.setItem(hk, String(Date.now())); } catch (e) {} setTimeout(function () { hint(s, 'web'); }, 700); }
+        // Par défaut : on ouvre TOUJOURS l'application installée (comme avant). Seules les applications
+        // marquées « Pas installée ici » sur cet ordinateur s'ouvrent dans le navigateur.
+        if (satWeb(s)) { openWeb(s); return; }
+        launchApp(s, !satLaunchable(s));
     }
-    function learnApp(s) { try { localStorage.setItem('covo_pwa_installed_' + s.pwa, '1'); localStorage.setItem('covo_pwa_proto_' + s.pwa, '1'); } catch (e) {} }
+    function satWeb(s) { return lsGet('covo_pwa_web_' + s.pwa) === '1'; }
+    function setWeb(s, on) {
+        try {
+            if (on) { localStorage.setItem('covo_pwa_web_' + s.pwa, '1'); localStorage.removeItem('covo_pwa_proto_' + s.pwa); }
+            else localStorage.removeItem('covo_pwa_web_' + s.pwa);
+        } catch (e) {}
+    }
+    function learnApp(s) { try { localStorage.setItem('covo_pwa_installed_' + s.pwa, '1'); localStorage.setItem('covo_pwa_proto_' + s.pwa, '1'); localStorage.removeItem('covo_pwa_web_' + s.pwa); } catch (e) {} if (window._covoAppsPanelRefresh) window._covoAppsPanelRefresh(); }
     function launchApp(s, learn) {
         var left = false;
         function gone() { left = true; if (learn) learnApp(s); }
@@ -62836,7 +62842,7 @@ function covoQrPrint(o) {
                 var ss = byKey(SATS, hintEl.getAttribute('data-k'));
                 if (b.classList.contains('go') && ss) openWeb(ss);
                 if (b.classList.contains('app') && ss) { hintEl.classList.remove('show'); launchApp(ss, true); return; }
-                if (b.hasAttribute('data-forget') && ss) { try { localStorage.removeItem('covo_pwa_proto_' + ss.pwa); localStorage.removeItem('covo_pwa_installed_' + ss.pwa); } catch (er) {} }
+                if (b.hasAttribute('data-forget') && ss) { setWeb(ss, true); openWeb(ss, true); }
                 hintEl.classList.remove('show');
             });
         }
@@ -62847,7 +62853,7 @@ function covoQrPrint(o) {
                 ? '<b>' + esc(s.l) + ' ouvert dans le navigateur</b>Si l’application ' + esc(s.l) + ' est installée sur cet ordinateur, ouvrez-la d’ici : COVO Pro s’en souviendra et l’ouvrira ensuite directement dans sa fenêtre.'
                 : why === 'old'
                 ? '<b>' + esc(s.l) + ' ouvert dans le navigateur</b>L’application installée est une ancienne version : désinstallez-la puis réinstallez-la une fois (bouton 📲 Installer dans ' + esc(s.l) + ') pour qu’elle s’ouvre ensuite directement dans sa fenêtre.'
-                : '<b>' + esc(s.l) + ' ne s’est pas ouvert ?</b>Si le navigateur demande l’autorisation d’ouvrir l’application, acceptez (et cochez « Toujours autoriser »).')
+                : '<b>' + esc(s.l) + ' ne s’est pas ouvert ?</b>Si le navigateur demande l’autorisation d’ouvrir l’application, acceptez (et cochez « Toujours autoriser »). Si elle n’est pas installée sur cet ordinateur, touchez « Pas installée ici » : elle s’ouvrira désormais dans le navigateur.')
             + '<span class="bt">' + (why === 'web' ? '<button type="button" class="go app">🚀 Ouvrir l’application installée</button><button type="button" class="no">✕</button>'
                 : why === 'old' ? '<button type="button" class="no">OK</button>'
                 : '<button type="button" class="go">🌐 Ouvrir dans le navigateur</button><button type="button" class="no" data-forget="1" title="L’application n’est pas installée sur cet ordinateur : ouvrir désormais dans le navigateur">Pas installée ici</button><button type="button" class="no">✕</button>') + '</span></span>';
@@ -62855,6 +62861,48 @@ function covoQrPrint(o) {
         clearTimeout(hintEl._t); hintEl._t = setTimeout(function () { hintEl.classList.remove('show'); }, 15000);
     }
     window._covoOpenSatellite = openSat;
+    /* Panneau « Ouverture des applications » : état par application + test / réglage */
+    function appsPanel() {
+        var ov = $('tba-apps'); 
+        if (!ov) {
+            ov = document.createElement('div'); ov.id = 'tba-apps'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+            document.body.appendChild(ov);
+            var st = document.createElement('style');
+            st.textContent = '#tba-apps{position:fixed;inset:0;z-index:2147482300;display:none;align-items:center;justify-content:center;padding:14px;background:rgba(8,12,24,.62);backdrop-filter:blur(4px);font-family:inherit;}'
+                + '#tba-apps.show{display:flex;}#tba-apps .bx{width:min(520px,100%);max-height:88vh;overflow:auto;background:var(--bg-card,#fff);color:var(--text-main,#1e2d3d);border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.35);}'
+                + '#tba-apps .hd{display:flex;align-items:center;gap:10px;padding:14px 16px;background:linear-gradient(135deg,#1c55a0,#2a78d6);color:#fff;position:sticky;top:0;}#tba-apps .hd b{flex:1;font-size:.98rem;}#tba-apps .hd button{border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:.9rem;}'
+                + '#tba-apps .in{padding:12px 16px 16px;font-size:.78rem;line-height:1.45;color:var(--text-muted,#64748b);}'
+                + '#tba-apps .ap{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-color,#e5e7eb);}#tba-apps .ap:last-child{border-bottom:none;}'
+                + '#tba-apps .ap .ic{width:32px;height:32px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,var(--c1),var(--c2));}#tba-apps .ap .ic svg{width:17px;height:17px;}'
+                + '#tba-apps .ap .tx{flex:1;min-width:0;}#tba-apps .ap .tx b{display:block;font-size:.84rem;color:var(--text-main,#1e2d3d);}#tba-apps .ap .tx small{font-size:.72rem;font-weight:700;}'
+                + '#tba-apps .ap button{border:1.5px solid var(--border-color,#e5e7eb);background:transparent;color:inherit;border-radius:9px;padding:6px 9px;font-weight:800;font-size:.72rem;cursor:pointer;font-family:inherit;white-space:nowrap;}'
+                + '#tba-apps .ap button.pr{border:none;color:#fff;background:linear-gradient(135deg,var(--c1),var(--c2));}'
+                + '#tba-apps .ft{display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 16px;}#tba-apps .ft button{flex:1;border:none;border-radius:11px;padding:10px 12px;font-weight:800;font-size:.8rem;cursor:pointer;font-family:inherit;background:linear-gradient(135deg,#1c55a0,#2a78d6);color:#fff;}';
+            document.head.appendChild(st);
+            ov.addEventListener('click', function (e) {
+                if (e.target === ov || e.target.closest('[data-x]')) { ov.classList.remove('show'); return; }
+                var b = e.target.closest('button[data-a]'); if (!b) return;
+                var a = b.getAttribute('data-a'), sx = byKey(SATS, b.getAttribute('data-k'));
+                if (a === 'test' && sx) { setWeb(sx, false); launchApp(sx, true); setTimeout(render, 600); return; }
+                if (a === 'web' && sx) { setWeb(sx, !satWeb(sx)); render(); return; }
+                if (a === 'all') { SATS.forEach(function (x) { setWeb(x, false); }); render(); toast('🚀 Les applications COVO s’ouvriront directement dans leur fenêtre', 'success'); return; }
+            });
+        }
+        function render() {
+            ov.innerHTML = '<div class="bx"><div class="hd"><b>🚀 Ouverture des applications</b><button type="button" data-x="1" aria-label="Fermer">✕</button></div>'
+                + '<div class="in">Par défaut, chaque tuile ouvre l’<b>application installée</b> dans sa propre fenêtre. Touchez <b>Tester</b> pour vérifier : la première fois, le navigateur peut demander l’autorisation (acceptez et cochez « Toujours autoriser »). Une application non installée sur cet ordinateur peut être réglée sur <b>Navigateur</b>.'
+                + SATS.map(function (x) {
+                    var w = satWeb(x), ok = satLaunchable(x);
+                    var stt = w ? '<small style="color:#d97706">🌐 S’ouvre dans le navigateur</small>' : ok ? '<small style="color:#16a34a">✅ S’ouvre dans l’application</small>' : '<small style="color:#2563eb">🚀 Application (pas encore vérifiée ici)</small>';
+                    return '<div class="ap" style="--c1:' + x.c[0] + ';--c2:' + x.c[1] + '"><span class="ic">' + IC[x.ic] + '</span><span class="tx"><b>' + esc(x.l) + '</b>' + stt + '</span>'
+                        + '<button type="button" class="pr" data-a="test" data-k="' + x.k + '">🚀 Tester</button><button type="button" data-a="web" data-k="' + x.k + '" title="' + (w ? 'Ouvrir l’application installée' : 'Ouvrir dans le navigateur') + '">' + (w ? '🚀 Appli' : '🌐 Navigateur') + '</button></div>';
+                }).join('') + '</div><div class="ft"><button type="button" data-a="all">🚀 Tout ouvrir dans les applications</button></div></div>';
+        }
+        window._covoAppsPanelRefresh = function () { if (ov.classList.contains('show')) render(); };
+        render(); ov.classList.add('show');
+    }
+    window._covoAppsPanel = appsPanel;
+    document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('#tba-oapp'); if (b) { e.preventDefault(); e.stopPropagation(); appsPanel(); } }, true);
     function runKey(key) {
         var p = String(key).split(':');
         if (p[0] === 'a') run(p[1]); else if (p[0] === 's') openSat(p[1]); else if (key === 'x:logout') run('logout');
