@@ -17694,7 +17694,7 @@ function toggleInfoSection(headerElement) {
         let fastCount = 0; // 15 vérifications rapides (30s) puis on ralentit
 
         function poll() {
-            if (!_gdConnected || !_gdAccessToken || !window._gdFetchPublic) return;
+            if (typeof _gdConnected === 'undefined' || !_gdConnected || !_gdAccessToken || !window._gdFetchPublic) return;   // (variables internes au module Drive : sans elles, rien à faire)
             const q = encodeURIComponent(
                 `'${folderId}' in parents and trashed=false and name contains 'covo_backup'`
             );
@@ -70292,5 +70292,267 @@ function covoQrPrint(o) {
         } catch (e) {}
     };
     window._covoProjetsMerge = merge;
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — ÉCRAN « PROGRESSION » (ouverture de session) AMÉLIORÉ
+   • Nouveau design : carte centrée, icônes d'étape, étape en cours animée, fond opaque
+     (plus rien ne transparaît derrière), présentation verticale sur téléphone
+   • Récapitulatif à la fin : sauvegarde restaurée (date, ancienneté, appareil, taille),
+     ventes du jour, ruptures / stock bas, DLC dépassées / à 7 jours
+   • Durée du chargement, touche Entrée pour accéder, bouton « Réessayer » en cas d'échec,
+     option « Entrer automatiquement » (désactivée par défaut)
+   La logique de restauration n'est pas modifiée : ce module ne fait qu'habiller et compléter.
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._dpoPlusInstalled) return;
+    window._dpoPlusInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function J(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+    function eur(n) { return (Math.round((+n || 0) * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function ago(t) {
+        var m = Math.round((Date.now() - t) / 60000);
+        if (m < 1) return 'à l’instant'; if (m < 60) return 'il y a ' + m + ' min';
+        var h = Math.round(m / 60); if (h < 24) return 'il y a ' + h + ' h';
+        var d = Math.round(h / 24); return 'il y a ' + d + ' jour' + (d > 1 ? 's' : '');
+    }
+    function size(b) { b = +b || 0; return b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko'; }
+    var AUTOK = 'covo_dpo_auto';
+
+    var CSS = [
+        '#data-progress-overlay{background:radial-gradient(900px 520px at 15% -10%,rgba(26,115,232,.22),transparent 60%),radial-gradient(800px 520px at 110% 110%,rgba(39,174,96,.16),transparent 60%),#070c18!important;overflow-y:auto;padding:24px 14px;box-sizing:border-box;gap:0!important;}',
+        '#data-progress-overlay .dpo-card{width:min(640px,100%);margin:auto;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:24px;padding:26px 22px 22px;box-shadow:0 30px 80px rgba(0,0,0,.45);display:flex;flex-direction:column;align-items:center;gap:18px;box-sizing:border-box;animation:dpoIn .35s ease;}',
+        '@keyframes dpoIn{from{opacity:0;transform:translateY(10px) scale(.985)}}',
+        '#dpo-greet{color:rgba(255,255,255,.5);font-size:.74rem;font-weight:600;margin-top:-4px;text-align:center;}',
+        '#data-progress-overlay .dpo-steps{max-width:none;padding:0;}',
+        '#data-progress-overlay .dpo-step{position:relative;border-radius:14px;padding:12px 8px 10px;background:rgba(255,255,255,.04);border:1.5px solid rgba(255,255,255,.09);}',
+        '#data-progress-overlay .dpo-ic{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:1.05rem;margin-bottom:6px;background:rgba(255,255,255,.06);position:relative;}',
+        '#data-progress-overlay .dpo-step-num{display:none;}',
+        '#data-progress-overlay .dpo-step-lbl{font-size:.76rem;}',
+        '#data-progress-overlay .dpo-step-sub{font-size:.66rem;line-height:1.3;word-break:break-word;}',
+        '#data-progress-overlay .dpo-step-active .dpo-ic::after{content:"";position:absolute;inset:-4px;border-radius:14px;border:2px solid transparent;border-top-color:#5aa0f2;border-right-color:#5aa0f2;animation:splashSpin .9s linear infinite;}',
+        '#data-progress-overlay .dpo-step-done .dpo-ic{background:rgba(39,174,96,.22);}',
+        '#data-progress-overlay .dpo-step-done .dpo-ic::before{content:"✓";position:absolute;right:-6px;bottom:-6px;width:16px;height:16px;border-radius:50%;background:#27ae60;color:#fff;font-size:.6rem;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #0b1324;}',
+        '#data-progress-overlay .dpo-step-warn .dpo-ic{background:rgba(243,156,18,.2);}',
+        '#data-progress-overlay .dpo-arrow{padding:0 4px;font-size:1.2rem;}',
+        '#dpo-bar-fill{position:relative;overflow:hidden;}',
+        '#data-progress-overlay.dpo-running #dpo-bar-fill::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:dpoShine 1.2s linear infinite;}',
+        '@keyframes dpoShine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}',
+        '#dpo-pct{white-space:nowrap;margin-left:10px;}#dpo-msg{min-width:0;}',
+        '#dpo-time{font-size:.68rem;color:rgba(255,255,255,.38);text-align:center;margin-top:6px;min-height:14px;}',
+        '#dpo-recap{display:none;width:100%;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}',
+        '#dpo-recap.on{display:grid;animation:dpoIn .35s ease;}',
+        '#dpo-recap .rc{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:14px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);min-width:0;}',
+        '#dpo-recap .rc i{font-style:normal;font-size:1.15rem;flex-shrink:0;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.07);}',
+        '#dpo-recap .rc div{min-width:0;}',
+        '#dpo-recap .rc span{display:block;font-size:.6rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.42);}',
+        '#dpo-recap .rc b{display:block;font-size:.86rem;color:#fff;font-weight:800;margin-top:1px;}',
+        '#dpo-recap .rc small{display:block;font-size:.68rem;color:rgba(255,255,255,.55);margin-top:2px;line-height:1.35;}',
+        '#dpo-recap .rc.ok b{color:#7be0a9;}#dpo-recap .rc.wa b{color:#f5c76a;}#dpo-recap .rc.ko b{color:#ff8b7e;}',
+        '#dpo-actions{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;}',
+        '#dpo-actions .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;width:100%;}',
+        '#dpo-continue-btn{margin-top:0!important;min-width:240px;}',
+        '#dpo-retry{display:none;padding:14px 20px;border-radius:14px;border:1.5px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font-weight:800;font-size:.95rem;cursor:pointer;}',
+        '#dpo-auto{display:none;align-items:center;gap:8px;font-size:.74rem;color:rgba(255,255,255,.55);cursor:pointer;user-select:none;}',
+        '#dpo-auto input{width:15px;height:15px;accent-color:#27ae60;cursor:pointer;}',
+        '#dpo-kbd{display:none;font-size:.66rem;color:rgba(255,255,255,.32);}',
+        '#dpo-kbd kbd{font-family:inherit;padding:1px 6px;border-radius:5px;border:1px solid rgba(255,255,255,.2);}',
+        '@media (max-width:560px){',
+        '  #data-progress-overlay .dpo-card{padding:20px 14px 16px;border-radius:20px;gap:14px;}',
+        '  #data-progress-overlay .dpo-steps{flex-direction:column;gap:7px;}',
+        '  #data-progress-overlay .dpo-arrow{display:none;}',
+        '  #data-progress-overlay .dpo-step{flex:none!important;flex-direction:row;align-items:center;text-align:left;gap:10px;padding:9px 12px;}',
+        '  #data-progress-overlay .dpo-ic{margin:0;flex-shrink:0;width:30px;height:30px;}',
+        '  #data-progress-overlay .dpo-step-lbl{flex:1;font-size:.82rem;}',
+        '  #data-progress-overlay .dpo-step-sub{margin:0;text-align:right;max-width:55%;font-size:.7rem;}',
+        '  #dpo-recap{grid-template-columns:1fr;}',
+        '  #dpo-continue-btn{width:100%;min-width:0;}#dpo-retry{width:100%;}',
+        '}'
+    ].join('\n');
+
+    var ICONS = { 1: '🌐', 2: '☁️', 3: '🔄', 4: '🚀' };
+    var T0 = 0, INFO = null, autoT = 0, built = false;
+
+    function build() {
+        var ov = $('data-progress-overlay'); if (!ov || built) return !!built;
+        built = true;
+        if (!$('dpo-plus-css')) { var st = document.createElement('style'); st.id = 'dpo-plus-css'; st.textContent = CSS; document.head.appendChild(st); }
+        // tout le contenu dans une carte
+        var card = document.createElement('div'); card.className = 'dpo-card';
+        while (ov.firstChild) card.appendChild(ov.firstChild);
+        ov.appendChild(card);
+        // icônes des étapes
+        [1, 2, 3, 4].forEach(function (i) { var s = $('dpo-s' + i); if (s && !s.querySelector('.dpo-ic')) { var ic = document.createElement('div'); ic.className = 'dpo-ic'; ic.textContent = ICONS[i]; s.insertBefore(ic, s.firstChild); } });
+        // salutation + date
+        var un = $('dpo-username');
+        if (un && !$('dpo-greet')) { var g = document.createElement('div'); g.id = 'dpo-greet'; un.parentNode.appendChild(g); }
+        // durée sous la barre
+        var bar = $('dpo-bar-fill'), wrap = bar && bar.parentNode && bar.parentNode.parentNode;
+        if (wrap && !$('dpo-time')) { var t = document.createElement('div'); t.id = 'dpo-time'; wrap.appendChild(t); }
+        // récapitulatif + actions
+        var btn = $('dpo-continue-btn');
+        if (btn && !$('dpo-recap')) {
+            var rc = document.createElement('div'); rc.id = 'dpo-recap'; btn.parentNode.insertBefore(rc, btn);
+            var act = document.createElement('div'); act.id = 'dpo-actions';
+            act.innerHTML = '<div class="row"></div><label id="dpo-auto"><input type="checkbox" id="dpo-auto-cb"> Entrer automatiquement à la prochaine ouverture</label><div id="dpo-kbd">ou appuyez sur <kbd>Entrée</kbd></div>';
+            btn.parentNode.insertBefore(act, btn);
+            var row = act.querySelector('.row'); row.appendChild(btn);
+            var rt = document.createElement('button'); rt.type = 'button'; rt.id = 'dpo-retry'; rt.textContent = '🔄 Réessayer'; row.appendChild(rt);
+            rt.addEventListener('click', retry);
+            $('dpo-auto-cb').addEventListener('change', function () { try { localStorage.setItem(AUTOK, this.checked ? '1' : '0'); } catch (e) {} stopAuto(); });
+        }
+        return true;
+    }
+    function greet() {
+        var g = $('dpo-greet'); if (!g) return;
+        var d = new Date(), h = d.getHours();
+        g.textContent = (h < 5 ? 'Bonne nuit' : h < 18 ? 'Bonjour' : 'Bonsoir') + ' · ' + d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    }
+    function start() {
+        build(); greet(); stopAuto(); INFO = null;
+        T0 = Date.now();
+        var ov = $('data-progress-overlay'); if (ov) ov.classList.add('dpo-running');
+        var rc = $('dpo-recap'); if (rc) { rc.classList.remove('on'); rc.innerHTML = ''; }
+        ['dpo-retry', 'dpo-auto', 'dpo-kbd'].forEach(function (id) { var e = $(id); if (e) e.style.display = 'none'; });
+        var t = $('dpo-time'); if (t) t.textContent = '';
+    }
+    function finished() {
+        var ov = $('data-progress-overlay'), btn = $('dpo-continue-btn'); if (!ov || !btn) return;
+        ov.classList.remove('dpo-running');
+        var ok = /Accéder/.test(btn.textContent || '');
+        btn.style.boxShadow = ok ? '0 6px 22px rgba(39,174,96,.45)' : '0 6px 22px rgba(230,126,34,.4)';
+        var t = $('dpo-time'); if (t && T0) t.textContent = 'Chargé en ' + ((Date.now() - T0) / 1000).toFixed(1).replace('.', ',') + ' s';
+        $('dpo-retry').style.display = ok ? 'none' : 'inline-block';
+        var au = $('dpo-auto'); au.style.display = ok ? 'flex' : 'none';
+        $('dpo-auto-cb').checked = localStorage.getItem(AUTOK) === '1';
+        $('dpo-kbd').style.display = 'block';
+        recap(ok);
+        if (ok && localStorage.getItem(AUTOK) === '1') countdown(3);
+    }
+    function recap(ok) {
+        var el = $('dpo-recap'); if (!el) return;
+        var prods = J('covo_products', []), sales = J('covo_sales_history', []), ech = J('covo_echeances', []);
+        if (!Array.isArray(prods)) prods = []; if (!Array.isArray(sales)) sales = []; if (!Array.isArray(ech)) ech = [];
+        var html = '';
+        // 1) sauvegarde restaurée
+        if (ok && INFO && INFO.at) {
+            var p = INFO.props || {}, mine = !!(p.dev && window.CovoSync && typeof window.CovoSync.deviceId === 'function' && p.dev === window.CovoSync.deviceId());
+            var app = p.app && window.CovoSync && typeof window.CovoSync.appName === 'function' ? window.CovoSync.appName(p.app) : (p.app || '');
+            var dt = new Date(INFO.at);
+            html += card(ok && Date.now() - INFO.at < 864e5 ? 'ok' : 'wa', '💾', 'Sauvegarde restaurée',
+                dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) + ' à ' + dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ' · ' + ago(INFO.at),
+                [p.dev ? (mine ? '📱 Cet appareil' : '🌐 Autre appareil') : '', app, p.who ? '👤 ' + p.who : '', INFO.size ? size(INFO.size) : ''].filter(Boolean).join(' · ') || esc(INFO.name || ''));
+        } else {
+            html += card('wa', '💾', 'Données', 'Données de cet appareil', ok ? 'Restauration appliquée' : 'Sauvegarde Drive non chargée — vous pouvez réessayer');
+        }
+        // 2) ventes du jour
+        var d0 = new Date(); d0.setHours(0, 0, 0, 0);
+        var today = sales.filter(function (s) { return s && !s.cancelled && new Date(s.date) >= d0; });
+        var ca = today.reduce(function (a, s) { return a + (+s.total || 0); }, 0), last = today.reduce(function (a, s) { var t = new Date(s.date).getTime(); return t > a ? t : a; }, 0);
+        html += card(today.length ? 'ok' : '', '🧾', 'Aujourd’hui', today.length ? today.length + ' vente' + (today.length > 1 ? 's' : '') + ' · ' + eur(ca) : 'Aucune vente pour l’instant',
+            today.length ? 'Dernière à ' + new Date(last).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : sales.length + ' ventes au total');
+        // 3) stock
+        var act = prods.filter(function (p) { return p && p.active !== false; });
+        var rupt = act.filter(function (p) { return (+p.stock || 0) <= 0; }).length;
+        var bas = act.filter(function (p) { var s = +p.stock || 0, m = p.stockMin != null && p.stockMin !== '' ? +p.stockMin : (p.alertStock != null ? +p.alertStock : 3); return s > 0 && s <= m; }).length;
+        html += card(rupt ? 'ko' : bas ? 'wa' : 'ok', '📦', 'Stock', rupt || bas ? (rupt ? rupt + ' en rupture' : '') + (rupt && bas ? ' · ' : '') + (bas ? bas + ' stock bas' : '') : 'Aucune rupture', act.length + ' produit' + (act.length > 1 ? 's' : '') + ' actif' + (act.length > 1 ? 's' : ''));
+        // 4) DLC
+        var now = new Date(); now.setHours(0, 0, 0, 0); var in7 = now.getTime() + 7 * 864e5;
+        var exp = 0, soon = 0;
+        ech.forEach(function (e) {
+            if (!e || !e.date) return; var t = new Date(String(e.date).slice(0, 10) + 'T00:00:00').getTime(); if (isNaN(t)) return;
+            if ((+e.stock || 0) <= 0 && e.stock !== undefined && e.stock !== '') return;
+            if (t < now.getTime()) exp++; else if (t <= in7) soon++;
+        });
+        html += card(exp ? 'ko' : soon ? 'wa' : 'ok', '📅', 'Dates limites', exp || soon ? (exp ? exp + ' dépassée' + (exp > 1 ? 's' : '') : '') + (exp && soon ? ' · ' : '') + (soon ? soon + ' sous 7 jours' : '') : 'Rien à signaler', 'Échéances articles suivies : ' + ech.filter(function (e) { return e && e.date; }).length);
+        el.innerHTML = html; el.classList.add('on');
+        // propriétés Drive de la sauvegarde (appareil, appli, taille) : complétées dès qu'elles arrivent
+        if (ok && INFO && INFO.name && !INFO.props && !INFO._asked) { INFO._asked = true; fetchProps(); }
+    }
+    function card(cls, ic, title, main, sub) { return '<div class="rc ' + (cls || '') + '"><i>' + ic + '</i><div><span>' + esc(title) + '</span><b>' + esc(main) + '</b>' + (sub ? '<small>' + (/[<]/.test(sub) ? sub : esc(sub)) + '</small>' : '') + '</div></div>'; }
+    function fetchProps() {
+        try {
+            var st = typeof window._gdGetState === 'function' ? window._gdGetState() : {};
+            if (!st.connected || !st.folderId || typeof window._gdFetchPublic !== 'function') return;
+            var q = encodeURIComponent("'" + st.folderId + "' in parents and trashed=false and name = '" + String(INFO.name).replace(/'/g, "\\'") + "'");
+            window._gdFetchPublic('https://www.googleapis.com/drive/v3/files?q=' + q + '&pageSize=1&fields=files(id,name,size,properties,modifiedTime)')
+                .then(function (r) { return r.json(); }).then(function (j) {
+                    var f = j && j.files && j.files[0]; if (!f || !INFO) return;
+                    INFO.props = f.properties || {}; INFO.size = f.size;
+                    if (!INFO.at && f.modifiedTime) INFO.at = new Date(f.modifiedTime).getTime();
+                    var btn = $('dpo-continue-btn'); if (btn && btn.style.display !== 'none') recap(/Accéder/.test(btn.textContent || ''));
+                }).catch(function () {});
+        } catch (e) {}
+    }
+    function countdown(n) {
+        var btn = $('dpo-continue-btn'), base = btn.textContent.replace(/\s*\(\d+\)\s*$/, '');
+        stopAuto();
+        var tick = function () {
+            if (!btn || btn.style.display === 'none') return stopAuto();
+            if (n <= 0) { stopAuto(); btn.click(); return; }
+            btn.textContent = base + ' (' + n + ')'; n--; autoT = setTimeout(tick, 1000);
+        };
+        btn._dpoBase = base; tick();
+        // un clic ou une touche ailleurs annule l'entrée automatique
+        setTimeout(function () { document.addEventListener('pointerdown', cancelAuto, true); }, 50);
+    }
+    function cancelAuto(e) { if (e && e.target && e.target.id === 'dpo-continue-btn') return; stopAuto(); }
+    function stopAuto() {
+        clearTimeout(autoT); autoT = 0; document.removeEventListener('pointerdown', cancelAuto, true);
+        var btn = $('dpo-continue-btn'); if (btn && btn._dpoBase) { btn.textContent = btn._dpoBase; btn._dpoBase = null; }
+    }
+    function retry() {
+        var u = window._dpoCurrentUser;
+        if (!u || typeof window._progressOverlayRun !== 'function') { location.reload(); return; }
+        var btn = $('dpo-continue-btn'); if (btn) btn.style.display = 'none';
+        start();
+        window._progressOverlayRun(u);
+    }
+
+    // mémorise la sauvegarde appliquée (nom + date), sans rien changer à la restauration
+    function hookRestore() {
+        var f = window._doRestoreFromData;
+        if (typeof f !== 'function' || f._dpoHooked) return false;
+        var w = function (data, name, opts) {
+            try {
+                var ov = $('data-progress-overlay');
+                if (ov && ov.style.display !== 'none' && opts && opts.auto) {
+                    var bt = (opts && opts.backupTime) || (data && data._savedAt) || null;
+                    INFO = { name: name || '', at: bt ? new Date(bt).getTime() : 0 };
+                }
+            } catch (e) {}
+            return f.apply(this, arguments);
+        };
+        w._dpoHooked = true; window._doRestoreFromData = w; return true;
+    }
+
+    function boot() {
+        var ov = $('data-progress-overlay'), btn = $('dpo-continue-btn');
+        if (!ov || !btn) return setTimeout(boot, 300);
+        hookRestore(); setTimeout(hookRestore, 1500);
+        build();
+        var shown = ov.style.display !== 'none' && ov.style.display !== '';
+        if (shown) start();
+        new MutationObserver(function () {
+            var vis = ov.style.display !== 'none' && ov.style.display !== '';
+            if (vis && !shown) start();
+            if (!vis) stopAuto();
+            shown = vis;
+        }).observe(ov, { attributes: true, attributeFilter: ['style'] });
+        new MutationObserver(function () {
+            if (btn.style.display !== 'none' && shown) { if (!btn._dpoDone) { btn._dpoDone = true; finished(); } }
+            else btn._dpoDone = false;
+        }).observe(btn, { attributes: true, attributeFilter: ['style'] });
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter' || !shown) return;
+            if (btn.style.display === 'none') return;
+            var t = e.target; if (t && /INPUT|TEXTAREA|SELECT/.test(t.tagName)) return;
+            e.preventDefault(); btn.click();
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
