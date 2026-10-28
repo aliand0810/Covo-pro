@@ -70634,6 +70634,31 @@ function covoQrPrint(o) {
     function byId(id) { var L = prods(); for (var i = 0; i < L.length; i++) if (String(L[i].id) === String(id)) return L[i]; return null; }
     function isKg(p) { return p && p.unitType === 'kg'; }
     function basePrice(p) { return +(isKg(p) ? p.pricePerKg : p.price) || 0; }
+    /* Promo MAGASIN en cours sur l'article (champ « Promo % » du catalogue) → prix payé aujourd'hui en rayon */
+    function storePromo(p) {
+        var b = basePrice(p), pc = Math.max(0, Math.min(100, parseFloat(p && p.promo) || 0));
+        if (!(b > 0) || !pc) return null;
+        var pr = typeof window._promoPrice === 'function' ? window._promoPrice(b, pc, p.costPrice) : b * (1 - pc / 100);
+        pr = Math.round(pr * 100) / 100;
+        return pr < b ? { pct: pc, price: pr } : null;
+    }
+    function refPrice(p) { var sp = storePromo(p); return sp ? sp.price : basePrice(p); }
+    /* Comparaison promo fidélité ↔ promo magasin : liste de [niveau, message] */
+    function compare(p, fid) {
+        var sp = storePromo(p), out = [], kg = isKg(p), u = kg ? '/kg' : '';
+        if (sp && fid > 0) {
+            var d = Math.round((sp.price - fid) * 100) / 100, mg = '-' + sp.pct + ' % → ' + eur(sp.price) + u;
+            if (d > 0.004) out.push(['info', '🏷️ Article déjà en promotion en magasin (' + mg + '). La promo fidélité (' + eur(fid) + u + ') est PLUS avantageuse de ' + eur(d) + ' par ' + (kg ? 'kg' : 'article') + ' : les clients fidélité paieront ' + eur(fid) + u + ' en caisse, les autres ' + eur(sp.price) + u + '. L’annonce indiquera « au lieu de ' + eur(sp.price) + ' » (prix actuel en magasin).']);
+            else if (d >= -0.004) out.push(['warn', '⚠️ Article déjà en promotion en magasin au MÊME prix (' + mg + ') : la promo fidélité n’apporte aucun avantage aux clients fidélité.']);
+            else out.push(['warn', '⚠️ La promo magasin actuelle (' + mg + ') est PLUS avantageuse que la promo fidélité (' + eur(fid) + u + ') de ' + eur(-d) + ' : en caisse, le prix magasin reste appliqué et l’annonce du site afficherait un prix plus élevé qu’en rayon. Baissez le prix fidélité sous ' + eur(sp.price) + ' ou retirez la promo magasin.']);
+        }
+        if (!kg && fid > 0 && +p.packSize >= 2 && +p.packPrice > 0) {
+            var pu = +p.packPrice / +p.packSize;
+            if (pu < fid - 0.004) out.push(['warn', '📦 Prix pack magasin (' + p.packSize + ' pour ' + eur(p.packPrice) + ', soit ' + eur(pu) + '/u.) plus avantageux que le prix fidélité : avec la carte fidélité, le prix fidélité remplace le prix pack sur les unités en promo.']);
+        }
+        return out;
+    }
+    window._fpCompare = compare;
     function persist() {
         try { if (typeof saveAll === 'function') saveAll(); else localStorage.setItem('covo_products', JSON.stringify(prods())); } catch (e) { try { localStorage.setItem('covo_products', JSON.stringify(prods())); } catch (er) {} }
         try { if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {}
@@ -70656,7 +70681,7 @@ function covoQrPrint(o) {
     function defaultTitle(p, fp) { return 'Exclusivité fidélité : ' + (p ? p.name : 'article'); }
     function defaultText(p, fp) {
         var kg = isKg(p), q = +fp.qty || 0;
-        return (kg ? qtyTxt(q, true) + ' de « ' + p.name + ' »' : q + ' × « ' + p.name + ' »') + ' à ' + eur(fp.price) + (kg ? '/kg' : '') + ' au lieu de ' + eur(basePrice(p)) + (kg ? '/kg' : '')
+        return (kg ? qtyTxt(q, true) + ' de « ' + p.name + ' »' : q + ' × « ' + p.name + ' »') + ' à ' + eur(fp.price) + (kg ? '/kg' : '') + ' au lieu de ' + eur(refPrice(p)) + (kg ? '/kg' : '')
             + ', réservé aux clients ayant le compte fidélité. Dans la limite des ' + (kg ? 'quantités' : q + ' articles') + ' disponibles !';
     }
 
@@ -70705,9 +70730,12 @@ function covoQrPrint(o) {
                 d.innerHTML = '🎁 Offre fidélité : ' + qtyTxt(f.n, kg) + (kg ? '' : ' ×') + ' ' + eur(f.promo) + (kg ? '/kg' : '') + ' au lieu de ' + eur(f.base)
                     + ' · économie ' + eur((f.base - f.promo) * f.n)
                     + (f.q > f.n ? '<br><span style="color:#b45309;">⚠️ Plus que ' + qtyTxt(f.n, kg) + ' en promo : ' + qtyTxt(f.q - f.n, kg) + ' au prix normal</span>' : '');
+            } else if (cu && activeFor(p) && !item.costPriceApplied && !item._fid) {
+                d.style.background = 'rgba(15,118,110,.08)'; d.style.color = '#0f766e';
+                d.innerHTML = '🏷️ Prix actuel (' + eur(item.price) + ') déjà inférieur ou égal au prix fidélité (' + eur(p.fidPromo.price) + ') : le meilleur prix est conservé';
             } else if (!cu && activeFor(p) && !item.costPriceApplied) {
                 d.style.background = 'rgba(219,39,119,.06)'; d.style.color = '#9d174d'; d.style.border = '1px dashed rgba(219,39,119,.4)';
-                d.innerHTML = '🎁 Promo fidélité : ' + eur(p.fidPromo.price) + (isKg(p) ? '/kg' : '') + ' au lieu de ' + eur(basePrice(p)) + ' — scannez la carte fidélité du client';
+                d.innerHTML = '🎁 Promo fidélité : ' + eur(p.fidPromo.price) + (isKg(p) ? '/kg' : '') + ' au lieu de ' + eur(item.price) + ' — scannez la carte fidélité du client';
             } else return;
             el.appendChild(d);
         });
@@ -70772,7 +70800,7 @@ function covoQrPrint(o) {
             var st = state(fp);
             if (st === 'pause' || st === 'end') return;
             if (st === 'out' && fp.outAt && (Date.now() - Date.parse(fp.outAt)) > 3 * 864e5) return;   // épuisée depuis plus de 3 jours : retirée du site
-            var base = basePrice(p), kg = isKg(p);
+            var base = refPrice(p), kg = isKg(p);
             list.push({
                 id: p.id, name: String(p.name || ''), unit: kg ? 'kg' : 'u', st: st,
                 t: fp.title || defaultTitle(p, fp), x: fp.text || defaultText(p, fp),
@@ -70934,7 +70962,9 @@ function covoQrPrint(o) {
             var fp = p.fidPromo, s = state(fp), S = ST[s], kg = isKg(p), q = +fp.qty || 0, sd = Math.min(q, +fp.sold || 0), pc = q ? Math.round(sd / q * 100) : 0;
             h += '<div class="pfid-card" data-id="' + esc(p.id) + '"><div class="im">' + imgOf(p) + '</div><div style="min-width:0;">'
                 + '<div class="nm">' + esc(p.name) + '<span class="chip" style="background:' + S[2] + '1a;color:' + S[2] + ';">' + S[0] + ' ' + S[1] + '</span></div>'
-                + '<div class="pr"><b>' + eur(fp.price) + (kg ? '/kg' : '') + '</b><s>' + eur(basePrice(p)) + '</s> · ' + esc(fp.title || defaultTitle(p, fp)) + '</div>'
+                + '<div class="pr"><b>' + eur(fp.price) + (kg ? '/kg' : '') + '</b><s>' + eur(refPrice(p)) + '</s> · ' + esc(fp.title || defaultTitle(p, fp)) + '</div>'
+                + (function () { var sp = storePromo(p); if (!sp) return ''; var better = sp.price <= fp.price + 0.004;
+                    return '<div class="mt" style="color:' + (better ? '#b45309' : '#0f766e') + ';">🏷️ Aussi en promo magasin : -' + sp.pct + ' % → ' + eur(sp.price) + (kg ? '/kg' : '') + (better ? ' · ⚠️ plus avantageuse que la promo fidélité' : ' · la promo fidélité reste plus avantageuse (−' + eur(sp.price - fp.price) + ')') + '</div>'; })()
                 + '<div class="bar"><i style="width:' + pc + '%"></i></div>'
                 + '<div class="mt">' + qtyTxt(sd, kg) + ' vendu' + (sd > 1 ? 's' : '') + ' sur ' + qtyTxt(q, kg) + ' · <b>reste ' + qtyTxt(remaining(fp), kg) + '</b>'
                 + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '')
@@ -70984,7 +71014,8 @@ function covoQrPrint(o) {
         if (!keep && p.fidPromo && String(id) !== String(EDIT)) { openForm(p.id); msg('Cet article a déjà une promo fidélité : vous la modifiez', 'warn'); return; }
         EDIT_PID = p.id;
         $('pfid-res').style.display = 'none'; $('pfid-q').style.display = 'none';
-        $('pfid-prod-t').innerHTML = esc(p.name) + '<small>Prix normal ' + eur(basePrice(p)) + (isKg(p) ? '/kg' : '') + ' · stock ' + qtyTxt(+p.stock || 0, isKg(p)) + (isKg(p) ? '' : ' u.') + (p.category ? ' · ' + esc(p.category) : '') + '</small>';
+        var spk = storePromo(p);
+        $('pfid-prod-t').innerHTML = esc(p.name) + '<small>Prix normal ' + eur(basePrice(p)) + (isKg(p) ? '/kg' : '') + (spk ? ' · 🏷️ en promo magasin -' + spk.pct + ' % → ' + eur(spk.price) : '') + ' · stock ' + qtyTxt(+p.stock || 0, isKg(p)) + (isKg(p) ? '' : ' u.') + (p.category ? ' · ' + esc(p.category) : '') + '</small>';
         $('pfid-prod').classList.add('on');
         $('pfid-price-l').textContent = isKg(p) ? 'Prix fidélité (€/kg) *' : 'Prix fidélité (€) *';
         $('pfid-qty-l').textContent = isKg(p) ? 'Quantité en promo (kg) *' : 'Quantité en promo *';
@@ -70996,6 +71027,12 @@ function covoQrPrint(o) {
         if (force || !$('pfid-title')._touched) { $('pfid-title').value = defaultTitle(p, fp); if (force) $('pfid-title')._touched = false; }
         if (force || !$('pfid-text')._touched) { $('pfid-text').value = fp.price > 0 && fp.qty > 0 ? defaultText(p, fp) : ''; if (force) $('pfid-text')._touched = false; }
     }
+    function msgList(w) {
+        var m = $('pfid-msg'); if (!m) return;
+        var col = { bad: '#b91c1c', warn: '#b45309', info: '#0f766e', ok: '#15803d' };
+        m.className = 'msg';
+        m.innerHTML = w.map(function (x) { return '<div style="color:' + (col[x[0]] || 'inherit') + ';margin-top:3px;">' + esc(x[1]) + '</div>'; }).join('');
+    }
     function msg(t, c) { var m = $('pfid-msg'); if (m) { m.textContent = t; m.className = 'msg' + (c ? ' ' + c : ''); } }
     function collect() {
         var p = byId(EDIT_PID);
@@ -71003,7 +71040,7 @@ function covoQrPrint(o) {
             title: ($('pfid-title').value || '').trim(), text: ($('pfid-text').value || '').trim(), showPrices: $('pfid-show').checked, on: $('pfid-on').checked };
     }
     function annHTML(o, p) {
-        var kg = isKg(p), base = basePrice(p), q = o.qty || 0, n = Math.max(0, q - (o.sold || 0)), pc = base > 0 && o.price < base ? Math.round((1 - o.price / base) * 100) : 0;
+        var kg = isKg(p), base = refPrice(p), q = o.qty || 0, n = Math.max(0, q - (o.sold || 0)), pc = base > 0 && o.price < base ? Math.round((1 - o.price / base) * 100) : 0;
         return '<div class="pfid-ann"><span class="k">🎁 Exclusivité clients fidélité</span><div class="in">'
             + '<h4>' + esc(o.title || defaultTitle(p, o)) + '</h4><p>' + esc(o.text || '') + '</p>'
             + (o.showPrices ? '<div class="pp"><b>' + eur(o.price) + (kg ? '/kg' : '') + '</b><s>' + eur(base) + '</s>' + (pc ? '<em>-' + pc + ' %</em>' : '') + '</div>' : (pc ? '<div class="pp"><em>-' + pc + ' %</em></div>' : ''))
@@ -71019,8 +71056,10 @@ function covoQrPrint(o) {
         else if (o.price > 0 && o.p.costPrice != null && o.price < +o.p.costPrice) w.push(['warn', '⚠️ Prix fidélité inférieur au prix d’achat (' + eur(+o.p.costPrice) + ') : vente à perte.']);
         if (o.qty > 0 && !isKg(o.p) && o.qty > (+o.p.stock || 0)) w.push(['warn', '⚠️ Quantité en promo (' + qtyTxt(o.qty) + ') supérieure au stock actuel (' + qtyTxt(+o.p.stock || 0) + ').']);
         if (o.start && o.end && o.end < o.start) w.push(['bad', '❌ La date de fin est avant la date de début.']);
-        if (o.price > 0 && o.qty > 0 && base > o.price && !w.some(function (x) { return x[0] === 'bad'; })) w.push(['ok', '💸 Remise totale si tout est vendu : ' + eur((base - o.price) * o.qty)]);
-        msg(w.map(function (x) { return x[1]; }).join('  '), w.some(function (x) { return x[0] === 'bad'; }) ? 'bad' : w.some(function (x) { return x[0] === 'warn'; }) ? 'warn' : w.length ? 'ok' : '');
+        compare(o.p, o.price).forEach(function (x) { w.push(x); });
+        var ref = refPrice(o.p);
+        if (o.price > 0 && o.qty > 0 && ref > o.price && !w.some(function (x) { return x[0] === 'bad'; })) w.push(['ok', '💸 Remise totale si tout est vendu : ' + eur((ref - o.price) * o.qty) + (ref < base ? ' (par rapport au prix promo magasin)' : '')]);
+        msgList(w);
     }
     function save() {
         var o = collect(), p = o.p;
@@ -71031,6 +71070,8 @@ function covoQrPrint(o) {
         if (!(o.qty > 0)) { msg('❌ Indiquez la quantité en promotion', 'bad'); $('pfid-qty').focus(); return; }
         if (o.sold < 0 || o.sold > o.qty) { msg('❌ « Déjà vendus » doit être entre 0 et la quantité', 'bad'); return; }
         if (o.start && o.end && o.end < o.start) { msg('❌ La date de fin est avant la date de début', 'bad'); return; }
+        var spv = storePromo(p);
+        if (spv && o.price >= spv.price - 0.004 && !confirm('⚠️ « ' + p.name + ' » est déjà en promotion en magasin à ' + eur(spv.price) + ' (-' + spv.pct + ' %).\n\nLa promo fidélité à ' + eur(o.price) + ' n’est pas plus avantageuse : en caisse, le prix magasin restera appliqué.\n\nEnregistrer quand même ?')) return;
         if (EDIT != null && String(EDIT) !== String(p.id)) { var old = byId(EDIT); if (old && old.fidPromo) delete old.fidPromo; }
         var prev = p.fidPromo || {};
         p.fidPromo = {
@@ -71087,6 +71128,8 @@ function covoQrPrint(o) {
         setTimeout(function () { markOut(); publish(false); }, 15000);
         setInterval(function () { markOut(); publish(false); }, 5 * 60 * 1000);   // changement de jour (début / fin) et rattrapage hors ligne
         window.addEventListener('online', function () { schedulePublish(3000); });
+        // ventes faites dans Caisse Pro (même navigateur) → compteur repris et annonce du site mise à jour
+        window.addEventListener('storage', function (e) { if (e.key === 'covo_products') setTimeout(function () { markOut(); schedulePublish(2500); refreshAll(); }, 600); });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
