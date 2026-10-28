@@ -61776,6 +61776,7 @@ function covoQrPrint(o) {
             if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 160)); });
         });
     }
+    window._sitePutDoc = putDoc;   // utilisé par les Promos fidélité (site/promos)
     // ═══ Synchronisation du catalogue du site : une fois toutes les 24 heures
     //     (+ bouton « Synchroniser maintenant » et changement du numéro WhatsApp : envoi immédiat)
     var SYNC_EVERY = 24 * 3600 * 1000;
@@ -70600,6 +70601,492 @@ function covoQrPrint(o) {
             var t = e.target; if (t && /INPUT|TEXTAREA|SELECT/.test(t.tagName)) return;
             e.preventDefault(); btn.click();
         });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO PRO — PROMOTIONS FIDÉLITÉ (catalogue → caisse → site web)
+   Exemple : « 24 × Thé vrac à 1,00 € au lieu de 1,50 € — réservé aux clients fidélité »
+   • Catalogue : bouton « 🎁 Promos fidélité » (création, suivi, pause, fin)
+   • Données : product.fidPromo = { price, qty, sold, start, end, title, text, showPrices, on, log[] }
+     (dans covo_products → sauvegarde Drive et satellites inclus)
+   • Caisse : dès qu'un client fidélité est identifié (carte scannée / client choisi), le prix
+     promo s'applique aux unités encore disponibles ; le compteur diminue à chaque vente.
+     Au-delà de la quantité restante, le surplus est compté au prix normal.
+   • Site web : annonce publiée dans Firestore site/promos (lecture publique), avec le
+     nombre d'articles restants, mise à jour après chaque vente.
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._fpInstalled) return;
+    window._fpInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function num(v) { var n = parseFloat(String(v == null ? '' : v).replace(',', '.').replace(/\s/g, '')); return isFinite(n) ? n : NaN; }
+    function esc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(n) { return (+n || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function qtyTxt(n, kg) { return kg ? (Math.round(n * 1000) / 1000).toLocaleString('fr-FR') + ' kg' : String(Math.round(n * 1000) / 1000).replace('.', ','); }
+    function toast(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t || 'success'); }
+    function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+    function dFr(s) { if (!s) return ''; var d = new Date(s + 'T12:00:00'); return isNaN(d) ? s : d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }); }
+    function prods() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} try { return JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) { return []; } }
+    function byId(id) { var L = prods(); for (var i = 0; i < L.length; i++) if (String(L[i].id) === String(id)) return L[i]; return null; }
+    function isKg(p) { return p && p.unitType === 'kg'; }
+    function basePrice(p) { return +(isKg(p) ? p.pricePerKg : p.price) || 0; }
+    function persist() {
+        try { if (typeof saveAll === 'function') saveAll(); else localStorage.setItem('covo_products', JSON.stringify(prods())); } catch (e) { try { localStorage.setItem('covo_products', JSON.stringify(prods())); } catch (er) {} }
+        try { if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {}
+    }
+
+    /* ── État d'une promo ── */
+    function remaining(fp) { return Math.max(0, Math.round(((+fp.qty || 0) - (+fp.sold || 0)) * 1000) / 1000); }
+    function state(fp) {
+        if (!fp) return 'none';
+        if (fp.on === false) return 'pause';
+        var t = today();
+        if (fp.end && t > fp.end) return 'end';
+        if (remaining(fp) <= 0) return 'out';
+        if (fp.start && t < fp.start) return 'soon';
+        return 'on';
+    }
+    var ST = { on: ['🟢', 'En cours', '#15803d'], soon: ['🕒', 'Programmée', '#2563eb'], out: ['⛔', 'Épuisée', '#b91c1c'], end: ['🏁', 'Terminée', '#64748b'], pause: ['⏸️', 'En pause', '#b45309'] };
+    function activeFor(p) { return !!(p && p.fidPromo && state(p.fidPromo) === 'on' && p.active !== false); }
+    window._fpActive = activeFor;
+    function defaultTitle(p, fp) { return 'Exclusivité fidélité : ' + (p ? p.name : 'article'); }
+    function defaultText(p, fp) {
+        var kg = isKg(p), q = +fp.qty || 0;
+        return (kg ? qtyTxt(q, true) + ' de « ' + p.name + ' »' : q + ' × « ' + p.name + ' »') + ' à ' + eur(fp.price) + (kg ? '/kg' : '') + ' au lieu de ' + eur(basePrice(p)) + (kg ? '/kg' : '')
+            + ', réservé aux clients ayant le compte fidélité. Dans la limite des ' + (kg ? 'quantités' : q + ' articles') + ' disponibles !';
+    }
+
+    /* ═════════════ CAISSE ═════════════ */
+    function cartArr() { try { if (typeof cart !== 'undefined' && Array.isArray(cart)) return cart; } catch (e) {} return null; }
+    function fidApply() {
+        var C = cartArr(); if (!C) return;
+        var cu = window._ltyCu || null;
+        C.forEach(function (item) {
+            var p = byId(item.id), fp = p && p.fidPromo;
+            var ok = !!(cu && activeFor(p) && !item.costPriceApplied);
+            if (ok && !item._fid && !(+fp.price < (+item.price || 0) - 0.0001)) ok = false;   // une remise déjà plus forte reste prioritaire
+            if (!ok) {
+                if (item._fid) {
+                    if (!item.costPriceApplied) {
+                        item.price = item._fid.base;
+                        if (item._fid.baseU !== undefined) item.unitPrice = item._fid.baseU;
+                        item.packSize = item._fid.ps || 0; item.packPrice = item._fid.pp || 0;
+                    }
+                    item.name = String(item.name || '').replace(/ 🎁$/, '');
+                    delete item._fid;
+                }
+                return;
+            }
+            if (!item._fid) item._fid = { base: item.price, baseU: item.unitPrice, ps: item.packSize || 0, pp: item.packPrice || 0 };
+            var base = item._fid.base, q = +item.quantity || 0, rem = remaining(fp), n = Math.min(q, rem), pr = +fp.price;
+            if (item._tierActive) { item._tierActive = false; item._tierInfo = null; }
+            item.packSize = 0; item.packPrice = 0;
+            item.price = q > 0 ? (n >= q ? pr : Math.round((n * pr + (q - n) * base) / q * 10000) / 10000) : pr;
+            if (item.unitPrice !== undefined) item.unitPrice = item.price;
+            item._fid.n = n; item._fid.q = q; item._fid.promo = pr; item._fid.rem = rem;
+            if (!/ 🎁$/.test(String(item.name || ''))) item.name = String(item.name || '') + ' 🎁';
+        });
+    }
+    window._fpApplyCart = fidApply;
+    function decorateCart() {
+        var C = cartArr(), box = $('cart-items'); if (!C || !box) return;
+        var kids = box.children, cu = window._ltyCu;
+        C.forEach(function (item, i) {
+            var el = kids[i]; if (!el || el.querySelector('.pfid-ln')) return;
+            var p = byId(item.id), d = document.createElement('div'); d.className = 'pfid-ln';
+            d.style.cssText = 'font-size:.72rem;font-weight:800;margin-top:4px;padding:4px 7px;border-radius:7px;';
+            if (item._fid && item._fid.n > 0) {
+                var f = item._fid, kg = item.unitType === 'kg';
+                d.style.background = 'rgba(219,39,119,.1)'; d.style.color = '#be185d';
+                d.innerHTML = '🎁 Offre fidélité : ' + qtyTxt(f.n, kg) + (kg ? '' : ' ×') + ' ' + eur(f.promo) + (kg ? '/kg' : '') + ' au lieu de ' + eur(f.base)
+                    + ' · économie ' + eur((f.base - f.promo) * f.n)
+                    + (f.q > f.n ? '<br><span style="color:#b45309;">⚠️ Plus que ' + qtyTxt(f.n, kg) + ' en promo : ' + qtyTxt(f.q - f.n, kg) + ' au prix normal</span>' : '');
+            } else if (!cu && activeFor(p) && !item.costPriceApplied) {
+                d.style.background = 'rgba(219,39,119,.06)'; d.style.color = '#9d174d'; d.style.border = '1px dashed rgba(219,39,119,.4)';
+                d.innerHTML = '🎁 Promo fidélité : ' + eur(p.fidPromo.price) + (isKg(p) ? '/kg' : '') + ' au lieu de ' + eur(basePrice(p)) + ' — scannez la carte fidélité du client';
+            } else return;
+            el.appendChild(d);
+        });
+    }
+    var lastCu = undefined;
+    function watchCustomer() {
+        var id = window._ltyCu ? String(window._ltyCu.id) : '';
+        if (lastCu === undefined) { lastCu = id; return; }
+        if (id !== lastCu) {
+            lastCu = id;
+            var C = cartArr();
+            if (C && C.length && C.some(function (it) { return it._fid || activeFor(byId(it.id)); }) && typeof window.updateCartUI === 'function') {
+                window.updateCartUI();
+                if (id && C.some(function (it) { return it._fid && it._fid.n > 0; })) toast('🎁 Promo fidélité appliquée au panier');
+            }
+        }
+    }
+    function hookCaisse() {
+        if (typeof window._applyTiersToCart !== 'function' || typeof window.updateCartUI !== 'function' || typeof window._doValidateSale !== 'function') return false;
+        var at = window._applyTiersToCart;
+        window._applyTiersToCart = function () { var r = at.apply(this, arguments); try { fidApply(); } catch (e) { console.warn('[Promo fidélité]', e); } return r; };
+        try { _applyTiersToCart = window._applyTiersToCart; } catch (e) {}
+        var uc = window.updateCartUI;
+        window.updateCartUI = function () { var r = uc.apply(this, arguments); try { decorateCart(); setTimeout(decorateCart, 60); } catch (e) {} return r; };
+        var dv = window._doValidateSale;
+        window._doValidateSale = function () {
+            var C0 = cartArr(), snap = [];
+            try { fidApply(); } catch (e) {}
+            if (C0) C0.forEach(function (it) { if (it._fid && it._fid.n > 0) snap.push({ id: it.id, n: it._fid.n, promo: it._fid.promo, base: it._fid.base }); });
+            var cu = window._ltyCu;
+            var r = dv.apply(this, arguments);
+            if (snap.length && cartArr() !== C0) {                     // vente enregistrée (panier vidé)
+                var msg = [];
+                snap.forEach(function (s) {
+                    var p = byId(s.id); if (!p || !p.fidPromo) return;
+                    var fp = p.fidPromo;
+                    fp.sold = Math.round(((+fp.sold || 0) + s.n) * 1000) / 1000;
+                    if (!Array.isArray(fp.log)) fp.log = [];
+                    fp.log.unshift({ at: new Date().toISOString(), n: s.n, client: cu ? (cu.name || '') : '', cid: cu ? cu.id : null });
+                    if (fp.log.length > 300) fp.log.length = 300;
+                    msg.push(p.name + ' : ' + (remaining(fp) > 0 ? 'reste ' + qtyTxt(remaining(fp), isKg(p)) : 'offre épuisée'));
+                });
+                persist();
+                schedulePublish(1500);
+                if (msg.length) setTimeout(function () { toast('🎁 Promo fidélité — ' + msg.join(' · '), 'info'); }, 900);
+                refreshAll();
+            }
+            return r;
+        };
+        try { _doValidateSale = window._doValidateSale; } catch (e) {}
+        setInterval(watchCustomer, 700);
+        return true;
+    }
+
+    /* ═════════════ PUBLICATION SUR LE SITE (Firestore site/promos) ═════════════ */
+    var KEY_H = 'covo_fidpromo_pub_hash', KEY_AT = 'covo_fidpromo_pub_at', pubT = null, pubErr = '', pubBusy = false;
+    function hash(s) { var h = 5381, h2 = 52711; for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); h = ((h << 5) + h + c) | 0; h2 = ((h2 << 5) + h2 ^ c) | 0; } return (h >>> 0).toString(36) + (h2 >>> 0).toString(36); }
+    function payload() {
+        var t = today(), list = [];
+        prods().forEach(function (p) {
+            var fp = p && p.fidPromo; if (!fp || p.active === false) return;
+            var st = state(fp);
+            if (st === 'pause' || st === 'end') return;
+            if (st === 'out' && fp.outAt && (Date.now() - Date.parse(fp.outAt)) > 3 * 864e5) return;   // épuisée depuis plus de 3 jours : retirée du site
+            var base = basePrice(p), kg = isKg(p);
+            list.push({
+                id: p.id, name: String(p.name || ''), unit: kg ? 'kg' : 'u', st: st,
+                t: fp.title || defaultTitle(p, fp), x: fp.text || defaultText(p, fp),
+                q: +fp.qty || 0, n: remaining(fp), start: fp.start || '', end: fp.end || '',
+                pct: base > 0 && +fp.price < base ? Math.max(1, Math.round((1 - fp.price / base) * 100)) : 0,
+                pr: fp.showPrices !== false ? +(+fp.price).toFixed(2) : null,
+                op: fp.showPrices !== false ? +base.toFixed(2) : null
+            });
+        });
+        list.sort(function (a, b) { var o = { on: 0, soon: 1, out: 2 }; return (o[a.st] - o[b.st]) || a.name.localeCompare(b.name, 'fr'); });
+        return { promos: list, day: t };
+    }
+    function publish(force) {
+        if (pubBusy) return Promise.resolve('busy');
+        var json = JSON.stringify(payload()), h = hash(json);
+        if (!force && h === localStorage.getItem(KEY_H)) return Promise.resolve('same');
+        if (typeof window._sitePutDoc !== 'function') { pubErr = 'module site web indisponible'; uiStatus(); return Promise.resolve('nosite'); }
+        if (!navigator.onLine) { pubErr = 'hors ligne'; uiStatus(); return Promise.resolve('offline'); }
+        pubBusy = true; uiStatus();
+        return window._sitePutDoc('promos', { data: { stringValue: json }, count: { integerValue: String(JSON.parse(json).promos.length) }, updatedAt: { timestampValue: new Date().toISOString() } })
+            .then(function () { pubErr = ''; try { localStorage.setItem(KEY_H, h); localStorage.setItem(KEY_AT, String(Date.now())); } catch (e) {} if (force) toast('🌐 Promos fidélité publiées sur le site'); return 'ok'; })
+            .catch(function (e) { pubErr = String(e && e.message || e); console.warn('[Promo fidélité] publication', e); if (force) toast('⚠️ Site web non mis à jour : ' + (/403|PERMISSION/.test(pubErr) ? 'règle Firestore « site » manquante' : pubErr), 'error'); return 'err'; })
+            .then(function (r) { pubBusy = false; uiStatus(); return r; });
+    }
+    function schedulePublish(ms) { clearTimeout(pubT); pubT = setTimeout(function () { publish(false); }, ms || 4000); }
+    window._fpPublish = publish;
+    function markOut() {   // date d'épuisement (pour retirer l'annonce du site après 3 jours)
+        var ch = false;
+        prods().forEach(function (p) { var fp = p && p.fidPromo; if (!fp) return; if (remaining(fp) <= 0 && !fp.outAt) { fp.outAt = new Date().toISOString(); ch = true; } else if (remaining(fp) > 0 && fp.outAt) { delete fp.outAt; ch = true; } });
+        if (ch) persist();
+    }
+
+    /* ═════════════ INTERFACE CATALOGUE ═════════════ */
+    var CSS = [
+        '#pfid-modal{display:none;position:fixed;inset:0;z-index:21000;background:rgba(15,23,42,.6);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:12px;}',
+        '#pfid-modal.open{display:flex;}',
+        '#pfid-modal .bx{background:var(--bg-card,#fff);color:var(--text-main,#1f2937);width:100%;max-width:980px;max-height:94vh;border-radius:20px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.45);}',
+        '#pfid-modal .hd{background:linear-gradient(120deg,#831843,#db2777 55%,#f472b6);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;}',
+        '#pfid-modal .hd .ic{width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:1.35rem;flex-shrink:0;}',
+        '#pfid-modal .hd b{display:block;font-size:1.05rem;} #pfid-modal .hd small{font-size:.74rem;opacity:.9;font-weight:600;}',
+        '#pfid-modal .hd .x{margin-left:auto;background:rgba(255,255,255,.2);border:none;color:#fff;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:1rem;flex-shrink:0;}',
+        '#pfid-modal .bd{flex:1;overflow-y:auto;padding:16px 20px;background:var(--bg-body,#f8fafc);}',
+        '#pfid-modal .ft{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 20px;border-top:1px solid var(--border-color,#e5e7eb);background:var(--bg-card,#fff);}',
+        '#pfid-modal .ft .st{font-size:.72rem;font-weight:700;color:var(--text-muted,#64748b);flex:1;min-width:180px;}',
+        '#pfid-modal button.b{border:none;border-radius:10px;padding:10px 14px;font-weight:800;font-size:.84rem;cursor:pointer;font-family:inherit;}',
+        '#pfid-modal button.pri{background:linear-gradient(135deg,#db2777,#9d174d);color:#fff;}',
+        '#pfid-modal button.sec{background:var(--bg-card-2,#f1f5f9);color:var(--text-main,#334155);border:1.5px solid var(--border-color,#e2e8f0);}',
+        '#pfid-modal .kp{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;}',
+        '#pfid-modal .kp div{background:var(--bg-card,#fff);border:1px solid var(--border-color,#e5e7eb);border-radius:14px;padding:10px 12px;}',
+        '#pfid-modal .kp small{display:block;font-size:.62rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b);}',
+        '#pfid-modal .kp b{font-size:1.25rem;}',
+        '.pfid-card{background:var(--bg-card,#fff);border:1px solid var(--border-color,#e5e7eb);border-radius:16px;padding:12px 14px;display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;margin-bottom:10px;}',
+        '.pfid-card .im{width:52px;height:52px;border-radius:12px;background:#fdf2f8;display:flex;align-items:center;justify-content:center;font-size:1.4rem;overflow:hidden;}',
+        '.pfid-card .im img{width:100%;height:100%;object-fit:contain;background:#fff;}',
+        '.pfid-card .nm{font-weight:900;font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+        '.pfid-card .pr{font-size:.82rem;font-weight:800;margin-top:2px;} .pfid-card .pr s{color:var(--text-muted,#94a3b8);font-weight:700;margin-left:4px;} .pfid-card .pr b{color:#db2777;font-size:1rem;}',
+        '.pfid-card .bar{height:8px;border-radius:6px;background:var(--bg-card-2,#f1f5f9);overflow:hidden;margin-top:6px;max-width:420px;} .pfid-card .bar i{display:block;height:100%;background:linear-gradient(90deg,#f472b6,#db2777);border-radius:6px;}',
+        '.pfid-card .mt{font-size:.72rem;font-weight:700;color:var(--text-muted,#64748b);margin-top:4px;}',
+        '.pfid-card .chip{display:inline-block;font-size:.66rem;font-weight:900;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:2px;}',
+        '.pfid-card .ac{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}',
+        '.pfid-card .ac button{border:1.5px solid var(--border-color,#e2e8f0);background:var(--bg-card,#fff);color:var(--text-main,#334155);border-radius:9px;padding:6px 9px;font-size:.72rem;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap;}',
+        '.pfid-card .ac button.del{color:#b91c1c;border-color:rgba(185,28,28,.3);}',
+        '.pfid-empty{text-align:center;padding:40px 16px;color:var(--text-muted,#64748b);font-weight:700;background:var(--bg-card,#fff);border:1px dashed var(--border-color,#e2e8f0);border-radius:16px;}',
+        '.pfid-empty b{display:block;font-size:2.2rem;margin-bottom:6px;}',
+        '#pfid-form{display:none;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:16px;}',
+        '#pfid-form.on{display:grid;}',
+        '#pfid-form .f{background:var(--bg-card,#fff);border:1px solid var(--border-color,#e5e7eb);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:11px;}',
+        '#pfid-form label{display:block;font-size:.64rem;font-weight:900;text-transform:uppercase;color:var(--text-muted,#64748b);margin-bottom:4px;letter-spacing:.3px;}',
+        '#pfid-form input,#pfid-form textarea{width:100%;box-sizing:border-box;padding:10px 11px;border:1.5px solid var(--border-color,#e2e8f0);border-radius:10px;font-size:.9rem;background:var(--input-bg,#fff);color:var(--text-main,#1f2937);font-family:inherit;}',
+        '#pfid-form textarea{min-height:76px;resize:vertical;}',
+        '#pfid-form input:focus,#pfid-form textarea:focus{outline:none;border-color:#db2777;box-shadow:0 0 0 3px rgba(219,39,119,.14);}',
+        '#pfid-form .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px;} #pfid-form .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}',
+        '#pfid-form .chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;} #pfid-form .chips button{border:1px solid rgba(219,39,119,.4);background:#fff;color:#be185d;border-radius:999px;padding:3px 9px;font-size:.7rem;font-weight:800;cursor:pointer;font-family:inherit;}',
+        '#pfid-res{max-height:220px;overflow:auto;border:1px solid var(--border-color,#e2e8f0);border-radius:10px;margin-top:6px;display:none;background:var(--bg-card,#fff);}',
+        '#pfid-res button{display:flex;width:100%;gap:8px;align-items:center;text-align:left;border:none;border-bottom:1px solid var(--border-color,#f1f5f9);background:none;padding:8px 10px;cursor:pointer;font-family:inherit;color:var(--text-main,#1f2937);font-size:.82rem;font-weight:700;}',
+        '#pfid-res button:hover{background:#fdf2f8;} #pfid-res button span{margin-left:auto;color:var(--text-muted,#64748b);font-size:.74rem;}',
+        '#pfid-prod{display:none;align-items:center;gap:10px;padding:9px 11px;border-radius:12px;background:#fdf2f8;border:1.5px solid rgba(219,39,119,.3);font-weight:800;font-size:.86rem;}',
+        '#pfid-prod{color:#831843;}',
+        '#pfid-form label.sw{text-transform:none;letter-spacing:0;font-size:.82rem;color:var(--text-main,#1f2937);margin:0;}',
+        'body.dark-mode #pfid-form input[type=date]{color-scheme:dark;}',
+        '#pfid-prod.on{display:flex;} #pfid-prod small{display:block;font-weight:700;color:#9d174d;font-size:.72rem;} #pfid-prod button{margin-left:auto;border:none;background:none;color:#be185d;font-weight:800;cursor:pointer;}',
+        '#pfid-form .sw{display:flex;align-items:center;gap:9px;font-size:.82rem;font-weight:800;cursor:pointer;} #pfid-form .sw input{width:18px;height:18px;accent-color:#db2777;}',
+        '#pfid-form .msg{font-size:.76rem;font-weight:800;min-height:1em;} #pfid-form .msg.bad{color:#b91c1c;} #pfid-form .msg.warn{color:#b45309;} #pfid-form .msg.ok{color:#15803d;}',
+        /* aperçu de l'annonce sur le site */
+        '.pfid-prev-h{font-size:.66rem;font-weight:900;text-transform:uppercase;color:var(--text-muted,#64748b);margin-bottom:6px;letter-spacing:.3px;}',
+        '.pfid-ann{border-radius:18px;overflow:hidden;background:linear-gradient(135deg,#fff1f7,#ffe4ef);border:1.5px solid #fbcfe8;color:#3b0a24;font-family:inherit;}',
+        '.pfid-ann .k{display:inline-flex;align-items:center;gap:6px;background:#db2777;color:#fff;font-size:.68rem;font-weight:900;padding:5px 10px;border-radius:0 0 12px 0;text-transform:uppercase;letter-spacing:.4px;}',
+        '.pfid-ann .in{padding:12px 14px 14px;} .pfid-ann h4{margin:2px 0 6px;font-size:1.05rem;line-height:1.25;} .pfid-ann p{margin:0 0 10px;font-size:.8rem;line-height:1.45;color:#6b1f43;}',
+        '.pfid-ann .pp{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;} .pfid-ann .pp b{font-size:1.7rem;color:#db2777;font-weight:900;} .pfid-ann .pp s{color:#9d6b84;font-weight:800;} .pfid-ann .pp em{font-style:normal;background:#db2777;color:#fff;font-size:.72rem;font-weight:900;padding:2px 7px;border-radius:7px;}',
+        '.pfid-ann .rb{height:9px;border-radius:6px;background:#fbcfe8;overflow:hidden;} .pfid-ann .rb i{display:block;height:100%;background:#db2777;}',
+        '.pfid-ann .rt{font-size:.74rem;font-weight:900;color:#9d174d;margin-top:5px;} .pfid-ann .cta{display:inline-block;margin-top:10px;background:#3b0a24;color:#fff;font-size:.78rem;font-weight:900;padding:8px 12px;border-radius:10px;}',
+        '.cvx-fp{position:absolute;left:8px;bottom:8px;background:#db2777;color:#fff;font-size:.62rem;font-weight:900;padding:3px 7px;border-radius:7px;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:2;}',
+        '@media (max-width:760px){#pfid-form{grid-template-columns:1fr;}#pfid-modal .kp{grid-template-columns:1fr 1fr;}.pfid-card{grid-template-columns:44px minmax(0,1fr);}.pfid-card .ac{grid-column:1/-1;justify-content:flex-start;}#pfid-form .g3{grid-template-columns:1fr 1fr;}}'
+    ].join('\n');
+
+    var EDIT = null;   // id du produit en cours d'édition
+    function build() {
+        if ($('pfid-modal')) return;
+        var st = document.createElement('style'); st.id = 'pfid-css'; st.textContent = CSS; document.head.appendChild(st);
+        var m = document.createElement('div'); m.id = 'pfid-modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true');
+        m.innerHTML = '<div class="bx"><div class="hd"><span class="ic">🎁</span><div><b>Promotions fidélité</b><small>Annoncées sur le site web · appliquées en caisse aux clients fidélité · quantité limitée</small></div><button type="button" class="x" id="pfid-x" aria-label="Fermer">✕</button></div>'
+            + '<div class="bd"><div id="pfid-list"></div>'
+            + '<div id="pfid-form"><div class="f">'
+            + '<div><label for="pfid-q">Article en promotion *</label><input id="pfid-q" type="search" placeholder="🔍 Rechercher un produit du catalogue…" autocomplete="off"><div id="pfid-res"></div>'
+            + '<div id="pfid-prod"><span id="pfid-prod-t"></span><button type="button" id="pfid-prod-x">Changer</button></div></div>'
+            + '<div class="g3"><div><label for="pfid-price" id="pfid-price-l">Prix fidélité (€) *</label><input id="pfid-price" inputmode="decimal" autocomplete="off" placeholder="ex. 1,00"><div class="chips" id="pfid-pc"><button type="button" data-r=".9">-10 %</button><button type="button" data-r=".8">-20 %</button><button type="button" data-r=".667">-33 %</button><button type="button" data-r=".5">-50 %</button></div></div>'
+            + '<div><label for="pfid-qty" id="pfid-qty-l">Quantité en promo *</label><input id="pfid-qty" inputmode="decimal" autocomplete="off" placeholder="ex. 24"><div class="chips" id="pfid-qc"><button type="button" data-q="12">12</button><button type="button" data-q="24">24</button><button type="button" data-q="48">48</button><button type="button" data-q="100">100</button></div></div>'
+            + '<div><label>Déjà vendus</label><input id="pfid-sold" inputmode="decimal" autocomplete="off" value="0"></div></div>'
+            + '<div class="g2"><div><label for="pfid-start">Début (facultatif)</label><input id="pfid-start" type="date"></div><div><label for="pfid-end">Fin (facultatif)</label><input id="pfid-end" type="date"></div></div>'
+            + '<div><label for="pfid-title">Titre de l’annonce</label><input id="pfid-title" maxlength="90"></div>'
+            + '<div><label for="pfid-text">Message aux clients</label><textarea id="pfid-text" maxlength="400"></textarea><div class="chips"><button type="button" id="pfid-auto">✨ Texte automatique</button></div></div>'
+            + '<label class="sw"><input type="checkbox" id="pfid-show" checked> Afficher les prix dans l’annonce (visible par tous les visiteurs)</label>'
+            + '<label class="sw"><input type="checkbox" id="pfid-on" checked> Promotion active</label>'
+            + '<div class="msg" id="pfid-msg"></div>'
+            + '</div><div><div class="pfid-prev-h">Aperçu de l’annonce sur le site</div><div id="pfid-prev"></div>'
+            + '<div class="mt" style="font-size:.72rem;font-weight:700;color:var(--text-muted,#64748b);margin-top:10px;line-height:1.5;">🛒 <b>En caisse</b> : le prix fidélité s’applique automatiquement dès que la carte fidélité du client est scannée (ou le client choisi), dans la limite de la quantité restante. Le compteur baisse à chaque vente et le site affiche « Plus que … ».</div></div></div>'
+            + '</div>'
+            + '<div class="ft"><span class="st" id="pfid-st"></span>'
+            + '<button type="button" class="b sec" id="pfid-back" style="display:none;">← Retour</button>'
+            + '<button type="button" class="b sec" id="pfid-pub">🌐 Publier sur le site</button>'
+            + '<button type="button" class="b pri" id="pfid-new">➕ Nouvelle promo fidélité</button>'
+            + '<button type="button" class="b pri" id="pfid-save" style="display:none;">✅ Enregistrer la promotion</button></div></div>';
+        document.body.appendChild(m);
+        $('pfid-x').onclick = close;
+        m.addEventListener('mousedown', function (e) { if (e.target === m) close(); });
+        $('pfid-new').onclick = function () { openForm(null); };
+        $('pfid-back').onclick = showList;
+        $('pfid-save').onclick = save;
+        $('pfid-pub').onclick = function () { publish(true); };
+        $('pfid-q').addEventListener('input', search);
+        $('pfid-q').addEventListener('focus', search);
+        $('pfid-res').addEventListener('click', function (e) { var b = e.target.closest('[data-id]'); if (b) pickProduct(b.getAttribute('data-id')); });
+        $('pfid-prod-x').onclick = function () { EDIT_PID = null; $('pfid-prod').classList.remove('on'); $('pfid-q').style.display = ''; $('pfid-q').value = ''; $('pfid-q').focus(); preview(); };
+        $('pfid-pc').addEventListener('click', function (e) { var b = e.target.closest('[data-r]'); if (!b) return; var p = byId(EDIT_PID); if (!p) { msg('Choisissez d’abord l’article', 'warn'); return; } $('pfid-price').value = String(Math.round(basePrice(p) * +b.getAttribute('data-r') * 100) / 100).replace('.', ','); autoText(false); preview(); });
+        $('pfid-qc').addEventListener('click', function (e) { var b = e.target.closest('[data-q]'); if (!b) return; $('pfid-qty').value = b.getAttribute('data-q'); autoText(false); preview(); });
+        $('pfid-auto').onclick = function () { autoText(true); preview(); };
+        ['pfid-price', 'pfid-qty', 'pfid-sold', 'pfid-start', 'pfid-end', 'pfid-title', 'pfid-text', 'pfid-show', 'pfid-on'].forEach(function (id) { $(id).addEventListener('input', function () { if (id === 'pfid-price' || id === 'pfid-qty') autoText(false); preview(); }); $(id).addEventListener('change', preview); });
+        $('pfid-title').addEventListener('input', function () { this._touched = true; });
+        $('pfid-text').addEventListener('input', function () { this._touched = true; });
+        document.addEventListener('keydown', function (e) { if (m.classList.contains('open') && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if ($('pfid-form').classList.contains('on')) showList(); else close(); } }, true);
+    }
+    var EDIT_PID = null;
+    function open() { build(); markOut(); $('pfid-modal').classList.add('open'); showList(); }
+    function close() { var m = $('pfid-modal'); if (m) m.classList.remove('open'); }
+    window._fpOpen = open;
+    function imgOf(p) { var s = p && p.img ? String(p.img) : ''; return s && !/placehold/.test(s) ? '<img src="' + esc(s) + '" alt="" onerror="this.outerHTML=\'🎁\'">' : (isKg(p) ? '⚖️' : '🎁'); }
+    function showList() {
+        EDIT = null;
+        $('pfid-form').classList.remove('on'); $('pfid-list').style.display = '';
+        $('pfid-back').style.display = 'none'; $('pfid-save').style.display = 'none'; $('pfid-new').style.display = ''; $('pfid-pub').style.display = '';
+        var L = prods().filter(function (p) { return p && p.fidPromo; });
+        var o = { on: 0, soon: 1, pause: 2, out: 3, end: 4 };
+        L.sort(function (a, b) { return (o[state(a.fidPromo)] - o[state(b.fidPromo)]) || String(a.name).localeCompare(String(b.name), 'fr'); });
+        var nOn = 0, sold = 0, eco = 0, left = 0;
+        L.forEach(function (p) { var fp = p.fidPromo, s = state(fp); if (s === 'on') { nOn++; left += remaining(fp); } sold += +fp.sold || 0; eco += (+fp.sold || 0) * Math.max(0, basePrice(p) - fp.price); });
+        var h = '<div class="kp"><div><small>Promos en cours</small><b>' + nOn + '</b></div><div><small>Articles restants</small><b>' + qtyTxt(left) + '</b></div><div><small>Vendus en promo</small><b>' + qtyTxt(sold) + '</b></div><div><small>Remises accordées</small><b>' + eur(eco) + '</b></div></div>';
+        if (!L.length) h += '<div class="pfid-empty"><b>🎁</b>Aucune promotion fidélité pour le moment.<br>Exemple : 24 articles à 1,00 € au lieu de 1,50 € pour les clients ayant le compte fidélité.</div>';
+        L.forEach(function (p) {
+            var fp = p.fidPromo, s = state(fp), S = ST[s], kg = isKg(p), q = +fp.qty || 0, sd = Math.min(q, +fp.sold || 0), pc = q ? Math.round(sd / q * 100) : 0;
+            h += '<div class="pfid-card" data-id="' + esc(p.id) + '"><div class="im">' + imgOf(p) + '</div><div style="min-width:0;">'
+                + '<div class="nm">' + esc(p.name) + '<span class="chip" style="background:' + S[2] + '1a;color:' + S[2] + ';">' + S[0] + ' ' + S[1] + '</span></div>'
+                + '<div class="pr"><b>' + eur(fp.price) + (kg ? '/kg' : '') + '</b><s>' + eur(basePrice(p)) + '</s> · ' + esc(fp.title || defaultTitle(p, fp)) + '</div>'
+                + '<div class="bar"><i style="width:' + pc + '%"></i></div>'
+                + '<div class="mt">' + qtyTxt(sd, kg) + ' vendu' + (sd > 1 ? 's' : '') + ' sur ' + qtyTxt(q, kg) + ' · <b>reste ' + qtyTxt(remaining(fp), kg) + '</b>'
+                + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '')
+                + (fp.log && fp.log[0] ? ' · dernière vente ' + new Date(fp.log[0].at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + (fp.log[0].client ? ' (' + esc(fp.log[0].client) + ')' : '') : '') + '</div></div>'
+                + '<div class="ac"><button type="button" data-a="edit">✏️ Modifier</button>'
+                + (s === 'pause' ? '<button type="button" data-a="on">▶️ Reprendre</button>' : (s === 'on' || s === 'soon' ? '<button type="button" data-a="off">⏸️ Pause</button>' : ''))
+                + (s === 'out' || s === 'end' ? '<button type="button" data-a="again">🔁 Relancer</button>' : '')
+                + '<button type="button" class="del" data-a="del">🗑️</button></div></div>';
+        });
+        $('pfid-list').innerHTML = h;
+        $('pfid-list').onclick = function (e) {
+            var b = e.target.closest('[data-a]'); if (!b) return;
+            var id = b.closest('[data-id]').getAttribute('data-id'), p = byId(id); if (!p || !p.fidPromo) return;
+            var a = b.getAttribute('data-a');
+            if (a === 'edit') openForm(id);
+            else if (a === 'again') { openForm(id); $('pfid-sold').value = '0'; $('pfid-on').checked = true; if (p.fidPromo.end && p.fidPromo.end < today()) $('pfid-end').value = ''; preview(); msg('Relance : compteur remis à zéro — ajustez la quantité puis enregistrez', 'ok'); }
+            else if (a === 'off' || a === 'on') { p.fidPromo.on = a === 'on'; persist(); schedulePublish(800); showList(); refreshAll(); toast(a === 'on' ? '▶️ Promo fidélité reprise' : '⏸️ Promo fidélité en pause'); }
+            else if (a === 'del') { if (!confirm('Supprimer la promotion fidélité de « ' + p.name + ' » ? L’annonce sera retirée du site.')) return; delete p.fidPromo; persist(); schedulePublish(800); showList(); refreshAll(); toast('🗑️ Promotion fidélité supprimée'); }
+        };
+        uiStatus();
+    }
+    function openForm(id) {
+        EDIT = id; EDIT_PID = id;
+        $('pfid-list').style.display = 'none'; $('pfid-form').classList.add('on');
+        $('pfid-back').style.display = ''; $('pfid-save').style.display = ''; $('pfid-new').style.display = 'none'; $('pfid-pub').style.display = 'none';
+        var p = id != null ? byId(id) : null, fp = p && p.fidPromo || {};
+        $('pfid-price').value = fp.price != null ? String(fp.price).replace('.', ',') : '';
+        $('pfid-qty').value = fp.qty != null ? String(fp.qty).replace('.', ',') : '24';
+        $('pfid-sold').value = String(+fp.sold || 0).replace('.', ',');
+        $('pfid-start').value = fp.start || ''; $('pfid-end').value = fp.end || '';
+        $('pfid-title').value = fp.title || ''; $('pfid-text').value = fp.text || '';
+        $('pfid-title')._touched = !!fp.title; $('pfid-text')._touched = !!fp.text;
+        $('pfid-show').checked = fp.showPrices !== false; $('pfid-on').checked = fp.on !== false;
+        $('pfid-q').value = ''; $('pfid-res').style.display = 'none';
+        if (p) pickProduct(p.id, true); else { $('pfid-prod').classList.remove('on'); $('pfid-q').style.display = ''; setTimeout(function () { $('pfid-q').focus(); }, 40); }
+        msg('', ''); preview();
+    }
+    function search() {
+        var q = String($('pfid-q').value || '').toLowerCase().trim(), box = $('pfid-res');
+        var L = prods().filter(function (p) { return p && p.name && p.active !== false && (!q || (p.name + ' ' + (p.barcode || '') + ' ' + (p.category || '')).toLowerCase().indexOf(q) >= 0); })
+            .sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'fr'); }).slice(0, 60);
+        box.innerHTML = L.length ? L.map(function (p) { return '<button type="button" data-id="' + esc(p.id) + '">' + (p.fidPromo ? '🎁 ' : '') + esc(p.name) + '<span>' + eur(basePrice(p)) + (isKg(p) ? '/kg' : '') + ' · stock ' + qtyTxt(+p.stock || 0, isKg(p)) + '</span></button>'; }).join('') : '<div style="padding:10px;font-size:.8rem;color:#64748b;">Aucun produit</div>';
+        box.style.display = 'block';
+    }
+    function pickProduct(id, keep) {
+        var p = byId(id); if (!p) return;
+        if (!keep && p.fidPromo && String(id) !== String(EDIT)) { openForm(p.id); msg('Cet article a déjà une promo fidélité : vous la modifiez', 'warn'); return; }
+        EDIT_PID = p.id;
+        $('pfid-res').style.display = 'none'; $('pfid-q').style.display = 'none';
+        $('pfid-prod-t').innerHTML = esc(p.name) + '<small>Prix normal ' + eur(basePrice(p)) + (isKg(p) ? '/kg' : '') + ' · stock ' + qtyTxt(+p.stock || 0, isKg(p)) + (isKg(p) ? '' : ' u.') + (p.category ? ' · ' + esc(p.category) : '') + '</small>';
+        $('pfid-prod').classList.add('on');
+        $('pfid-price-l').textContent = isKg(p) ? 'Prix fidélité (€/kg) *' : 'Prix fidélité (€) *';
+        $('pfid-qty-l').textContent = isKg(p) ? 'Quantité en promo (kg) *' : 'Quantité en promo *';
+        autoText(false); preview();
+    }
+    function autoText(force) {
+        var p = byId(EDIT_PID); if (!p) return;
+        var fp = { price: num($('pfid-price').value) || 0, qty: num($('pfid-qty').value) || 0 };
+        if (force || !$('pfid-title')._touched) { $('pfid-title').value = defaultTitle(p, fp); if (force) $('pfid-title')._touched = false; }
+        if (force || !$('pfid-text')._touched) { $('pfid-text').value = fp.price > 0 && fp.qty > 0 ? defaultText(p, fp) : ''; if (force) $('pfid-text')._touched = false; }
+    }
+    function msg(t, c) { var m = $('pfid-msg'); if (m) { m.textContent = t; m.className = 'msg' + (c ? ' ' + c : ''); } }
+    function collect() {
+        var p = byId(EDIT_PID);
+        return { p: p, price: num($('pfid-price').value), qty: num($('pfid-qty').value), sold: num($('pfid-sold').value) || 0, start: $('pfid-start').value || '', end: $('pfid-end').value || '',
+            title: ($('pfid-title').value || '').trim(), text: ($('pfid-text').value || '').trim(), showPrices: $('pfid-show').checked, on: $('pfid-on').checked };
+    }
+    function annHTML(o, p) {
+        var kg = isKg(p), base = basePrice(p), q = o.qty || 0, n = Math.max(0, q - (o.sold || 0)), pc = base > 0 && o.price < base ? Math.round((1 - o.price / base) * 100) : 0;
+        return '<div class="pfid-ann"><span class="k">🎁 Exclusivité clients fidélité</span><div class="in">'
+            + '<h4>' + esc(o.title || defaultTitle(p, o)) + '</h4><p>' + esc(o.text || '') + '</p>'
+            + (o.showPrices ? '<div class="pp"><b>' + eur(o.price) + (kg ? '/kg' : '') + '</b><s>' + eur(base) + '</s>' + (pc ? '<em>-' + pc + ' %</em>' : '') + '</div>' : (pc ? '<div class="pp"><em>-' + pc + ' %</em></div>' : ''))
+            + '<div class="rb"><i style="width:' + (q ? Math.round(n / q * 100) : 0) + '%"></i></div><div class="rt">Plus que ' + qtyTxt(n, kg) + (kg ? '' : ' article' + (n > 1 ? 's' : '')) + ' sur ' + qtyTxt(q, kg) + (o.end ? ' · jusqu’au ' + dFr(o.end) : '') + '</div>'
+            + '<span class="cta">Je me connecte à mon compte fidélité</span></div></div>';
+    }
+    function preview() {
+        var o = collect(), box = $('pfid-prev'); if (!box) return;
+        if (!o.p) { box.innerHTML = '<div class="pfid-empty" style="padding:24px 12px;"><b>🎁</b>Choisissez l’article en promotion</div>'; msg('', ''); return; }
+        box.innerHTML = annHTML({ price: o.price || 0, qty: o.qty || 0, sold: o.sold, title: o.title, text: o.text, showPrices: o.showPrices, end: o.end }, o.p);
+        var base = basePrice(o.p), w = [];
+        if (o.price > 0 && o.price >= base) w.push(['bad', '❌ Le prix fidélité doit être inférieur au prix normal (' + eur(base) + ').']);
+        else if (o.price > 0 && o.p.costPrice != null && o.price < +o.p.costPrice) w.push(['warn', '⚠️ Prix fidélité inférieur au prix d’achat (' + eur(+o.p.costPrice) + ') : vente à perte.']);
+        if (o.qty > 0 && !isKg(o.p) && o.qty > (+o.p.stock || 0)) w.push(['warn', '⚠️ Quantité en promo (' + qtyTxt(o.qty) + ') supérieure au stock actuel (' + qtyTxt(+o.p.stock || 0) + ').']);
+        if (o.start && o.end && o.end < o.start) w.push(['bad', '❌ La date de fin est avant la date de début.']);
+        if (o.price > 0 && o.qty > 0 && base > o.price && !w.some(function (x) { return x[0] === 'bad'; })) w.push(['ok', '💸 Remise totale si tout est vendu : ' + eur((base - o.price) * o.qty)]);
+        msg(w.map(function (x) { return x[1]; }).join('  '), w.some(function (x) { return x[0] === 'bad'; }) ? 'bad' : w.some(function (x) { return x[0] === 'warn'; }) ? 'warn' : w.length ? 'ok' : '');
+    }
+    function save() {
+        var o = collect(), p = o.p;
+        if (!p) { msg('❌ Choisissez l’article en promotion', 'bad'); $('pfid-q').focus(); return; }
+        var base = basePrice(p);
+        if (!(o.price > 0)) { msg('❌ Indiquez le prix fidélité', 'bad'); $('pfid-price').focus(); return; }
+        if (o.price >= base) { msg('❌ Le prix fidélité doit être inférieur au prix normal (' + eur(base) + ')', 'bad'); $('pfid-price').focus(); return; }
+        if (!(o.qty > 0)) { msg('❌ Indiquez la quantité en promotion', 'bad'); $('pfid-qty').focus(); return; }
+        if (o.sold < 0 || o.sold > o.qty) { msg('❌ « Déjà vendus » doit être entre 0 et la quantité', 'bad'); return; }
+        if (o.start && o.end && o.end < o.start) { msg('❌ La date de fin est avant la date de début', 'bad'); return; }
+        if (EDIT != null && String(EDIT) !== String(p.id)) { var old = byId(EDIT); if (old && old.fidPromo) delete old.fidPromo; }
+        var prev = p.fidPromo || {};
+        p.fidPromo = {
+            id: prev.id || ('FP' + Date.now().toString(36)), price: Math.round(o.price * 100) / 100, qty: o.qty, sold: o.sold,
+            start: o.start, end: o.end, title: o.title || defaultTitle(p, o), text: o.text || defaultText(p, o),
+            showPrices: o.showPrices, on: o.on, createdAt: prev.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
+            log: Array.isArray(prev.log) ? prev.log : []
+        };
+        if (remaining(p.fidPromo) > 0) delete p.fidPromo.outAt;
+        persist(); markOut();
+        schedulePublish(600);
+        refreshAll();
+        toast('🎁 Promo fidélité enregistrée : ' + p.name + ' à ' + eur(p.fidPromo.price) + ' (' + qtyTxt(remaining(p.fidPromo), isKg(p)) + ' disponibles)');
+        showList();
+    }
+    function uiStatus() {
+        var s = $('pfid-st'); if (!s) return;
+        var at = +localStorage.getItem(KEY_AT) || 0;
+        s.textContent = pubBusy ? '⏳ Publication sur le site…' : pubErr ? '⚠️ Site non mis à jour : ' + (/403|PERMISSION/.test(pubErr) ? 'règle Firestore « site » manquante' : pubErr) : at ? '🌐 Site à jour · ' + new Date(at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '🌐 Pas encore publié sur le site';
+    }
+    function refreshAll() {
+        try { if ($('pfid-modal') && $('pfid-modal').classList.contains('open') && !$('pfid-form').classList.contains('on')) showList(); } catch (e) {}
+        try { decorateTiles(); } catch (e) {}
+        try { var C = cartArr(); if (C && C.length && typeof window.updateCartUI === 'function') window.updateCartUI(); } catch (e) {}
+    }
+
+    /* ── Bouton dans le catalogue + pastille 🎁 sur les vignettes ── */
+    function addButton() {
+        var btns = document.querySelector('#cvx-hero .cvx-web .btns');
+        if (!btns || $('pfid-btn')) return;
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'cvx-hb'; b.id = 'pfid-btn';
+        b.title = 'Promotions réservées aux clients fidélité : prix spécial, quantité limitée, annonce sur le site';
+        b.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+        btns.insertBefore(b, btns.firstChild);
+        btnLabel();
+    }
+    function btnLabel() { var b = $('pfid-btn'); if (!b) return; var n = prods().filter(function (p) { return activeFor(p); }).length; b.textContent = '🎁 Promos fidélité' + (n ? ' (' + n + ')' : ''); }
+    function decorateTiles() {
+        btnLabel();
+        var main = $('cvx-main'); if (!main) return;
+        Array.prototype.forEach.call(main.querySelectorAll('[data-pid]'), function (t) {
+            var p = byId(t.getAttribute('data-pid')), on = activeFor(p), im = t.querySelector('.cvx-im') || t, x = im.querySelector('.cvx-fp');
+            if (on && !x) { x = document.createElement('span'); x.className = 'cvx-fp'; im.style.position = im.style.position || 'relative'; im.appendChild(x); }
+            if (on) { var tx = '🎁 ' + eur(p.fidPromo.price) + ' · reste ' + qtyTxt(remaining(p.fidPromo), isKg(p)); if (x.textContent !== tx) x.textContent = tx; if (!x.title) x.title = 'Promo fidélité en cours'; }
+            else if (x) x.remove();
+        });
+    }
+
+    function boot() {
+        var tries = 0;
+        (function waitCaisse() { if (!hookCaisse() && ++tries < 120) setTimeout(waitCaisse, 500); })();
+        var obsT = null;
+        new MutationObserver(function () { clearTimeout(obsT); obsT = setTimeout(function () { addButton(); decorateTiles(); }, 120); }).observe(document.body, { childList: true, subtree: true });
+        setTimeout(function () { markOut(); publish(false); }, 15000);
+        setInterval(function () { markOut(); publish(false); }, 5 * 60 * 1000);   // changement de jour (début / fin) et rattrapage hors ligne
+        window.addEventListener('online', function () { schedulePublish(3000); });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
