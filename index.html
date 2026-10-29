@@ -8911,7 +8911,7 @@ button, .btn, .retours-btn {
         }
 
         const priceEl = document.getElementById('pd-price');
-        priceEl.textContent = (disc > 0 ? '-' + disc + '%  ' : '') + finalP.toFixed(2) + unit;
+        priceEl.textContent = (disc > 0 ? '-' + window._promoPctOf(baseP, promoP) + '%  ' : '') + finalP.toFixed(2) + unit;
         priceEl.style.color = nightPct ? '#a78bfa' : disc > 0 ? '#e67e22' : 'var(--success,#2ecc71)';
 
         const oldEl = document.getElementById('pd-old-price');
@@ -8927,7 +8927,7 @@ button, .btn, .retours-btn {
         stockEl.textContent = stockVal;
         stockEl.style.color = p.stock <= 0 ? '#e74c3c' : p.stock < 5 ? '#e67e22' : '#27ae60';
 
-        document.getElementById('pd-promo').textContent = disc > 0 ? '-' + disc + '%' : 'Aucune';
+        document.getElementById('pd-promo').textContent = disc > 0 ? '-' + window._promoPctOf(baseP, promoP) + '%' : 'Aucune';
         var _promoBtn = document.getElementById('pd-promo-print-btn');
         if (_promoBtn) _promoBtn.style.display = (p.promo && p.promo > 0) ? '' : 'none';
 
@@ -13697,7 +13697,7 @@ function toggleInfoSection(headerElement) {
                 ? `${parseFloat(p.pricePerKg||0).toFixed(2)} €/kg`
                 : `${parseFloat(p.price||0).toFixed(2)} €`;
             const stock = p.stock != null ? `Stock : ${p.stock}` : '';
-            const promo = p.promo ? `<span style="background:#e74c3c;color:white;font-size:0.62rem;padding:1px 5px;border-radius:6px;margin-left:4px;">-${p.promo}%</span>` : '';
+            const promo = p.promo ? `<span style="background:#e74c3c;color:white;font-size:0.62rem;padding:1px 5px;border-radius:6px;margin-left:4px;">-${window._promoRealPct(p)}%</span>` : '';
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:9px;border:1px solid var(--border-color,#eee);background:var(--bg-card,#fff);cursor:pointer;text-align:left;width:100%;transition:background 0.15s;';
@@ -13869,7 +13869,7 @@ function toggleInfoSection(headerElement) {
             if (nameEl) nameEl.textContent = p.name;
             if (infoEl) {
                 let info = price;
-                if (p.promo) info += ` · 🏷️ -${p.promo}%`;
+                if (p.promo) info += ` · 🏷️ -${window._promoRealPct(p)}%`;
                 if (p.stock != null) info += ` · Stock : ${p.stock}`;
                 if (p.category) info += ` · 📁 ${p.category}`;
                 infoEl.textContent = info;
@@ -14031,7 +14031,7 @@ function toggleInfoSection(headerElement) {
                 <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">
                     ${a.category?`📁 ${a.category} · `:''}
                     <span style="${promoPrice?'text-decoration:line-through;color:var(--text-muted);':''}">${price}</span>
-                    ${promoPrice?`<span style="color:#e74c3c;font-weight:800;margin-left:5px;">${promoPrice} <span style="background:#e74c3c;color:white;padding:0 4px;border-radius:4px;font-size:0.65rem;">-${a.promo}%</span></span>`:''}
+                    ${promoPrice?`<span style="color:#e74c3c;font-weight:800;margin-left:5px;">${promoPrice} <span style="background:#e74c3c;color:white;padding:0 4px;border-radius:4px;font-size:0.65rem;">-${window._promoRealPct(a)}%</span></span>`:''}
                 </div>
             </div>`;
         card.appendChild(artDiv);
@@ -18647,7 +18647,7 @@ function toggleInfoSection(headerElement) {
                 lbl.onmouseleave = function(){ this.style.background=''; };
                 const isSelected = parseInt(product.promo) === parseInt(promo);
                 const color = parseInt(promo)>=50?'#e74c3c':parseInt(promo)>=20?'#e67e22':'#27ae60';
-                lbl.innerHTML = `<input type="radio" name="promo-pick" value="${promo}" ${isSelected?'checked':''}> <span style="font-weight:${isSelected?'700':'400'};"><span style="color:${color};font-weight:800;">-${promo}%</span> de réduction</span>`;
+                lbl.innerHTML = `<input type="radio" name="promo-pick" value="${promo}" ${isSelected?'checked':''}> <span style="font-weight:${isSelected?'700':'400'};"><span style="color:${color};font-weight:800;">-${promo}%</span> de réduction${(function(){ var b=parseFloat(product.unitType==='kg'?product.pricePerKg:product.price)||0; if(!(b>0)) return ''; var np=window._promoPrice(b,promo,product.costPrice); return ' <span style="color:var(--text-muted,#888);font-size:0.78rem;">→ '+np.toFixed(2)+' € (soit -'+window._promoPctOf(b,np)+' % réel)</span>'; })()}</span>`;
                 lbl.addEventListener('change', () => { promoHidden.value=promo; promoLabel.textContent=`🏷️ -${promo}%`; _togglePromoPicker(); });
                 promoOptions.appendChild(lbl);
             });
@@ -20566,6 +20566,25 @@ logout = function(skipConfirmation = false) {
         return base * (1 - promo / 100);
     };
 
+    // ── % de remise RÉEL affiché (la promo « % » est un curseur entre prix de vente et prix d'achat :
+    //    25,40 € → 22,50 € = -11 % réel, même si le curseur est à 51,79 %)
+    window._promoPctOf = function(base, newPrice) {
+        base = parseFloat(base) || 0; newPrice = parseFloat(newPrice);
+        if (!(base > 0) || isNaN(newPrice) || newPrice >= base) return 0;
+        return Math.max(1, Math.round((1 - newPrice / base) * 100));
+    };
+    window._promoRealPct = function(p) {
+        if (!p) return 0;
+        var pc = parseFloat(p.promo) || 0; if (!(pc > 0)) return 0;
+        var b = parseFloat(p.unitType === 'kg' ? p.pricePerKg : p.price) || 0;
+        if (!(b > 0)) return Math.round(pc);
+        return window._promoPctOf(b, window._promoPrice(b, pc, p.costPrice));
+    };
+    window._promoItemPct = function(item) {
+        try { var p = products.find(function(x){ return String(x.id) === String(item.id); }); if (p) return window._promoRealPct(p) || item.discount; } catch(e) {}
+        return item.discount;
+    };
+
     function addToCart(productId) {
         const product = products.find(p => p.id === productId);
         if (!product || product.stock <= 0) return;
@@ -20932,7 +20951,7 @@ logout = function(skipConfirmation = false) {
                         <span style="font-weight:bold; color:var(--success);">
                             ${_cartLineTotal(item).toFixed(2)}€
                             ${isKg ? `<span style="font-size:0.75rem; color:var(--gray); display:block;">${unitLabel}</span>` : ''}
-                            ${item.discount > 0 ? `<span style="font-size:0.8rem; color:var(--danger);">(-${item.discount}%)</span>` : ''}
+                            ${item.discount > 0 ? `<span style="font-size:0.8rem; color:var(--danger);">(-${window._promoItemPct(item)}%)</span>` : ''}
                         </span>
                     </div>
                     ${packLabel}
@@ -24299,7 +24318,7 @@ logout = function(skipConfirmation = false) {
         const badgesEl = document.getElementById('pd-badges-img');
         const bgs = [];
         if (p.active===false) bgs.push('<span style="background:#e74c3c;color:white;padding:3px 9px;border-radius:20px;font-size:0.75rem;font-weight:700;">Désactivé</span>');
-        if (p.promo>0) bgs.push('<span style="background:#f39c12;color:white;padding:3px 9px;border-radius:20px;font-size:0.75rem;font-weight:700;">-'+p.promo+'%</span>');
+        if (p.promo>0) bgs.push('<span style="background:#f39c12;color:white;padding:3px 9px;border-radius:20px;font-size:0.75rem;font-weight:700;">-'+window._promoRealPct(p)+'%</span>');
         if (badgesEl) badgesEl.innerHTML = bgs.join('');
 
         // Nom / cat
@@ -24340,7 +24359,7 @@ logout = function(skipConfirmation = false) {
         document.getElementById('pd-stock').style.color = p.stock<=0?'#e74c3c':p.stock<5?'#e67e22':'var(--success,#2ecc71)';
 
         // Promo
-        document.getElementById('pd-promo').textContent = p.promo>0?'-'+p.promo+'%':'Aucune';
+        document.getElementById('pd-promo').textContent = p.promo>0?'-'+window._promoRealPct(p)+'%':'Aucune';
 
         // DLC
         const dlcBlock = document.getElementById('pd-dlc-block');
@@ -46361,7 +46380,7 @@ function initAdminSections() {
         if (badgesEl) {
             var badges = [];
             if (p.active === false) badges.push('<span style="background:#e74c3c;color:#fff;font-size:0.68rem;font-weight:800;padding:2px 8px;border-radius:10px;">⛔ Désactivé</span>');
-            if (p.promo > 0) badges.push('<span style="background:#e67e22;color:#fff;font-size:0.68rem;font-weight:800;padding:2px 8px;border-radius:10px;">🔥 Promo −'+p.promo+'%</span>');
+            if (p.promo > 0) badges.push('<span style="background:#e67e22;color:#fff;font-size:0.68rem;font-weight:800;padding:2px 8px;border-radius:10px;">🔥 Promo −'+window._promoRealPct(p)+'%</span>');
             var st = _plStockState(p);
             if (st.state === 'critical') badges.push('<span style="background:#c0392b;color:#fff;font-size:0.68rem;font-weight:800;padding:2px 8px;border-radius:10px;">⚠️ Stock critique</span>');
             else if (st.state === 'low') badges.push('<span style="background:#f39c12;color:#fff;font-size:0.68rem;font-weight:800;padding:2px 8px;border-radius:10px;">⚠️ Stock faible</span>');
@@ -57905,7 +57924,7 @@ window._rachatRender=function(filter){
     var h='<div class="promo-card'+(big?' promo-big':'')+'">';
     if(img) h+='<div class="promo-img"><img src="'+esc(img)+'" onerror="this.style.display=\'none\'"></div>';
     h+='<div class="promo-name">'+esc(p.name||'')+'</div>';
-    h+='<div class="promo-badge">-'+(parseFloat(p.promo)||0)+'%</div>';
+    h+='<div class="promo-badge">-'+(window._promoPctOf(pr.base, np)||Math.round(parseFloat(p.promo)||0))+'%</div>';
     h+='<div class="promo-prices"><span class="promo-old">'+pr.base.toFixed(2)+pr.suffix+'</span><span class="promo-new">'+np.toFixed(2)+pr.suffix+'</span></div>';
     if((p.barcode||'').trim()) h+='<div class="promo-bc">'+esc(String(p.barcode).trim())+'</div>';
     h+='</div>';
@@ -57942,8 +57961,9 @@ window._rachatRender=function(filter){
   function _print(inner, title){
     var win=window.open('','_blank'); if(!win){ if(typeof showScanToast==='function') showScanToast('⚠️ Autorisez les popups pour imprimer','warning'); return; }
     win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+esc(title)+'<\/title><style>'+_css()+'<\/style></head><body><div class="promo-sheet">'+inner+'<\/div>'
-      +'<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},400);});<\/script></body></html>');
+      +'<script>window.addEventListener("load",function(){setTimeout(function(){window.focus();window.print();},400);});<\/script></body></html>');
     win.document.close();
+    try { win.focus(); } catch(e) {}
   }
 
   window._promoPrintFull=function(pid){
@@ -57968,7 +57988,7 @@ window._rachatRender=function(filter){
     var m=document.getElementById('promo-choice-modal');
     if(!m){
       m=document.createElement('div'); m.id='promo-choice-modal';
-      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);z-index:24600;justify-content:center;align-items:center;padding:16px;';
+      m.style.cssText='display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);z-index:100600;justify-content:center;align-items:center;padding:16px;';
       m.addEventListener('click',function(e){ if(e.target===m) _closeChoice(); });
       document.body.appendChild(m);
     }
@@ -57985,6 +58005,7 @@ window._rachatRender=function(filter){
       +'<div style="font-size:.74rem;color:var(--text-muted,#8a94a6);margin-top:2px;">Tous les articles en promotion regroupés ('+nbPromo+' article'+(nbPromo>1?'s':'')+')</div></button>'
       +'</div></div>';
     m.style.display='flex';
+    if (m.parentNode !== document.body || m !== document.body.lastElementChild) document.body.appendChild(m);
   };
 })();
 </script>
@@ -58010,7 +58031,7 @@ window._rachatRender=function(filter){
     var base=_base(), cost=_cost(), pct=window._pemGetPromo();
     if(!base || !pct){ prev.textContent='Aucune promotion'; prev.style.color='var(--text-muted,#8a94a6)'; return; }
     var pp=(typeof window._promoPrice==='function')?window._promoPrice(base, pct, (cost==null?undefined:cost)):(base*(1-pct/100));
-    prev.innerHTML='Prix promo : <span style="color:#c0392b;">'+pp.toFixed(2)+'€</span> · -'+(+pct).toFixed(pct%1?1:0)+'%';
+    var _rp=window._promoPctOf(base, pp); prev.innerHTML='Prix promo : <span style="color:#c0392b;">'+pp.toFixed(2)+'€</span> · soit <b>-'+_rp+' %</b> sur le prix de vente'+(Math.abs(_rp-pct)>=1?' <span style="font-size:.78em;color:var(--text-muted,#8a94a6);">(réglage '+(+pct).toFixed(pct%1?1:0)+' % entre prix de vente et prix d’achat)</span>':'');
     prev.style.color='var(--text-main,#2c3e50)';
   };
 
@@ -64594,7 +64615,7 @@ function covoQrPrint(o) {
             var manual = !!p.hiddenFromPortal, forced = auto && stock <= 0 && !manual;
             return {
                 p: p, id: p.id, no: NO[String(p.id)] || '', name: p.name || 'Produit', cat: p.category || 'Général', stock: stock, kg: kg, base: base, price: pr,
-                disc: +p.promo || 0, lvl: stock <= 0 ? 'out' : stock < LOW ? 'low' : 'ok', sold: sm[String(p.id)] || 0,
+                disc: +p.promo > 0 ? window._promoRealPct(p) : 0, lvl: stock <= 0 ? 'out' : stock < LOW ? 'low' : 'ok', sold: sm[String(p.id)] || 0,
                 manual: manual, forced: forced, hidden: manual || forced, offSite: !!p.hiddenFromSite, img: imgOf(p),
                 value: Math.max(0, stock) * (+p.costPrice || pr || 0)
             };
@@ -66262,7 +66283,7 @@ function covoQrPrint(o) {
     function show(pid, card) {
         var all = P(), p = all.filter(function (x) { return String(x.id) === String(pid); })[0]; if (!p || !card || !document.body.contains(card)) return;
         var col = catColor(p.category), kg = p.unitType === 'kg', u = kg ? '/kg' : '';
-        var base = kg ? +p.pricePerKg || 0 : +p.price || 0, price = eff(p), disc = +p.promo || 0;
+        var base = kg ? +p.pricePerKg || 0 : +p.price || 0, price = eff(p), disc = +p.promo > 0 ? window._promoRealPct(p) : 0;
         var nightOn = false; try { nightOn = !!(p.nightTariff && typeof isNightTariffCurrentlyActive === 'function' && isNightTariffCurrentlyActive()); } catch (e) {}
         var stock = +p.stock || 0, lvl = stock <= 0 ? 'crit' : stock < (kg ? 0.5 : 5) ? 'warn' : 'ok';
         var sq = kg ? (Math.round(stock * 1000) / 1000).toLocaleString('fr-FR') + ' kg' : String(stock);
@@ -67017,7 +67038,7 @@ function covoQrPrint(o) {
         var st = +p.stock || 0, lvl = st <= 0 ? 'bad' : st < (kg ? 0.5 : 5) ? 'warn' : 'ok';
         var c = ['<span class="cat">🗂️ ' + esc(p.category || 'Sans catégorie') + '</span>', '<span class="' + lvl + '">' + (lvl === 'bad' ? '⛔ Rupture' : lvl === 'warn' ? '⚠️ Stock bas' : '📦 En stock') + '</span>'];
         if (p.active === false) c.push('<span class="bad">👁️ Masqué en caisse</span>');
-        if (+p.promo > 0) c.push('<span class="warn">🏷️ -' + p.promo + ' %</span>');
+        if (+p.promo > 0) c.push('<span class="warn">🏷️ -' + window._promoRealPct(p) + ' %</span>');
         if (p.barcode) c.push('<span>🔖 ' + esc(p.barcode) + '</span>');
         $('pdx-chips').innerHTML = c.join('');
         var cat = $('pd-cat'); if (cat) cat.style.display = 'none';
@@ -67443,10 +67464,10 @@ function covoQrPrint(o) {
     function imgOf(p) { var s = p && (p.img || p.image || ''); return s && /^(data:image|https?:)/.test(s) ? s : ''; }
     function col(c) { try { if (typeof _catColorFor === 'function') return _catColorFor(c || 'Général'); } catch (e) {} return '#1c55a0'; }
     function ini(n) { var w = String(n || '?').replace(/[^\p{L}\p{N} ]/gu, ' ').trim().split(/\s+/); return ((w[0] || '?').charAt(0) + (w[1] ? w[1].charAt(0) : '')).toUpperCase(); }
-    function priceOf(p) { var kg = p.unitType === 'kg', base = +(kg ? p.pricePerKg : p.price) || 0, pr = +p.promo > 0 ? base * (1 - p.promo / 100) : base; return '<div class="vps-pr">' + money(pr) + (kg ? '/kg' : '') + (pr < base ? '<s>' + money(base) + '</s>' : '') + '</div>'; }
+    function priceOf(p) { var kg = p.unitType === 'kg', base = +(kg ? p.pricePerKg : p.price) || 0, pr = +p.promo > 0 ? window._promoPrice(base, p.promo, p.costPrice) : base; return '<div class="vps-pr">' + money(pr) + (kg ? '/kg' : '') + (pr < base ? '<s>' + money(base) + '</s>' : '') + '</div>'; }
     function card(p) {
         var im = imgOf(p);
-        return '<div class="vps-card">' + (+p.promo > 0 ? '<span class="pc">-' + Math.round(p.promo) + '%</span>' : '') + '<div class="im">' + (im ? '<img src="' + esc(im) + '" alt="" loading="lazy">' : '<div class="vps-ini" style="background:' + col(p.category) + '">' + esc(ini(p.name)) + '</div>') + '</div>'
+        return '<div class="vps-card">' + (+p.promo > 0 ? '<span class="pc">-' + window._promoRealPct(p) + '%</span>' : '') + '<div class="im">' + (im ? '<img src="' + esc(im) + '" alt="" loading="lazy">' : '<div class="vps-ini" style="background:' + col(p.category) + '">' + esc(ini(p.name)) + '</div>') + '</div>'
             + '<div class="tx"><b>' + esc(p.name) + '</b>' + priceOf(p) + '<small>' + ((+p.stock || 0) > 0 ? '🟢 En stock' : '🔴 Indisponible') + '</small></div></div>';
     }
     function grid(list, w, max) { if (!list.length) return '<div class="vps-empty">Aucun article à afficher sur cette page aujourd’hui.</div>'; var cols = w >= 1200 ? 6 : w >= 900 ? 5 : w >= 600 ? 3 : 2; return '<div class="vps-grid" style="--cols:' + cols + '">' + list.slice(0, max || (cols * 4)).map(card).join('') + '</div>'; }
@@ -67457,7 +67478,7 @@ function covoQrPrint(o) {
         var news = L.slice().sort(function (a, b) { return (Date.parse(b.dateCreated || b.createdAt) || 0) - (Date.parse(a.dateCreated || a.createdAt) || 0); });
         if (pg.kind === 'home') {
             var h = promos[0] || L[0];
-            body = (h ? '<div class="vps-hero">' + (+h.promo > 0 ? '<div class="pct">-' + Math.round(h.promo) + '%</div>' : '') + '<div class="im">' + (imgOf(h) ? '<img src="' + esc(imgOf(h)) + '" alt="">' : '<div class="vps-ini" style="background:' + col(h.category) + '">' + esc(ini(h.name)) + '</div>') + '</div><span class="tag">🔥 Promotion du moment</span><h3>' + esc(h.name) + '</h3><div style="font-size:.8rem;opacity:.85">Rayon ' + esc(h.category || 'Général') + '</div></div>' : '')
+            body = (h ? '<div class="vps-hero">' + (+h.promo > 0 ? '<div class="pct">-' + window._promoRealPct(h) + '%</div>' : '') + '<div class="im">' + (imgOf(h) ? '<img src="' + esc(imgOf(h)) + '" alt="">' : '<div class="vps-ini" style="background:' + col(h.category) + '">' + esc(ini(h.name)) + '</div>') + '</div><span class="tag">🔥 Promotion du moment</span><h3>' + esc(h.name) + '</h3><div style="font-size:.8rem;opacity:.85">Rayon ' + esc(h.category || 'Général') + '</div></div>' : '')
                 + '<div class="vps-tile"><i>✨</i><div><b>Nouvel arrivage</b><small>' + Math.min(news.length, 18) + ' nouveautés en rayon</small></div></div>'
                 + '<div class="vps-tile"><i style="background:#e8f0fb">🛒</i><div><b>Tous les articles</b><small>' + L.length + ' articles dans ' + cats.length + ' rayons</small></div></div>';
         } else if (pg.kind === 'promo') { nav = 'promo'; body = '<div class="vps-h">🔥 Promotions</div><div class="vps-s">' + promos.length + ' article' + (promos.length > 1 ? 's' : '') + ' en promotion</div>' + grid(promos, w); }
@@ -70640,7 +70661,7 @@ function covoQrPrint(o) {
         if (!(b > 0) || !pc) return null;
         var pr = typeof window._promoPrice === 'function' ? window._promoPrice(b, pc, p.costPrice) : b * (1 - pc / 100);
         pr = Math.round(pr * 100) / 100;
-        return pr < b ? { pct: pc, price: pr } : null;
+        return pr < b ? { pct: Math.max(1, Math.round((1 - pr / b) * 100)), price: pr } : null;   // % RÉEL affiché
     }
     function refPrice(p) { var sp = storePromo(p); return sp ? sp.price : basePrice(p); }
     /* Comparaison promo fidélité ↔ promo magasin : liste de [niveau, message] */
