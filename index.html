@@ -70685,8 +70685,23 @@ function covoQrPrint(o) {
         try { if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {}
     }
 
+    /* ── Clients fidélité ── */
+    function lgData() { try { return JSON.parse(localStorage.getItem('covo_loyalty') || 'null') || { customers: [] }; } catch (e) { return { customers: [] }; } }
+    function custById(id) { var L = lgData().customers || []; for (var i = 0; i < L.length; i++) if (String(L[i].id) === String(id)) return L[i]; return null; }
+    function firstName(c) { return String((c && c.name) || '').trim().split(/\s+/)[0] || ''; }
+    /* Promo « par client » : chaque client choisi a son propre quota (ex. 24 boissons à 1 €), puis prix normal */
+    function isCli(fp) { return !!(fp && fp.mode === 'client'); }
+    function inList(fp, cid) { return cid != null && (fp.clients || []).some(function (x) { return String(x) === String(cid); }); }
+    function usedBy(fp, cid) { return +(((fp.used || {})[String(cid)]) || 0); }
+    function cliLeft(fp, cid) { if (!inList(fp, cid)) return 0; return Math.max(0, Math.round(((+fp.perClient || 0) - usedBy(fp, cid)) * 1000) / 1000); }
+    function quotaFor(fp, cu) { return isCli(fp) ? (cu ? cliLeft(fp, cu.id) : 0) : remaining(fp); }
+    window._fpQuotaFor = function (p, cu) { return p && p.fidPromo ? quotaFor(p.fidPromo, cu) : 0; };
+
     /* ── État d'une promo ── */
-    function remaining(fp) { return Math.max(0, Math.round(((+fp.qty || 0) - (+fp.sold || 0)) * 1000) / 1000); }
+    function remaining(fp) {
+        if (isCli(fp)) { var t = 0; (fp.clients || []).forEach(function (id) { t += Math.max(0, (+fp.perClient || 0) - usedBy(fp, id)); }); return Math.round(t * 1000) / 1000; }
+        return Math.max(0, Math.round(((+fp.qty || 0) - (+fp.sold || 0)) * 1000) / 1000);
+    }
     function state(fp) {
         if (!fp) return 'none';
         if (fp.on === false) return 'pause';
@@ -70699,11 +70714,21 @@ function covoQrPrint(o) {
     var ST = { on: ['🟢', 'En cours', '#15803d'], soon: ['🕒', 'Programmée', '#2563eb'], out: ['⛔', 'Épuisée', '#b91c1c'], end: ['🏁', 'Terminée', '#64748b'], pause: ['⏸️', 'En pause', '#b45309'] };
     function activeFor(p) { return !!(p && p.fidPromo && state(p.fidPromo) === 'on' && p.active !== false); }
     window._fpActive = activeFor;
-    function defaultTitle(p, fp) { return 'Exclusivité fidélité : ' + (p ? p.name : 'article'); }
+    function defaultTitle(p, fp) { return (isCli(fp) ? 'Votre offre fidélité : ' : 'Exclusivité fidélité : ') + (p ? p.name : 'article'); }
     function defaultText(p, fp) {
         var kg = isKg(p), q = +fp.qty || 0;
+        if (isCli(fp)) {
+            var pc = +fp.perClient || 0;
+            return 'Profitez de « ' + p.name + ' » à ' + eur(fp.price) + (kg ? '/kg' : '') + ' au lieu de ' + eur(refPrice(p)) + (kg ? '/kg' : '') + ', jusqu’à ' + (kg ? qtyTxt(pc, true) : pc + ' article' + (pc > 1 ? 's' : '')) + ' rien que pour vous. Présentez votre carte fidélité en caisse !';
+        }
         return (kg ? qtyTxt(q, true) + ' de « ' + p.name + ' »' : q + ' × « ' + p.name + ' »') + ' à ' + eur(fp.price) + (kg ? '/kg' : '') + ' au lieu de ' + eur(refPrice(p)) + (kg ? '/kg' : '')
             + ', réservé aux clients ayant le compte fidélité. Dans la limite des ' + (kg ? 'quantités' : q + ' articles') + ' disponibles !';
+    }
+
+    function defaultWa(p, fp) {
+        var kg = isKg(p), pc = +fp.perClient || 0;
+        return 'Bonjour {prenom} 👋 Bonne nouvelle : en tant que client fidélité, profitez de « ' + p.name + ' » à ' + eur(fp.price) + (kg ? '/kg' : '') + ' au lieu de ' + eur(refPrice(p)) + (kg ? '/kg' : '')
+            + ', jusqu’à ' + (kg ? qtyTxt(pc, true) : pc + ' article' + (pc > 1 ? 's' : '')) + ' rien que pour vous (il vous en reste {reste}). Présentez simplement votre carte fidélité en caisse. À bientôt !';
     }
 
     /* ═════════════ CAISSE ═════════════ */
@@ -70713,7 +70738,7 @@ function covoQrPrint(o) {
         var cu = window._ltyCu || null;
         C.forEach(function (item) {
             var p = byId(item.id), fp = p && p.fidPromo;
-            var ok = !!(cu && activeFor(p) && !item.costPriceApplied);
+            var ok = !!(cu && activeFor(p) && !item.costPriceApplied && quotaFor(fp, cu) > 0);
             if (ok && !item._fid && !(+fp.price < (+item.price || 0) - 0.0001)) ok = false;   // une remise déjà plus forte reste prioritaire
             if (!ok) {
                 if (item._fid) {
@@ -70728,12 +70753,12 @@ function covoQrPrint(o) {
                 return;
             }
             if (!item._fid) item._fid = { base: item.price, baseU: item.unitPrice, ps: item.packSize || 0, pp: item.packPrice || 0 };
-            var base = item._fid.base, q = +item.quantity || 0, rem = remaining(fp), n = Math.min(q, rem), pr = +fp.price;
+            var base = item._fid.base, q = +item.quantity || 0, rem = quotaFor(fp, cu), n = Math.min(q, rem), pr = +fp.price;
             if (item._tierActive) { item._tierActive = false; item._tierInfo = null; }
             item.packSize = 0; item.packPrice = 0;
             item.price = q > 0 ? (n >= q ? pr : Math.round((n * pr + (q - n) * base) / q * 10000) / 10000) : pr;
             if (item.unitPrice !== undefined) item.unitPrice = item.price;
-            item._fid.n = n; item._fid.q = q; item._fid.promo = pr; item._fid.rem = rem;
+            item._fid.n = n; item._fid.q = q; item._fid.promo = pr; item._fid.rem = rem; item._fid.cli = isCli(fp) ? { per: +fp.perClient || 0, left: rem, name: firstName(cu) } : null;
             if (!/ 🎁$/.test(String(item.name || ''))) item.name = String(item.name || '') + ' 🎁';
         });
     }
@@ -70750,13 +70775,20 @@ function covoQrPrint(o) {
                 d.style.background = 'rgba(219,39,119,.1)'; d.style.color = '#be185d';
                 d.innerHTML = '🎁 Offre fidélité : ' + qtyTxt(f.n, kg) + (kg ? '' : ' ×') + ' ' + eur(f.promo) + (kg ? '/kg' : '') + ' au lieu de ' + eur(f.base)
                     + ' · économie ' + eur((f.base - f.promo) * f.n)
-                    + (f.q > f.n ? '<br><span style="color:#b45309;">⚠️ Plus que ' + qtyTxt(f.n, kg) + ' en promo : ' + qtyTxt(f.q - f.n, kg) + ' au prix normal</span>' : '');
+                    + (f.cli ? '<br>👤 Offre personnelle de ' + esc(f.cli.name || 'ce client') + ' : ' + qtyTxt(f.cli.left - Math.min(f.n, f.cli.left), kg) + ' restant' + ((f.cli.left - f.n) > 1 ? 's' : '') + ' sur ' + qtyTxt(f.cli.per, kg) + ' après cette vente' : '')
+                    + (f.q > f.n ? '<br><span style="color:#b45309;">⚠️ Plus que ' + qtyTxt(f.n, kg) + ' en promo' + (f.cli ? ' pour ce client' : '') + ' : ' + qtyTxt(f.q - f.n, kg) + ' au prix normal</span>' : '');
+            } else if (cu && activeFor(p) && isCli(p.fidPromo) && !item.costPriceApplied && !item._fid) {
+                if (!inList(p.fidPromo, cu.id)) return;
+                d.style.background = 'rgba(100,116,139,.1)'; d.style.color = '#475569';
+                d.innerHTML = '👤 Offre fidélité de ' + esc(firstName(cu) || 'ce client') + ' épuisée (' + qtyTxt(usedBy(p.fidPromo, cu.id), isKg(p)) + '/' + qtyTxt(+p.fidPromo.perClient || 0, isKg(p)) + ') : prix normal';
             } else if (cu && activeFor(p) && !item.costPriceApplied && !item._fid) {
                 d.style.background = 'rgba(15,118,110,.08)'; d.style.color = '#0f766e';
                 d.innerHTML = '🏷️ Prix actuel (' + eur(item.price) + ') déjà inférieur ou égal au prix fidélité (' + eur(p.fidPromo.price) + ') : le meilleur prix est conservé';
             } else if (!cu && activeFor(p) && !item.costPriceApplied) {
                 d.style.background = 'rgba(219,39,119,.06)'; d.style.color = '#9d174d'; d.style.border = '1px dashed rgba(219,39,119,.4)';
-                d.innerHTML = '🎁 Promo fidélité : ' + eur(p.fidPromo.price) + (isKg(p) ? '/kg' : '') + ' au lieu de ' + eur(item.price) + ' — scannez la carte fidélité du client';
+                d.innerHTML = isCli(p.fidPromo)
+                    ? '👤 Offre personnelle ' + eur(p.fidPromo.price) + (isKg(p) ? '/kg' : '') + ' pour ' + (p.fidPromo.clients || []).length + ' client' + ((p.fidPromo.clients || []).length > 1 ? 's' : '') + ' fidélité — scannez la carte du client'
+                    : '🎁 Promo fidélité : ' + eur(p.fidPromo.price) + (isKg(p) ? '/kg' : '') + ' au lieu de ' + eur(item.price) + ' — scannez la carte fidélité du client';
             } else return;
             el.appendChild(d);
         });
@@ -70789,18 +70821,21 @@ function covoQrPrint(o) {
             var cu = window._ltyCu;
             var r = dv.apply(this, arguments);
             if (snap.length && cartArr() !== C0) {                     // vente enregistrée (panier vidé)
-                var msg = [];
+                var msg = [], touched = [];
                 snap.forEach(function (s) {
                     var p = byId(s.id); if (!p || !p.fidPromo) return;
                     var fp = p.fidPromo;
                     fp.sold = Math.round(((+fp.sold || 0) + s.n) * 1000) / 1000;
+                    if (isCli(fp) && cu) { if (!fp.used) fp.used = {}; fp.used[String(cu.id)] = Math.round((usedBy(fp, cu.id) + s.n) * 1000) / 1000; touched.push(cu.id); }
                     if (!Array.isArray(fp.log)) fp.log = [];
                     fp.log.unshift({ at: new Date().toISOString(), n: s.n, client: cu ? (cu.name || '') : '', cid: cu ? cu.id : null });
                     if (fp.log.length > 300) fp.log.length = 300;
-                    msg.push(p.name + ' : ' + (remaining(fp) > 0 ? 'reste ' + qtyTxt(remaining(fp), isKg(p)) : 'offre épuisée'));
+                    if (isCli(fp) && cu) { var lf = cliLeft(fp, cu.id); msg.push(p.name + ' : ' + (lf > 0 ? 'il reste ' + qtyTxt(lf, isKg(p)) + '/' + qtyTxt(+fp.perClient || 0, isKg(p)) + ' à ' + (firstName(cu) || 'ce client') : 'offre de ' + (firstName(cu) || 'ce client') + ' terminée (prix normal ensuite)')); }
+                    else msg.push(p.name + ' : ' + (remaining(fp) > 0 ? 'reste ' + qtyTxt(remaining(fp), isKg(p)) : 'offre épuisée'));
                 });
                 persist();
                 schedulePublish(1500);
+                if (touched.length) publishClients(touched, false);
                 if (msg.length) setTimeout(function () { toast('🎁 Promo fidélité — ' + msg.join(' · '), 'info'); }, 900);
                 refreshAll();
             }
@@ -70817,7 +70852,7 @@ function covoQrPrint(o) {
     function payload() {
         var t = today(), list = [];
         prods().forEach(function (p) {
-            var fp = p && p.fidPromo; if (!fp || p.active === false) return;
+            var fp = p && p.fidPromo; if (!fp || p.active === false || isCli(fp)) return;   // offre personnelle : uniquement dans l'espace du client
             var st = state(fp);
             if (st === 'pause' || st === 'end') return;
             if (st === 'out' && fp.outAt && (Date.now() - Date.parse(fp.outAt)) > 3 * 864e5) return;   // épuisée depuis plus de 3 jours : retirée du site
@@ -70846,7 +70881,57 @@ function covoQrPrint(o) {
             .catch(function (e) { pubErr = String(e && e.message || e); console.warn('[Promo fidélité] publication', e); if (force) toast('⚠️ Site web non mis à jour : ' + (/403|PERMISSION/.test(pubErr) ? 'règle Firestore « site » manquante' : pubErr), 'error'); return 'err'; })
             .then(function (r) { pubBusy = false; uiStatus(); return r; });
     }
-    function schedulePublish(ms) { clearTimeout(pubT); pubT = setTimeout(function () { publish(false); }, ms || 4000); }
+    function schedulePublish(ms) { clearTimeout(pubT); pubT = setTimeout(function () { publish(false); publishClients(null, false); }, ms || 4000); }
+    function fsEnc(x) {
+        if (x === null || x === undefined) return { nullValue: null };
+        if (typeof x === 'boolean') return { booleanValue: x };
+        if (typeof x === 'number') return Number.isInteger(x) ? { integerValue: String(x) } : { doubleValue: x };
+        if (typeof x === 'string') return { stringValue: x };
+        if (Array.isArray(x)) return { arrayValue: { values: x.map(fsEnc) } };
+        var f = {}; Object.keys(x).forEach(function (k) { f[k] = fsEnc(x[k]); }); return { mapValue: { fields: f } };
+    }
+    /* offres personnelles d'un client (affichées dans son espace fidélité sur le site) */
+    function offersFor(cid) {
+        var out = [];
+        prods().forEach(function (p) {
+            var fp = p && p.fidPromo; if (!isCli(fp) || p.active === false || !inList(fp, cid)) return;
+            var st = state(fp); if (st === 'pause' || st === 'end') return;
+            var base = refPrice(p), kg = isKg(p), per = +fp.perClient || 0, u = Math.min(per, usedBy(fp, cid)), left = Math.max(0, per - u);
+            out.push({ id: p.id, name: String(p.name || ''), unit: kg ? 'kg' : 'u', st: left > 0 ? (st === 'soon' ? 'soon' : 'on') : 'used',
+                t: fp.title || defaultTitle(p, fp), x: fp.text || defaultText(p, fp), q: per, u: +u.toFixed(3), n: +left.toFixed(3),
+                start: fp.start || '', end: fp.end || '', pr: +(+fp.price).toFixed(2), op: +base.toFixed(2),
+                pct: base > 0 && +fp.price < base ? Math.max(1, Math.round((1 - fp.price / base) * 100)) : 0 });
+        });
+        return out;
+    }
+    window._fpOffersFor = offersFor;
+    var KEY_CH = 'covo_fidpromo_cli_hash', cliBusy = false;
+    function cliIds() {
+        var ids = {}; prods().forEach(function (p) { var fp = p && p.fidPromo; if (isCli(fp)) (fp.clients || []).forEach(function (id) { ids[String(id)] = 1; }); });
+        try { Object.keys(JSON.parse(localStorage.getItem(KEY_CH) || '{}') || {}).forEach(function (id) { ids[id] = 1; }); } catch (e) {}   // anciens bénéficiaires : leur offre est retirée
+        return Object.keys(ids);
+    }
+    /* → { envoyés, sansAcces, erreurs } */
+    function publishClients(ids, force) {
+        if (cliBusy || typeof window._covoFs !== 'function' || !navigator.onLine) return Promise.resolve(null);
+        var hs = {}; try { hs = JSON.parse(localStorage.getItem(KEY_CH) || '{}') || {}; } catch (e) {}
+        var res = { sent: 0, noAccess: 0, err: 0 }, seq = Promise.resolve();
+        cliBusy = true;
+        (ids || cliIds()).forEach(function (cid) {
+            var c = custById(cid);
+            if (!c || !c.portalUid) { if (c) res.noAccess++; return; }
+            var off = offersFor(c.id), h = hash(JSON.stringify(off));
+            if (!force && hs[String(c.id)] === h) return;
+            seq = seq.then(function () {
+                return window._covoFs('PATCH', 'clients/' + c.portalUid + '?updateMask.fieldPaths=offres&updateMask.fieldPaths=offresAt&currentDocument.exists=true',
+                    { fields: { offres: fsEnc(off), offresAt: fsEnc(new Date().toISOString()) } })
+                    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); if (off.length) hs[String(c.id)] = h; else delete hs[String(c.id)]; res.sent++; })
+                    .catch(function (e) { res.err++; console.warn('[Promo fidélité] espace client', c.name, e); });
+            });
+        });
+        return seq.then(function () { try { localStorage.setItem(KEY_CH, JSON.stringify(hs)); } catch (e) {} cliBusy = false; return res; });
+    }
+    window._fpPublishClients = publishClients;
     window._fpPublish = publish;
     function markOut() {   // date d'épuisement (pour retirer l'annonce du site après 3 jours)
         var ch = false;
@@ -70914,6 +70999,34 @@ function covoQrPrint(o) {
         '.pfid-ann .rb{height:9px;border-radius:6px;background:#fbcfe8;overflow:hidden;} .pfid-ann .rb i{display:block;height:100%;background:#db2777;}',
         '.pfid-ann .rt{font-size:.74rem;font-weight:900;color:#9d174d;margin-top:5px;} .pfid-ann .cta{display:inline-block;margin-top:10px;background:#3b0a24;color:#fff;font-size:.78rem;font-weight:900;padding:8px 12px;border-radius:10px;}',
         '.cvx-fp{position:absolute;left:8px;bottom:8px;background:#db2777;color:#fff;font-size:.62rem;font-weight:900;padding:3px 7px;border-radius:7px;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:2;}',
+        '.pfid-seg{display:flex;border:1.5px solid var(--border-color,#e2e8f0);border-radius:11px;overflow:hidden;}',
+        '.pfid-seg button{flex:1;border:none;background:var(--input-bg,#f8fafc);color:var(--text-muted,#64748b);font-weight:800;font-size:.78rem;padding:10px 8px;cursor:pointer;font-family:inherit;line-height:1.3;}',
+        '.pfid-seg button.on{background:linear-gradient(135deg,#db2777,#9d174d);color:#fff;}',
+        '.pfid-chint{font-size:.7rem;font-weight:700;color:var(--text-muted,#64748b);margin:5px 0;}',
+        '.pfid-cbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;} .pfid-cbar input{flex:1;min-width:180px;} .pfid-cbar .chips{margin-top:0!important;}',
+        '#pfid-cli{max-height:260px;overflow:auto;border:1px solid var(--border-color,#e2e8f0);border-radius:12px;background:var(--bg-card,#fff);}',
+        '.pfid-crow{display:grid;grid-template-columns:22px 34px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--border-color,#f1f5f9);cursor:pointer;font-size:.8rem;}',
+        '#pfid-form label.pfid-crow{display:grid;text-transform:none;letter-spacing:0;margin:0;font-size:.8rem;font-weight:700;color:var(--text-main,#1f2937);}',
+        '#pfid-form label.pfid-crow small{text-transform:none;}',
+        '.pfid-nbox h4{color:var(--text-main,#1f2937);}',
+        '.pfid-crow:hover{background:rgba(219,39,119,.05);} .pfid-crow.on{background:rgba(219,39,119,.08);}',
+        '.pfid-crow input{width:17px;height:17px;accent-color:#db2777;margin:0;} .pfid-crow .rk{font-weight:900;color:#be185d;font-size:.74rem;text-align:center;}',
+        '.pfid-crow b{display:block;font-size:.84rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} .pfid-crow small{display:block;color:var(--text-muted,#64748b);font-weight:700;font-size:.7rem;}',
+        '.pfid-crow .ic{font-size:.72rem;white-space:nowrap;color:var(--text-muted,#64748b);font-weight:800;text-align:right;}',
+        '#pfid-ncli{display:inline-block;background:#db2777;color:#fff;border-radius:999px;padding:1px 8px;font-size:.66rem;margin-left:6px;text-transform:none;}',
+        '.pfid-cchips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;} .pfid-cchips span{font-size:.66rem;font-weight:800;padding:2px 7px;border-radius:999px;background:rgba(219,39,119,.08);color:#9d174d;} .pfid-cchips span.done{background:rgba(100,116,139,.12);color:#64748b;}',
+        '#pfid-notify{display:none;} #pfid-notify.on{display:block;}',
+        '.pfid-nbox{background:var(--bg-card,#fff);border:1px solid var(--border-color,#e5e7eb);border-radius:16px;padding:14px;margin-bottom:12px;}',
+        '.pfid-nbox h4{margin:0 0 6px;font-size:.95rem;} .pfid-nbox textarea{width:100%;box-sizing:border-box;min-height:90px;padding:10px 11px;border:1.5px solid var(--border-color,#e2e8f0);border-radius:10px;font-size:.86rem;background:var(--input-bg,#fff);color:var(--text-main,#1f2937);font-family:inherit;}',
+        '.pfid-nrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 4px;border-bottom:1px solid var(--border-color,#f1f5f9);}',
+        '.pfid-nrow b{font-size:.86rem;} .pfid-nrow small{display:block;font-size:.7rem;font-weight:700;color:var(--text-muted,#64748b);margin-top:2px;}',
+        '.pfid-tag{display:inline-block;font-size:.64rem;font-weight:900;padding:2px 7px;border-radius:999px;margin:3px 4px 0 0;}',
+        '.pfid-tag.ok{background:rgba(22,163,74,.12);color:#15803d;} .pfid-tag.no{background:rgba(100,116,139,.12);color:#64748b;} .pfid-tag.wa{background:rgba(37,211,102,.14);color:#128C7E;}',
+        '.pfid-wa{border:none;border-radius:9px;background:#25D366;color:#fff;font-weight:900;font-size:.76rem;padding:8px 11px;cursor:pointer;font-family:inherit;white-space:nowrap;}',
+        '.pfid-wa:disabled{opacity:.4;cursor:not-allowed;}',
+        '#pfid-step{display:none;margin-top:10px;padding:12px;border-radius:12px;background:rgba(37,211,102,.08);border:1.5px solid rgba(37,211,102,.35);}',
+        '#pfid-step.on{display:block;} #pfid-step .who{font-weight:900;font-size:1rem;} #pfid-step .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}',
+        '#pfid-step .acts button{border:none;border-radius:10px;padding:10px 13px;font-weight:900;cursor:pointer;font-family:inherit;}',
         '@media (max-width:760px){#pfid-form{grid-template-columns:1fr;}#pfid-modal .kp{grid-template-columns:1fr 1fr;}.pfid-card{grid-template-columns:44px minmax(0,1fr);}.pfid-card .ac{grid-column:1/-1;justify-content:flex-start;}#pfid-form .g3{grid-template-columns:1fr 1fr;}}'
     ].join('\n');
 
@@ -70927,17 +71040,24 @@ function covoQrPrint(o) {
             + '<div id="pfid-form"><div class="f">'
             + '<div><label for="pfid-q">Article en promotion *</label><input id="pfid-q" type="search" placeholder="🔍 Rechercher un produit du catalogue…" autocomplete="off"><div id="pfid-res"></div>'
             + '<div id="pfid-prod"><span id="pfid-prod-t"></span><button type="button" id="pfid-prod-x">Changer</button></div></div>'
+            + '<div><label>Type de promotion</label><div class="pfid-seg" id="pfid-mode"><button type="button" data-m="stock" class="on">📦 Quantité limitée<br><small>pour tous les clients fidélité</small></button><button type="button" data-m="client">👤 Par client<br><small>quota personnel (ex. 24 chacun)</small></button></div></div>'
             + '<div class="g3"><div><label for="pfid-price" id="pfid-price-l">Prix fidélité (€) *</label><input id="pfid-price" inputmode="decimal" autocomplete="off" placeholder="ex. 1,00"><div class="chips" id="pfid-pc"><button type="button" data-r=".9">-10 %</button><button type="button" data-r=".8">-20 %</button><button type="button" data-r=".667">-33 %</button><button type="button" data-r=".5">-50 %</button></div></div>'
-            + '<div><label for="pfid-qty" id="pfid-qty-l">Quantité en promo *</label><input id="pfid-qty" inputmode="decimal" autocomplete="off" placeholder="ex. 24"><div class="chips" id="pfid-qc"><button type="button" data-q="12">12</button><button type="button" data-q="24">24</button><button type="button" data-q="48">48</button><button type="button" data-q="100">100</button></div></div>'
-            + '<div><label>Déjà vendus</label><input id="pfid-sold" inputmode="decimal" autocomplete="off" value="0"></div></div>'
+            + '<div id="pfid-qtyc"><label for="pfid-qty" id="pfid-qty-l">Quantité en promo *</label><input id="pfid-qty" inputmode="decimal" autocomplete="off" placeholder="ex. 24"><div class="chips" id="pfid-qc"><button type="button" data-q="12">12</button><button type="button" data-q="24">24</button><button type="button" data-q="48">48</button><button type="button" data-q="100">100</button></div></div>'
+            + '<div id="pfid-soldc"><label>Déjà vendus</label><input id="pfid-sold" inputmode="decimal" autocomplete="off" value="0"></div>'
+            + '<div id="pfid-perc" style="display:none;"><label for="pfid-per" id="pfid-per-l">Quantité par client *</label><input id="pfid-per" inputmode="decimal" autocomplete="off" value="24"><div class="chips" id="pfid-pq"><button type="button" data-q="6">6</button><button type="button" data-q="12">12</button><button type="button" data-q="24">24</button><button type="button" data-q="48">48</button></div></div></div>'
             + '<div class="g2"><div><label for="pfid-start">Début (facultatif)</label><input id="pfid-start" type="date"></div><div><label for="pfid-end">Fin (facultatif)</label><input id="pfid-end" type="date"></div></div>'
+            + '<div id="pfid-clibox" style="display:none;"><label>Clients bénéficiaires * <span id="pfid-ncli">0</span></label>'
+            + '<div class="pfid-cbar"><input id="pfid-cq" type="search" placeholder="🔍 Nom, téléphone ou n° de carte…" autocomplete="off"><div class="chips" id="pfid-top"><button type="button" data-top="5">Top 5</button><button type="button" data-top="10">Top 10</button><button type="button" data-top="20">Top 20</button><button type="button" data-top="0">Aucun</button></div></div>'
+            + '<div class="pfid-chint">🏆 Classés par dépenses totales au magasin : vos meilleurs clients en premier.</div><div id="pfid-cli"></div>'
+            + '<div style="margin-top:10px;"><label for="pfid-wa">Message WhatsApp pour prévenir les clients</label><textarea id="pfid-wa" maxlength="700"></textarea><div class="pfid-chint">{prenom}, {nom} et {reste} sont remplacés automatiquement pour chaque client.</div></div></div>'
             + '<div><label for="pfid-title">Titre de l’annonce</label><input id="pfid-title" maxlength="90"></div>'
             + '<div><label for="pfid-text">Message aux clients</label><textarea id="pfid-text" maxlength="400"></textarea><div class="chips"><button type="button" id="pfid-auto">✨ Texte automatique</button></div></div>'
-            + '<label class="sw"><input type="checkbox" id="pfid-show" checked> Afficher les prix dans l’annonce (visible par tous les visiteurs)</label>'
+            + '<label class="sw" id="pfid-showl"><input type="checkbox" id="pfid-show" checked> Afficher les prix dans l’annonce (visible par tous les visiteurs)</label>'
             + '<label class="sw"><input type="checkbox" id="pfid-on" checked> Promotion active</label>'
             + '<div class="msg" id="pfid-msg"></div>'
-            + '</div><div><div class="pfid-prev-h">Aperçu de l’annonce sur le site</div><div id="pfid-prev"></div>'
-            + '<div class="mt" style="font-size:.72rem;font-weight:700;color:var(--text-muted,#64748b);margin-top:10px;line-height:1.5;">🛒 <b>En caisse</b> : le prix fidélité s’applique automatiquement dès que la carte fidélité du client est scannée (ou le client choisi), dans la limite de la quantité restante. Le compteur baisse à chaque vente et le site affiche « Plus que … ».</div></div></div>'
+            + '</div><div><div class="pfid-prev-h" id="pfid-prev-h">Aperçu de l’annonce sur le site</div><div id="pfid-prev"></div>'
+            + '<div class="mt" id="pfid-howto" style="font-size:.72rem;font-weight:700;color:var(--text-muted,#64748b);margin-top:10px;line-height:1.5;"></div></div></div>'
+            + '<div id="pfid-notify"></div>'
             + '</div>'
             + '<div class="ft"><span class="st" id="pfid-st"></span>'
             + '<button type="button" class="b sec" id="pfid-back" style="display:none;">← Retour</button>'
@@ -70948,7 +71068,7 @@ function covoQrPrint(o) {
         $('pfid-x').onclick = close;
         m.addEventListener('mousedown', function (e) { if (e.target === m) close(); });
         $('pfid-new').onclick = function () { openForm(null); };
-        $('pfid-back').onclick = showList;
+        $('pfid-back').onclick = function () { QUEUE = null; showList(); };
         $('pfid-save').onclick = save;
         $('pfid-pub').onclick = function () { publish(true); };
         $('pfid-q').addEventListener('input', search);
@@ -70958,10 +71078,22 @@ function covoQrPrint(o) {
         $('pfid-pc').addEventListener('click', function (e) { var b = e.target.closest('[data-r]'); if (!b) return; var p = byId(EDIT_PID); if (!p) { msg('Choisissez d’abord l’article', 'warn'); return; } $('pfid-price').value = String(Math.round(basePrice(p) * +b.getAttribute('data-r') * 100) / 100).replace('.', ','); autoText(false); preview(); });
         $('pfid-qc').addEventListener('click', function (e) { var b = e.target.closest('[data-q]'); if (!b) return; $('pfid-qty').value = b.getAttribute('data-q'); autoText(false); preview(); });
         $('pfid-auto').onclick = function () { autoText(true); preview(); };
+        $('pfid-mode').addEventListener('click', function (e) { var b = e.target.closest('[data-m]'); if (!b) return; setMode(b.getAttribute('data-m')); autoText(false); preview(); });
+        $('pfid-pq').addEventListener('click', function (e) { var b = e.target.closest('[data-q]'); if (!b) return; $('pfid-per').value = b.getAttribute('data-q'); autoText(false); renderCli(); preview(); });
+        $('pfid-per').addEventListener('input', function () { autoText(false); renderCli(); preview(); });
+        $('pfid-cq').addEventListener('input', renderCli);
+        $('pfid-top').addEventListener('click', function (e) {
+            var b = e.target.closest('[data-top]'); if (!b) return;
+            var n = +b.getAttribute('data-top'); SEL = {};
+            ranked().slice(0, n).forEach(function (r) { SEL[String(r.c.id)] = 1; });
+            renderCli(); preview();
+        });
+        $('pfid-cli').addEventListener('change', function (e) { var cb = e.target.closest('input[data-cid]'); if (!cb) return; if (cb.checked) SEL[cb.getAttribute('data-cid')] = 1; else delete SEL[cb.getAttribute('data-cid')]; renderCli(); preview(); });
+        $('pfid-wa').addEventListener('input', function () { this._touched = true; });
         ['pfid-price', 'pfid-qty', 'pfid-sold', 'pfid-start', 'pfid-end', 'pfid-title', 'pfid-text', 'pfid-show', 'pfid-on'].forEach(function (id) { $(id).addEventListener('input', function () { if (id === 'pfid-price' || id === 'pfid-qty') autoText(false); preview(); }); $(id).addEventListener('change', preview); });
         $('pfid-title').addEventListener('input', function () { this._touched = true; });
         $('pfid-text').addEventListener('input', function () { this._touched = true; });
-        document.addEventListener('keydown', function (e) { if (m.classList.contains('open') && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if ($('pfid-form').classList.contains('on')) showList(); else close(); } }, true);
+        document.addEventListener('keydown', function (e) { if (m.classList.contains('open') && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if ($('pfid-form').classList.contains('on') || $('pfid-notify').classList.contains('on')) { QUEUE = null; showList(); } else close(); } }, true);
     }
     var EDIT_PID = null;
     function open() { build(); markOut(); $('pfid-modal').classList.add('open'); showList(); }
@@ -70970,7 +71102,7 @@ function covoQrPrint(o) {
     function imgOf(p) { var s = p && p.img ? String(p.img) : ''; return s && !/placehold/.test(s) ? '<img src="' + esc(s) + '" alt="" onerror="this.outerHTML=\'🎁\'">' : (isKg(p) ? '⚖️' : '🎁'); }
     function showList() {
         EDIT = null;
-        $('pfid-form').classList.remove('on'); $('pfid-list').style.display = '';
+        $('pfid-form').classList.remove('on'); $('pfid-list').style.display = ''; $('pfid-notify').classList.remove('on');
         $('pfid-back').style.display = 'none'; $('pfid-save').style.display = 'none'; $('pfid-new').style.display = ''; $('pfid-pub').style.display = '';
         var L = prods().filter(function (p) { return p && p.fidPromo; });
         var o = { on: 0, soon: 1, pause: 2, out: 3, end: 4 };
@@ -70986,11 +71118,11 @@ function covoQrPrint(o) {
                 + '<div class="pr"><b>' + eur(fp.price) + (kg ? '/kg' : '') + '</b><s>' + eur(refPrice(p)) + '</s> · ' + esc(fp.title || defaultTitle(p, fp)) + '</div>'
                 + (function () { var sp = storePromo(p); if (!sp) return ''; var better = sp.price <= fp.price + 0.004;
                     return '<div class="mt" style="color:' + (better ? '#b45309' : '#0f766e') + ';">🏷️ Aussi en promo magasin : -' + sp.pct + ' % → ' + eur(sp.price) + (kg ? '/kg' : '') + (better ? ' · ⚠️ plus avantageuse que la promo fidélité' : ' · la promo fidélité reste plus avantageuse (−' + eur(sp.price - fp.price) + ')') + '</div>'; })()
-                + '<div class="bar"><i style="width:' + pc + '%"></i></div>'
-                + '<div class="mt">' + qtyTxt(sd, kg) + ' vendu' + (sd > 1 ? 's' : '') + ' sur ' + qtyTxt(q, kg) + ' · <b>reste ' + qtyTxt(remaining(fp), kg) + '</b>'
+                + (isCli(fp) ? cliSummary(p, fp) : '<div class="bar"><i style="width:' + pc + '%"></i></div>'
+                + '<div class="mt">' + qtyTxt(sd, kg) + ' vendu' + (sd > 1 ? 's' : '') + ' sur ' + qtyTxt(q, kg) + ' · <b>reste ' + qtyTxt(remaining(fp), kg) + '</b>')
                 + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '')
                 + (fp.log && fp.log[0] ? ' · dernière vente ' + new Date(fp.log[0].at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + (fp.log[0].client ? ' (' + esc(fp.log[0].client) + ')' : '') : '') + '</div></div>'
-                + '<div class="ac"><button type="button" data-a="edit">✏️ Modifier</button>'
+                + '<div class="ac"><button type="button" data-a="edit">✏️ Modifier</button>' + (isCli(fp) ? '<button type="button" data-a="notify" style="color:#128C7E;border-color:rgba(37,211,102,.5);">💬 Prévenir</button>' : '')
                 + (s === 'pause' ? '<button type="button" data-a="on">▶️ Reprendre</button>' : (s === 'on' || s === 'soon' ? '<button type="button" data-a="off">⏸️ Pause</button>' : ''))
                 + (s === 'out' || s === 'end' ? '<button type="button" data-a="again">🔁 Relancer</button>' : '')
                 + '<button type="button" class="del" data-a="del">🗑️</button></div></div>';
@@ -71001,15 +71133,21 @@ function covoQrPrint(o) {
             var id = b.closest('[data-id]').getAttribute('data-id'), p = byId(id); if (!p || !p.fidPromo) return;
             var a = b.getAttribute('data-a');
             if (a === 'edit') openForm(id);
+            else if (a === 'notify') showNotify(id);
+            else if (a === 'again' && isCli(p.fidPromo)) {
+                if (!confirm('Relancer l’offre personnelle de « ' + p.name + ' » ? Les compteurs de tous les clients repartent à zéro (' + (+p.fidPromo.perClient || 0) + ' chacun).')) return;
+                p.fidPromo.used = {}; p.fidPromo.sold = 0; p.fidPromo.on = true; p.fidPromo.notified = {}; if (p.fidPromo.end && p.fidPromo.end < today()) p.fidPromo.end = '';
+                delete p.fidPromo.outAt; persist(); schedulePublish(800); publishClients(p.fidPromo.clients, true); showList(); refreshAll(); toast('🔁 Offre personnelle relancée : pensez à prévenir les clients');
+            }
             else if (a === 'again') { openForm(id); $('pfid-sold').value = '0'; $('pfid-on').checked = true; if (p.fidPromo.end && p.fidPromo.end < today()) $('pfid-end').value = ''; preview(); msg('Relance : compteur remis à zéro — ajustez la quantité puis enregistrez', 'ok'); }
             else if (a === 'off' || a === 'on') { p.fidPromo.on = a === 'on'; persist(); schedulePublish(800); showList(); refreshAll(); toast(a === 'on' ? '▶️ Promo fidélité reprise' : '⏸️ Promo fidélité en pause'); }
-            else if (a === 'del') { if (!confirm('Supprimer la promotion fidélité de « ' + p.name + ' » ? L’annonce sera retirée du site.')) return; delete p.fidPromo; persist(); schedulePublish(800); showList(); refreshAll(); toast('🗑️ Promotion fidélité supprimée'); }
+            else if (a === 'del') { if (!confirm('Supprimer la promotion fidélité de « ' + p.name + ' » ? L’annonce sera retirée du site.')) return; var exCli = isCli(p.fidPromo) ? (p.fidPromo.clients || []).slice() : []; delete p.fidPromo; persist(); schedulePublish(800); if (exCli.length) publishClients(exCli, true); showList(); refreshAll(); toast('🗑️ Promotion fidélité supprimée'); }
         };
         uiStatus();
     }
     function openForm(id) {
         EDIT = id; EDIT_PID = id;
-        $('pfid-list').style.display = 'none'; $('pfid-form').classList.add('on');
+        $('pfid-list').style.display = 'none'; $('pfid-form').classList.add('on'); $('pfid-notify').classList.remove('on');
         $('pfid-back').style.display = ''; $('pfid-save').style.display = ''; $('pfid-new').style.display = 'none'; $('pfid-pub').style.display = 'none';
         var p = id != null ? byId(id) : null, fp = p && p.fidPromo || {};
         $('pfid-price').value = fp.price != null ? String(fp.price).replace('.', ',') : '';
@@ -71019,6 +71157,10 @@ function covoQrPrint(o) {
         $('pfid-title').value = fp.title || ''; $('pfid-text').value = fp.text || '';
         $('pfid-title')._touched = !!fp.title; $('pfid-text')._touched = !!fp.text;
         $('pfid-show').checked = fp.showPrices !== false; $('pfid-on').checked = fp.on !== false;
+        $('pfid-per').value = fp.perClient != null ? String(fp.perClient).replace('.', ',') : '24';
+        $('pfid-wa').value = fp.wa || ''; $('pfid-wa')._touched = !!fp.wa; $('pfid-cq').value = '';
+        SEL = {}; (fp.clients || []).forEach(function (cid) { SEL[String(cid)] = 1; });
+        setMode(isCli(fp) ? 'client' : 'stock');
         $('pfid-q').value = ''; $('pfid-res').style.display = 'none';
         if (p) pickProduct(p.id, true); else { $('pfid-prod').classList.remove('on'); $('pfid-q').style.display = ''; setTimeout(function () { $('pfid-q').focus(); }, 40); }
         msg('', ''); preview();
@@ -71044,10 +71186,152 @@ function covoQrPrint(o) {
     }
     function autoText(force) {
         var p = byId(EDIT_PID); if (!p) return;
-        var fp = { price: num($('pfid-price').value) || 0, qty: num($('pfid-qty').value) || 0 };
+        var fp = { price: num($('pfid-price').value) || 0, qty: num($('pfid-qty').value) || 0, mode: MODE, perClient: num($('pfid-per').value) || 0 };
+        if (MODE === 'client' && (force || !$('pfid-wa')._touched)) { $('pfid-wa').value = fp.price > 0 && fp.perClient > 0 ? defaultWa(p, fp) : ''; if (force) $('pfid-wa')._touched = false; }
         if (force || !$('pfid-title')._touched) { $('pfid-title').value = defaultTitle(p, fp); if (force) $('pfid-title')._touched = false; }
         if (force || !$('pfid-text')._touched) { $('pfid-text').value = fp.price > 0 && fp.qty > 0 ? defaultText(p, fp) : ''; if (force) $('pfid-text')._touched = false; }
     }
+    var MODE = 'stock', SEL = {};
+    function setMode(m) {
+        MODE = m === 'client' ? 'client' : 'stock';
+        Array.prototype.forEach.call($('pfid-mode').querySelectorAll('[data-m]'), function (b) { b.classList.toggle('on', b.getAttribute('data-m') === MODE); });
+        var cli = MODE === 'client';
+        $('pfid-qtyc').style.display = cli ? 'none' : ''; $('pfid-soldc').style.display = cli ? 'none' : '';
+        $('pfid-perc').style.display = cli ? '' : 'none'; $('pfid-clibox').style.display = cli ? 'block' : 'none';
+        $('pfid-showl').style.display = cli ? 'none' : '';
+        $('pfid-prev-h').textContent = cli ? 'Aperçu dans l’espace fidélité du client (site web)' : 'Aperçu de l’annonce sur le site';
+        $('pfid-howto').innerHTML = cli
+            ? '🛒 <b>En caisse</b> : dès que la carte fidélité d’un client choisi est scannée (COVO Pro ou Caisse Pro), le prix fidélité s’applique jusqu’à son quota (ex. 24). Une fois son quota atteint, le prix normal revient automatiquement pour lui.<br>🌐 <b>Espace fidélité</b> : chaque client voit son offre et ce qu’il lui reste en se connectant au site. 💬 Après l’enregistrement, vous pourrez le prévenir par WhatsApp.'
+            : '🛒 <b>En caisse</b> : le prix fidélité s’applique automatiquement dès que la carte fidélité du client est scannée (ou le client choisi), dans la limite de la quantité restante. Le compteur baisse à chaque vente et le site affiche « Plus que … ».';
+        if (cli) { if (!Object.keys(SEL).length) ranked().slice(0, 10).forEach(function (r) { SEL[String(r.c.id)] = 1; }); renderCli(); }
+    }
+    function spentOf(c) {
+        var t = +c.totalSpent || 0;
+        if (!t && Array.isArray(c.history)) c.history.forEach(function (h) { if (h && (h.type === 'credit' || h.type === 'credit_purchase') && +h.amount > 0) t += +h.amount; });
+        return t;
+    }
+    function visitsOf(c) { return Array.isArray(c.history) ? c.history.filter(function (h) { return h && (h.type === 'credit' || h.type === 'credit_purchase'); }).length : 0; }
+    function ranked() {
+        return (lgData().customers || []).filter(function (c) { return c && c.id != null && c.active !== false; })
+            .map(function (c) { return { c: c, spent: spentOf(c), visits: visitsOf(c) }; })
+            .sort(function (a, b) { return (b.spent - a.spent) || (b.visits - a.visits) || String(a.c.name || '').localeCompare(String(b.c.name || ''), 'fr'); });
+    }
+    function renderCli() {
+        var box = $('pfid-cli'); if (!box) return;
+        var q = String(($('pfid-cq') || {}).value || '').toLowerCase().trim(), all = ranked(), fp = (byId(EDIT) || {}).fidPromo || {}, per = num($('pfid-per').value) || 0, kg = isKg(byId(EDIT_PID));
+        var rows = all.map(function (r, i) { r.rank = i + 1; return r; }).filter(function (r) { return !q || ((r.c.name || '') + ' ' + (r.c.phone || '') + ' ' + (r.c.barcode || '')).toLowerCase().indexOf(q) >= 0; });
+        rows.sort(function (a, b) { var sa = SEL[String(a.c.id)] ? 0 : 1, sb = SEL[String(b.c.id)] ? 0 : 1; return q ? a.rank - b.rank : (sa - sb) || (a.rank - b.rank); });
+        box.innerHTML = rows.length ? rows.slice(0, 250).map(function (r) {
+            var c = r.c, on = !!SEL[String(c.id)], u = usedBy(fp, c.id);
+            return '<label class="pfid-crow' + (on ? ' on' : '') + '"><input type="checkbox" data-cid="' + esc(c.id) + '"' + (on ? ' checked' : '') + '><span class="rk">#' + r.rank + '</span>'
+                + '<span style="min-width:0;"><b>' + esc(c.name || 'Client') + '</b><small>💶 ' + eur(r.spent) + ' dépensés · 🧾 ' + r.visits + ' passage' + (r.visits > 1 ? 's' : '') + (u > 0 && isCli(fp) ? ' · 🎁 ' + qtyTxt(u, kg) + '/' + qtyTxt(+fp.perClient || per, kg) + ' utilisés' : '') + '</small></span>'
+                + '<span class="ic" title="WhatsApp · espace fidélité en ligne">' + (c.phone ? '📱' : '<span style="opacity:.35">📱</span>') + ' ' + (c.portalUid ? '🌐' : '<span style="opacity:.35">🌐</span>') + '</span></label>';
+        }).join('') : '<div style="padding:14px;text-align:center;color:#64748b;font-weight:700;font-size:.8rem;">' + (all.length ? 'Aucun client ne correspond' : 'Aucun client fidélité enregistré') + '</div>';
+        $('pfid-ncli').textContent = Object.keys(SEL).length;
+    }
+    function annCliHTML(o, p) {
+        var kg = isKg(p), base = refPrice(p), per = o.perClient || 0, pc = base > 0 && o.price < base ? Math.round((1 - o.price / base) * 100) : 0;
+        return '<div class="pfid-ann"><span class="k">👤 Votre offre personnelle</span><div class="in">'
+            + '<h4>' + esc(o.title || defaultTitle(p, { mode: 'client' })) + '</h4><p>' + esc(o.text || '') + '</p>'
+            + '<div class="pp"><b>' + eur(o.price || 0) + (kg ? '/kg' : '') + '</b><s>' + eur(base) + '</s>' + (pc ? '<em>-' + pc + ' %</em>' : '') + '</div>'
+            + '<div class="rb"><i style="width:100%"></i></div><div class="rt">Il vous reste ' + qtyTxt(per, kg) + (kg ? '' : ' article' + (per > 1 ? 's' : '')) + ' sur ' + qtyTxt(per, kg) + (o.end ? ' · jusqu’au ' + dFr(o.end) : '') + '</div>'
+            + '<span class="cta">Présentez votre carte fidélité en caisse</span></div></div>';
+    }
+    function cliSummary(p, fp) {
+        var kg = isKg(p), per = +fp.perClient || 0, ids = fp.clients || [], usedT = 0, done = 0, notif = 0;
+        ids.forEach(function (id) { var u = Math.min(per, usedBy(fp, id)); usedT += u; if (u >= per) done++; if ((fp.notified || {})[String(id)]) notif++; });
+        var tot = per * ids.length, pc = tot ? Math.round(usedT / tot * 100) : 0;
+        return '<div class="bar"><i style="width:' + pc + '%"></i></div>'
+            + '<div class="mt">👤 Offre personnelle · <b>' + qtyTxt(per, kg) + ' par client</b> · ' + ids.length + ' client' + (ids.length > 1 ? 's' : '') + ' · ' + qtyTxt(usedT, kg) + ' utilisé' + (usedT > 1 ? 's' : '') + ' sur ' + qtyTxt(tot, kg)
+            + (done ? ' · ' + done + ' quota' + (done > 1 ? 's' : '') + ' atteint' + (done > 1 ? 's' : '') : '') + ' · 💬 ' + notif + '/' + ids.length + ' prévenu' + (notif > 1 ? 's' : '')
+            + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '') + '</div>'
+            + '<div class="pfid-cchips">' + ids.slice(0, 12).map(function (id) { var c = custById(id), u = Math.min(per, usedBy(fp, id)); return '<span class="' + (u >= per ? 'done' : '') + '">' + esc(c ? firstName(c) || c.name : 'Client') + ' ' + qtyTxt(u, kg) + '/' + qtyTxt(per, kg) + '</span>'; }).join('') + (ids.length > 12 ? '<span>+' + (ids.length - 12) + '</span>' : '') + '</div>';
+    }
+
+    /* ── Panneau « Prévenir les clients » (WhatsApp guidé + espace fidélité) ── */
+    var NP = null, QUEUE = null, QI = 0;
+    function waNum(phone) {
+        try { if (typeof window._waIntl === 'function') { var a = window._waIntl(phone); if (a) return a; } } catch (e) {}
+        try { if (typeof window._waNormPhone === 'function') return window._waNormPhone(phone, '33'); } catch (e) {}
+        return String(phone || '').replace(/\D/g, '');
+    }
+    function waMsg(p, fp, c) {
+        var kg = isKg(p), left = cliLeft(fp, c.id);
+        return String(fp.wa || defaultWa(p, fp)).replace(/\{prenom\}/g, firstName(c)).replace(/\{nom\}/g, c.name || '').replace(/\{reste\}/g, qtyTxt(left, kg) + (kg ? '' : ''));
+    }
+    function showNotify(pid) {
+        var p = byId(pid); if (!p || !isCli(p.fidPromo)) return;
+        NP = p.id; QUEUE = null; QI = 0;
+        $('pfid-list').style.display = 'none'; $('pfid-form').classList.remove('on'); $('pfid-notify').classList.add('on');
+        $('pfid-back').style.display = ''; $('pfid-save').style.display = 'none'; $('pfid-new').style.display = 'none'; $('pfid-pub').style.display = 'none';
+        renderNotify();
+    }
+    function renderNotify() {
+        var p = byId(NP), box = $('pfid-notify'); if (!p || !box || !isCli(p.fidPromo)) return;
+        var fp = p.fidPromo, kg = isKg(p), per = +fp.perClient || 0, ids = fp.clients || [];
+        var withPortal = ids.filter(function (id) { var c = custById(id); return c && c.portalUid; }).length;
+        var h = '<div class="pfid-nbox"><h4>💬 Prévenir les clients — ' + esc(p.name) + '</h4>'
+            + '<div class="pfid-chint" style="font-size:.78rem;">Offre : <b style="color:#db2777;">' + eur(fp.price) + (kg ? '/kg' : '') + '</b> au lieu de ' + eur(refPrice(p)) + ' · ' + qtyTxt(per, kg) + ' par client · ' + ids.length + ' client' + (ids.length > 1 ? 's' : '') + '</div>'
+            + '<div class="pfid-chint" style="font-size:.78rem;">🌐 <b>Espace fidélité</b> : ' + withPortal + ' client' + (withPortal > 1 ? 's' : '') + ' voi' + (withPortal > 1 ? 'ent' : 't') + ' l’offre en se connectant au site' + (ids.length - withPortal ? ' · ' + (ids.length - withPortal) + ' sans accès en ligne' : '') + ' <button type="button" class="pfid-wa" id="pfid-nsync" style="background:#2563eb;padding:5px 9px;margin-left:6px;">🔄 Mettre à jour</button></div>'
+            + '<label style="display:block;font-size:.64rem;font-weight:900;text-transform:uppercase;color:var(--text-muted,#64748b);margin:10px 0 4px;">Message WhatsApp</label><textarea id="pfid-nmsg" maxlength="700">' + esc(fp.wa || defaultWa(p, fp)) + '</textarea>'
+            + '<div class="pfid-chint">{prenom}, {nom} et {reste} sont remplacés pour chaque client. WhatsApp s’ouvre avec le message prêt : il suffit d’appuyer sur Envoyer.</div>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;"><button type="button" class="pfid-wa" id="pfid-nall">▶️ Prévenir les clients pas encore prévenus (un par un)</button><button type="button" class="pfid-wa" id="pfid-nall2" style="background:#64748b;">Tout le monde à nouveau</button></div>'
+            + '<div id="pfid-step"></div></div>'
+            + '<div class="pfid-nbox"><h4>Clients bénéficiaires</h4>' + ids.map(function (id) {
+                var c = custById(id); if (!c) return '';
+                var u = Math.min(per, usedBy(fp, id)), nt = (fp.notified || {})[String(id)], ph = c.phone && !c.noWhatsapp ? waNum(c.phone) : '';
+                return '<div class="pfid-nrow"><div><b>' + esc(c.name || 'Client') + '</b><small>' + esc(c.phone || 'pas de téléphone') + ' · 🎁 ' + qtyTxt(u, kg) + '/' + qtyTxt(per, kg) + ' utilisés · reste ' + qtyTxt(Math.max(0, per - u), kg) + '</small>'
+                    + '<span class="pfid-tag ' + (nt ? 'wa' : 'no') + '">' + (nt ? '💬 prévenu le ' + new Date(nt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '💬 pas encore prévenu') + '</span>'
+                    + '<span class="pfid-tag ' + (c.portalUid ? 'ok' : 'no') + '">' + (c.portalUid ? '🌐 visible dans son espace' : '🌐 pas d’accès en ligne') + '</span></div>'
+                    + '<button type="button" class="pfid-wa" data-wa="' + esc(id) + '"' + (ph ? '' : ' disabled title="Pas de numéro WhatsApp"') + '>💬 WhatsApp</button></div>';
+            }).join('') + '</div>';
+        box.innerHTML = h;
+        $('pfid-nmsg').addEventListener('change', function () { fp.wa = this.value.trim() || defaultWa(p, fp); persist(); });
+        $('pfid-nmsg').addEventListener('input', function () { fp.wa = this.value; });
+        $('pfid-nsync').onclick = function () {
+            this.disabled = true; this.textContent = '⏳';
+            publishClients(ids, true).then(function (r) { toast(r ? '🌐 Espaces fidélité mis à jour : ' + r.sent + ' client(s)' + (r.noAccess ? ' · ' + r.noAccess + ' sans accès en ligne' : '') + (r.err ? ' · ⚠️ ' + r.err + ' échec(s)' : '') : '⚠️ Mise à jour impossible (hors ligne ?)', r && !r.err ? 'success' : 'warning'); renderNotify(); });
+        };
+        box.onclick = function (e) { var b = e.target.closest('[data-wa]'); if (b && !b.disabled) sendWa(b.getAttribute('data-wa')); };
+        $('pfid-nall').onclick = function () { startQueue(false); };
+        $('pfid-nall2').onclick = function () { startQueue(true); };
+        renderStep();
+    }
+    function sendWa(cid) {
+        var p = byId(NP), fp = p && p.fidPromo, c = custById(cid); if (!fp || !c) return false;
+        var ph = c.phone && !c.noWhatsapp ? waNum(c.phone) : ''; if (!ph) { toast('⚠️ ' + (c.name || 'Client') + ' : pas de numéro WhatsApp', 'warning'); return false; }
+        var t = $('pfid-nmsg'); if (t && t.value.trim()) fp.wa = t.value.trim();
+        window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(waMsg(p, fp, c)), '_blank');
+        if (!fp.notified) fp.notified = {};
+        fp.notified[String(cid)] = new Date().toISOString();
+        persist();
+        return true;
+    }
+    function startQueue(all) {
+        var p = byId(NP), fp = p && p.fidPromo; if (!fp) return;
+        QUEUE = (fp.clients || []).filter(function (id) { var c = custById(id); return c && c.phone && !c.noWhatsapp && (all || !(fp.notified || {})[String(id)]); });
+        QI = 0;
+        if (!QUEUE.length) { toast(all ? 'Aucun client avec un numéro WhatsApp' : '✅ Tous les clients avec un numéro WhatsApp ont déjà été prévenus', 'info'); QUEUE = null; }
+        renderStep();
+    }
+    function renderStep() {
+        var st = $('pfid-step'); if (!st) return;
+        if (!QUEUE) { st.classList.remove('on'); st.innerHTML = ''; return; }
+        st.classList.add('on');
+        if (QI >= QUEUE.length) {
+            st.innerHTML = '<div class="who">✅ Envoi terminé</div><div class="pfid-chint">' + QUEUE.length + ' client' + (QUEUE.length > 1 ? 's' : '') + ' traité' + (QUEUE.length > 1 ? 's' : '') + '.</div><div class="acts"><button type="button" id="pfid-sdone" style="background:#25D366;color:#fff;">Fermer</button></div>';
+            $('pfid-sdone').onclick = function () { QUEUE = null; renderNotify(); };
+            return;
+        }
+        var c = custById(QUEUE[QI]) || {};
+        st.innerHTML = '<div class="pfid-chint">Client ' + (QI + 1) + ' / ' + QUEUE.length + '</div><div class="who">' + esc(c.name || '') + '</div><div class="pfid-chint">' + esc(c.phone || '') + '</div>'
+            + '<div class="acts"><button type="button" id="pfid-sgo" style="background:#25D366;color:#fff;">💬 Ouvrir WhatsApp pour ' + esc(firstName(c) || 'ce client') + '</button><button type="button" id="pfid-sskip" style="background:rgba(100,116,139,.15);color:inherit;">⏭️ Passer</button><button type="button" id="pfid-sstop" style="background:none;color:#b91c1c;">■ Arrêter</button></div>';
+        $('pfid-sgo').onclick = function () { sendWa(QUEUE[QI]); QI++; renderNotify(); };
+        $('pfid-sskip').onclick = function () { QI++; renderStep(); };
+        $('pfid-sstop').onclick = function () { QUEUE = null; renderNotify(); };
+    }
+    window._fpNotify = function (pid) { open(); showNotify(pid); };
+
     function msgList(w) {
         var m = $('pfid-msg'); if (!m) return;
         var col = { bad: '#b91c1c', warn: '#b45309', info: '#0f766e', ok: '#15803d' };
@@ -71058,7 +71342,8 @@ function covoQrPrint(o) {
     function collect() {
         var p = byId(EDIT_PID);
         return { p: p, price: num($('pfid-price').value), qty: num($('pfid-qty').value), sold: num($('pfid-sold').value) || 0, start: $('pfid-start').value || '', end: $('pfid-end').value || '',
-            title: ($('pfid-title').value || '').trim(), text: ($('pfid-text').value || '').trim(), showPrices: $('pfid-show').checked, on: $('pfid-on').checked };
+            title: ($('pfid-title').value || '').trim(), text: ($('pfid-text').value || '').trim(), showPrices: $('pfid-show').checked, on: $('pfid-on').checked,
+            mode: MODE, perClient: num($('pfid-per').value), clients: Object.keys(SEL), wa: ($('pfid-wa').value || '').trim() };
     }
     function annHTML(o, p) {
         var kg = isKg(p), base = refPrice(p), q = o.qty || 0, n = Math.max(0, q - (o.sold || 0)), pc = base > 0 && o.price < base ? Math.round((1 - o.price / base) * 100) : 0;
@@ -71071,8 +71356,21 @@ function covoQrPrint(o) {
     function preview() {
         var o = collect(), box = $('pfid-prev'); if (!box) return;
         if (!o.p) { box.innerHTML = '<div class="pfid-empty" style="padding:24px 12px;"><b>🎁</b>Choisissez l’article en promotion</div>'; msg('', ''); return; }
-        box.innerHTML = annHTML({ price: o.price || 0, qty: o.qty || 0, sold: o.sold, title: o.title, text: o.text, showPrices: o.showPrices, end: o.end }, o.p);
         var base = basePrice(o.p), w = [];
+        if (o.mode === 'client') {
+            box.innerHTML = annCliHTML(o, o.p);
+            if (o.price > 0 && o.price >= base) w.push(['bad', '❌ Le prix fidélité doit être inférieur au prix normal (' + eur(base) + ').']);
+            else if (o.price > 0 && o.p.costPrice != null && o.price < +o.p.costPrice) w.push(['warn', '⚠️ Prix fidélité inférieur au prix d’achat (' + eur(+o.p.costPrice) + ') : vente à perte.']);
+            if (!o.clients.length) w.push(['warn', '👤 Choisissez au moins un client bénéficiaire (boutons Top 5 / Top 10…).']);
+            if (o.start && o.end && o.end < o.start) w.push(['bad', '❌ La date de fin est avant la date de début.']);
+            compare(o.p, o.price).forEach(function (x) { w.push(x); });
+            var refc = refPrice(o.p);
+            if (o.price > 0 && o.perClient > 0 && o.clients.length && refc > o.price) w.push(['ok', '💸 ' + o.clients.length + ' client' + (o.clients.length > 1 ? 's' : '') + ' × ' + qtyTxt(o.perClient, isKg(o.p)) + ' : remise maximale ' + eur((refc - o.price) * o.perClient * o.clients.length) + ' si tous utilisent leur offre']);
+            var noPortal = o.clients.filter(function (id) { var c = custById(id); return c && !c.portalUid; }).length;
+            if (noPortal) w.push(['info', '🌐 ' + noPortal + ' client' + (noPortal > 1 ? 's' : '') + ' sans accès à l’espace fidélité en ligne : prévenez-le' + (noPortal > 1 ? 's' : '') + ' par WhatsApp.']);
+            msgList(w); return;
+        }
+        box.innerHTML = annHTML({ price: o.price || 0, qty: o.qty || 0, sold: o.sold, title: o.title, text: o.text, showPrices: o.showPrices, end: o.end }, o.p);
         if (o.price > 0 && o.price >= base) w.push(['bad', '❌ Le prix fidélité doit être inférieur au prix normal (' + eur(base) + ').']);
         else if (o.price > 0 && o.p.costPrice != null && o.price < +o.p.costPrice) w.push(['warn', '⚠️ Prix fidélité inférieur au prix d’achat (' + eur(+o.p.costPrice) + ') : vente à perte.']);
         if (o.qty > 0 && !isKg(o.p) && o.qty > (+o.p.stock || 0)) w.push(['warn', '⚠️ Quantité en promo (' + qtyTxt(o.qty) + ') supérieure au stock actuel (' + qtyTxt(+o.p.stock || 0) + ').']);
@@ -71088,23 +71386,44 @@ function covoQrPrint(o) {
         var base = basePrice(p);
         if (!(o.price > 0)) { msg('❌ Indiquez le prix fidélité', 'bad'); $('pfid-price').focus(); return; }
         if (o.price >= base) { msg('❌ Le prix fidélité doit être inférieur au prix normal (' + eur(base) + ')', 'bad'); $('pfid-price').focus(); return; }
-        if (!(o.qty > 0)) { msg('❌ Indiquez la quantité en promotion', 'bad'); $('pfid-qty').focus(); return; }
-        if (o.sold < 0 || o.sold > o.qty) { msg('❌ « Déjà vendus » doit être entre 0 et la quantité', 'bad'); return; }
+        if (o.mode === 'client') {
+            if (!(o.perClient > 0)) { msg('❌ Indiquez la quantité par client', 'bad'); $('pfid-per').focus(); return; }
+            if (!o.clients.length) { msg('❌ Choisissez au moins un client bénéficiaire', 'bad'); return; }
+        } else {
+            if (!(o.qty > 0)) { msg('❌ Indiquez la quantité en promotion', 'bad'); $('pfid-qty').focus(); return; }
+            if (o.sold < 0 || o.sold > o.qty) { msg('❌ « Déjà vendus » doit être entre 0 et la quantité', 'bad'); return; }
+        }
         if (o.start && o.end && o.end < o.start) { msg('❌ La date de fin est avant la date de début', 'bad'); return; }
         var spv = storePromo(p);
         if (spv && o.price >= spv.price - 0.004 && !confirm('⚠️ « ' + p.name + ' » est déjà en promotion en magasin à ' + eur(spv.price) + ' (-' + spv.pct + ' %).\n\nLa promo fidélité à ' + eur(o.price) + ' n’est pas plus avantageuse : en caisse, le prix magasin restera appliqué.\n\nEnregistrer quand même ?')) return;
         if (EDIT != null && String(EDIT) !== String(p.id)) { var old = byId(EDIT); if (old && old.fidPromo) delete old.fidPromo; }
         var prev = p.fidPromo || {};
+        var removedCli = (prev.clients || []).filter(function (id) { return o.mode !== 'client' || o.clients.indexOf(String(id)) < 0; });
+        if (o.mode === 'client') { o.qty = o.perClient * o.clients.length; o.sold = +prev.sold || 0; }
         p.fidPromo = {
             id: prev.id || ('FP' + Date.now().toString(36)), price: Math.round(o.price * 100) / 100, qty: o.qty, sold: o.sold,
             start: o.start, end: o.end, title: o.title || defaultTitle(p, o), text: o.text || defaultText(p, o),
             showPrices: o.showPrices, on: o.on, createdAt: prev.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
             log: Array.isArray(prev.log) ? prev.log : []
         };
+        if (o.mode === 'client') {
+            var fpn = p.fidPromo;
+            fpn.mode = 'client'; fpn.perClient = o.perClient; fpn.clients = o.clients.slice(); fpn.showPrices = true;
+            fpn.used = prev.used || {}; fpn.notified = prev.notified || {}; fpn.wa = o.wa || defaultWa(p, fpn);
+            if (o.title === '' || /^Exclusivité fidélité : /.test(fpn.title)) fpn.title = defaultTitle(p, fpn);
+            if (o.text === '') fpn.text = defaultText(p, fpn);
+        }
         if (remaining(p.fidPromo) > 0) delete p.fidPromo.outAt;
         persist(); markOut();
         schedulePublish(600);
         refreshAll();
+        if (isCli(p.fidPromo)) {
+            publishClients(p.fidPromo.clients.concat(removedCli), true);
+            toast('👤 Offre personnelle enregistrée : ' + p.name + ' à ' + eur(p.fidPromo.price) + ' pour ' + p.fidPromo.clients.length + ' client(s) — prévenez-les maintenant');
+            showNotify(p.id);
+            return;
+        }
+        if (removedCli.length) publishClients(removedCli, true);
         toast('🎁 Promo fidélité enregistrée : ' + p.name + ' à ' + eur(p.fidPromo.price) + ' (' + qtyTxt(remaining(p.fidPromo), isKg(p)) + ' disponibles)');
         showList();
     }
@@ -71114,7 +71433,7 @@ function covoQrPrint(o) {
         s.textContent = pubBusy ? '⏳ Publication sur le site…' : pubErr ? '⚠️ Site non mis à jour : ' + (/403|PERMISSION/.test(pubErr) ? 'règle Firestore « site » manquante' : pubErr) : at ? '🌐 Site à jour · ' + new Date(at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '🌐 Pas encore publié sur le site';
     }
     function refreshAll() {
-        try { if ($('pfid-modal') && $('pfid-modal').classList.contains('open') && !$('pfid-form').classList.contains('on')) showList(); } catch (e) {}
+        try { if ($('pfid-modal') && $('pfid-modal').classList.contains('open') && !$('pfid-form').classList.contains('on')) { if ($('pfid-notify').classList.contains('on')) { if (!QUEUE) renderNotify(); } else showList(); } } catch (e) {}
         try { decorateTiles(); } catch (e) {}
         try { var C = cartArr(); if (C && C.length && typeof window.updateCartUI === 'function') window.updateCartUI(); } catch (e) {}
     }
@@ -71146,8 +71465,8 @@ function covoQrPrint(o) {
         (function waitCaisse() { if (!hookCaisse() && ++tries < 120) setTimeout(waitCaisse, 500); })();
         var obsT = null;
         new MutationObserver(function () { clearTimeout(obsT); obsT = setTimeout(function () { addButton(); decorateTiles(); }, 120); }).observe(document.body, { childList: true, subtree: true });
-        setTimeout(function () { markOut(); publish(false); }, 15000);
-        setInterval(function () { markOut(); publish(false); }, 5 * 60 * 1000);   // changement de jour (début / fin) et rattrapage hors ligne
+        setTimeout(function () { markOut(); publish(false); publishClients(null, false); }, 15000);
+        setInterval(function () { markOut(); publish(false); publishClients(null, false); }, 5 * 60 * 1000);   // changement de jour (début / fin) et rattrapage hors ligne
         window.addEventListener('online', function () { schedulePublish(3000); });
         // ventes faites dans Caisse Pro (même navigateur) → compteur repris et annonce du site mise à jour
         window.addEventListener('storage', function (e) { if (e.key === 'covo_products') setTimeout(function () { markOut(); schedulePublish(2500); refreshAll(); }, 600); });
