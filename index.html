@@ -71655,7 +71655,7 @@ function covoQrPrint(o) {
             var snap2  = inv.stockSnapshot || {};
             var counts2 = inv.counts || {};
             var totalExcess = 0, totalMissing = 0;
-            var valExcess = 0, valMissing = 0;
+            var valExcess = 0, valMissing = 0, totalSaisie = 0;
             var prods2 = (typeof products !== 'undefined') ? products : [];
             Object.keys(counts2).forEach(function(id2) {
                 var p2      = prods2.find(function(x){ return String(x.id) === id2; });
@@ -71663,11 +71663,13 @@ function covoQrPrint(o) {
                 var diff2   = parseFloat(counts2[id2]||0) - parseFloat(ref2||0);
                 var refP    = p2 ? parseFloat(p2.unitType==='kg' ? p2.pricePerKg||0 : p2.price||0) : 0;
                 if (diff2 > 0) { totalExcess  += diff2; valExcess  += diff2 * refP; }
-                if (diff2 < 0) { totalMissing += Math.abs(diff2); valMissing += Math.abs(diff2) * refP; }
+                if (diff2 < 0 && inv.motifs && inv.motifs[id2] === 'saisie') { totalSaisie += Math.abs(diff2); }
+                else if (diff2 < 0) { totalMissing += Math.abs(diff2); valMissing += Math.abs(diff2) * refP; }
             });
             var summaryHtml = '';
-            if (totalMissing > 0 || totalExcess > 0) {
+            if (totalMissing > 0 || totalExcess > 0 || totalSaisie > 0) {
                 var parts3 = [];
+                if (totalSaisie > 0) parts3.push('<span style="color:#2c6fad;font-weight:700;font-size:0.68rem;">✏️ '+parseFloat(totalSaisie).toFixed(1)+' u. erreur de saisie</span>');
                 if (totalMissing > 0) parts3.push('<span style="color:#e74c3c;font-weight:700;font-size:0.68rem;">−'+parseFloat(totalMissing).toFixed(1)+' u.&nbsp;('+(valMissing>0?parseFloat(valMissing).toFixed(2)+'€':'—')+')</span>');
                 if (totalExcess  > 0) parts3.push('<span style="color:#27ae60;font-weight:700;font-size:0.68rem;">+'+parseFloat(totalExcess).toFixed(1)+' u.&nbsp;('+(valExcess>0?'+'+parseFloat(valExcess).toFixed(2)+'€':'—')+')</span>');
                 summaryHtml = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">'+parts3.join('<span style="color:var(--gray,#ccc);">&nbsp;·&nbsp;</span>')+'</div>';
@@ -71935,40 +71937,69 @@ function covoQrPrint(o) {
             var listEl = document.getElementById('invt-confirm-pertes-list');
             var totalEl = document.getElementById('invt-confirm-pertes-total');
             var totalVal = _preEcarts.reduce(function(s,e){ return s + e.lostVal; }, 0);
-            if (listEl) {
-                listEl.innerHTML = _preEcarts.map(function(e) {
-                    return '<div style="background:var(--bg-card-2,#fff5f5);border-radius:10px;'
-                         + 'border:1.5px solid rgba(231,76,60,0.2);padding:10px 14px;">'
-                         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">'
-                         +   '<span style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);">📦 ' + e.name + '</span>'
-                         +   '<span style="background:#fde8e8;color:#c0392b;border-radius:6px;padding:2px 9px;'
-                         +        'font-size:0.72rem;font-weight:800;border:1px solid #fca5a5;">🔴 Perdu</span>'
-                         + '</div>'
-                         + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;">'
-                         +   '<div style="background:rgba(0,0,0,0.04);border-radius:7px;padding:6px 4px;">'
-                         +     '<div style="font-size:0.82rem;font-weight:700;color:var(--text-muted,#888);">' + e.theorique.toFixed(e.unit==='kg'?3:0) + ' ' + e.unit + '</div>'
-                         +     '<div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:2px;">Théorique</div>'
-                         +   '</div>'
-                         +   '<div style="background:rgba(231,76,60,0.07);border-radius:7px;padding:6px 4px;">'
-                         +     '<div style="font-size:0.82rem;font-weight:700;color:#e74c3c;">' + e.compte.toFixed(e.unit==='kg'?3:0) + ' ' + e.unit + '</div>'
-                         +     '<div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:2px;">Compté</div>'
-                         +   '</div>'
-                         +   '<div style="background:rgba(231,76,60,0.07);border-radius:7px;padding:6px 4px;">'
-                         +     '<div style="font-size:0.82rem;font-weight:900;color:#c0392b;">−' + e.lostQty.toFixed(e.unit==='kg'?3:0) + ' ' + e.unit + '</div>'
-                         +     '<div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:2px;">'
-                         +       (e.lostVal > 0 ? '≈ ' + e.lostVal.toFixed(2) + ' €' : 'Manquant') + '</div>'
-                         +   '</div>'
-                         + '</div>'
-                         + '</div>';
-                }).join('');
-            }
-            if (totalEl) totalEl.textContent = totalVal.toFixed(2) + ' €';
+            window._invtPreEcarts = _preEcarts;
+            if (window._invtSession && !window._invtSession.motifs) window._invtSession.motifs = {};
+            window._invtRenderEcarts();
             var modal = document.getElementById('invt-confirm-pertes-modal');
             if (modal) modal.style.display = 'flex';
             return; // ← arrêter ici, attendre confirmation
         }
         // Aucun écart → valider directement
         _invtDoValidate();
+    };
+
+    // ── Écarts : choix « Perte » ou « Erreur de saisie » par article ──
+    window._invtSetMotif = function(id, m) {
+        if (!window._invtSession) return;
+        var M = window._invtSession.motifs || (window._invtSession.motifs = {});
+        if (id === '*') (window._invtPreEcarts || []).forEach(function(e){ M[e.id] = m; });
+        else M[id] = m;
+        window._invtRenderEcarts();
+    };
+    window._invtRenderEcarts = function() {
+        var E = window._invtPreEcarts || [], M = (window._invtSession && window._invtSession.motifs) || {};
+        var modal = document.getElementById('invt-confirm-pertes-modal');
+        if (modal && !modal._mtx) {
+            modal._mtx = 1;
+            Array.prototype.forEach.call(modal.querySelectorAll('div'), function(d){
+                if (!d.children.length || d.children.length > 2) { if (/Déclaration de pertes/.test(d.textContent) && !d.children.length) d.textContent = 'Écarts détectés — Perte ou erreur de saisie ?'; }
+                if (/seront déclarés comme/.test(d.innerHTML) && !d.querySelector('div')) d.innerHTML = 'Le stock compté est inférieur au stock théorique.<br>Pour chaque article, indiquez s’il s’agit d’une <strong style="color:#fff;">perte</strong> ou d’une simple <strong style="color:#fff;">erreur de saisie</strong> (stock corrigé, sans perte).';
+            });
+            Array.prototype.forEach.call(modal.querySelectorAll('button'), function(b){ if (/Déclarer les pertes/.test(b.textContent)) b.id = 'invt-confirm-go'; });
+            Array.prototype.forEach.call(modal.querySelectorAll('span'), function(s){ if (/Valeur totale des pertes/.test(s.textContent)) s.id = 'invt-confirm-total-lbl'; });
+        }
+        var listEl = document.getElementById('invt-confirm-pertes-list');
+        var totalEl = document.getElementById('invt-confirm-pertes-total');
+        var nP = 0, nS = 0, vP = 0;
+        E.forEach(function(e){ if (M[e.id] === 'saisie') nS++; else { nP++; vP += e.lostVal; } });
+        var seg = function(id, m, on, ic, lb, c) {
+            return '<button type="button" onclick="window._invtSetMotif(\'' + id + '\',\'' + m + '\')" style="flex:1;padding:6px 8px;border-radius:8px;cursor:pointer;font-weight:800;font-size:0.74rem;font-family:inherit;'
+                 + (on ? 'background:' + c + ';color:#fff;border:1.5px solid ' + c + ';' : 'background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);border:1.5px solid var(--border-color,#e0e0e0);') + '">' + ic + ' ' + lb + '</button>';
+        };
+        if (listEl) {
+            listEl.innerHTML = (E.length > 1 ? '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:0.72rem;font-weight:700;color:var(--text-muted,#888);">Tout marquer :'
+                    + '<button type="button" onclick="window._invtSetMotif(\'*\',\'perte\')" style="padding:4px 10px;border-radius:20px;border:1.5px solid rgba(231,76,60,0.4);background:none;color:#c0392b;font-weight:800;font-size:0.7rem;cursor:pointer;">🔴 Pertes</button>'
+                    + '<button type="button" onclick="window._invtSetMotif(\'*\',\'saisie\')" style="padding:4px 10px;border-radius:20px;border:1.5px solid rgba(44,111,173,0.4);background:none;color:#2c6fad;font-weight:800;font-size:0.7rem;cursor:pointer;">✏️ Erreurs de saisie</button></div>' : '')
+              + E.map(function(e) {
+                var sai = M[e.id] === 'saisie', dec = e.unit === 'kg' ? 3 : 0;
+                var c = sai ? '#2c6fad' : '#c0392b';
+                return '<div style="background:' + (sai ? 'rgba(44,111,173,0.06)' : 'var(--bg-card-2,#fff5f5)') + ';border-radius:10px;border:1.5px solid ' + (sai ? 'rgba(44,111,173,0.3)' : 'rgba(231,76,60,0.2)') + ';padding:10px 14px;">'
+                     + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;gap:8px;">'
+                     +   '<span style="font-weight:700;font-size:0.88rem;color:var(--text-main,#2c3e50);">📦 ' + e.name + '</span>'
+                     +   '<span style="font-size:0.72rem;font-weight:800;color:' + c + ';white-space:nowrap;">' + (sai ? '✏️ Erreur de saisie' : '🔴 Perte') + '</span>'
+                     + '</div>'
+                     + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;">'
+                     +   '<div style="background:rgba(0,0,0,0.04);border-radius:7px;padding:6px 4px;"><div style="font-size:0.82rem;font-weight:700;color:var(--text-muted,#888);">' + e.theorique.toFixed(dec) + ' ' + e.unit + '</div><div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:2px;">Théorique</div></div>'
+                     +   '<div style="background:rgba(0,0,0,0.04);border-radius:7px;padding:6px 4px;"><div style="font-size:0.82rem;font-weight:700;color:' + c + ';">' + e.compte.toFixed(dec) + ' ' + e.unit + '</div><div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:2px;">Compté</div></div>'
+                     +   '<div style="background:rgba(0,0,0,0.04);border-radius:7px;padding:6px 4px;"><div style="font-size:0.82rem;font-weight:900;color:' + c + ';">−' + e.lostQty.toFixed(dec) + ' ' + e.unit + '</div><div style="font-size:0.6rem;color:var(--text-muted,#aaa);margin-top:2px;">' + (sai ? 'Correction, sans perte' : (e.lostVal > 0 ? '≈ ' + e.lostVal.toFixed(2) + ' €' : 'Manquant')) + '</div></div>'
+                     + '</div>'
+                     + '<div style="display:flex;gap:6px;margin-top:8px;">' + seg(e.id, 'perte', !sai, '🔴', 'Perte', '#c0392b') + seg(e.id, 'saisie', sai, '✏️', 'Erreur de saisie', '#2c6fad') + '</div>'
+                     + '</div>';
+              }).join('');
+        }
+        if (totalEl) totalEl.textContent = vP.toFixed(2) + ' €' + (nS ? '  ·  ✏️ ' + nS + ' erreur' + (nS > 1 ? 's' : '') + ' de saisie' : '');
+        var go = document.getElementById('invt-confirm-go');
+        if (go) go.textContent = nP ? '✅ Déclarer ' + nP + ' perte' + (nP > 1 ? 's' : '') + ' et valider' : '✅ Corriger le stock et valider (aucune perte)';
     };
 
     window.invtConfirmAndValidate = function() {
@@ -71995,6 +72026,10 @@ function covoQrPrint(o) {
         // ── Accumulateurs de pertes ───────────────────────────────────────────
         var _invtPertes     = [];
         var _invtPertesVal  = 0;
+        var _invtSaisies    = [];
+        var _invtMotifs     = (window._invtSession && window._invtSession.motifs) || {};
+        var _invtBefore     = {};
+        var _invtMotifSave  = {};
         Object.keys(counts).forEach(function(id) {
             var p = prods.find(function(x) { return String(x.id) === String(id); });
             if (p) {
@@ -72002,15 +72037,22 @@ function covoQrPrint(o) {
                 var isKg   = p.unitType === 'kg';
                 var before = parseFloat(p.stock || 0);
                 var after  = isKg ? parseFloat(newQty.toFixed(3)) : Math.round(newQty);
+                _invtBefore[id] = before;
+                var _isSaisie = after < before - 0.0001 && _invtMotifs[id] === 'saisie';
                 // Mise à jour stock si pas encore appliquée en temps réel
                 if (Math.abs(before - after) > 0.0001) {
                     p.stock = after;
                     if (typeof window._logStockChange === 'function') {
-                        window._logStockChange(p, before, after, 'inventaire', 'Inventaire validé', {});
+                        window._logStockChange(p, before, after, 'inventaire', _isSaisie ? '✏️ Erreur de saisie — stock corrigé à l\'inventaire (pas de perte)' : 'Inventaire validé', _isSaisie ? { motif: 'saisie', source: 'inventaire', qty: parseFloat((before - after).toFixed(3)) } : {});
                     }
                 }
+                if (_isSaisie) {
+                    _invtSaisies.push({ name: p.name || '—', qty: parseFloat((before - after).toFixed(3)), unit: isKg ? 'kg' : 'u.' });
+                    _invtMotifSave[id] = 'saisie';
+                }
                 // ── Détection automatique des pertes ─────────────────────────────────
-                if (after < before - 0.0001) {
+                else if (after < before - 0.0001) {
+                    _invtMotifSave[id] = 'perte';
                     var lostQty  = parseFloat((before - after).toFixed(3));
                     var unitP    = parseFloat(isKg ? (p.pricePerKg || p.price || 0) : (p.price || 0));
                     var lostVal  = parseFloat((lostQty * unitP).toFixed(2));
@@ -72032,7 +72074,7 @@ function covoQrPrint(o) {
         var stockSnapshot = {};
         Object.keys(counts).forEach(function(id) {
             var p2 = prods.find(function(x){ return String(x.id) === id; });
-            if (p2) stockSnapshot[id] = p2.stock || 0;
+            if (p2) stockSnapshot[id] = _invtBefore.hasOwnProperty(id) ? _invtBefore[id] : (p2.stock || 0);
         });
 
         var inv = {
@@ -72042,7 +72084,10 @@ function covoQrPrint(o) {
             counted:       counted,
             total:         total,
             counts:        counts,
-            stockSnapshot: stockSnapshot
+            stockSnapshot: stockSnapshot,
+            motifs:        _invtMotifSave,
+            pertesVal:     parseFloat(_invtPertesVal.toFixed(2)),
+            saisies:       _invtSaisies.length
         };
         var inventaires = JSON.parse(localStorage.getItem('covo_inventaires') || '[]');
         inventaires.unshift(inv);
@@ -72069,6 +72114,7 @@ function covoQrPrint(o) {
             // Toast d'avertissement
             var _pMsg = '\u26a0\ufe0f ' + _invtPertes.length + ' article' + (_invtPertes.length > 1 ? 's' : '') + ' perdu' + (_invtPertes.length > 1 ? 's' : '');
             _pMsg += ' \u00b7 Valeur : ' + _invtPertesVal.toFixed(2) + ' \u20ac';
+            if (_invtSaisies.length) _pMsg += ' \u00b7 \u270f\ufe0f ' + _invtSaisies.length + ' erreur' + (_invtSaisies.length > 1 ? 's' : '') + ' de saisie';
             if (typeof showScanToast === 'function') showScanToast(_pMsg, 'warning');
             // Carte résumé visible dans l'onglet
             setTimeout(function() {
@@ -72082,7 +72128,8 @@ function covoQrPrint(o) {
                 }
             }, 300);
         } else {
-            if (typeof showScanToast === 'function') showScanToast('\u2705 Inventaire valid\u00e9 ! ' + counted + ' / ' + total + ' articles compt\u00e9s', 'success');
+            var _sumEl0 = document.getElementById('invt-pertes-summary'); if (_sumEl0) _sumEl0.style.display = 'none';
+            if (typeof showScanToast === 'function') showScanToast('\u2705 Inventaire valid\u00e9 ! ' + counted + ' / ' + total + ' articles compt\u00e9s' + (_invtSaisies.length ? ' \u00b7 \u270f\ufe0f ' + _invtSaisies.length + ' erreur' + (_invtSaisies.length > 1 ? 's' : '') + ' de saisie corrig\u00e9e' + (_invtSaisies.length > 1 ? 's' : '') + ' (sans perte)' : ''), 'success');
         }
 
         // Rafraîchir la liste inventaire
@@ -72178,7 +72225,7 @@ function covoQrPrint(o) {
                     border = '1.5px solid rgba(231,76,60,0.55)';
                     bg     = 'rgba(231,76,60,0.06)';
                     diffHtml = '<div style="font-size:0.68rem;font-weight:800;color:#e74c3c;margin-top:2px;">'
-                             + '⚠️ Article perdu : −' + absDiff.toFixed(isKg ? 3 : 0) + unit
+                             + '⚠️ Écart : −' + absDiff.toFixed(isKg ? 3 : 0) + unit
                              + (diffVal > 0 ? ' · ' + diffVal.toFixed(2) + ' €' : '') + '</div>';
                 } else {
                     border = '1.5px solid rgba(39,174,96,0.55)';
@@ -72252,7 +72299,7 @@ function covoQrPrint(o) {
         var titleEl = document.getElementById('invt-pertes-banner-title');
         var subEl   = document.getElementById('invt-pertes-banner-sub');
         var valEl   = document.getElementById('invt-pertes-banner-val');
-        if (titleEl) titleEl.textContent = pertes.length + ' article' + (pertes.length > 1 ? 's' : '') + ' perdu' + (pertes.length > 1 ? 's' : '') + ' détecté' + (pertes.length > 1 ? 's' : '');
+        if (titleEl) titleEl.textContent = pertes.length + ' écart' + (pertes.length > 1 ? 's' : '') + ' négatif' + (pertes.length > 1 ? 's' : '') + ' — perte ou erreur de saisie (à préciser à la validation)';
         if (subEl)   subEl.textContent   = pertes.slice(0, 4).map(function(e){ return e.name + ' (−' + e.qty + ' ' + e.unit + ')'; }).join(' · ') + (pertes.length > 4 ? ' …' : '');
         if (valEl)   valEl.textContent   = totalVal.toFixed(2) + ' €';
     }
@@ -72625,6 +72672,8 @@ function covoQrPrint(o) {
                 var stockRef = snap[id] != null ? snap[id] : (p ? (p.stock || 0) : null);
                 var diff     = stockRef != null ? (counted - stockRef) : null;
                 var diffStr  = diff != null ? (diff >= 0 ? '+' + diff : String(diff)) : '?';
+                var mot      = (inv.motifs || {})[id];
+                var motHtml  = (diff != null && diff < 0 && mot) ? '<div style="font-size:0.66rem;font-weight:800;margin-top:2px;color:' + (mot === 'saisie' ? '#2c6fad' : '#c0392b') + ';">' + (mot === 'saisie' ? '✏️ Erreur de saisie (pas de perte)' : '🔴 Perte déclarée') + '</div>' : '';
                 var diffClr  = diff == null ? '#888' : (diff > 0 ? '#27ae60' : diff < 0 ? '#e74c3c' : '#888');
                 var diffBg   = diff == null ? 'rgba(128,128,128,0.08)' : (diff > 0 ? 'rgba(39,174,96,0.1)' : diff < 0 ? 'rgba(231,76,60,0.1)' : 'rgba(128,128,128,0.08)');
 
@@ -72633,7 +72682,7 @@ function covoQrPrint(o) {
                 var saleP  = (p && (p.price || p.pricePerKg) != null) ? parseFloat(p.unitType==='kg' ? p.pricePerKg||0 : p.price||0) : null;
                 if (saleP !== null && saleP <= 0) saleP = null;
                 var valHtml = '';
-                if (diff != null && diff !== 0 && (costP !== null || saleP !== null)) {
+                if (diff != null && diff !== 0 && mot !== 'saisie' && (costP !== null || saleP !== null)) {
                     var parts = [];
                     if (costP !== null) {
                         var vc = diff * costP;
@@ -72652,7 +72701,7 @@ function covoQrPrint(o) {
                      +   '<div style="flex:1;min-width:0;">'
                      +     '<div style="font-weight:700;font-size:0.84rem;color:var(--text-main,#2c3e50);">' + name + '</div>'
                      +     '<div style="font-size:0.7rem;color:var(--gray,#888);">' + cat + '</div>'
-                     +     valHtml
+                     +     valHtml + motHtml
                      +   '</div>'
                      +   '<div style="text-align:right;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end;gap:2px;">'
                      +     '<div style="font-size:0.88rem;font-weight:900;color:var(--text-main,#2c3e50);">' + counted + unit + '</div>'
@@ -72719,11 +72768,37 @@ function covoQrPrint(o) {
         '.qs-row .ed .ok{background:linear-gradient(135deg,#27ae60,#1e8449);color:#fff;}',
         '.qs-row .ed .pl{background:rgba(39,174,96,.12);color:#1e8449;}',
         '.qs-row.done{border-left-color:#27ae60;background:rgba(39,174,96,.08);}',
+        '#qs-box .mot{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px;font-size:.74rem;font-weight:800;color:var(--text-muted,#64748b);}',
+        '#qs-box .mot .chip.on{background:var(--mc,#1e8449);border-color:var(--mc,#1e8449);color:#fff;}',
+        '#qs-box .mot input{flex:1;min-width:160px;padding:6px 9px;border:1.5px solid var(--border-color,#e2e8f0);border-radius:8px;font-size:.8rem;background:var(--input-bg,#fff);color:var(--text-main,#1f2937);}',
+        '#smot-pop{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:30500;width:min(520px,calc(100vw - 24px));background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:1.5px solid var(--border-color,#e2e8f0);border-radius:16px;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:12px 14px;font-family:inherit;}',
+        '#smot-pop .t{font-size:.84rem;font-weight:900;margin-bottom:2px;}',
+        '#smot-pop .s{font-size:.74rem;font-weight:700;color:var(--text-muted,#64748b);margin-bottom:9px;}',
+        '#smot-pop .b{display:flex;gap:6px;flex-wrap:wrap;}',
+        '#smot-pop .b button{flex:1 1 auto;border:1.5px solid var(--mc);background:none;color:var(--mc);border-radius:9px;padding:7px 9px;font-weight:800;font-size:.76rem;cursor:pointer;font-family:inherit;}',
+        '#smot-pop .b button:hover{background:var(--mc);color:#fff;}',
+        '#smot-pop .x{position:absolute;top:6px;right:8px;border:none;background:none;font-size:1rem;cursor:pointer;color:var(--text-muted,#64748b);}',
+        '#smot-pop .n{display:none;gap:6px;margin-top:8px;}#smot-pop .n input{flex:1;padding:7px 9px;border:1.5px solid var(--border-color,#e2e8f0);border-radius:8px;background:var(--input-bg,#fff);color:var(--text-main,#1f2937);font-size:.82rem;}',
+        '#smot-pop .n button{border:none;border-radius:8px;padding:7px 12px;font-weight:800;background:#1e8449;color:#fff;cursor:pointer;}',
         '.qs-empty{text-align:center;padding:18px;font-size:.84rem;font-weight:700;color:var(--text-muted,#64748b);}',
         '@media (max-width:640px){.qs-row{grid-template-columns:minmax(0,1fr) auto;}.qs-row .ed{grid-column:1/-1;justify-content:flex-start;}}'
     ].join('\n');
 
-    var Q = { f: 'all', q: '', done: {} };
+    var Q = { f: 'all', q: '', done: {}, m: (function () { try { return localStorage.getItem('covo_qs_motif') || 'saisie'; } catch (e) { return 'saisie'; } })(), note: '' };
+
+    /* ── Motifs de modification du stock (partagés : correction rapide + fiches produit) ── */
+    var MOT = { saisie: ['✏️', 'Erreur de saisie', '#2c6fad'], recep: ['📦', 'Réception marchandise', '#1e8449'], perte: ['🔴', 'Perte / casse', '#c0392b'], autre: ['📝', 'Autre', '#7f8c8d'] };
+    window._stockMotifs = MOT;
+    /* Décrit l'entrée d'historique selon le motif (type, libellé, méta) */
+    function motifLog(m, before, after, note, ctx) {
+        var d = MOT[m] || MOT.autre, delta = +(after - before).toFixed(3);
+        var reason = d[0] + ' ' + (m === 'autre' && note ? note : d[1]) + (m !== 'autre' && note ? ' — ' + note : '') + (ctx ? ' · ' + ctx : '');
+        var meta = { motif: m };
+        if (note) meta.note = note;
+        if (m === 'perte' && delta < 0) return { type: 'defect', reason: reason, meta: Object.assign(meta, { qty: Math.abs(delta) }) };
+        return { type: 'manual', reason: reason, meta: meta };
+    }
+    window._stockMotifLog = motifLog;
     function buildPanel() {
         var tab = $('tab-retours'); if (!tab) return false;
         if ($('rt-inventaire')) return true;
@@ -72751,13 +72826,15 @@ function covoQrPrint(o) {
             if (Q.f === 'low' && st <= 0) return false;
             return !q || ((p.name || '') + ' ' + (p.category || '') + ' ' + (p.barcode || '')).toLowerCase().indexOf(q) >= 0;
         }).sort(function (a, b) { return (+a.stock || 0) - (+b.stock || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'fr'); });
-        var keepFocus = document.activeElement && document.activeElement.id === 'qs-q';
-        box.innerHTML = '<div class="qh"><div><h3>⚡ Stocks bas — correction rapide</h3><p>Saisissez le nouveau stock et validez (✓ ou Entrée) : la fiche est mise à jour tout de suite, sans lancer d’inventaire.</p></div>'
+        var keepFocus = document.activeElement && document.activeElement.id === 'qs-q', keepNote = document.activeElement && document.activeElement.id === 'qs-note';
+        box.innerHTML = '<div class="qh"><div><h3>⚡ Stocks bas — correction rapide</h3><p>Choisissez le motif, saisissez le nouveau stock et validez (✓ ou Entrée) : la fiche est mise à jour tout de suite, sans lancer d’inventaire. Une erreur de saisie n’est jamais comptée comme perte.</p></div>'
             + '<label class="th">Seuil stock bas <input id="qs-th" type="number" min="0" step="1" value="' + th + '"></label></div>'
             + '<div class="bar"><input id="qs-q" type="search" placeholder="🔍 Rechercher un article (nom, rayon, code-barres)…" value="' + esc(Q.q) + '" autocomplete="off">'
             + '<button type="button" class="chip' + (Q.f === 'all' ? ' on' : '') + '" data-qf="all">Tous ' + all.length + '</button>'
             + '<button type="button" class="chip' + (Q.f === 'out' ? ' on' : '') + '" data-qf="out">⛔ Ruptures ' + outN + '</button>'
             + '<button type="button" class="chip' + (Q.f === 'low' ? ' on' : '') + '" data-qf="low">⚠️ Stock bas ' + (all.length - outN) + '</button></div>'
+            + '<div class="mot">Motif de la modification :' + Object.keys(MOT).map(function (k) { return '<button type="button" class="chip' + (Q.m === k ? ' on' : '') + '" style="--mc:' + MOT[k][2] + '" data-qm="' + k + '">' + MOT[k][0] + ' ' + MOT[k][1] + '</button>'; }).join('')
+            + '<input id="qs-note" type="text" maxlength="120" placeholder="' + (Q.m === 'autre' ? 'Précisez le motif (obligatoire)…' : 'Note (facultatif)…') + '" value="' + esc(Q.note) + '" autocomplete="off"></div>'
             + '<div id="qs-list">' + (L.length ? L.map(function (p) {
                 var st = +p.stock || 0, kg = isKg(p), c = st <= 0 ? '#e74c3c' : '#f39c12', id = esc(p.id);
                 return '<div class="qs-row" style="--c:' + c + '" data-row="' + id + '"><div style="min-width:0;"><b>' + esc(p.name || 'Article') + '</b><small>' + esc(p.category || '—') + (p.barcode ? ' · ' + esc(p.barcode) : '') + '</small></div>'
@@ -72765,11 +72842,12 @@ function covoQrPrint(o) {
                     + '<div class="ed"><button type="button" class="pl" data-add="6" data-pid="' + id + '">+6</button><button type="button" class="pl" data-add="12" data-pid="' + id + '">+12</button><button type="button" class="pl" data-add="24" data-pid="' + id + '">+24</button>'
                     + '<input type="text" inputmode="decimal" autocomplete="off" data-pid="' + id + '" placeholder="' + (kg ? 'kg' : 'qté') + '" aria-label="Nouveau stock de ' + esc(p.name || '') + '"><button type="button" class="ok" data-save="' + id + '" title="Enregistrer le nouveau stock">✓</button></div></div>';
             }).join('') : '<div class="qs-empty">' + (all.length ? 'Aucun article ne correspond.' : '✅ Aucun article en rupture ou sous le seuil de ' + th + '.') + '</div>') + '</div>';
-        if (keepFocus) { var i = $('qs-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+        if (keepFocus || keepNote) { var i = $(keepFocus ? 'qs-q' : 'qs-note'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
     }
     function onQClick(e) {
         var b = e.target.closest('button'); if (!b) return;
         if (b.hasAttribute('data-qf')) { Q.f = b.getAttribute('data-qf'); renderQuick(); return; }
+        if (b.hasAttribute('data-qm')) { if (Q.m !== b.getAttribute('data-qm')) Q.note = ''; Q.m = b.getAttribute('data-qm'); try { localStorage.setItem('covo_qs_motif', Q.m); } catch (er) {} renderQuick(); if (Q.m === 'autre') { var n = $('qs-note'); if (n) n.focus(); } return; }
         if (b.hasAttribute('data-add')) {
             var pid = b.getAttribute('data-pid'), inp = document.querySelector('#qs-list input[data-pid="' + cssEsc(pid) + '"]'), p = byId(pid); if (!inp || !p) return;
             var base = isNaN(num(inp.value)) ? Math.max(0, +p.stock || 0) : num(inp.value);
@@ -72780,6 +72858,7 @@ function covoQrPrint(o) {
     var qT = null;
     function onQInput(e) {
         if (e.target.id === 'qs-q') { Q.q = e.target.value; clearTimeout(qT); qT = setTimeout(renderQuick, 160); }
+        else if (e.target.id === 'qs-note') { Q.note = e.target.value; }
         else if (e.target.id === 'qs-th') {
             var v = num(e.target.value); if (!(v >= 0)) return;
             clearTimeout(qT); qT = setTimeout(function () {
@@ -72796,14 +72875,19 @@ function covoQrPrint(o) {
         if (isNaN(v) || v < 0) { toast('⚠️ Indiquez le nouveau stock (nombre ≥ 0)', 'warning'); inp.focus(); return; }
         var before = +p.stock || 0, after = kg ? +v.toFixed(3) : Math.round(v);
         if (Math.abs(after - before) < 0.0005) { toast('Stock inchangé pour « ' + p.name + ' »', 'info'); return; }
+        var note = String(Q.note || '').trim();
+        if (Q.m === 'autre' && !note) { toast('📝 Précisez le motif « Autre » dans le champ note', 'warning'); var ni = $('qs-note'); if (ni) ni.focus(); return; }
+        if (Q.m === 'perte' && after > before) { toast('🔴 Une perte ne peut pas augmenter le stock — choisissez un autre motif', 'warning'); return; }
+        var L = motifLog(Q.m, before, after, note, 'correction rapide');
         p.stock = after;
         try {
-            if (typeof window._logStockChange === 'function') window._logStockChange(p, before, after, 'manual', 'Correction rapide du stock (stocks bas)', { source: 'stock_bas', user: (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.username || currentUser.name || '') : '' });
-            else { if (!Array.isArray(p.stockHistory)) p.stockHistory = []; p.stockHistory.push({ date: new Date().toISOString(), type: 'manual', before: before, after: after, delta: +(after - before).toFixed(3), reason: 'Correction rapide du stock (stocks bas)' }); }
+            var meta = Object.assign({ source: 'stock_bas', user: (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.username || currentUser.name || '') : '' }, L.meta);
+            if (typeof window._logStockChange === 'function') window._logStockChange(p, before, after, L.type, L.reason, meta);
+            else { if (!Array.isArray(p.stockHistory)) p.stockHistory = []; p.stockHistory.push({ date: new Date().toISOString(), type: L.type, before: before, after: after, delta: +(after - before).toFixed(3), reason: L.reason, meta: meta }); }
         } catch (e) {}
         if (typeof saveAll === 'function') saveAll();
         try { if (typeof window.renderProducts === 'function') window.renderProducts(); } catch (e) {}
-        toast('✅ ' + p.name + ' : stock ' + fmtQ(before, kg) + ' → ' + fmtQ(after, kg));
+        toast('✅ ' + p.name + ' : stock ' + fmtQ(before, kg) + ' → ' + fmtQ(after, kg) + ' · ' + MOT[Q.m][0] + ' ' + MOT[Q.m][1]);
         var row = document.querySelector('#qs-list [data-row="' + cssEsc(pid) + '"]');
         if (row) { row.classList.add('done'); var c = row.querySelector('.cur'); if (c) c.innerHTML = '<small>Stock</small>' + fmtQ(after, kg) + ' ✓'; }
         setTimeout(function () { renderQuick(); try { if (typeof window.invtInit === 'function') window.invtInit(); } catch (e) {} try { if (typeof window._gxRender === 'function') window._gxRender(); } catch (e) {} }, 1300);
@@ -72832,8 +72916,69 @@ function covoQrPrint(o) {
         };
         return true;
     }
+    /* ── Autres modifications du stock (fiche produit, catalogue, formulaire) : demander le motif ── */
+    var ASK = /^(Modification catalogue|Modification fiche produit|Modification formulaire)$/, popQ = [], popT = null;
+    function persistHist(p) {
+        try { if (typeof saveAll === 'function') { saveAll(); return; } } catch (e) {}
+        try { var all = JSON.parse(localStorage.getItem('covo_products') || '[]'); var i = all.findIndex(function (x) { return String(x.id) === String(p.id); }); if (i >= 0) { all[i].stockHistory = p.stockHistory; localStorage.setItem('covo_products', JSON.stringify(all)); } } catch (e) {}
+    }
+    function applyMotif(it, m, note) {
+        var p = it.p, e = it.e;
+        if (!Array.isArray(p.stockHistory)) return;
+        if (p.stockHistory.indexOf(e) < 0) e = p.stockHistory.filter(function (x) { return x.date === it.e.date && x.before === it.e.before && x.after === it.e.after; })[0];
+        if (!e) return;
+        var L = motifLog(m, e.before, e.after, note, e.reason);
+        e.type = L.type; e.reason = L.reason; e.meta = Object.assign({}, e.meta || {}, L.meta);
+        persistHist(p);
+        toast(MOT[m][0] + ' ' + (p.name || 'Article') + ' : motif « ' + (m === 'autre' && note ? note : MOT[m][1]) + ' » enregistré');
+    }
+    function showPop() {
+        clearTimeout(popT);
+        var box = $('smot-pop'); if (box) box.remove();
+        var it = popQ[0]; if (!it) return;
+        if (!$('qs-css')) { var st = document.createElement('style'); st.id = 'qs-css'; st.textContent = CSS; document.head.appendChild(st); }
+        var kg = isKg(it.p), down = it.e.after < it.e.before;
+        box = document.createElement('div'); box.id = 'smot-pop'; box.setAttribute('role', 'dialog');
+        box.innerHTML = '<button type="button" class="x" data-k="skip" title="Ignorer">✕</button>'
+            + '<div class="t">Stock modifié : ' + esc(it.p.name || 'Article') + ' — ' + fmtQ(it.e.before || 0, kg) + ' → ' + fmtQ(it.e.after || 0, kg) + '</div>'
+            + '<div class="s">Quel est le motif ? ' + (down ? '(une erreur de saisie n’est pas comptée comme perte)' : '') + (popQ.length > 1 ? ' · ' + (popQ.length - 1) + ' autre(s) en attente' : '') + '</div>'
+            + '<div class="b">' + Object.keys(MOT).filter(function (k) { return k !== 'perte' || down; }).map(function (k) { return '<button type="button" style="--mc:' + MOT[k][2] + '" data-k="' + k + '">' + MOT[k][0] + ' ' + MOT[k][1] + '</button>'; }).join('') + '</div>'
+            + '<div class="n"><input type="text" maxlength="120" placeholder="Précisez le motif…"><button type="button" data-k="note">OK</button></div>';
+        document.body.appendChild(box);
+        box.addEventListener('click', function (ev) {
+            var b = ev.target.closest('button'); if (!b) return;
+            var k = b.getAttribute('data-k');
+            if (k === 'autre') { box.querySelector('.n').style.display = 'flex'; box.querySelector('.n input').focus(); clearTimeout(popT); return; }
+            if (k === 'note') { var v = box.querySelector('.n input').value.trim(); if (!v) { box.querySelector('.n input').focus(); return; } applyMotif(it, 'autre', v); }
+            else if (k !== 'skip') applyMotif(it, k, '');
+            popQ.shift(); showPop();
+        });
+        box.querySelector('.n input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); box.querySelector('[data-k="note"]').click(); } });
+        popT = setTimeout(function () { if (popQ[0] === it) { popQ.shift(); showPop(); } }, 30000);
+    }
+    function hookLog() {
+        var o = window._logStockChange; if (typeof o !== 'function') return false;
+        if (o._mot) return true;
+        var w = function (p, before, after, type, reason, meta) {
+            var r = o.apply(this, arguments);
+            try {
+                if (type === 'manual' && ASK.test(String(reason || '')) && !(meta && meta.motif) && p && Array.isArray(p.stockHistory) && p.stockHistory.length) {
+                    var e = p.stockHistory[p.stockHistory.length - 1];
+                    if (e && e.before != null && e.after != null && Math.abs(e.after - e.before) > 0.0001) {
+                        popQ = popQ.filter(function (x) { return x.p !== p; }); popQ.push({ p: p, e: e });
+                        setTimeout(function () { if (!$('smot-pop')) showPop(); else showPop(); }, 350);
+                    }
+                }
+            } catch (er) {}
+            return r;
+        };
+        w._mot = 1; window._logStockChange = w; return true;
+    }
+    window._stockMotifAsk = function (p, e) { popQ.push({ p: p, e: e }); showPop(); };
+
     function boot() {
         if (!hookSwitch()) { setTimeout(boot, 400); return; }
+        (function hl() { if (!hookLog()) setTimeout(hl, 500); })();
         window.addEventListener('storage', function (e) {
             if (e.key !== 'covo_products' && e.key !== 'covo_inventaires') return;
             var p = $('rt-inventaire'); if (p && p.classList.contains('active')) setTimeout(function () { renderQuick(); try { window.invtInit && window.invtInit(); } catch (er) {} }, 400);
