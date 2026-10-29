@@ -71118,10 +71118,11 @@ function covoQrPrint(o) {
                 + '<div class="pr"><b>' + eur(fp.price) + (kg ? '/kg' : '') + '</b><s>' + eur(refPrice(p)) + '</s> · ' + esc(fp.title || defaultTitle(p, fp)) + '</div>'
                 + (function () { var sp = storePromo(p); if (!sp) return ''; var better = sp.price <= fp.price + 0.004;
                     return '<div class="mt" style="color:' + (better ? '#b45309' : '#0f766e') + ';">🏷️ Aussi en promo magasin : -' + sp.pct + ' % → ' + eur(sp.price) + (kg ? '/kg' : '') + (better ? ' · ⚠️ plus avantageuse que la promo fidélité' : ' · la promo fidélité reste plus avantageuse (−' + eur(sp.price - fp.price) + ')') + '</div>'; })()
-                + (isCli(fp) ? cliSummary(p, fp) : '<div class="bar"><i style="width:' + pc + '%"></i></div>'
-                + '<div class="mt">' + qtyTxt(sd, kg) + ' vendu' + (sd > 1 ? 's' : '') + ' sur ' + qtyTxt(q, kg) + ' · <b>reste ' + qtyTxt(remaining(fp), kg) + '</b>')
-                + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '')
-                + (fp.log && fp.log[0] ? ' · dernière vente ' + new Date(fp.log[0].at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + (fp.log[0].client ? ' (' + esc(fp.log[0].client) + ')' : '') : '') + '</div></div>'
+                + (isCli(fp) ? cliSummary(p, fp) + '</div>'
+                    : '<div class="bar"><i style="width:' + pc + '%"></i></div>'
+                    + '<div class="mt">' + qtyTxt(sd, kg) + ' vendu' + (sd > 1 ? 's' : '') + ' sur ' + qtyTxt(q, kg) + ' · <b>reste ' + qtyTxt(remaining(fp), kg) + '</b>'
+                    + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '')
+                    + (fp.log && fp.log[0] ? ' · dernière vente ' + new Date(fp.log[0].at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + (fp.log[0].client ? ' (' + esc(fp.log[0].client) + ')' : '') : '') + '</div></div>')
                 + '<div class="ac"><button type="button" data-a="edit">✏️ Modifier</button>' + (isCli(fp) ? '<button type="button" data-a="notify" style="color:#128C7E;border-color:rgba(37,211,102,.5);">💬 Prévenir</button>' : '')
                 + (s === 'pause' ? '<button type="button" data-a="on">▶️ Reprendre</button>' : (s === 'on' || s === 'soon' ? '<button type="button" data-a="off">⏸️ Pause</button>' : ''))
                 + (s === 'out' || s === 'end' ? '<button type="button" data-a="again">🔁 Relancer</button>' : '')
@@ -71130,7 +71131,8 @@ function covoQrPrint(o) {
         $('pfid-list').innerHTML = h;
         $('pfid-list').onclick = function (e) {
             var b = e.target.closest('[data-a]'); if (!b) return;
-            var id = b.closest('[data-id]').getAttribute('data-id'), p = byId(id); if (!p || !p.fidPromo) return;
+            var host = b.closest('[data-id]'); if (!host) return;
+            var id = host.getAttribute('data-id'), p = byId(id); if (!p || !p.fidPromo) return;
             var a = b.getAttribute('data-a');
             if (a === 'edit') openForm(id);
             else if (a === 'notify') showNotify(id);
@@ -71155,10 +71157,12 @@ function covoQrPrint(o) {
         $('pfid-sold').value = String(+fp.sold || 0).replace('.', ',');
         $('pfid-start').value = fp.start || ''; $('pfid-end').value = fp.end || '';
         $('pfid-title').value = fp.title || ''; $('pfid-text').value = fp.text || '';
-        $('pfid-title')._touched = !!fp.title; $('pfid-text')._touched = !!fp.text;
+        // texte resté « automatique » → il suit les changements de prix / quantité ; texte personnalisé → conservé
+        $('pfid-title')._touched = !!fp.title && !(p && fp.title === defaultTitle(p, fp));
+        $('pfid-text')._touched = !!fp.text && !(p && fp.text === defaultText(p, fp));
         $('pfid-show').checked = fp.showPrices !== false; $('pfid-on').checked = fp.on !== false;
         $('pfid-per').value = fp.perClient != null ? String(fp.perClient).replace('.', ',') : '24';
-        $('pfid-wa').value = fp.wa || ''; $('pfid-wa')._touched = !!fp.wa; $('pfid-cq').value = '';
+        $('pfid-wa').value = fp.wa || ''; $('pfid-wa')._touched = !!fp.wa && !(p && isCli(fp) && fp.wa === defaultWa(p, fp)); $('pfid-cq').value = '';
         SEL = {}; (fp.clients || []).forEach(function (cid) { SEL[String(cid)] = 1; });
         setMode(isCli(fp) ? 'client' : 'stock');
         $('pfid-q').value = ''; $('pfid-res').style.display = 'none';
@@ -71244,7 +71248,8 @@ function covoQrPrint(o) {
         return '<div class="bar"><i style="width:' + pc + '%"></i></div>'
             + '<div class="mt">👤 Offre personnelle · <b>' + qtyTxt(per, kg) + ' par client</b> · ' + ids.length + ' client' + (ids.length > 1 ? 's' : '') + ' · ' + qtyTxt(usedT, kg) + ' utilisé' + (usedT > 1 ? 's' : '') + ' sur ' + qtyTxt(tot, kg)
             + (done ? ' · ' + done + ' quota' + (done > 1 ? 's' : '') + ' atteint' + (done > 1 ? 's' : '') : '') + ' · 💬 ' + notif + '/' + ids.length + ' prévenu' + (notif > 1 ? 's' : '')
-            + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '') + '</div>'
+            + (fp.start || fp.end ? ' · ' + (fp.start ? 'du ' + dFr(fp.start) + ' ' : '') + (fp.end ? 'au ' + dFr(fp.end) : '') : '')
+            + (fp.log && fp.log[0] ? ' · dernière vente ' + new Date(fp.log[0].at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + (fp.log[0].client ? ' (' + esc(fp.log[0].client) + ')' : '') : '') + '</div>'
             + '<div class="pfid-cchips">' + ids.slice(0, 12).map(function (id) { var c = custById(id), u = Math.min(per, usedBy(fp, id)); return '<span class="' + (u >= per ? 'done' : '') + '">' + esc(c ? firstName(c) || c.name : 'Client') + ' ' + qtyTxt(u, kg) + '/' + qtyTxt(per, kg) + '</span>'; }).join('') + (ids.length > 12 ? '<span>+' + (ids.length - 12) + '</span>' : '') + '</div>';
     }
 
