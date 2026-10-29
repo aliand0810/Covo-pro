@@ -70820,6 +70820,7 @@ function covoQrPrint(o) {
             if (C0) C0.forEach(function (it) { if (it._fid && it._fid.n > 0) snap.push({ id: it.id, n: it._fid.n, promo: it._fid.promo, base: it._fid.base }); });
             var cu = window._ltyCu;
             var r = dv.apply(this, arguments);
+            if (cartArr() !== C0) setTimeout(autoClear, 400);
             if (snap.length && cartArr() !== C0) {                     // vente enregistrée (panier vidé)
                 var msg = [], touched = [];
                 snap.forEach(function (s) {
@@ -70845,6 +70846,47 @@ function covoQrPrint(o) {
         setInterval(watchCustomer, 700);
         return true;
     }
+
+    /* ═════════════ RUPTURE DE STOCK → FICHE REMISE À L'ÉTAT NORMAL ═════════════
+       Quand un article en promotion passe en rupture (vente, inventaire, Caisse Pro…), sa promo
+       magasin (« Promo % ») est retirée et sa promo fidélité mise en pause : au prochain
+       approvisionnement, l'article revient au prix normal. Tracé dans l'historique de la fiche. */
+    var KEY_SP = 'covo_promo_stock_prev';
+    function autoClear() {
+        var prev = null; try { prev = JSON.parse(localStorage.getItem(KEY_SP) || 'null'); } catch (e) {}
+        var first = !prev || typeof prev !== 'object'; prev = prev || {};
+        var cur = {}, cleared = [], now = new Date().toISOString();
+        prods().forEach(function (p) {
+            if (!p || p.id == null) return;
+            var st = +p.stock || 0, id = String(p.id), was = prev[id];
+            cur[id] = st;
+            if (st > 0) return;
+            if (!(first || (was !== undefined && was > 0))) return;          // seulement au PASSAGE en rupture
+            var what = [];
+            if (+p.promo > 0) {
+                var old = +p.promo, b = basePrice(p), np = typeof window._promoPrice === 'function' ? window._promoPrice(b, old, p.costPrice) : b;
+                p.promo = 0; what.push('promo magasin');
+                if (!Array.isArray(p.stockHistory)) p.stockHistory = [];
+                p.stockHistory.push({ date: now, type: 'info', before: null, after: null, delta: 0, reason: 'Promotion retirée automatiquement (rupture de stock) : ' + (b > 0 && np < b ? '-' + Math.max(1, Math.round((1 - np / b) * 100)) + ' % (' + np.toFixed(2) + ' €)' : old + ' %') + ' → prix normal ' + b.toFixed(2) + ' €', user: 'COVO Pro', meta: { source: 'promo_rupture', field: 'promo', old: old, new: 0 } });
+            }
+            var fp = p.fidPromo;
+            if (fp && fp.on !== false && state(fp) !== 'end') {
+                fp.on = false; fp.pausedReason = 'rupture'; fp.pausedAt = now; what.push('promo fidélité (en pause)');
+                if (!Array.isArray(p.stockHistory)) p.stockHistory = [];
+                p.stockHistory.push({ date: now, type: 'info', before: null, after: null, delta: 0, reason: 'Promo fidélité mise en pause (rupture de stock)', user: 'COVO Pro', meta: { source: 'promo_rupture', field: 'fidPromo' } });
+            }
+            if (what.length) cleared.push(p.name + ' (' + what.join(' + ') + ')');
+        });
+        try { localStorage.setItem(KEY_SP, JSON.stringify(cur)); } catch (e) {}
+        if (cleared.length) {
+            persist(); schedulePublish(1500);
+            try { if (typeof window.renderProducts === 'function') window.renderProducts(); } catch (e) {}
+            refreshAll();
+            toast('📦 Rupture de stock : promotion retirée — ' + cleared.slice(0, 4).join(' · ') + (cleared.length > 4 ? ' · +' + (cleared.length - 4) : '') + '. L’article reviendra au prix normal au prochain approvisionnement.', 'info');
+        }
+        return cleared;
+    }
+    window._promoAutoClear = autoClear;
 
     /* ═════════════ PUBLICATION SUR LE SITE (Firestore site/promos) ═════════════ */
     var KEY_H = 'covo_fidpromo_pub_hash', KEY_AT = 'covo_fidpromo_pub_at', pubT = null, pubErr = '', pubBusy = false;
@@ -71114,7 +71156,7 @@ function covoQrPrint(o) {
         L.forEach(function (p) {
             var fp = p.fidPromo, s = state(fp), S = ST[s], kg = isKg(p), q = +fp.qty || 0, sd = Math.min(q, +fp.sold || 0), pc = q ? Math.round(sd / q * 100) : 0;
             h += '<div class="pfid-card" data-id="' + esc(p.id) + '"><div class="im">' + imgOf(p) + '</div><div style="min-width:0;">'
-                + '<div class="nm">' + esc(p.name) + '<span class="chip" style="background:' + S[2] + '1a;color:' + S[2] + ';">' + S[0] + ' ' + S[1] + '</span></div>'
+                + '<div class="nm">' + esc(p.name) + '<span class="chip" style="background:' + S[2] + '1a;color:' + S[2] + ';">' + S[0] + ' ' + S[1] + (s === 'pause' && fp.pausedReason === 'rupture' ? ' · rupture de stock' : '') + '</span></div>'
                 + '<div class="pr"><b>' + eur(fp.price) + (kg ? '/kg' : '') + '</b><s>' + eur(refPrice(p)) + '</s> · ' + esc(fp.title || defaultTitle(p, fp)) + '</div>'
                 + (function () { var sp = storePromo(p); if (!sp) return ''; var better = sp.price <= fp.price + 0.004;
                     return '<div class="mt" style="color:' + (better ? '#b45309' : '#0f766e') + ';">🏷️ Aussi en promo magasin : -' + sp.pct + ' % → ' + eur(sp.price) + (kg ? '/kg' : '') + (better ? ' · ⚠️ plus avantageuse que la promo fidélité' : ' · la promo fidélité reste plus avantageuse (−' + eur(sp.price - fp.price) + ')') + '</div>'; })()
@@ -71142,7 +71184,7 @@ function covoQrPrint(o) {
                 delete p.fidPromo.outAt; persist(); schedulePublish(800); publishClients(p.fidPromo.clients, true); showList(); refreshAll(); toast('🔁 Offre personnelle relancée : pensez à prévenir les clients');
             }
             else if (a === 'again') { openForm(id); $('pfid-sold').value = '0'; $('pfid-on').checked = true; if (p.fidPromo.end && p.fidPromo.end < today()) $('pfid-end').value = ''; preview(); msg('Relance : compteur remis à zéro — ajustez la quantité puis enregistrez', 'ok'); }
-            else if (a === 'off' || a === 'on') { p.fidPromo.on = a === 'on'; persist(); schedulePublish(800); showList(); refreshAll(); toast(a === 'on' ? '▶️ Promo fidélité reprise' : '⏸️ Promo fidélité en pause'); }
+            else if (a === 'off' || a === 'on') { if (a === 'on' && (+p.stock || 0) <= 0 && !confirm('« ' + p.name + ' » est en rupture de stock. Reprendre quand même la promo fidélité ?')) return; p.fidPromo.on = a === 'on'; if (a === 'on') { delete p.fidPromo.pausedReason; delete p.fidPromo.pausedAt; } persist(); schedulePublish(800); showList(); refreshAll(); toast(a === 'on' ? '▶️ Promo fidélité reprise' : '⏸️ Promo fidélité en pause'); }
             else if (a === 'del') { if (!confirm('Supprimer la promotion fidélité de « ' + p.name + ' » ? L’annonce sera retirée du site.')) return; var exCli = isCli(p.fidPromo) ? (p.fidPromo.clients || []).slice() : []; delete p.fidPromo; persist(); schedulePublish(800); if (exCli.length) publishClients(exCli, true); showList(); refreshAll(); toast('🗑️ Promotion fidélité supprimée'); }
         };
         uiStatus();
@@ -71171,7 +71213,7 @@ function covoQrPrint(o) {
     }
     function search() {
         var q = String($('pfid-q').value || '').toLowerCase().trim(), box = $('pfid-res');
-        var L = prods().filter(function (p) { return p && p.name && p.active !== false && (!q || (p.name + ' ' + (p.barcode || '') + ' ' + (p.category || '')).toLowerCase().indexOf(q) >= 0); })
+        var L = prods().filter(function (p) { return p && p.name && p.active !== false && ((+p.stock || 0) > 0 || String(p.id) === String(EDIT)) && (!q || (p.name + ' ' + (p.barcode || '') + ' ' + (p.category || '')).toLowerCase().indexOf(q) >= 0); })
             .sort(function (a, b) { return String(a.name).localeCompare(String(b.name), 'fr'); }).slice(0, 60);
         box.innerHTML = L.length ? L.map(function (p) { return '<button type="button" data-id="' + esc(p.id) + '">' + (p.fidPromo ? '🎁 ' : '') + esc(p.name) + '<span>' + eur(basePrice(p)) + (isKg(p) ? '/kg' : '') + ' · stock ' + qtyTxt(+p.stock || 0, isKg(p)) + '</span></button>'; }).join('') : '<div style="padding:10px;font-size:.8rem;color:#64748b;">Aucun produit</div>';
         box.style.display = 'block';
@@ -71474,7 +71516,9 @@ function covoQrPrint(o) {
         setInterval(function () { markOut(); publish(false); publishClients(null, false); }, 5 * 60 * 1000);   // changement de jour (début / fin) et rattrapage hors ligne
         window.addEventListener('online', function () { schedulePublish(3000); });
         // ventes faites dans Caisse Pro (même navigateur) → compteur repris et annonce du site mise à jour
-        window.addEventListener('storage', function (e) { if (e.key === 'covo_products') setTimeout(function () { markOut(); schedulePublish(2500); refreshAll(); }, 600); });
+        window.addEventListener('storage', function (e) { if (e.key === 'covo_products') setTimeout(function () { autoClear(); markOut(); schedulePublish(2500); refreshAll(); }, 600); });
+        setTimeout(autoClear, 8000);
+        setInterval(autoClear, 60000);   // stock modifié ailleurs (inventaire, fiche produit…)
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
