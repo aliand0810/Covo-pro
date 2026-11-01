@@ -73521,3 +73521,188 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   COVO — 🧨 RÉINITIALISATION COMPLÈTE (COVO Pro + Admin Pro)
+   • Protégée par le mot de passe Admin-Développeur (3 essais, puis blocage 60 s)
+   • Efface sur CET appareil toutes les données COVO (celles qui partent sur
+     Google Drive : produits, ventes, clients, réglages…), la connexion Drive
+     de l'appareil, les bases locales COVO, la session et les cookies.
+   • Conserve : licence, mot de passe Admin-Développeur, Client ID Google et
+     réglages de sauvegarde, les sauvegardes déjà présentes sur Google Drive
+     et les données des autres logiciels du même site.
+   • Option : dernière sauvegarde Google Drive juste avant d'effacer.
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoResetInstalled) return; window._covoResetInstalled = true;
+    var KEEP = { covo_master_pwd: 1, gdrive_client_id: 1, gdrive_backup_config: 1 };
+    var EXTRA = { main_file: 1, hist_agacc_collapsed: 1 };
+    var IDB = ['covo_fsa_db', 'covo-visites-pro'];
+    var DONE = 'reset_done_covo';
+    function $(id) { return document.getElementById(id); }
+    function toast(m, t) { try { if (typeof showScanToast === 'function') return showScanToast(m, t || 'info'); } catch (e) {} }
+    function isCovoKey(k) { return !KEEP[k] && (/^covo[_-]/i.test(k) || /^gdrive_/.test(k) || EXTRA[k]); }
+    function covoKeys() { var a = []; try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && isCovoKey(k)) a.push(k); } } catch (e) {} return a; }
+    function masterPwd() { try { return localStorage.getItem('covo_master_pwd') || 'Aliand081089'; } catch (e) { return 'Aliand081089'; } }
+    function driveOn() { try { return localStorage.getItem('gdrive_connected') === '1'; } catch (e) { return false; } }
+    function saveFn() { return typeof window.gdriveSaveNow === 'function' ? function () { return window.gdriveSaveNow(); } : (typeof window.cpDriveBackupNow === 'function' ? function () { return window.cpDriveBackupNow(false, 'reset'); } : null); }
+
+    var CSS = [
+        '#rz-ov{position:fixed;inset:0;z-index:2147483100;background:rgba(10,6,6,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:14px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}',
+        '#rz-box{width:min(560px,100%);max-height:94vh;overflow:auto;background:#fff;color:#1f2937;border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.5);}',
+        '#rz-ov.dk #rz-box{background:#111827;color:#e5e7eb;}',
+        '#rz-h{background:linear-gradient(135deg,#991b1b,#dc2626);color:#fff;padding:16px 18px;display:flex;gap:12px;align-items:flex-start;}',
+        '#rz-h .ic{font-size:1.6rem;line-height:1;}#rz-h b{display:block;font-size:1.05rem;font-weight:900;}#rz-h small{display:block;opacity:.85;font-size:.76rem;margin-top:3px;}',
+        '#rz-h button{margin-left:auto;background:rgba(255,255,255,.18);border:none;color:#fff;border-radius:9px;width:32px;height:32px;font-size:1rem;cursor:pointer;flex-shrink:0;}',
+        '#rz-b{padding:16px 18px;font-size:.86rem;line-height:1.55;}',
+        '#rz-b .two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}',
+        '#rz-b .col{border-radius:12px;padding:10px 12px;font-size:.78rem;}',
+        '#rz-b .col.del{background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.3);}',
+        '#rz-b .col.keep{background:rgba(22,163,74,.08);border:1px solid rgba(22,163,74,.3);}',
+        '#rz-b .col b{display:block;margin-bottom:4px;font-size:.82rem;}#rz-b .col ul{margin:0;padding-left:16px;}',
+        '#rz-b label.f{display:block;font-weight:800;font-size:.78rem;margin:12px 0 5px;}',
+        '#rz-b .pw{display:flex;gap:6px;}#rz-b input[type=password],#rz-b input[type=text]{flex:1;width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #d1d5db;border-radius:10px;font-size:.92rem;background:#fff;color:#111827;}',
+        '#rz-ov.dk #rz-b input[type=password],#rz-ov.dk #rz-b input[type=text]{background:#1f2937;color:#f9fafb;border-color:#374151;}',
+        '#rz-b .eye{border:1.5px solid #d1d5db;background:none;border-radius:10px;padding:0 12px;cursor:pointer;color:inherit;}',
+        '#rz-b .chk{display:flex;gap:9px;align-items:flex-start;margin-top:12px;font-size:.82rem;cursor:pointer;}#rz-b .chk input{margin-top:3px;width:17px;height:17px;}',
+        '#rz-b .msg{min-height:1.2em;margin-top:10px;font-weight:800;font-size:.8rem;}#rz-b .msg.err{color:#dc2626;}#rz-b .msg.ok{color:#16a34a;}',
+        '#rz-b .warn{background:rgba(234,179,8,.12);border:1px solid rgba(234,179,8,.4);border-radius:10px;padding:8px 11px;font-size:.78rem;margin-top:10px;}',
+        '#rz-f{display:flex;gap:8px;padding:0 18px 18px;}',
+        '#rz-f button{flex:1;padding:11px;border-radius:11px;font-weight:900;font-size:.88rem;cursor:pointer;border:1.5px solid #d1d5db;background:none;color:inherit;font-family:inherit;}',
+        '#rz-f #rz-go{flex:2;border:none;background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;}',
+        '#rz-f #rz-go:disabled{opacity:.45;cursor:not-allowed;}',
+        '.rz-btn{background:rgba(220,38,38,.18)!important;border:1.5px solid #dc2626!important;color:#fecaca!important;}',
+        '.rz-btn:hover{background:rgba(220,38,38,.4)!important;}',
+        '#rz-sec{border:2px solid rgba(220,38,38,.45)!important;}',
+        '#rz-sec .rz-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;}',
+        '#rz-sec .rz-row .t{flex:1;min-width:200px;}#rz-sec .rz-row b{color:#dc2626;font-size:.95rem;}#rz-sec .rz-row small{display:block;opacity:.75;font-size:.75rem;margin-top:2px;}',
+        '#rz-sec .rz-row button{padding:9px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;font-weight:900;cursor:pointer;font-family:inherit;}'
+    ].join('\n');
+    function css() { if (!$('rz-css')) { var s = document.createElement('style'); s.id = 'rz-css'; s.textContent = CSS; document.head.appendChild(s); } }
+    function dark() { try { return document.body.classList.contains('dark-mode') || document.documentElement.getAttribute('data-theme') === 'dark'; } catch (e) { return false; } }
+
+    var fails = 0, lockUntil = 0, busy = false;
+    function open() {
+        css();
+        var ov = $('rz-ov'); if (ov) ov.remove();
+        var n = covoKeys().length, d = driveOn(), sf = saveFn();
+        ov = document.createElement('div'); ov.id = 'rz-ov'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+        if (dark()) ov.classList.add('dk');
+        ov.innerHTML = '<div id="rz-box"><div id="rz-h"><span class="ic">🧨</span><div><b>Réinitialiser le logiciel</b><small>Efface toutes les données COVO de cet appareil · action irréversible sur l’appareil</small></div><button type="button" data-x="1" title="Fermer">✕</button></div>'
+            + '<div id="rz-b">'
+            + '<div class="two"><div class="col del"><b>🗑️ Sera effacé (' + n + ' éléments)</b><ul><li>Produits, stocks, ventes, tickets</li><li>Clients fidélité, crédits, promos</li><li>Achats, finances, paie, devis, projets</li><li>Retours, échéances, inventaires</li><li>Utilisateurs, réglages, préférences</li><li>Connexion Google Drive de l’appareil</li><li>Session et cookies</li></ul></div>'
+            + '<div class="col keep"><b>✅ Sera conservé</b><ul><li>Les sauvegardes déjà sur Google Drive (restauration possible)</li><li>La licence</li><li>Le mot de passe Admin-Développeur</li><li>Le Client ID Google et les réglages de sauvegarde</li><li>Les données de vos autres logiciels</li></ul></div></div>'
+            + '<label class="f" for="rz-pw">🔐 Mot de passe Admin-Développeur</label><div class="pw"><input id="rz-pw" type="password" autocomplete="off" placeholder="Mot de passe"><button type="button" class="eye" data-eye="1" title="Afficher">👁️</button></div>'
+            + '<label class="f" for="rz-cf">✍️ Pour confirmer, tapez <b>EFFACER</b></label><input id="rz-cf" type="text" autocomplete="off" placeholder="EFFACER">'
+            + '<label class="chk"><input type="checkbox" id="rz-bk"' + (d && sf ? ' checked' : ' disabled') + '><span>☁️ Faire une dernière sauvegarde Google Drive juste avant d’effacer' + (d && sf ? '' : ' <i>(Google Drive non connecté)</i>') + '</span></label>'
+            + '<div class="warn">⚠️ Fermez les autres applications COVO ouvertes (Caisse, Gestion, Fidélité…) sur cet appareil avant de continuer : sinon elles pourraient réécrire leurs données.</div>'
+            + '<div class="msg" id="rz-msg"></div></div>'
+            + '<div id="rz-f"><button type="button" data-x="1">Annuler</button><button type="button" id="rz-go" disabled>🧨 Tout effacer</button></div></div>';
+        document.body.appendChild(ov);
+        var pw = $('rz-pw'), cf = $('rz-cf'), go = $('rz-go');
+        function upd() { go.disabled = busy || !pw.value || cf.value.trim().toUpperCase() !== 'EFFACER'; }
+        pw.addEventListener('input', upd); cf.addEventListener('input', upd);
+        [pw, cf].forEach(function (i) { i.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !go.disabled) go.click(); }); });
+        ov.addEventListener('click', function (e) {
+            if (busy) return;
+            if (e.target === ov || e.target.closest('[data-x]')) { ov.remove(); return; }
+            if (e.target.closest('[data-eye]')) { pw.type = pw.type === 'password' ? 'text' : 'password'; return; }
+        });
+        go.addEventListener('click', run);
+        setTimeout(function () { pw.focus(); }, 40);
+    }
+    function msg(t, cls) { var m = $('rz-msg'); if (m) { m.textContent = t; m.className = 'msg ' + (cls || ''); } }
+
+    function run() {
+        if (busy) return;
+        var now = Date.now();
+        if (now < lockUntil) { msg('⏳ Trop d’essais. Réessayez dans ' + Math.ceil((lockUntil - now) / 1000) + ' s.', 'err'); return; }
+        var pw = $('rz-pw');
+        if (pw.value !== masterPwd()) {
+            fails++; pw.value = ''; $('rz-go').disabled = true; pw.focus();
+            if (fails >= 3) { lockUntil = Date.now() + 60000; fails = 0; msg('❌ Mot de passe incorrect. Bloqué pendant 60 secondes.', 'err'); }
+            else msg('❌ Mot de passe Admin-Développeur incorrect (' + (3 - fails) + ' essai' + (3 - fails > 1 ? 's' : '') + ' restant' + (3 - fails > 1 ? 's' : '') + ').', 'err');
+            return;
+        }
+        fails = 0; busy = true; $('rz-go').disabled = true; $('rz-go').textContent = '⏳ En cours…';
+        var bk = $('rz-bk'), sf = saveFn();
+        var p = (bk && bk.checked && !bk.disabled && sf) ? backup(sf) : Promise.resolve(true);
+        p.then(function (ok) {
+            if (!ok) {
+                busy = false; $('rz-go').textContent = '🧨 Tout effacer'; $('rz-go').disabled = false;
+                msg('⚠️ La sauvegarde Drive a échoué : rien n’a été effacé. Réessayez, ou décochez la sauvegarde pour effacer quand même.', 'err');
+                return;
+            }
+            msg('🧹 Effacement…', 'ok');
+            wipe();
+        });
+    }
+    function backup(sf) {
+        msg('☁️ Sauvegarde Google Drive en cours…', 'ok');
+        return new Promise(function (res) {
+            var t = setTimeout(function () { res(false); }, 45000);
+            Promise.resolve().then(sf).then(function (st) { clearTimeout(t); res(st === 'saved' || st === 'same' || st === undefined || st === true); }, function () { clearTimeout(t); res(false); });
+        });
+    }
+    function wipe() {
+        /* 1) empêcher la page actuelle de réécrire ses données en mémoire avant le rechargement */
+        try {
+            var S = Storage.prototype, oSet = S.setItem;
+            S.setItem = function (k, v) { if (this === window.localStorage && isCovoKey(String(k))) return; return oSet.apply(this, arguments); };
+        } catch (e) {}
+        /* 2) stockage local COVO */
+        var keys = covoKeys(); keys.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
+        /* 3) session + cookies */
+        try { sessionStorage.clear(); } catch (e) {}
+        try {
+            var host = location.hostname, parts = host.split('.'), paths = ['/', location.pathname, location.pathname.replace(/[^/]*$/, '')];
+            document.cookie.split(';').forEach(function (c) {
+                var name = c.split('=')[0].trim(); if (!name) return;
+                paths.forEach(function (pth) {
+                    document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=' + pth;
+                    for (var i = 0; i < parts.length - 1; i++) document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=' + pth + '; domain=.' + parts.slice(i).join('.');
+                });
+            });
+        } catch (e) {}
+        /* 4) bases locales COVO */
+        var pend = IDB.map(function (n) { return new Promise(function (r) { try { var q = indexedDB.deleteDatabase(n); q.onsuccess = q.onerror = q.onblocked = function () { r(); }; setTimeout(r, 1500); } catch (e) { r(); } }); });
+        Promise.all(pend).then(function () {
+            try { Storage.prototype.setItem.call(sessionStorage, DONE, String(keys.length)); } catch (e) {}
+            location.replace(location.pathname);
+        });
+    }
+
+    /* ── Boutons : barre « 🛠️ Dev » + section rouge en bas du panneau admin ── */
+    function inject() {
+        css();
+        var bar = $('master-quick-bar');
+        if (bar && !$('rz-dev-btn')) {
+            var b = document.createElement('button'); b.type = 'button'; b.id = 'rz-dev-btn'; b.className = 'rz-btn'; b.textContent = '🧨 Reset';
+            b.title = 'Effacer toutes les données COVO de cet appareil (mot de passe Admin-Développeur demandé)';
+            b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); open(); });
+            bar.appendChild(b);
+        }
+        if (!$('rz-sec')) {
+            var root = $('admin-panel') || document;
+            var secs = root.querySelectorAll('.admin-section'); var last = secs[secs.length - 1];
+            if (last && last.parentNode) {
+                var s = document.createElement('div'); s.className = 'admin-section'; s.id = 'rz-sec';
+                s.innerHTML = '<div class="rz-row"><div class="t"><b>🧨 Réinitialiser le logiciel</b><small>Efface toutes les données COVO de cet appareil (produits, ventes, clients, réglages, cookies…). Mot de passe Admin-Développeur obligatoire. Les sauvegardes Google Drive sont conservées.</small></div><button type="button" id="rz-sec-btn">🧨 Reset</button></div>';
+                last.parentNode.insertBefore(s, last.nextSibling);
+                $('rz-sec-btn').addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); open(); });
+            }
+        }
+    }
+    window.covoResetOpen = open;
+    function boot() {
+        inject(); var n = 0, t = setInterval(function () { inject(); if (++n > 20) clearInterval(t); }, 1500);
+        var d = null; try { d = sessionStorage.getItem(DONE); sessionStorage.removeItem(DONE); } catch (e) {}
+        if (d !== null) setTimeout(function () {
+            toast('🧨 Réinitialisation terminée : ' + d + ' éléments COVO effacés sur cet appareil. Les sauvegardes Google Drive sont intactes.', 'success');
+        }, 2500);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
