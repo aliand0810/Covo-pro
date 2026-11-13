@@ -9642,9 +9642,9 @@ window._devisAddCatalogItem = function(productId) {
     const unitPrice = (p.unitType === 'kg' && p.pricePerKg) ? parseFloat(p.pricePerKg) : (parseFloat(p.price) || 0);
     // Si la seule ligne présente est encore vide, on la remplace plutôt que d'empiler une ligne inutile.
     if (_devisLines.length === 1 && !(_devisLines[0].nom||'').trim() && !(parseFloat(_devisLines[0].prixUnitaire)||0)) {
-        _devisLines[0] = { id: Date.now(), nom: p.name || '', quantite: 1, prixUnitaire: unitPrice };
+        _devisLines[0] = { id: Date.now(), nom: p.name || '', quantite: 1, prixUnitaire: unitPrice, productId: p.id };
     } else {
-        _devisLines.push({ id: Date.now(), nom: p.name || '', quantite: 1, prixUnitaire: unitPrice });
+        _devisLines.push({ id: Date.now(), nom: p.name || '', quantite: 1, prixUnitaire: unitPrice, productId: p.id });
     }
     _devisRenderLines();
     _devisRecalc();
@@ -9780,7 +9780,7 @@ function _devisCollect() {
             adresse: document.getElementById('devis-client-adresse').value.trim()
         },
         items: _devisLines.filter(function(l){ return (l.nom||'').trim() || (parseFloat(l.prixUnitaire)||0) > 0; }).map(function(l){
-            return { id: l.id, nom: l.nom, quantite: parseFloat(l.quantite)||0, prixUnitaire: parseFloat(l.prixUnitaire)||0 };
+            var _o = { id: l.id, nom: l.nom, quantite: parseFloat(l.quantite)||0, prixUnitaire: parseFloat(l.prixUnitaire)||0 }; if (l.productId != null) _o.productId = l.productId; return _o;
         }),
         remisePct: totals.remise,
         tvaPct: totals.tva,
@@ -10064,7 +10064,7 @@ window._devisConfirmPayment = function() {
     document.getElementById('devis-payment-modal').style.display = 'none';
     _devisRenderList();
     _devisOpenPreview(_devisPaymentDevisId);
-    showScanToast('💰 Règlement enregistré' + (_devisPaymentDirectMode ? ' (sans ticket)' : ''), 'success');
+    showScanToast('💰 Règlement enregistré' + (_devisPaymentDirectMode ? ' — ticket de caisse ' + ((window._factTickLast && window._factTickLast.ticketNum) || '') + ' créé' : ''), 'success');
 };
 
 // Règlement "sans ticket" (direct) : aucune écriture dans covo_sales_history — le paiement n'est
@@ -13369,6 +13369,8 @@ function _bilanInit() {
         steps: [
             { t: 'Créer un devis', s: ['Cliquez sur [[➕ Nouveau devis]] (numéro automatique, ex. DEV-2026-0001).', 'Renseignez le client, la date, la validité (jours) et le statut.', 'Ajoutez les lignes : [[📦 Depuis le catalogue]] ou [[➕ Ligne libre]] (tapez dans « Désignation » pour retrouver un article).', 'Indiquez quantités et prix ; ajoutez une remise (%) et la TVA si besoin : les totaux se calculent.', 'Notes / conditions, puis [[💾 Enregistrer]] ou [[🖨️ Enregistrer & Générer PDF]].'] },
             { t: 'Suivre et facturer', s: ['Cliquez sur un devis pour l’aperçu complet : modification, PDF, suppression.', 'Passez-le en « 📤 Envoyé » quand vous l’avez transmis au client.', 'Quand le client accepte, passez-le en « ✅ Accepté » : il devient une **facture** (même document, même numéro) et apparaît dans [[✅ Factures]], où vous suivez son règlement.'] },
+            { t: 'Encaisser une facture', s: ['Dans [[✅ Factures]], cliquez sur [[💶 Encaisser]] (ou ouvrez la facture puis enregistrez un règlement).', 'Mode [[🧾 Nouveau ticket (direct)]] : saisissez le montant et le mode de paiement, puis validez.', 'Un **ticket de caisse** est créé automatiquement à la date du jour : il apparaît dans l’historique des ventes et compte dans l’objectif du jour.', 'Quand le règlement **solde** la facture, ses articles sont comptés comme vendus (statistiques, Bilan) et retirés du stock pour les articles du catalogue. Un acompte crée un ticket « Acompte facture … ».', 'Mode [[🎫 Rattacher à un ticket]] : le règlement est ajouté à un ticket existant que vous choisissez.'] },
+            { t: 'Créer les tickets des anciens règlements', s: ['Si un bandeau « règlements de facture sans ticket de caisse » apparaît, cliquez sur [[🧾 Créer les tickets manquants]].', 'Les tickets sont datés du jour de chaque règlement : l’historique et les objectifs des jours concernés sont corrigés.', 'Le stock et les soldes espèces / CB ne sont pas modifiés (ils l’ont déjà été au moment du règlement).'] },
             { t: 'Afficher votre RIB sur les documents', s: ['Remplissez les coordonnées bancaires.', 'Cochez « Afficher sur les devis et factures ».', 'Cliquez sur [[💾 Enregistrer]].'] }
         ], tips: [], faq: []
     },
@@ -14078,6 +14080,225 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { renderUserList(); });
     else renderUserList();
+})();
+</script>
+<script>
+/* ═══ COVO — FACTURES RÉGLÉES → TICKET DE CAISSE ═══
+   Chaque règlement « direct » d'une facture crée un ticket de caisse daté du règlement
+   (covo_sales_history), rattaché au règlement (paiement.ticketId) :
+   • l'objectif du jour, l'historique des ventes, les objectifs validés des jours passés et
+     le Bilan le comptent une seule fois (le règlement pointe vers ce ticket) ;
+   • quand la facture est soldée, le ticket porte les ARTICLES de la facture (comptés comme
+     vendus, retirés du stock pour les articles du catalogue) ; les acomptes déjà encaissés
+     sont déduits sur une ligne de règlement (non comptée comme article) ;
+   • un acompte (règlement partiel) crée un ticket « Acompte facture … ».
+   • « Créer les tickets manquants » : rattrapage des règlements déjà enregistrés sans ticket
+     (sans toucher au stock ni aux soldes espèces / CB, déjà mis à jour à l'époque). */
+(function () {
+    'use strict';
+    if (window._factTickInstalled) return; window._factTickInstalled = true;
+
+    function $(id) { return document.getElementById(id); }
+    function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+    function r2(v) { return Math.round(num(v) * 100) / 100; }
+    function r3(v) { return Math.round(num(v) * 1000) / 1000; }
+    function toast(m, t) { if (typeof showScanToast === 'function') showScanToast(m, t); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(v) { return num(v).toFixed(2).replace('.', ',') + ' €'; }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(); }
+    function allDevis() { try { return _devisGetAll(); } catch (e) { return []; } }
+    function saveDevis(list) { _devisSaveAll(list); }
+    function getSales() { try { if (Array.isArray(window.salesHistory)) return window.salesHistory; } catch (e) {} try { return JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch (e) { return []; } }
+    function prods() { try { if (Array.isArray(window.products)) return window.products; } catch (e) {} return []; }
+    function isAccepted(d) { return d && d.statut === 'accepte'; }
+    function METHOD(mode) { return mode === 'cb' ? 'cb' : mode === 'mixte' ? 'mixed' : (mode === 'credit' || mode === 'compte') ? 'credit' : 'cash'; }
+    function modeTxt(mode) { try { return _devisPaymentModeLabel(mode, false); } catch (e) { return mode || ''; } }
+    function sortedPays(d) { return (Array.isArray(d.paiements) ? d.paiements : []).slice().sort(function (a, b) { return new Date(a.date) - new Date(b.date); }); }
+
+    /* Article du catalogue correspondant à une ligne de facture */
+    function findProduct(l) {
+        var P = prods();
+        if (l.productId != null) { var p0 = P.find(function (p) { return String(p.id) === String(l.productId); }); if (p0) return p0; }
+        var n = norm(l.nom); if (!n) return null;
+        var m = P.filter(function (p) { return norm(p.name) === n; });
+        return m.find(function (p) { return p.active !== false; }) || m[0] || null;
+    }
+
+    /* Lignes « articles » d'une facture, prix ramenés au TTC réellement facturé (remise + TVA) */
+    function articleItems(d) {
+        var lines = (d.items || []).filter(function (l) { return num(l.quantite) > 0 && (String(l.nom || '').trim() || num(l.prixUnitaire) > 0); });
+        var sous = lines.reduce(function (a, l) { return a + num(l.quantite) * num(l.prixUnitaire); }, 0);
+        var f = sous > 0.004 ? num(d.totalTTC) / sous : 1;
+        return lines.map(function (l, i) {
+            var p = findProduct(l), price = r2(num(l.prixUnitaire) * f);
+            return {
+                id: p ? p.id : ('FACT-' + d.numero + '-' + (i + 1)),
+                name: String(l.nom || (p && p.name) || 'Article'),
+                price: price, originalPrice: price, unitPrice: price,
+                quantity: num(l.quantite), unitType: p ? (p.unitType || 'unit') : 'unit',
+                discount: 0, tvaRate: p && p.tvaRate != null ? p.tvaRate : (num(d.tvaPct) || null),
+                fromInvoice: d.numero, _productId: p ? p.id : null
+            };
+        });
+    }
+
+    function newId(t, used) { var id = Math.floor(t); while (used[id]) id++; used[id] = 1; return id; }
+
+    /* Construit le ticket d'un règlement. prevPaid = total déjà réglé AVANT ce règlement. */
+    function buildTicket(d, p, prevPaid, n, count, used) {
+        var montant = r2(p.montant), total = r2(d.totalTTC);
+        var solde = r2(prevPaid + montant) >= total - 0.01;
+        var who = (d.client && d.client.nom) ? (' — ' + d.client.nom) : '';
+        var items, arts = [];
+        if (solde) {
+            arts = articleItems(d);
+            items = arts.slice();
+            var sumA = r2(arts.reduce(function (a, it) { return a + it.price * it.quantity; }, 0));
+            var adj = r2(montant - sumA);
+            if (Math.abs(adj) > 0.004) items.push({
+                id: 'DEVIS-' + d.numero + '-ADJ-' + p.id,
+                name: prevPaid > 0.004 ? ('Acomptes déjà réglés — facture ' + d.numero) : ('Arrondi facture ' + d.numero),
+                price: adj, quantity: 1, paid: true, devisPaymentMode: p.mode
+            });
+        } else {
+            items = [{ id: 'DEVIS-' + d.numero + '-' + p.id, name: 'Acompte facture ' + d.numero + who + ' (' + modeTxt(p.mode) + ')', price: montant, quantity: 1, paid: true, devisPaymentMode: p.mode }];
+        }
+        var esp = r2(p.montantEspeces), cb = r2(p.montantCB), method = METHOD(p.mode);
+        var cu = null; try { cu = typeof _covoCurrentUser === 'function' ? _covoCurrentUser() : null; } catch (e) {}
+        var t = new Date(p.date).getTime(); if (!isFinite(t)) t = Date.now();
+        var ticket = {
+            id: newId(t, used), date: new Date(t).toISOString(), items: items, total: montant,
+            cashier: p.createdBy || (cu ? (cu.username || cu.name || '') : ''), cashierId: (cu && (!p.createdBy || p.createdBy === (cu.username || cu.name))) ? (cu.id || '') : '',
+            method: method, received: montant,
+            receivedCash: method === 'cash' ? montant : (method === 'mixed' ? esp : 0),
+            receivedCB: method === 'cb' ? montant : (method === 'mixed' ? cb : 0),
+            receivedTicket: 0, change: 0,
+            ticketNum: d.numero + (count > 1 ? ('/' + n) : ''),
+            devisId: d.id, devisNumero: d.numero, devisPaymentId: p.id, source: 'facture',
+            invoiceClient: d.client && d.client.nom ? d.client.nom : ''
+        };
+        return { ticket: ticket, arts: solde ? arts : [] };
+    }
+
+    /* Sortie de stock des articles du catalogue (une seule fois, au solde de la facture) */
+    function stockOut(d, arts, ticket) {
+        var P = prods(), done = 0;
+        arts.forEach(function (it) {
+            if (it._productId == null) return;
+            var p = P.find(function (x) { return x.id === it._productId; }); if (!p) return;
+            var before = num(p.stock), q = num(it.quantity);
+            p.stock = p.unitType === 'kg' ? r3(before - q) : Math.round((before - q) * 1000) / 1000;
+            if (typeof window._logStockChange === 'function') window._logStockChange(p, before, p.stock, 'sale', 'Vente facture ' + d.numero, { qty: q, saleId: ticket.id, devisId: d.id });
+            done++;
+        });
+        arts.forEach(function (it) { delete it._productId; });
+        if (done) { try { localStorage.setItem('covo_products', JSON.stringify(P)); } catch (e) {} }
+        d.stockOutAt = new Date().toISOString();
+        return done;
+    }
+
+    function pushTickets(list) {
+        var S = getSales();
+        list.forEach(function (t) { S.push(t); });
+        S.sort(function (a, b) { return new Date(a.date) - new Date(b.date); });
+        localStorage.setItem('covo_sales_history', JSON.stringify(S));
+        try { if (!Array.isArray(window.salesHistory) || window.salesHistory !== S) window.salesHistory = S; } catch (e) {}
+        if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty();
+    }
+    function usedIds() { var u = {}; getSales().forEach(function (s) { u[s.id] = 1; }); return u; }
+
+    /* ── Règlement direct : enregistrement d'origine, puis création du ticket ── */
+    var oDirect = window._devisSettlePaymentDirect;
+    if (typeof oDirect === 'function') window._devisSettlePaymentDirect = function (devisId, montant, mode, esp, cb) {
+        window._factTickLast = null;
+        var d0 = allDevis().find(function (x) { return x.id === devisId; });
+        var prev = d0 ? (typeof _devisMontantRegle === 'function' ? _devisMontantRegle(d0) : 0) : 0;
+        var ok = oDirect.apply(this, arguments);
+        if (!ok) return ok;
+        try {
+            var all = allDevis(), d = all.find(function (x) { return x.id === devisId; }); if (!d) return ok;
+            var P = sortedPays(d), p = d.paiements[d.paiements.length - 1];
+            if (!p || p.ticketId) return ok;
+            var built = buildTicket(d, p, prev, P.indexOf(p) + 1, P.length, usedIds());
+            if (built.arts.length && !d.stockOutAt) stockOut(d, built.arts, built.ticket);
+            else built.arts.forEach(function (it) { delete it._productId; });
+            pushTickets([built.ticket]);
+            p.ticketId = built.ticket.id; p.ticketNumero = built.ticket.ticketNum; p.autoTicket = true;
+            saveDevis(all);
+            window._factTickLast = built.ticket;
+        } catch (e) { console.warn('[Facture → ticket]', e); }
+        return ok;
+    };
+
+    /* ── Rattrapage : règlements déjà enregistrés sans ticket ── */
+    function missing() {
+        var S = getSales(), ids = {}; S.forEach(function (s) { ids[String(s.id)] = 1; });
+        var out = [];
+        allDevis().forEach(function (d) {
+            if (!isAccepted(d) && !(d.paiements || []).length) return;
+            sortedPays(d).forEach(function (p) { if (p && (p.ticketId == null || p.ticketId === '') && num(p.montant) > 0.004) out.push({ d: d, p: p }); });
+        });
+        return out;
+    }
+    window._factTickMissing = function () { return missing().length; };
+    window._factTickBackfill = function () {
+        var M = missing(); if (!M.length) { toast('✅ Aucun règlement sans ticket'); return 0; }
+        var tot = M.reduce(function (a, x) { return a + num(x.p.montant); }, 0);
+        if (!confirm('Créer ' + M.length + ' ticket(s) de caisse pour les règlements de factures enregistrés sans ticket (' + eur(tot) + ') ?\n\n'
+            + '• Chaque ticket est daté du jour du règlement : l’historique des ventes et les objectifs des jours concernés en tiennent compte.\n'
+            + '• Les factures soldées ajoutent leurs articles comme vendus.\n'
+            + '• Le stock et les soldes espèces / CB ne sont PAS modifiés (déjà mis à jour à l’époque).')) return 0;
+        var all = allDevis(), used = usedIds(), tickets = [];
+        all.forEach(function (d) {
+            var P = sortedPays(d), cum = 0;
+            P.forEach(function (p, i) {
+                if (p && (p.ticketId == null || p.ticketId === '') && num(p.montant) > 0.004) {
+                    var b = buildTicket(d, p, cum, i + 1, P.length, used);
+                    b.arts.forEach(function (it) { delete it._productId; });
+                    b.ticket.backfilled = true;
+                    tickets.push(b.ticket);
+                    p.ticketId = b.ticket.id; p.ticketNumero = b.ticket.ticketNum; p.autoTicket = true;
+                }
+                cum = r2(cum + num(p && p.montant));
+            });
+        });
+        pushTickets(tickets); saveDevis(all);
+        toast('🧾 ' + tickets.length + ' ticket(s) de caisse créé(s)', 'success');
+        banner();
+        try { if (typeof _devisRenderList === 'function') _devisRenderList(); } catch (e) {}
+        return tickets.length;
+    };
+
+    /* Bandeau dans l'onglet Devis / Factures */
+    function banner() {
+        var panel = $('gst-devis'); if (!panel) return;
+        var n = 0; try { n = missing().length; } catch (e) {}
+        var b = $('ftk-banner');
+        if (!n) { if (b) b.remove(); return; }
+        if (!b) {
+            b = document.createElement('div'); b.id = 'ftk-banner';
+            b.style.cssText = 'display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:11px 14px;border-radius:12px;background:#fff8e1;border:1.5px solid #f3d27a;color:#6b4f00;font-size:.84rem;';
+            var tg = $('devis-view-toggle');
+            if (tg && tg.parentNode) tg.parentNode.insertBefore(b, tg); else panel.insertBefore(b, panel.firstChild);
+        }
+        b.innerHTML = '<span style="font-size:1.3rem">🧾</span><div style="flex:1;min-width:220px"><b>' + n + ' règlement' + (n > 1 ? 's' : '') + ' de facture sans ticket de caisse</b><br>'
+            + '<span style="opacity:.85">Ils n’apparaissent pas dans l’historique des ventes ni dans les objectifs validés des jours concernés.</span></div>'
+            + '<button type="button" id="ftk-go" style="padding:9px 14px;border:none;border-radius:9px;background:#2c6fad;color:#fff;font-weight:800;cursor:pointer">🧾 Créer les tickets manquants</button>';
+        $('ftk-go').onclick = function () { window._factTickBackfill(); };
+    }
+    window._factTickBanner = banner;
+    var oRL = window._devisRenderList;
+    if (typeof oRL === 'function') window._devisRenderList = function () { var r = oRL.apply(this, arguments); try { banner(); } catch (e) {} return r; };
+    window.addEventListener('storage', function (e) { if (e.key === 'covo_devis' || e.key === 'covo_sales_history') setTimeout(banner, 50); });
+
+    /* Libellés de la fenêtre de règlement */
+    function labels() {
+        var btn = $('devis-payment-mode-btn-direct'); if (btn) btn.textContent = '🧾 Nouveau ticket (direct)';
+        var h = $('devis-payment-direct-hint');
+        if (h) h.innerHTML = '🧾 Un <b>ticket de caisse</b> est créé automatiquement, daté d’aujourd’hui : il compte dans l’historique des ventes, l’objectif du jour (objectif validé) et met à jour le solde espèces / CB. '
+            + 'Quand ce règlement <b>solde la facture</b>, les articles de la facture sont comptés comme vendus et retirés du stock (articles du catalogue).';
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { labels(); banner(); }); else { labels(); banner(); }
 })();
 </script>
 </body>
