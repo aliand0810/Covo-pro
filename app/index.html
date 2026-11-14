@@ -7539,7 +7539,7 @@ button, .btn, .retours-btn {
                             📊 Stock disponible
                             <span class="permission-badge" id="perm-stock"></span>
                         </label>
-                        <input type="number" id="edit-stock" min="0" placeholder="0">
+                        <input type="number" id="edit-stock" min="0" step="any" placeholder="0">
                     </div>
                 </div>
                 
@@ -18448,7 +18448,26 @@ function toggleInfoSection(headerElement) {
             btn.style.display = 'none';
             if (switchBtn) switchBtn.style.display = 'none';
         }
+        try { _pzCashierEditBtn(); } catch (e) {}
     }
+    /* Caissier avec droit « Modifier les articles » : bouton visible dans la barre Produits pour activer le mode édition */
+    function _pzCashierEditBtn() {
+        var tools = document.getElementById('pz-tools'), b = document.getElementById('pz-cedit');
+        var ok = !!(currentUser && currentUser.role === 'caissier' && !isAdmin && typeof cashierPermissions !== 'undefined' && cashierPermissions.editEnabled);
+        if (!ok) { if (b) b.remove(); return; }
+        if (!tools) return;
+        if (!b) {
+            b = document.createElement('button'); b.type = 'button'; b.id = 'pz-cedit'; b.className = 'pz-tool';
+            b.addEventListener('click', function () { toggleCashierEditMode(); });
+            tools.insertBefore(b, tools.firstChild);
+        }
+        var f = cashierPermissions.permissions || {}, names = { stock: 'stock', price: 'prix', name: 'nom', category: 'catégorie', barcode: 'code-barres', image: 'image', dlc: 'DLC', promo: 'promo' };
+        var allowed = Object.keys(names).filter(function (k) { return f[k]; }).map(function (k) { return names[k]; });
+        b.innerHTML = cashierEditModeActive ? '✅ Mode édition activé' : '✏️ Modifier les articles';
+        b.title = (cashierEditModeActive ? 'Cliquez pour quitter le mode édition. ' : 'Affiche le bouton « Éditer cet article » sur chaque produit. ') + (allowed.length ? 'Autorisé : ' + allowed.join(', ') + '.' : 'Aucun champ autorisé.');
+        b.style.cssText = cashierEditModeActive ? 'background:#16a34a!important;color:#fff!important;border-color:#16a34a!important;box-shadow:0 0 12px rgba(22,163,74,.55)' : 'background:#f59e0b!important;color:#1f2937!important;border-color:#f59e0b!important;font-weight:800';
+    }
+    window._pzCashierEditBtn = _pzCashierEditBtn;
 
     // ===== TITRE INTERFACE DYNAMIQUE =====
     function updateInterfaceTitle() {
@@ -18843,7 +18862,7 @@ function toggleInfoSection(headerElement) {
         if (perms.image) { if (window._covoImgApply) window._covoImgApply(product, document.getElementById('edit-image').value, window._cemImgShown); else { var _ei = document.getElementById('edit-image').value.trim(); if (_ei) product.img = _ei; } }
         if (perms.category) product.category = document.getElementById('edit-category').value;
         if (perms.barcode) product.barcode = document.getElementById('edit-barcode').value;
-        if (perms.stock) product.stock = parseInt(document.getElementById('edit-stock').value) || 0;
+        if (perms.stock) product.stock = product.unitType === 'kg' ? (Math.round((parseFloat(String(document.getElementById('edit-stock').value).replace(',', '.')) || 0) * 1000) / 1000) : (parseInt(document.getElementById('edit-stock').value) || 0);
         if (perms.price) product.price = parseFloat(document.getElementById('edit-price').value) || 0;
         if (perms.dlc) product.expiryDate = document.getElementById('edit-dlc').value;
         if (perms.promo) product.promo = parseInt(document.getElementById('edit-promo').value) || 0;
@@ -62751,6 +62770,7 @@ function covoQrPrint(o) {
         if (a.k === 'full') return document.fullscreenElement ? 'Quitter plein écran' : 'Plein écran';
         if (a.k === 'cashier') { var t = cleanLabel(el, a.l); return /^caissier$/i.test(t) ? 'Mode caissier' : t; }
         if (a.k === 'night') return cleanLabel(el, a.l);
+        if (a.k === 'admin' && !admin()) return cleanLabel(el, a.l);
         if (a.k === 'autosave') return cleanLabel($('dev-autosave-chip-txt'), 'Auto-save');
         if (a.k === 'master') { var n = parseInt((($('master-save-bar-count') || {}).textContent || '0'), 10) || 0; return n ? 'Tout sauvegarder (' + n + ')' : 'Tout sauvegarder'; }
         if (a.k === 'expired') { var e = parseInt((el.textContent || '').replace(/\D/g, ''), 10) || 0; return e + ' expiré' + (e > 1 ? 's' : ''); }
@@ -66186,7 +66206,7 @@ function covoQrPrint(o) {
         var moved = [find('button[onclick^="openNoBarcodeSearch"]'), find('button[onclick^="printNoBarcodeList"]'), $('adv-filter-sort'), $('adv-filter-btn'), find('button[onclick="clearFilters()"]'), $('tva-mode-btn'), $('ez-toggle-all-btn')];
         moved.forEach(function (el) { if (el) { el.classList.add('pz-tool'); tools.appendChild(el); } });
         var cat = $('filter-category'); if (cat) { cat.style.display = 'none'; tools.appendChild(cat); }
-        var sp = document.createElement('span'); sp.className = 'sp'; tools.appendChild(sp);
+        var sp = document.createElement('span'); sp.className = 'sp'; tools.appendChild(sp); try { window._pzCashierEditBtn && window._pzCashierEditBtn(); } catch (e) {}
         var seg = document.createElement('div'); seg.className = 'pz-seg'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Affichage');
         seg.innerHTML = '<button type="button" data-v="grid" title="Grandes vignettes">▦ Vignettes</button><button type="button" data-v="compact" title="Vignettes compactes">▤ Compacte</button><button type="button" data-v="list" title="Liste">☰ Liste</button>';
         tools.appendChild(seg);
@@ -74359,5 +74379,78 @@ function covoQrPrint(o) {
         return out;
     };
     window._covoInvoiceExtraOn = function (date, S) { var X = window._covoInvoiceExtraByDay(S); return X[key(date || new Date())] || { amt: 0, n: 0, times: [], list: [] }; };
+})();
+</script>
+<script>
+/* ═══ Fiche produit : « ➕ Nouvelle catégorie » à côté du champ Catégorie (modifier un article / nouveau produit) ═══
+   La catégorie est enregistrée dans la liste (même source que le gestionnaire de catégories) puis sélectionnée
+   pour l'article ; elle est liée au produit à l'enregistrement de la fiche. */
+(function () {
+    'use strict';
+    var NEW = '__covo_new_cat__';
+    function $(id) { return document.getElementById(id); }
+    function clean(v) { return String(v || '').replace(/[<>"`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40); }
+    function cats() { try { if (typeof getEchCategories === 'function') return getEchCategories(); } catch (e) {} try { return (typeof categories !== 'undefined' && Array.isArray(categories)) ? categories.slice() : []; } catch (e) { return []; } }
+    function say(m, t) { try { showScanToast(m, t || 'success'); } catch (e) {} }
+    function addNewOpt(sel) {
+        if (!sel || sel.querySelector('option[value="' + NEW + '"]')) return;
+        var o = document.createElement('option'); o.value = NEW; o.textContent = '➕ Nouvelle catégorie…'; sel.appendChild(o);
+    }
+    function save(name) {
+        var L = cats(), hit = L.filter(function (c) { return String(c).toLowerCase() === name.toLowerCase(); })[0];
+        if (hit) return { name: hit, created: false };
+        L.push(name);
+        try { if (typeof saveEchCats === 'function') saveEchCats(L); else { localStorage.setItem('covo_categories', JSON.stringify(L)); if (window._syncCategories) window._syncCategories(L); } } catch (e) {}
+        try { var now = new Date().toISOString(); localStorage.setItem('covo_drive_pending', now); localStorage.setItem('covo_last_local_change', now); } catch (e) {}
+        return { name: name, created: true };
+    }
+    function select(sel, name) {
+        var has = [].some.call(sel.options, function (o) { return o.value === name; });
+        if (!has) { var o = document.createElement('option'); o.value = name; o.textContent = name; var nw = sel.querySelector('option[value="' + NEW + '"]'); sel.insertBefore(o, nw || null); }
+        sel.value = name; sel.dataset.prev = name;
+        sel.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    function openBox() {
+        var sel = $('pem-cat'), box = $('pem-newcat'); if (!sel || !box) return;
+        box.style.display = 'flex'; var i = $('pem-newcat-in'); i.value = ''; i.style.borderColor = ''; $('pem-newcat-msg').textContent = ''; setTimeout(function () { i.focus(); }, 30);
+        if (sel.value === NEW) sel.value = sel.dataset.prev || '';
+    }
+    function closeBox() { var box = $('pem-newcat'); if (box) box.style.display = 'none'; }
+    function commit() {
+        var sel = $('pem-cat'), i = $('pem-newcat-in'), msg = $('pem-newcat-msg'); if (!sel || !i) return;
+        var name = clean(i.value);
+        if (!name) { i.style.borderColor = '#e74c3c'; msg.textContent = 'Saisissez le nom de la catégorie.'; i.focus(); return; }
+        var r = save(name); select(sel, r.name); closeBox();
+        say(r.created ? '📁 Catégorie « ' + r.name + ' » créée et liée à l’article' : '📁 Catégorie « ' + r.name + ' » existe déjà : sélectionnée', r.created ? 'success' : 'info');
+    }
+    function install() {
+        var sel = $('pem-cat'); if (!sel) return false;
+        if ($('pem-newcat-btn')) return true;
+        var host = sel.parentElement;
+        var row = document.createElement('div'); row.style.cssText = 'display:flex;gap:6px;align-items:stretch';
+        host.insertBefore(row, sel); row.appendChild(sel); sel.style.flex = '1'; sel.style.minWidth = '0';
+        var b = document.createElement('button'); b.type = 'button'; b.id = 'pem-newcat-btn'; b.textContent = '➕ Nouvelle'; b.title = 'Créer une nouvelle catégorie pour cet article';
+        b.style.cssText = 'flex-shrink:0;border:1.5px solid #16a34a;background:#16a34a;color:#fff;border-radius:9px;padding:0 12px;font-weight:800;font-size:0.8rem;cursor:pointer;white-space:nowrap';
+        row.appendChild(b);
+        var box = document.createElement('div'); box.id = 'pem-newcat';
+        box.style.cssText = 'display:none;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;padding:8px;border:1.5px dashed #16a34a;border-radius:9px;background:rgba(22,163,74,.08)';
+        box.innerHTML = '<input type="text" id="pem-newcat-in" maxlength="40" placeholder="Nom de la nouvelle catégorie (ex. Épicerie fine)" style="flex:1;min-width:160px;padding:8px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:8px;font-size:0.88rem;background:var(--input-bg,#f8f9fa);color:var(--text-main,#2c3e50);box-sizing:border-box">'
+            + '<button type="button" id="pem-newcat-ok" style="border:none;background:#16a34a;color:#fff;border-radius:8px;padding:8px 12px;font-weight:800;font-size:0.8rem;cursor:pointer">✓ Enregistrer</button>'
+            + '<button type="button" id="pem-newcat-x" style="border:none;background:var(--border-color,#e2e8f0);color:var(--text-main,#2c3e50);border-radius:8px;padding:8px 10px;font-weight:700;font-size:0.8rem;cursor:pointer">✕</button>'
+            + '<div id="pem-newcat-msg" style="flex-basis:100%;font-size:0.72rem;color:#e74c3c;font-weight:700"></div>';
+        host.appendChild(box);
+        b.addEventListener('click', openBox);
+        $('pem-newcat-ok').addEventListener('click', commit);
+        $('pem-newcat-x').addEventListener('click', closeBox);
+        $('pem-newcat-in').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeBox(); } });
+        sel.addEventListener('focus', function () { if (sel.value !== NEW) sel.dataset.prev = sel.value; });
+        sel.addEventListener('change', function () { if (sel.value === NEW) openBox(); else sel.dataset.prev = sel.value; });
+        // la fiche reconstruit la liste à chaque ouverture : on rajoute l'option « Nouvelle catégorie » et on referme la saisie
+        new MutationObserver(function () { addNewOpt(sel); sel.dataset.prev = sel.value === NEW ? '' : sel.value; closeBox(); }).observe(sel, { childList: true });
+        addNewOpt(sel);
+        return true;
+    }
+    function boot() { if (!install()) setTimeout(boot, 500); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
