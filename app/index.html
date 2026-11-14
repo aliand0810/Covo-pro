@@ -28593,23 +28593,42 @@ logout = function(skipConfirmation = false) {
     }
     function printNoBarcodeList(query, catFilter) {
         var e = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
-        var say = function (m) { try { showToast(m, 'info'); } catch (x) { alert(m); } };
+        var say = function (m) { try { if (typeof showScanToast === 'function') showScanToast(m, 'success'); else if (typeof showToast === 'function') showToast(m, 'info'); else alert(m); } catch (x) {} };
         var q = String(query || '').toLowerCase().trim(), cat = catFilter || '__all__';
         var list = products.filter(function (p) {
             if (!_nbcNoReal(p) || !(isAdmin || p.active)) return false;
-            var c = p.category || 'Sans catégorie';
+            var c = String(p.category || 'Sans catégorie');
             return (cat === '__all__' || c === cat) && (!q || String(p.name || '').toLowerCase().indexOf(q) >= 0 || c.toLowerCase().indexOf(q) >= 0);
         });
         if (!list.length) { say('Aucun article sans code-barres à imprimer'); return; }
-        // ouvrir la fenêtre tout de suite (sinon bloquée comme pop-up), la remplir ensuite
-        var w = window.open('', '_blank');
-        if (!w) { say('Autorisez les fenêtres pop-up pour imprimer'); return; }
         var todo = list.filter(function (p) { return !_nbcIsInternal(p); }).length;
-        if (todo && !confirm(todo + ' article(s) n’ont pas de code-barres.\n\nCOVO Pro va leur créer un code-barres interne (EAN-13 commençant par 21), enregistré dans leur fiche : une fois imprimé, son scan en caisse retrouve l’article et l’ajoute au panier.\n\nContinuer ?')) { w.close(); return; }
-        var made = _nbcAssign(list);
-        if (made) say('🏷️ ' + made + ' code(s)-barres interne(s) créé(s)');
+        if (!todo) { _nbcShow(_nbcHtml(list, q, cat)); return; }
+        /* Confirmation dans la page (pas de confirm() : après l'ouverture d'un onglet, Chrome l'annule sans l'afficher) ;
+           le clic sur « Créer et imprimer » ouvre ensuite la fenêtre d'impression. */
+        var old = document.getElementById('nbc-ask'); if (old) old.remove();
+        var ov = document.createElement('div'); ov.id = 'nbc-ask';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100050;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+        ov.innerHTML = '<div style="background:#fff;color:#0f172a;max-width:440px;width:100%;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45);font-family:inherit">'
+            + '<div style="background:linear-gradient(135deg,#f39c12,#e67e22);color:#fff;padding:14px 18px;font-weight:800;font-size:1.05rem">🏷️ Créer les codes-barres</div>'
+            + '<div style="padding:16px 18px;font-size:.92rem;line-height:1.5"><b>' + todo + ' article' + (todo > 1 ? 's n’ont' : ' n’a') + ' pas de code-barres.</b><br>COVO Pro va créer pour ' + (todo > 1 ? 'chacun' : 'lui') + ' un <b>code-barres interne</b> (13 chiffres commençant par 21), enregistré dans la fiche. Une fois imprimé, son scan en caisse retrouve l’article et l’ajoute au panier.</div>'
+            + '<div style="display:flex;gap:8px;padding:0 18px 16px;justify-content:flex-end"><button type="button" data-nbc="no" style="border:none;background:#e2e8f0;color:#0f172a;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer">Annuler</button>'
+            + '<button type="button" data-nbc="ok" style="border:none;background:#e67e22;color:#fff;border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer">🖨️ Créer et imprimer</button></div></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener('click', function (ev) {
+            var b = ev.target.closest('[data-nbc]');
+            if (ev.target === ov || (b && b.getAttribute('data-nbc') === 'no')) { ov.remove(); return; }
+            if (!b) return;
+            ov.remove();
+            var made = _nbcAssign(list);
+            _nbcShow(_nbcHtml(list, q, cat));
+            if (made) say('🏷️ ' + made + ' code' + (made > 1 ? 's' : '') + '-barres interne' + (made > 1 ? 's' : '') + ' créé' + (made > 1 ? 's' : ''));
+        });
+        var okb = ov.querySelector('[data-nbc="ok"]'); if (okb) okb.focus();
+    }
+    function _nbcHtml(list, q, cat) {
+        var e = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
         var groups = {};
-        list.forEach(function (p) { var c = p.category || 'Sans catégorie'; (groups[c] = groups[c] || []).push(p); });
+        list.forEach(function (p) { var c = String(p.category || 'Sans catégorie'); (groups[c] = groups[c] || []).push(p); });
         var cats = Object.keys(groups).sort(function (a, b) { return a.localeCompare(b, 'fr'); });
         var money = function (v) { return (parseFloat(v) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; };
         var shop = ''; try { shop = (appSettings && (appSettings.companyName || appSettings.shopName)) || ''; } catch (x) {}
@@ -28638,7 +28657,23 @@ logout = function(skipConfirmation = false) {
             + '<div class="sub">' + n + ' article' + (n > 1 ? 's' : '') + ' · ' + cats.length + ' catégorie' + (cats.length > 1 ? 's' : '') + (cat !== '__all__' ? ' · catégorie « ' + e(cat) + ' »' : '') + (q ? ' · recherche « ' + e(q) + ' »' : '') + ' · ' + now.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</div>'
             + '<table><thead><tr><th>Photo</th><th>Article · prix</th><th style="text-align:center">Code-barres (à scanner en caisse)</th><th>✓</th></tr></thead><tbody>' + rows + '</tbody></table>'
             + '<p class="note">Codes-barres internes COVO Pro (EAN-13 « 21… ») enregistrés dans la fiche de chaque article : scannez-les en caisse pour ajouter l’article au panier.</p></body></html>';
-        w.document.open(); w.document.write(html); w.document.close();
+        return html;
+    }
+    /* Affichage : nouvel onglet ; s'il est bloqué (pop-up, appli installée), aperçu intégré avec son bouton Imprimer */
+    function _nbcShow(html) {
+        var w = null; try { w = window.open('', '_blank'); } catch (x) { w = null; }
+        if (w) { try { w.document.open(); w.document.write(html); w.document.close(); return; } catch (x) { try { w.close(); } catch (y) {} } }
+        var old = document.getElementById('nbc-prev'); if (old) old.remove();
+        var ov = document.createElement('div'); ov.id = 'nbc-prev';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:100060;background:rgba(15,23,42,.7);display:flex;flex-direction:column;align-items:center;padding:12px;gap:8px';
+        ov.innerHTML = '<div style="width:min(1000px,100%);display:flex;gap:8px;justify-content:flex-end"><button type="button" data-np="print" style="border:none;background:#e67e22;color:#fff;border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer">🖨️ Imprimer</button><button type="button" data-np="close" style="border:none;background:#fff;color:#0f172a;border-radius:10px;padding:9px 14px;font-weight:800;cursor:pointer">✕ Fermer</button></div>'
+            + '<iframe title="Aperçu avant impression" style="flex:1;width:min(1000px,100%);border:none;border-radius:12px;background:#fff"></iframe>';
+        document.body.appendChild(ov);
+        var fr = ov.querySelector('iframe'); fr.srcdoc = html;
+        ov.addEventListener('click', function (ev) {
+            var b = ev.target.closest('[data-np]'); if (!b) return;
+            if (b.getAttribute('data-np') === 'close') ov.remove(); else try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (x) {}
+        });
     }
 
     // ===== RECHERCHE MANUELLE — ARTICLES SANS CODE-BARRE =====
