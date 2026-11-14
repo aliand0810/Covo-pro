@@ -4941,7 +4941,7 @@ button, .btn, .retours-btn {
                         onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">
                         🏷️ Sans code-barre <span id="nbs-count-badge" style="background:rgba(255,255,255,0.3);border-radius:10px;padding:1px 6px;font-size:0.72rem;font-weight:600;">–</span>
                     </button>
-                    <button onclick="printNoBarcodeList()" title="Imprimer tous les articles sans code-barre"
+                    <button onclick="printNoBarcodeList()" title="Imprimer les articles sans code-barres avec un code-barres interne scannable et leur photo"
                         style="background:rgba(255,255,255,0.16);color:white;padding:6px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,0.3);cursor:pointer;font-weight:700;font-size:0.79rem;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"
                         onmouseover="this.style.background='rgba(255,255,255,0.26)'" onmouseout="this.style.background='rgba(255,255,255,0.16)'">🖨️ Imprimer sans code-barre</button>
                     <div style="width:1px;height:24px;background:rgba(255,255,255,0.2);flex-shrink:0;"></div>
@@ -28553,16 +28553,61 @@ logout = function(skipConfirmation = false) {
         barcodeBuffer = '';
     }
 
-    // ===== IMPRESSION — ARTICLES SANS CODE-BARRE =====
+    // ===== IMPRESSION — ARTICLES SANS CODE-BARRE (codes-barres internes EAN-13 + photo) =====
+    // Chaque article sans code-barres fournisseur reçoit un code-barres interne EAN-13 « 21 » + n° (enregistré
+    // dans la fiche : product.barcode, barcodeInternal = true). Scanné en caisse, il retrouve l'article et l'ajoute au panier.
+    function _ean13Check(d12) { var s = 0; for (var i = 0; i < 12; i++) s += (+d12.charAt(i)) * (i % 2 ? 3 : 1); return String((10 - s % 10) % 10); }
+    function _nbcIsInternal(p) { return !!(p && p.barcodeInternal && p.barcode && /^21\d{11}$/.test(String(p.barcode))); }
+    function _nbcNoReal(p) { return !!p && (!(p.barcode && String(p.barcode).trim().length >= 6) || _nbcIsInternal(p)); }
+    function _nbcAssign(list) {
+        var used = {}; products.forEach(function (p) { if (p && p.barcode) used[String(p.barcode).trim()] = 1; });
+        var seq = 0; products.forEach(function (p) { if (_nbcIsInternal(p)) seq = Math.max(seq, parseInt(String(p.barcode).slice(2, 12), 10) || 0); });
+        var made = 0;
+        list.forEach(function (p) {
+            if (_nbcIsInternal(p)) return;
+            var code = '', idn = String(p.id == null ? '' : p.id);
+            if (/^\d{1,10}$/.test(idn)) { var d = '21' + ('0000000000' + idn).slice(-10); code = d + _ean13Check(d); }   // le n° d'article apparaît dans le code
+            while (!code || used[code]) { seq++; var d2 = '21' + ('0000000000' + seq).slice(-10); code = d2 + _ean13Check(d2); }
+            if (p.barcode && String(p.barcode).trim()) p.barcodeOld = String(p.barcode).trim();
+            p.barcode = code; p.barcodeInternal = true; used[code] = 1; made++;
+        });
+        if (made) {
+            try { if (typeof window.saveAll === 'function') window.saveAll(); else localStorage.setItem('covo_products', JSON.stringify(products)); } catch (x) { try { localStorage.setItem('covo_products', JSON.stringify(products)); } catch (y) {} }
+            try { var now = new Date().toISOString(); localStorage.setItem('covo_drive_pending', now); localStorage.setItem('covo_last_local_change', now); } catch (x) {}
+            try { _updateNbsBadge(); } catch (x) {}
+            try { if (typeof renderProducts === 'function') renderProducts(); } catch (x) {}
+        }
+        return made;
+    }
+    function _nbcSvg(code) {
+        try {
+            if (typeof JsBarcode !== 'function') return '';
+            var el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            JsBarcode(el, code, { format: /^\d{13}$/.test(code) ? 'EAN13' : 'CODE128', width: 1.9, height: 46, fontSize: 14, margin: 8, textMargin: 1, lineColor: '#000000', background: '#ffffff', flat: true });
+            return el.outerHTML;
+        } catch (e) { return ''; }
+    }
+    function _nbcImg(p) {
+        var s = p && (p.img || p.image || p.imgUrl || ''); if (s && /^(data:image\/|https?:\/\/)/.test(String(s).trim())) return String(s).trim();
+        try { if (typeof window._covoImgLink === 'function') return window._covoImgLink(p) || ''; } catch (e) {} return '';
+    }
     function printNoBarcodeList(query, catFilter) {
         var e = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+        var say = function (m) { try { showToast(m, 'info'); } catch (x) { alert(m); } };
         var q = String(query || '').toLowerCase().trim(), cat = catFilter || '__all__';
         var list = products.filter(function (p) {
-            if (!p || (p.barcode && String(p.barcode).trim().length >= 6) || !(isAdmin || p.active)) return false;
+            if (!_nbcNoReal(p) || !(isAdmin || p.active)) return false;
             var c = p.category || 'Sans catégorie';
             return (cat === '__all__' || c === cat) && (!q || String(p.name || '').toLowerCase().indexOf(q) >= 0 || c.toLowerCase().indexOf(q) >= 0);
         });
-        if (!list.length) { try { showToast('Aucun article sans code-barre à imprimer', 'info'); } catch (x) { alert('Aucun article sans code-barre à imprimer'); } return; }
+        if (!list.length) { say('Aucun article sans code-barres à imprimer'); return; }
+        // ouvrir la fenêtre tout de suite (sinon bloquée comme pop-up), la remplir ensuite
+        var w = window.open('', '_blank');
+        if (!w) { say('Autorisez les fenêtres pop-up pour imprimer'); return; }
+        var todo = list.filter(function (p) { return !_nbcIsInternal(p); }).length;
+        if (todo && !confirm(todo + ' article(s) n’ont pas de code-barres.\n\nCOVO Pro va leur créer un code-barres interne (EAN-13 commençant par 21), enregistré dans leur fiche : une fois imprimé, son scan en caisse retrouve l’article et l’ajoute au panier.\n\nContinuer ?')) { w.close(); return; }
+        var made = _nbcAssign(list);
+        if (made) say('🏷️ ' + made + ' code(s)-barres interne(s) créé(s)');
         var groups = {};
         list.forEach(function (p) { var c = p.category || 'Sans catégorie'; (groups[c] = groups[c] || []).push(p); });
         var cats = Object.keys(groups).sort(function (a, b) { return a.localeCompare(b, 'fr'); });
@@ -28570,26 +28615,30 @@ logout = function(skipConfirmation = false) {
         var shop = ''; try { shop = (appSettings && (appSettings.companyName || appSettings.shopName)) || ''; } catch (x) {}
         var n = 0, rows = cats.map(function (c) {
             var L = groups[c].slice().sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || ''), 'fr'); });
-            return '<tr class="cat"><td colspan="7">' + e(c) + ' <span>(' + L.length + ')</span></td></tr>' + L.map(function (p) {
-                n++; var kg = p.unitType === 'kg', price = kg && p.pricePerKg ? money(p.pricePerKg) + '/kg' : money(p.price);
-                var st = p.stock == null || p.stock === '' ? '—' : (Math.round((parseFloat(p.stock) || 0) * 1000) / 1000).toLocaleString('fr-FR') + (kg ? ' kg' : '');
-                return '<tr' + (p.active === false ? ' class="off"' : '') + '><td class="code"><small>Code produit</small>' + e(p.id) + '</td><td><b>' + e(p.name) + '</b>' + (p.active === false ? ' <i>(inactif)</i>' : '') + (p.barcode ? '<div class="bad">code incomplet : ' + e(p.barcode) + '</div>' : '') + '</td><td>' + (kg ? 'Au kilo' : 'À l’unité') + '</td><td class="r">' + price + '</td><td class="r">' + st + '</td><td class="w"></td><td class="ck">☐</td></tr>';
+            return '<tr class="cat"><td colspan="4">' + e(c) + ' <span>(' + L.length + ')</span></td></tr>' + L.map(function (p) {
+                n++; var kg = p.unitType === 'kg', price = kg && p.pricePerKg ? money(p.pricePerKg) + ' /kg' : money(p.price);
+                var im = _nbcImg(p), ini = String(p.name || '?').trim().charAt(0).toUpperCase() || '📦';
+                var st = p.stock == null || p.stock === '' ? '' : 'Stock ' + (Math.round((parseFloat(p.stock) || 0) * 1000) / 1000).toLocaleString('fr-FR') + (kg ? ' kg' : '');
+                return '<tr' + (p.active === false ? ' class="off"' : '') + '><td class="ph">' + (im ? '<img src="' + e(im) + '" alt="" onerror="this.outerHTML=\'<div class=ini>' + e(ini) + '</div>\'">' : '<div class="ini">' + e(ini) + '</div>') + '</td>'
+                    + '<td><div class="nm">' + e(p.name) + (p.active === false ? ' <i>(inactif)</i>' : '') + '</div><div class="pr">' + price + '</div><div class="mt">' + (kg ? 'Au kilo' : 'À l’unité') + (st ? ' · ' + st : '') + '</div></td>'
+                    + '<td class="bc">' + (_nbcSvg(p.barcode) || '<b>' + e(p.barcode) + '</b>') + '</td><td class="ck">☐</td></tr>';
             }).join('');
         }).join('');
         var now = new Date();
-        var html = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Articles sans code-barre</title><style>'
+        var html = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Articles sans code-barres — codes internes</title><style>'
             + 'body{font-family:Arial,sans-serif;color:#0f172a;padding:24px;font-size:12px}h1{font-size:19px;margin:0 0 3px}.sub{color:#555;margin-bottom:12px}'
-            + 'table{width:100%;border-collapse:collapse}th{background:#e67e22;color:#fff;text-align:left;padding:7px 8px;font-size:11px}td{padding:7px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top}'
-            + '.r{text-align:right;white-space:nowrap}.code{width:84px;font-family:Courier New,monospace;font-size:17px;font-weight:800;color:#9a3412;white-space:nowrap;border-left:4px solid #e67e22}.code small{display:block;font-family:Arial,sans-serif;font-size:8.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.3px}.w{width:200px;border-bottom:1px solid #94a3b8}.ck{width:22px;text-align:center;font-size:15px}'
-            + 'tr.cat td{background:#fff4e6;font-weight:800;color:#9a3412;border-bottom:2px solid #f5c08a;padding-top:10px}tr.cat span{font-weight:600;color:#c2410c}tr.off td{color:#94a3b8}.bad{color:#b91c1c;font-size:10.5px;margin-top:2px}'
-            + 'thead{display:table-header-group}tr{page-break-inside:avoid}button{float:right;padding:8px 14px;border:none;border-radius:8px;background:#e67e22;color:#fff;font-weight:700;cursor:pointer}'
-            + '@media print{button{display:none}body{padding:0}}@page{margin:12mm}</style></head><body>'
-            + '<button onclick="window.print()">🖨️ Imprimer</button><h1>🏷️ Articles sans code-barre' + (shop ? ' — ' + e(shop) : '') + '</h1>'
+            + 'table{width:100%;border-collapse:collapse}th{background:#e67e22;color:#fff;text-align:left;padding:7px 8px;font-size:11px}td{padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:middle}'
+            + '.ph{width:70px}.ph img,.ini{width:64px;height:64px;border-radius:8px;object-fit:cover;display:block;border:1px solid #e5e7eb}.ini{display:flex;align-items:center;justify-content:center;background:#fff4e6;color:#c2410c;font-weight:800;font-size:24px}'
+            + '.nm{font-weight:800;font-size:14px}.pr{font-size:17px;font-weight:800;color:#c2410c;margin-top:3px}.mt{color:#64748b;font-size:11px;margin-top:2px}'
+            + '.bc{width:230px;text-align:center}.bc svg{display:block;margin:0 auto;max-width:100%;height:auto}.ck{width:22px;text-align:center;font-size:15px}'
+            + 'tr.cat td{background:#fff4e6;font-weight:800;color:#9a3412;border-bottom:2px solid #f5c08a;padding-top:10px}tr.cat span{font-weight:600;color:#c2410c}tr.off td{opacity:.6}'
+            + '.note{margin-top:12px;color:#555;font-size:11px}thead{display:table-header-group}tr{page-break-inside:avoid}button{float:right;padding:8px 14px;border:none;border-radius:8px;background:#e67e22;color:#fff;font-weight:700;cursor:pointer}'
+            + '@media print{button{display:none}body{padding:0}}@page{margin:10mm}</style></head><body>'
+            + '<button onclick="window.print()">🖨️ Imprimer</button><h1>🏷️ Articles sans code-barres' + (shop ? ' — ' + e(shop) : '') + '</h1>'
             + '<div class="sub">' + n + ' article' + (n > 1 ? 's' : '') + ' · ' + cats.length + ' catégorie' + (cats.length > 1 ? 's' : '') + (cat !== '__all__' ? ' · catégorie « ' + e(cat) + ' »' : '') + (q ? ' · recherche « ' + e(q) + ' »' : '') + ' · ' + now.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) + ' ' + now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</div>'
-            + '<table><thead><tr><th>Code produit</th><th>Article</th><th>Vente</th><th class="r">Prix</th><th class="r">Stock</th><th>Code-barres à noter</th><th>✓</th></tr></thead><tbody>' + rows + '</tbody></table></body></html>';
-        var w = window.open('', '_blank');
-        if (!w) { try { showToast('Autorisez les fenêtres pop-up pour imprimer', 'info'); } catch (x) {} return; }
-        w.document.write(html); w.document.close();
+            + '<table><thead><tr><th>Photo</th><th>Article · prix</th><th style="text-align:center">Code-barres (à scanner en caisse)</th><th>✓</th></tr></thead><tbody>' + rows + '</tbody></table>'
+            + '<p class="note">Codes-barres internes COVO Pro (EAN-13 « 21… ») enregistrés dans la fiche de chaque article : scannez-les en caisse pour ajouter l’article au panier.</p></body></html>';
+        w.document.open(); w.document.write(html); w.document.close();
     }
 
     // ===== RECHERCHE MANUELLE — ARTICLES SANS CODE-BARRE =====
