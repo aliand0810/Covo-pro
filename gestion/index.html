@@ -13748,17 +13748,38 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         if (mode === 'qr') { var q = qrURL(v, 220); return q ? '<img class="uxm-qr" src="' + q + '" alt="QR code">' : '<div class="uxm-nocode">Générateur de QR code indisponible</div>'; }
         var b = barSVG(v); return b ? '<div class="uxm-bar">' + b + '</div>' : '<div class="uxm-nocode">Générateur de code-barres indisponible (connexion internet requise au premier chargement)</div>';
     }
+    /* Thème de la carte selon le niveau : bandeau (t1,t2), fond (b1,b2,b3), halo (gl) */
+    var BTH = {
+        debutant: { t1: '#22a06b', t2: '#11734a', b1: '#2fae78', b2: '#6cc3b0', b3: '#1e6b74', gl: 'rgba(52,211,153,.55)' },
+        confirme: { t1: '#2f6fe4', t2: '#1d3f9e', b1: '#3d82f0', b2: '#7cb6d8', b3: '#1f3b86', gl: 'rgba(96,165,250,.55)' },
+        responsable: { t1: '#e09a1c', t2: '#94530a', b1: '#f0a92e', b2: '#ecc47a', b3: '#8a520e', gl: 'rgba(251,191,36,.55)' },
+        admin: { t1: '#7c4ddb', t2: '#4a2593', b1: '#8b5cf6', b2: '#b3a6e6', b3: '#47288f', gl: 'rgba(167,139,250,.55)' }
+    };
+    function themeOf(u) { return roleOf(u) === 'admin' ? BTH.admin : BTH[levelKey(u)] || BTH.debutant; }
+    /* Décor : pistes de circuit à gauche, réseau de points à droite (repère 300 × 470) */
+    var DECO_C = [['M0 112H24V150H50', 50, 150], ['M0 134H14V196H38V220', 38, 220], ['M0 168H34V186', 34, 186], ['M0 210H22V256H54', 54, 256], ['M0 240H10V306H34', 34, 306], ['M0 282H28V336', 28, 336], ['M0 326H16V378H46', 46, 378], ['M0 360H36V408', 36, 408], ['M0 404H22V444H58', 58, 444], ['M300 430H272V452', 272, 452]];
+    var DECO_P = [[238, 104], [284, 132], [254, 172], [298, 204], [232, 218], [272, 252], [300, 282], [246, 304], [286, 334], [258, 368], [296, 396]];
+    var DECO_E = [[0, 1], [0, 2], [1, 2], [1, 3], [2, 4], [2, 5], [3, 5], [4, 5], [5, 6], [5, 7], [6, 8], [7, 8], [7, 9], [8, 9], [8, 10], [9, 10]];
+    function decoSVG() {
+        var h = '<svg class="uxm-b-deco" viewBox="0 0 300 470" preserveAspectRatio="xMidYMin slice" aria-hidden="true"><g fill="none" stroke="rgba(255,255,255,.28)" stroke-width="1.6">';
+        DECO_C.forEach(function (c) { h += '<path d="' + c[0] + '"/>'; });
+        DECO_E.forEach(function (e) { var a = DECO_P[e[0]], b = DECO_P[e[1]]; h += '<line x1="' + a[0] + '" y1="' + a[1] + '" x2="' + b[0] + '" y2="' + b[1] + '" stroke-width="1"/>'; });
+        h += '</g><g fill="rgba(255,255,255,.45)">';
+        DECO_C.forEach(function (c) { h += '<circle cx="' + c[1] + '" cy="' + c[2] + '" r="3"/>'; });
+        DECO_P.forEach(function (p) { h += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="3.4"/>'; });
+        return h + '</g></svg>';
+    }
     function badgeHTML(u, mode) {
-        var r = roleOf(u), L = levelOf(u);
-        return '<div class="uxm-badge uxm-b-' + r + '" style="--lv1:' + L.c1 + ';--lv2:' + L.c2 + '">' +
-            '<div class="uxm-b-band"><span class="uxm-b-brand"><img src="' + COVO_LOGO + '" alt="COVO">COVO Pro</span><span>Badge d’accès</span></div>' +
+        var r = roleOf(u), L = levelOf(u), T = themeOf(u), n = pinOf(u).length;
+        return '<div class="uxm-badge uxm-b-' + r + '" style="--t1:' + T.t1 + ';--t2:' + T.t2 + ';--b1:' + T.b1 + ';--b2:' + T.b2 + ';--b3:' + T.b3 + ';--gl:' + T.gl + ';--lv1:' + L.c1 + ';--lv2:' + L.c2 + '">' +
+            decoSVG() + '<div class="uxm-b-glow"></div>' +
+            '<div class="uxm-b-band"><span class="uxm-b-brand"><img src="' + COVO_LOGO + '" alt="COVO">COVO PRO</span><span>BADGE D’ACCÈS</span></div>' +
             '<div class="uxm-b-av">' + (u.avatar ? '<img src="' + esc(u.avatar) + '" alt="">' : esc(initials(u.username))) + '</div>' +
             '<div class="uxm-b-name">' + esc(u.username) + '</div>' +
-            '<div class="uxm-b-role">' + (r === 'admin' ? '👑 Administrateur' : '💼 Caissier') + '</div>' +
-            (r === 'admin' ? '' : '<div class="uxm-b-lv">' + L.ic + ' ' + L.l.toUpperCase() + '</div>') +
+            '<div class="uxm-b-role">' + (r === 'admin' ? '👑 Administrateur' : '💼 Caissier · ' + L.ic + ' ' + L.l) + '</div>' +
             '<div class="uxm-b-id">#' + esc(u.id || '—') + '</div>' +
             '<div class="uxm-b-code">' + codeHTML(u, mode) + '</div>' +
-            '<div class="uxm-b-dots">' + (pinOf(u) ? Array(pinOf(u).length + 1).join('● ') : '') + '</div>' +
+            '<div class="uxm-b-metal">' + (n ? Array(n + 1).join('<i></i>') : '') + '</div>' +
             '</div>';
     }
 
@@ -13874,7 +13895,20 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         '.uxm-b-code{margin:12px 16px 0;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px;min-height:80px;display:flex;align-items:center;justify-content:center}' +
         '.uxm-b-code svg{display:block;width:100%;height:auto}.uxm-b-code .uxm-bar{width:100%}.uxm-qr{width:150px;height:150px;display:block;image-rendering:pixelated}' +
         '.uxm-b-dots{font-size:.85rem;letter-spacing:.12em;color:#94a3b8;margin-top:8px;min-height:1em}' +
-        '.uxm-nocode{font-size:.78rem;color:#b45309;padding:8px}';
+        '.uxm-nocode{font-size:.78rem;color:#b45309;padding:8px}' +
+        '.uxm-badge{position:relative;width:280px;border:none!important;border-radius:22px;padding-bottom:0;overflow:hidden;color:#0f2a4a;background:linear-gradient(165deg,var(--b1) 0%,var(--b2) 50%,var(--b3) 100%);box-shadow:0 0 0 1px rgba(0,0,0,.28),inset 0 0 0 3px rgba(255,255,255,.22),0 14px 34px rgba(15,23,42,.3)!important}' +
+        '.uxm-badge>*{position:relative;z-index:1}.uxm-badge>.uxm-b-deco{position:absolute;inset:0;z-index:0;width:100%;height:100%;pointer-events:none}' +
+        '.uxm-badge>.uxm-b-glow{position:absolute;z-index:0;left:50%;top:120px;width:320px;height:230px;transform:translateX(-50%);background:radial-gradient(ellipse at center,rgba(255,255,255,.78) 0%,rgba(255,255,255,.35) 45%,rgba(255,255,255,0) 72%);pointer-events:none}' +
+        '.uxm-badge .uxm-b-band{height:96px;padding:12px 14px;align-items:flex-start;background:linear-gradient(180deg,var(--t1),var(--t2))!important;border-radius:0 0 22px 22px;box-shadow:0 5px 12px rgba(0,0,0,.28),inset 0 -1px 0 rgba(255,255,255,.25);font-family:Georgia,"Times New Roman",serif;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,.45)}' +
+        '.uxm-badge .uxm-b-brand{font-size:.9rem;letter-spacing:.04em;align-items:center}.uxm-badge .uxm-b-brand img{width:30px;height:30px;margin-top:0;box-shadow:0 0 0 2px rgba(255,255,255,.85),0 2px 6px rgba(0,0,0,.35)}' +
+        '.uxm-badge .uxm-b-av{width:88px;height:88px;margin:-44px auto 10px;border:none;font-family:"Arial Black",Arial,sans-serif;font-size:2.1rem;color:#fff;text-shadow:0 2px 3px rgba(0,0,0,.4);background:radial-gradient(circle at 35% 28%,var(--b1),var(--t2) 75%)!important;box-shadow:0 0 0 4px #f1f5f9,0 0 0 6px #8b95a3,0 0 0 8px #dfe4ea,0 0 0 9px #9aa3ae,0 0 26px 8px var(--gl),0 6px 14px rgba(0,0,0,.35)}' +
+        '.uxm-badge .uxm-b-name{font-family:Georgia,"Times New Roman",serif;font-weight:800;font-size:1.5rem;color:#0f2a4a;margin-top:6px;text-shadow:0 1px 0 rgba(255,255,255,.5)}' +
+        '.uxm-badge .uxm-b-role{color:#0f2a4a;font-size:.9rem;font-weight:600;margin-top:4px}' +
+        '.uxm-badge .uxm-b-id{background:none;color:#a16207;font-family:Arial,sans-serif;font-size:.92rem;font-weight:700;letter-spacing:.05em;margin-top:6px;padding:0;text-shadow:0 1px 0 rgba(255,255,255,.65)}' +
+        '.uxm-badge .uxm-b-code{margin:16px 14px 0;border:none;border-radius:14px 14px 0 0;background:#fff;padding:14px 12px;box-shadow:0 -1px 0 rgba(255,255,255,.6),0 3px 10px rgba(0,0,0,.18)}' +
+        '.uxm-badge .uxm-b-metal{margin:0 14px 16px;height:46px;border-radius:0 0 14px 14px;display:flex;align-items:center;justify-content:center;gap:9px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.08) 0 1px,rgba(0,0,0,.03) 1px 3px),linear-gradient(180deg,#e2e6ea 0%,#bcc3cb 42%,#d6dade 68%,#a7afb8 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.75),0 3px 10px rgba(0,0,0,.22)}' +
+        '.uxm-badge .uxm-b-metal i{width:11px;height:11px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#f8fafc,#8f98a4);box-shadow:inset 0 0 0 1px #6b7280,0 1px 1px rgba(255,255,255,.7)}' +
+        '.uxm-badge .uxm-b-dots,.uxm-badge .uxm-b-lv{display:none}.uxm-badge .uxm-nocode{color:#b45309}';
 
     /* ── Montage de l'interface ── */
     function mount() {
@@ -14203,7 +14237,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         var css = CSS.split('#uxm{')[0] + CSS.slice(CSS.indexOf('.uxm-badge{'));
         w.document.write('<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Badges · COVO Pro</title><style>' + css +
             '@page{margin:10mm}body{margin:0;padding:12px;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-            '.grid{display:flex;flex-wrap:wrap;gap:14px}.uxm-badge{box-shadow:none;break-inside:avoid;page-break-inside:avoid;width:250px}</style></head><body><div class="grid">' +
+            '.grid{display:flex;flex-wrap:wrap;gap:14px}.uxm-badge{box-shadow:0 0 0 1px rgba(0,0,0,.28),inset 0 0 0 3px rgba(255,255,255,.22)!important;break-inside:avoid;page-break-inside:avoid;width:270px}</style></head><body><div class="grid">' +
             list.map(function (u) { return badgeHTML(u, MODE); }).join('') +
             '</div><script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>');
         w.document.close();
@@ -14217,35 +14251,71 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         var codeSrc = MODE === 'qr' ? qrURL(v, 440) : (function () { var s = barSVG(v); return s ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s.indexOf('xmlns=') > 0 ? s : s.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"')) : ''; })();
         if (!codeSrc) { toast('⚠️ Générateur de code indisponible'); return; }
         Promise.all([loadImg(codeSrc), loadImg(u.avatar || ''), loadImg(COVO_LOGO)]).then(function (im) {
-            var S = 2, W = 300, H = MODE === 'qr' ? 470 : 400;
+            var S = 3, W = 300, qr = MODE === 'qr', H = qr ? 520 : 450;
             var c = document.createElement('canvas'); c.width = W * S; c.height = H * S;
             var x = c.getContext('2d'); x.scale(S, S);
-            var adm = roleOf(u) === 'admin', LVu = levelOf(u);
-            x.fillStyle = '#ffffff'; rr(x, 0, 0, W, H, 18); x.fill(); x.save(); rr(x, 0, 0, W, H, 18); x.clip();
-            var g = x.createLinearGradient(0, 0, W, 76); g.addColorStop(0, LVu.c1); g.addColorStop(1, LVu.c2);
-            x.fillStyle = g; x.fillRect(0, 0, W, 76); x.restore();
-            x.fillStyle = '#fff'; x.font = '800 10px system-ui,Segoe UI,sans-serif'; x.textBaseline = 'top';
-            if (im[2]) { x.save(); x.beginPath(); x.arc(27, 22, 13, 0, Math.PI * 2); x.fillStyle = '#fff'; x.fill(); x.drawImage(im[2], 14, 9, 26, 26); x.restore(); }
-            x.textAlign = 'left'; x.fillText('COVO PRO', im[2] ? 46 : 14, 12); x.textAlign = 'right'; x.fillText('BADGE D’ACCÈS', W - 14, 12);
-            var cx = W / 2, cy = 76, R = 36;
-            x.beginPath(); x.arc(cx, cy, R + 4, 0, Math.PI * 2); x.fillStyle = '#fff'; x.fill();
-            x.save(); x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.clip();
-            if (im[1]) { x.drawImage(im[1], cx - R, cy - R, R * 2, R * 2); } else { x.fillStyle = adm ? '#6d28d9' : LVu.c2; x.fillRect(cx - R, cy - R, R * 2, R * 2); x.fillStyle = '#fff'; x.font = '800 24px system-ui,sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(initials(u.username), cx, cy + 1); }
+            var adm = roleOf(u) === 'admin', LVu = levelOf(u), T = themeOf(u), cx = W / 2;
+            x.save(); rr(x, 0, 0, W, H, 22); x.clip();
+            // fond + halo
+            var g = x.createLinearGradient(0, 0, W * .55, H); g.addColorStop(0, T.b1); g.addColorStop(.5, T.b2); g.addColorStop(1, T.b3);
+            x.fillStyle = g; x.fillRect(0, 0, W, H);
+            var hg = x.createRadialGradient(cx, 200, 10, cx, 200, 175); hg.addColorStop(0, 'rgba(255,255,255,.78)'); hg.addColorStop(.45, 'rgba(255,255,255,.35)'); hg.addColorStop(1, 'rgba(255,255,255,0)');
+            x.fillStyle = hg; x.fillRect(0, 60, W, 300);
+            // circuits + réseau
+            x.save(); x.strokeStyle = 'rgba(255,255,255,.28)'; x.lineWidth = 1.6;
+            DECO_C.forEach(function (d) { try { x.stroke(new Path2D(d[0])); } catch (e) {} });
+            x.lineWidth = 1; DECO_E.forEach(function (e) { var a = DECO_P[e[0]], b = DECO_P[e[1]]; x.beginPath(); x.moveTo(a[0], a[1]); x.lineTo(b[0], b[1]); x.stroke(); });
+            x.fillStyle = 'rgba(255,255,255,.45)';
+            DECO_C.forEach(function (d) { x.beginPath(); x.arc(d[1], d[2], 3, 0, Math.PI * 2); x.fill(); });
+            DECO_P.forEach(function (p) { x.beginPath(); x.arc(p[0], p[1], 3.4, 0, Math.PI * 2); x.fill(); });
             x.restore();
-            x.textAlign = 'center'; x.textBaseline = 'top'; x.fillStyle = '#0f172a'; x.font = '800 18px system-ui,sans-serif';
-            var name = String(u.username || ''); while (x.measureText(name).width > W - 30 && name.length > 3) name = name.slice(0, -2) + '…';
-            x.fillText(name, cx, 122);
-            x.fillStyle = '#475569'; x.font = '600 12px system-ui,sans-serif'; x.fillText(adm ? 'Administrateur' : 'Caissier · ' + LVu.ic + ' ' + LVu.l, cx, 146);
-            x.fillStyle = '#4338ca'; x.font = '12px monospace'; x.fillText('#' + (u.id || ''), cx, 166);
-            var top = 192, img = im[0];
-            if (img) {
-                if (MODE === 'qr') { x.drawImage(img, cx - 110, top, 220, 220); }
-                else { var bw = W - 40, bh = Math.min(120, bw * (img.height / img.width || .35)); x.drawImage(img, 20, top + 10, bw, bh); }
+            // bandeau
+            x.save(); x.shadowColor = 'rgba(0,0,0,.3)'; x.shadowBlur = 12; x.shadowOffsetY = 5;
+            var bg = x.createLinearGradient(0, 0, 0, 90); bg.addColorStop(0, T.t1); bg.addColorStop(1, T.t2); x.fillStyle = bg;
+            x.beginPath(); x.moveTo(0, 0); x.lineTo(W, 0); x.lineTo(W, 66); x.quadraticCurveTo(W, 90, W - 24, 90); x.lineTo(24, 90); x.quadraticCurveTo(0, 90, 0, 66); x.closePath(); x.fill(); x.restore();
+            x.textBaseline = 'middle'; x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.45)'; x.shadowBlur = 2; x.shadowOffsetY = 1;
+            if (im[2]) { x.save(); x.shadowBlur = 4; x.beginPath(); x.arc(31, 29, 17, 0, Math.PI * 2); x.fillStyle = '#fff'; x.fill(); x.restore(); x.drawImage(im[2], 15, 13, 32, 32); }
+            x.textAlign = 'left'; x.font = '700 17px Georgia,"Times New Roman",serif'; x.fillText('COVO PRO', im[2] ? 55 : 16, 30);
+            x.textAlign = 'right'; x.font = '700 11px Georgia,"Times New Roman",serif'; x.fillText('BADGE D’ACCÈS', W - 16, 30);
+            x.shadowColor = 'transparent'; x.shadowBlur = 0; x.shadowOffsetY = 0;
+            // médaillon
+            var cy = 92, R = 44;
+            x.save(); x.shadowColor = T.gl; x.shadowBlur = 26; x.beginPath(); x.arc(cx, cy, R + 9, 0, Math.PI * 2); x.fillStyle = '#9aa3ae'; x.fill(); x.restore();
+            var ring = x.createLinearGradient(cx - R, cy - R, cx + R, cy + R); ring.addColorStop(0, '#f8fafc'); ring.addColorStop(.35, '#9aa3ae'); ring.addColorStop(.6, '#eef2f6'); ring.addColorStop(1, '#7b8592');
+            x.beginPath(); x.arc(cx, cy, R + 8, 0, Math.PI * 2); x.fillStyle = ring; x.fill();
+            x.beginPath(); x.arc(cx, cy, R + 3, 0, Math.PI * 2); x.fillStyle = '#e5e9ee'; x.fill();
+            x.save(); x.beginPath(); x.arc(cx, cy, R, 0, Math.PI * 2); x.clip();
+            if (im[1]) x.drawImage(im[1], cx - R, cy - R, R * 2, R * 2);
+            else {
+                var ag = x.createRadialGradient(cx - 14, cy - 16, 4, cx, cy, R); ag.addColorStop(0, T.b1); ag.addColorStop(1, T.t2); x.fillStyle = ag; x.fillRect(cx - R, cy - R, R * 2, R * 2);
+                x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.4)'; x.shadowBlur = 3; x.shadowOffsetY = 2; x.font = '900 34px "Arial Black",Arial,sans-serif'; x.textAlign = 'center'; x.fillText(initials(u.username), cx, cy + 2);
             }
-            x.fillStyle = '#94a3b8'; x.font = '14px system-ui,sans-serif'; x.fillText(Array(v.length + 1).join('● '), cx, H - 34);
-            x.strokeStyle = '#e2e8f0'; x.lineWidth = 1; rr(x, .5, .5, W - 1, H - 1, 18); x.stroke();
+            x.restore();
+            // textes
+            x.textAlign = 'center'; x.textBaseline = 'top';
+            x.fillStyle = '#0f2a4a'; x.font = '800 26px Georgia,"Times New Roman",serif';
+            var name = String(u.username || ''); while (x.measureText(name).width > W - 30 && name.length > 3) name = name.slice(0, -2) + '…';
+            x.fillText(name, cx, 150);
+            x.font = '600 14px system-ui,Segoe UI,sans-serif'; x.fillText(adm ? '👑 Administrateur' : '💼 Caissier · ' + LVu.ic + ' ' + LVu.l, cx, 184);
+            x.fillStyle = '#a16207'; x.font = '700 15px Arial,sans-serif'; x.fillText('#' + (u.id || ''), cx, 208);
+            // panneau code + bande métal
+            var px = 16, pw = W - 32, top = 240, ph = qr ? 222 : 140, mh = 46;
+            x.save(); x.shadowColor = 'rgba(0,0,0,.22)'; x.shadowBlur = 10; x.shadowOffsetY = 3; x.fillStyle = '#fff'; rr(x, px, top, pw, ph + mh, 14); x.fill(); x.restore();
+            var img = im[0];
+            if (img) { if (qr) x.drawImage(img, cx - 100, top + 11, 200, 200); else { var bw = pw - 28, bh = Math.min(ph - 24, bw * (img.height / img.width || .35)); x.drawImage(img, px + 14, top + (ph - bh) / 2, bw, bh); } }
+            x.save(); rr(x, px, top, pw, ph + mh, 14); x.clip();
+            var mg = x.createLinearGradient(0, top + ph, 0, top + ph + mh); mg.addColorStop(0, '#e2e6ea'); mg.addColorStop(.42, '#bcc3cb'); mg.addColorStop(.68, '#d6dade'); mg.addColorStop(1, '#a7afb8');
+            x.fillStyle = mg; x.fillRect(px, top + ph, pw, mh);
+            x.strokeStyle = 'rgba(255,255,255,.12)'; x.lineWidth = 1; for (var k = px; k < px + pw; k += 3) { x.beginPath(); x.moveTo(k, top + ph); x.lineTo(k, top + ph + mh); x.stroke(); }
+            x.restore();
+            var dn = v.length, gap = 20, sx = cx - (dn - 1) * gap / 2, dy = top + ph + mh / 2;
+            for (var d = 0; d < dn; d++) { var dg = x.createRadialGradient(sx + d * gap - 2, dy - 2, 1, sx + d * gap, dy, 6); dg.addColorStop(0, '#f8fafc'); dg.addColorStop(1, '#8f98a4'); x.beginPath(); x.arc(sx + d * gap, dy, 5.5, 0, Math.PI * 2); x.fillStyle = dg; x.fill(); x.strokeStyle = '#6b7280'; x.lineWidth = 1; x.stroke(); }
+            x.restore();
+            // contour
+            x.strokeStyle = 'rgba(255,255,255,.3)'; x.lineWidth = 3; rr(x, 2.5, 2.5, W - 5, H - 5, 20); x.stroke();
+            x.strokeStyle = 'rgba(0,0,0,.35)'; x.lineWidth = 1; rr(x, .5, .5, W - 1, H - 1, 22); x.stroke();
             var a = document.createElement('a');
-            a.download = 'badge_' + String(u.username || u.id).replace(/[^\w\-À-ÿ]+/g, '_') + (MODE === 'qr' ? '_qr' : '') + '.png';
+            a.download = 'badge_' + String(u.username || u.id).replace(/[^\w\-À-ÿ]+/g, '_') + (qr ? '_qr' : '') + '.png';
             a.href = c.toDataURL('image/png'); document.body.appendChild(a); a.click(); a.remove();
             toast('⬇️ Badge téléchargé');
         });
