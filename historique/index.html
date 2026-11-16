@@ -1049,6 +1049,7 @@ return tinf_uncompress;
                                         <tr style="background:var(--bg-body,#f4f7f6);">
                                             <th style="text-align:left;padding:8px 10px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--text-muted,#888);">Ticket</th>
                                             <th style="text-align:left;padding:8px 10px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--text-muted,#888);">Heure</th>
+                                            <th style="text-align:left;padding:8px 10px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--text-muted,#888);">Caissier</th>
                                             <th style="text-align:left;padding:8px 10px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--text-muted,#888);">Mode</th>
                                             <th style="text-align:left;padding:8px 10px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--text-muted,#888);">Client</th>
                                             <th style="text-align:right;padding:8px 10px;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.3px;color:var(--text-muted,#888);">Montant</th>
@@ -1984,6 +1985,37 @@ function _histAgAccOnPeriodChange(pk) {
     _histAgAccRenderDaysList();
 }
 
+// ── Vendeurs : qui a vendu quoi, jour par jour ──
+const _HIST_SELLER_COLORS = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4d7c0f'];
+function _histUsers() { try { return JSON.parse(localStorage.getItem('covo_users') || '[]') || []; } catch (e) { return []; } }
+function _histSellerOf(s, users) {
+    users = users || _histUsers();
+    var u = s.cashierId ? users.find(function (x) { return x && String(x.id) === String(s.cashierId); }) : null;
+    if (!u && s.cashier) u = users.find(function (x) { return x && String(x.username || '').toLowerCase() === String(s.cashier).toLowerCase(); });
+    var name = (u && u.username) || s.cashier || '';
+    var key = u ? 'u:' + u.id : (s.cashierId ? 'u:' + s.cashierId : (name ? 'n:' + name.toLowerCase() : '?'));
+    return { key: key, name: name || 'Non identifié', role: u ? (u.role === 'admin' ? 'Administrateur' : 'Caissier') : '', id: (u && u.id) || s.cashierId || '' };
+}
+function _histSellerColor(key) { var h = 0; for (var i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0; return key === '?' ? '#94a3b8' : _HIST_SELLER_COLORS[Math.abs(h) % _HIST_SELLER_COLORS.length]; }
+function _histSellers(sales) {
+    var users = _histUsers(), m = {};
+    (sales || []).forEach(function (s) {
+        var v = _histSellerOf(s, users), a = m[v.key] = m[v.key] || { key: v.key, name: v.name, role: v.role, id: v.id, n: 0, ca: 0, cancelled: 0 };
+        if (s.cancelled) { a.cancelled++; return; }
+        a.n++; a.ca += parseFloat(s.total || 0);
+    });
+    var L = Object.keys(m).map(function (k) { return m[k]; }).filter(function (a) { return a.n || a.cancelled; });
+    var tot = L.reduce(function (t, a) { return t + Math.max(0, a.ca); }, 0);
+    L.forEach(function (a) { a.share = tot > 0 ? Math.max(0, a.ca) / tot : 0; });
+    return L.sort(function (a, b) { return b.ca - a.ca; });
+}
+function _histSellerDot(a, size) { size = size || 20; return '<span style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:' + _histSellerColor(a.key) + ';color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:' + Math.round(size * .5) + 'px;font-weight:800;flex-shrink:0;">' + _histEscape(String(a.name || '?').charAt(0).toUpperCase()) + '</span>'; }
+window._histAgAccSellerFilter = null;
+function _histAgAccSetSellerFilter(k) {
+    window._histAgAccSellerFilter = (k && window._histAgAccSellerFilter !== k) ? k : null;
+    _histAgAccRenderTable(window._histAgAccDayKeySel);
+}
+
 function _histAgAccRenderDaysList() {
     const periods = window._histAgAccData || {};
     const period = periods[window._histAgAccPeriodKeySel];
@@ -2005,6 +2037,13 @@ function _histAgAccRenderDaysList() {
         }
         box.innerHTML = lines + (pp.points > 0.004 ? '<div><span style="color:var(--text-muted,#777);font-weight:600;">🎁 Remises points</span><b style="color:var(--text-muted,#777);">−' + _histPayFmt(pp.points) + '</b></div>' : '');
         box.style.display = lines ? 'flex' : 'none';
+        let sb = document.getElementById('hist-agacc-period-sellers');
+        if (!sb) { sb = document.createElement('div'); sb.id = 'hist-agacc-period-sellers'; sb.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-color,#e0e0e0);font-size:0.76rem;'; box.parentNode.insertBefore(sb, box.nextSibling); }
+        const allSales = []; Object.keys(period.days).forEach(function (dk) { Array.prototype.push.apply(allSales, period.days[dk].sales); });
+        const PS = _histSellers(allSales);
+        sb.innerHTML = PS.length ? '<div style="font-weight:800;color:var(--text-muted,#777);font-size:0.68rem;text-transform:uppercase;letter-spacing:.3px;">👥 Par vendeur (période)</div>' + PS.map(function (a) {
+            return '<div style="display:flex;align-items:center;gap:6px;">' + _histSellerDot(a, 18) + '<span style="flex:1;font-weight:700;color:var(--text-main,#2c3e50);">' + _histEscape(a.name) + ' <span style="font-weight:600;color:var(--text-muted,#999);">· ' + a.n + ' ticket' + (a.n > 1 ? 's' : '') + '</span></span><b>' + a.ca.toFixed(2) + ' €</b></div>';
+        }).join('') : '';
     }
 
     const dayKeys = Object.keys(period.days).sort().reverse();
@@ -2021,6 +2060,14 @@ function _histAgAccRenderDaysList() {
                 + '<span style="font-size:0.76rem;font-weight:700;color:#059669;">' + day.ca.toFixed(2) + ' €</span>'
                 + '</div>'
                 + _histPayBarHtml(day.pay || _histPayEmpty(), 'hist-pay-mini')
+                + (function () {
+                    const SL = _histSellers(day.sales).filter(function (a) { return a.n; });
+                    if (!SL.length) return '';
+                    return '<div style="display:flex;flex-wrap:wrap;gap:4px 8px;margin-top:4px;">' + SL.map(function (a) {
+                        return '<span title="' + _histEscape(a.name + ' : ' + a.n + ' ticket' + (a.n > 1 ? 's' : '') + ' — ' + a.ca.toFixed(2) + ' €') + '" style="display:inline-flex;align-items:center;gap:4px;font-size:0.68rem;color:var(--text-main,#2c3e50);font-weight:600;">' + _histSellerDot(a, 15)
+                            + (SL.length > 1 ? '<span>' + _histEscape(a.name) + ' <b>' + a.ca.toFixed(2) + ' €</b></span>' : '<span>' + _histEscape(a.name) + '</span>') + '</span>';
+                    }).join('') + '</div>';
+                })()
                 + '</div>';
         }).join('');
     }
@@ -2028,7 +2075,7 @@ function _histAgAccRenderDaysList() {
 }
 
 function _histAgAccSelectDay(dk) {
-    if (window._histAgAccDayKeySel !== dk) window._histAgAccPayFilter = null;
+    if (window._histAgAccDayKeySel !== dk) { window._histAgAccPayFilter = null; window._histAgAccSellerFilter = null; }
     window._histAgAccDayKeySel = dk;
     _histAgAccRenderDaysList();
 }
@@ -2045,7 +2092,7 @@ function _histAgAccRenderTable(dayKey) {
     if (!day) {
         if (payEl) payEl.innerHTML = '';
         if (titleEl) titleEl.textContent = '—';
-        bodyEl.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted,#999);">Sélectionnez un jour à gauche.</td></tr>';
+        bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted,#999);">Sélectionnez un jour à gauche.</td></tr>';
         return;
     }
     if (titleEl) titleEl.textContent = '🗓️ ' + _histAgAccDayLabel(dayKey) + ' — ' + day.ca.toFixed(2) + ' €';
@@ -2081,7 +2128,26 @@ function _histAgAccRenderTable(dayKey) {
         if (parts.length < 2 && s.method !== 'mixed') return '';
         return '<span class="hist-pay-detail">' + parts.map(function(c) { return c.icon + ' ' + sp[c.k].toFixed(2) + ' €'; }).join(' + ') + '</span>';
     };
+    // Vendeurs du jour (montant par vendeur) — un clic filtre le tableau
+    const SL = _histSellers(day.sales), sf = window._histAgAccSellerFilter;
+    if (sf && !SL.some(function (a) { return a.key === sf; })) window._histAgAccSellerFilter = null;
+    let sEl = document.getElementById('hist-agacc-sellers');
+    if (!sEl && payEl) { sEl = document.createElement('div'); sEl.id = 'hist-agacc-sellers'; payEl.parentNode.insertBefore(sEl, payEl.nextSibling); }
+    if (sEl) {
+        sEl.innerHTML = SL.length ? '<div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;"><b style="font-size:0.78rem;">👥 Ventes par vendeur ' + (SL.length > 1 ? '(' + SL.length + ' vendeurs)' : '') + '</b>'
+            + (window._histAgAccSellerFilter ? '<a href="#" onclick="_histAgAccSetSellerFilter(null);return false;" style="font-size:0.72rem;color:#2563eb;font-weight:700;">tout afficher</a>' : '<span style="font-size:0.7rem;color:var(--text-muted,#999);">Cliquez sur un vendeur pour voir ses tickets</span>') + '</div>'
+            + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin-bottom:10px;">' + SL.map(function (a) {
+                const on = window._histAgAccSellerFilter === a.key, col = _histSellerColor(a.key);
+                return '<button type="button" onclick="_histAgAccSetSellerFilter(decodeURIComponent(\'' + encodeURIComponent(a.key).replace(/'/g, '%27') + '\'))" style="text-align:left;cursor:pointer;border:1.5px solid ' + (on ? col : 'var(--border-color,#e0e0e0)') + ';background:' + (on ? col + '14' : 'var(--bg-card,#fff)') + ';border-radius:12px;padding:9px 10px;color:var(--text-main,#2c3e50);font:inherit;">'
+                    + '<div style="display:flex;align-items:center;gap:8px;">' + _histSellerDot(a, 28) + '<div style="flex:1;min-width:0;"><div style="font-weight:800;font-size:0.84rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _histEscape(a.name) + '</div><div style="font-size:0.66rem;color:var(--text-muted,#999);">' + _histEscape([a.role, a.id].filter(Boolean).join(' · ')) + '</div></div>'
+                    + '<div style="text-align:right;"><div style="font-weight:800;font-size:0.92rem;color:#059669;">' + a.ca.toFixed(2) + ' €</div><div style="font-size:0.66rem;color:var(--text-muted,#999);">' + a.n + ' ticket' + (a.n > 1 ? 's' : '') + (a.cancelled ? ' · ' + a.cancelled + ' annulé' + (a.cancelled > 1 ? 's' : '') : '') + '</div></div></div>'
+                    + '<div style="height:6px;border-radius:4px;background:var(--border-color,#eee);margin-top:7px;overflow:hidden;"><div style="height:100%;width:' + Math.round(a.share * 100) + '%;background:' + col + ';"></div></div>'
+                    + '<div style="font-size:0.66rem;color:var(--text-muted,#999);margin-top:3px;">' + Math.round(a.share * 100) + ' % du jour' + (a.n ? ' · panier moyen ' + (a.ca / a.n).toFixed(2) + ' €' : '') + '</div></button>';
+            }).join('') + '</div>' : '';
+    }
+    const sfk = window._histAgAccSellerFilter, _usr = _histUsers();
     const shown = day.sales.filter(function(s) {
+        if (sfk && _histSellerOf(s, _usr).key !== sfk) return false;
         if (!filt) return true;
         if (s.cancelled) return false;
         return Math.abs(_histPaySplit(s)[filt]) > 0.004;
@@ -2095,12 +2161,27 @@ function _histAgAccRenderTable(dayKey) {
         return '<tr ' + (clickable ? ('onclick="showTicketFromHistory(' + idx + ')" title="Voir le ticket"') : '') + ' style="' + rowStyle + 'border-top:1px solid var(--border-color,#eee);">'
             + '<td style="padding:7px 10px;">🧾 #' + s.id + (s.cancelled ? ' 🚫' : '') + (s.ticketNum != null ? '<br><span style="font-size:0.65rem;color:var(--text-muted,#aaa);">n° caisse : ' + s.ticketNum + '</span>' : '') + '</td>'
             + '<td style="padding:7px 10px;">' + heure + '</td>'
+            + '<td style="padding:7px 10px;">' + _histCashierCell(s) + '</td>'
             + '<td style="padding:7px 10px;white-space:nowrap;">' + (s.type === 'retour_article' ? '↩️ Retour' : methodLabelOf(s)) + payDetailOf(s) + '</td>'
             + '<td style="padding:7px 10px;">' + client + '</td>'
             + '<td style="padding:7px 10px;text-align:right;font-weight:700;">' + parseFloat(s.total || 0).toFixed(2) + ' €</td>'
             + '</tr>';
     }).join('');
-    bodyEl.innerHTML = rows || '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted,#999);">' + (filt ? 'Aucun ticket pour ce mode de paiement.' : 'Aucune vente ce jour.') + '</td></tr>';
+    bodyEl.innerHTML = rows || '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted,#999);">' + (sfk ? 'Aucun ticket pour ce vendeur' + (filt ? ' avec ce mode de paiement' : '') + '.' : filt ? 'Aucun ticket pour ce mode de paiement.' : 'Aucune vente ce jour.') + '</td></tr>';
+}
+
+// Caissier connecté au moment de la vente (sale.cashier = nom, sale.cashierId = identifiant)
+function _histCashierCell(s) {
+    var users = [];
+    try { users = JSON.parse(localStorage.getItem('covo_users') || '[]') || []; } catch (e) {}
+    var u = s.cashierId ? users.find(function (x) { return x && String(x.id) === String(s.cashierId); }) : null;
+    if (!u && s.cashier) u = users.find(function (x) { return x && String(x.username || '').toLowerCase() === String(s.cashier).toLowerCase(); });
+    var name = (u && u.username) || s.cashier || '';
+    if (!name && !s.cashierId) return '<span style="color:var(--text-muted,#aaa);">—</span>';
+    var role = u ? (u.role === 'admin' ? 'Administrateur' : u.role === 'caissier' ? 'Caissier' : (u.role || '')) : '';
+    var id = s.cashierId || (u && u.id) || '';
+    return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;"><span style="width:22px;height:22px;border-radius:50%;background:' + _histSellerColor(_histSellerOf(s).key) + ';color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;flex-shrink:0;">' + _histEscape(String(name || '?').charAt(0).toUpperCase()) + '</span><span><b>' + _histEscape(name || 'Inconnu') + '</b>'
+        + ((role || id) ? '<br><span style="font-size:0.65rem;color:var(--text-muted,#aaa);">' + _histEscape([role, id].filter(Boolean).join(' · ')) + '</span>' : '') + '</span></span>';
 }
 
 // Filtre du tableau du jour par mode de paiement (re-clic sur la même puce = tout afficher)
