@@ -3889,6 +3889,95 @@ window.cpMaybeShowInstallBanner = function(){
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
 })();
 </script>
+<script>
+/* Historique Pro — fiche ticket : « Modifier le vendeur » (Admin-Développeur uniquement) + trace des modifications */
+(function () {
+    'use strict';
+    /* ── Changement de vendeur d'un ticket (réservé à l'Admin-Développeur) — fenêtre de choix ── */
+    function _sellerPicker(sale, userList, onPick) {
+        var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+        var cols = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4d7c0f'];
+        var col = function (k) { var h = 0; for (var i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) | 0; return cols[Math.abs(h) % cols.length]; };
+        var L = (userList || []).filter(function (u) { return u && u.id && u.username; });
+        var cur = L.filter(function (u) { return (sale.cashierId && String(u.id) === String(sale.cashierId)) || (!sale.cashierId && String(u.username).toLowerCase() === String(sale.cashier || '').toLowerCase()); })[0];
+        var sel = cur ? cur.id : null;
+        var old = document.getElementById('sp-ov'); if (old) old.remove();
+        var ov = document.createElement('div'); ov.id = 'sp-ov';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+        var hist = (sale.sellerHistory || []).slice(-3).reverse().map(function (h) { return '<div>• ' + new Date(h.at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' : ' + esc((h.from && h.from.cashier) || '—') + ' → <b>' + esc(h.to && h.to.cashier) + '</b> (par ' + esc(h.by) + (h.motif ? ' · ' + esc(h.motif) : '') + ')</div>'; }).join('');
+        ov.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(440px,100%);max-height:90vh;overflow:auto;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.45)">'
+            + '<div style="background:linear-gradient(135deg,#0f172a,#334155);color:#fff;padding:14px 18px;border-radius:16px 16px 0 0"><div style="font-weight:800;font-size:1.02rem">👤 Modifier le vendeur du ticket</div><div style="font-size:.74rem;opacity:.8;margin-top:2px">Ticket ' + (sale.ticketNum != null ? 'n° ' + esc(sale.ticketNum) + ' · ' : '') + '#' + esc(sale.id) + ' · ' + new Date(sale.date).toLocaleString('fr-FR') + ' · ' + (parseFloat(sale.total) || 0).toFixed(2) + ' €</div><div style="font-size:.7rem;margin-top:6px;display:inline-block;background:rgba(239,68,68,.25);border:1px solid rgba(239,68,68,.6);border-radius:20px;padding:2px 9px">🛠️ Réservé à l’Admin-Développeur</div></div>'
+            + '<div style="padding:14px 18px"><div style="font-size:.78rem;margin-bottom:8px">Vendeur actuel : <b>' + esc(sale.cashier || sale.cashierId || 'Non identifié') + '</b></div>'
+            + '<div id="sp-list" style="display:flex;flex-direction:column;gap:6px">' + L.map(function (u) {
+                return '<button type="button" data-id="' + esc(u.id) + '" style="display:flex;align-items:center;gap:10px;border:2px solid var(--border-color,#e2e8f0);background:var(--bg-card,#fff);color:inherit;border-radius:12px;padding:8px 10px;cursor:pointer;font:inherit;text-align:left">'
+                    + '<span style="width:30px;height:30px;border-radius:50%;background:' + col('u:' + u.id) + ';color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800">' + esc(String(u.username).charAt(0).toUpperCase()) + '</span>'
+                    + '<span style="flex:1"><b>' + esc(u.username) + '</b><br><small style="color:var(--text-muted,#64748b)">' + (u.role === 'admin' ? '👑 Administrateur' : '💼 Caissier') + ' · ' + esc(u.id) + '</small></span>'
+                    + (cur && u.id === cur.id ? '<span style="font-size:.68rem;font-weight:800;color:#64748b">actuel</span>' : '') + '</button>';
+            }).join('') + '</div>'
+            + '<label style="display:block;font-size:.74rem;font-weight:700;margin:12px 0 4px">Motif (facultatif)</label><input id="sp-motif" maxlength="80" placeholder="ex. erreur de connexion, caisse partagée…" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1.5px solid var(--border-color,#e2e8f0);background:var(--input-bg,#fff);color:inherit;font-size:.86rem">'
+            + (hist ? '<div style="margin-top:10px;font-size:.72rem;color:var(--text-muted,#64748b)"><b>Modifications précédentes</b>' + hist + '</div>' : '')
+            + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button type="button" data-sp="x" style="border:none;background:var(--border-color,#e2e8f0);color:inherit;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer">Annuler</button><button type="button" data-sp="ok" disabled style="border:none;background:#2563eb;color:#fff;border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer;opacity:.5">✅ Enregistrer</button></div></div></div>';
+        document.body.appendChild(ov);
+        var ok = ov.querySelector('[data-sp="ok"]');
+        var paint = function () {
+            [].forEach.call(ov.querySelectorAll('#sp-list button'), function (b) { var on = b.getAttribute('data-id') === String(sel); b.style.borderColor = on ? '#2563eb' : 'var(--border-color,#e2e8f0)'; b.style.background = on ? 'rgba(37,99,235,.14)' : 'var(--bg-card,#fff)'; });
+            var changed = sel && (!cur || String(sel) !== String(cur.id)); ok.disabled = !changed; ok.style.opacity = changed ? '1' : '.5';
+        };
+        paint();
+        ov.addEventListener('click', function (e) {
+            if (e.target === ov || e.target.closest('[data-sp="x"]')) { ov.remove(); return; }
+            var b = e.target.closest('#sp-list button'); if (b) { sel = b.getAttribute('data-id'); paint(); return; }
+            if (e.target.closest('[data-sp="ok"]') && !ok.disabled) {
+                var u = L.filter(function (x) { return String(x.id) === String(sel); })[0]; if (!u) return;
+                var motif = (document.getElementById('sp-motif').value || '').trim();
+                ov.remove(); onPick(u, motif);
+            }
+        });
+    }
+    function _sellerApply(sale, u, motif, by) {
+        sale.sellerHistory = (sale.sellerHistory || []).concat([{ at: new Date().toISOString(), by: by || 'Admin-Développeur', motif: motif || '', from: { cashier: sale.cashier || null, cashierId: sale.cashierId || null }, to: { cashier: u.username, cashierId: u.id } }]);
+        sale.cashier = u.username; sale.cashierId = u.id;
+        return sale;
+    }
+    function isDev() { try { return typeof cpIsMasterDev === 'function' && cpIsMasterDev(); } catch (e) { return false; } }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function boot() {
+        if (typeof window.showTicketFromHistory !== 'function') return setTimeout(boot, 400);
+        var orig = window.showTicketFromHistory;
+        window.showTicketFromHistory = function (idx) {
+            var r = orig.apply(this, arguments);
+            var sale = window._sortedSalesHistory && window._sortedSalesHistory[idx], body = document.getElementById('hist-ticket-body');
+            if (!sale || !body) return r;
+            var H = sale.sellerHistory || [], last = H[H.length - 1];
+            var h = '';
+            if (last) h += '<div style="margin-top:10px;font-size:0.72rem;color:var(--text-muted,#888);">👤 Vendeur modifié le ' + new Date(last.at).toLocaleString('fr-FR') + ' : ' + esc((last.from && last.from.cashier) || '—') + ' → <b>' + esc(last.to.cashier) + '</b> (par ' + esc(last.by) + (last.motif ? ' · ' + esc(last.motif) : '') + ')</div>';
+            if (isDev()) h += '<div style="margin-top:12px;padding-top:10px;border-top:2px dashed var(--border-color,#ddd);"><div style="font-size:0.7rem;font-weight:800;color:var(--text-muted,#888);text-align:center;margin-bottom:6px;">🛠️ ADMIN-DÉVELOPPEUR</div><button type="button" id="hist-seller-edit" style="width:100%;border:none;border-radius:9px;padding:10px;font-weight:800;cursor:pointer;color:#fff;background:linear-gradient(135deg,#0f172a,#334155);">👤 Modifier le vendeur du ticket</button></div>';
+            if (h) { var d = document.createElement('div'); d.innerHTML = h; body.appendChild(d); }
+            var btn = document.getElementById('hist-seller-edit');
+            if (btn) btn.onclick = function () {
+                if (!isDev()) return;
+                var U = []; try { U = JSON.parse(localStorage.getItem('covo_users') || '[]') || []; } catch (e) {}
+                _sellerPicker(sale, U, function (u, motif) {
+                    var S = []; try { S = JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch (e) {}
+                    var i = S.findIndex(function (x) { return x.id === sale.id; }); if (i < 0) return;
+                    var by = ''; try { by = (currentUser && currentUser.username) || 'Admin-Développeur'; } catch (e) { by = 'Admin-Développeur'; }
+                    _sellerApply(S[i], u, motif, by);
+                    localStorage.setItem('covo_sales_history', JSON.stringify(S));
+                    try { var now = new Date().toISOString(); localStorage.setItem('covo_last_local_change', now); localStorage.setItem('covo_drive_pending', now); } catch (e) {}
+                    try { if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {}
+                    if (typeof showScanToast === 'function') showScanToast('👤 Vendeur du ticket modifié : ' + u.username, 'success');
+                    try { filterCashierHistory((document.getElementById('cashier-hist-search') || {}).value || ''); } catch (e) {}
+                    try { if (typeof _histAgAccRender === 'function') _histAgAccRender(); } catch (e) {}
+                    var j = (window._sortedSalesHistory || []).findIndex(function (x) { return x.id === sale.id; });
+                    if (j >= 0) window.showTicketFromHistory(j);
+                });
+            };
+            return r;
+        };
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 </body>
 </html>
 <script>
