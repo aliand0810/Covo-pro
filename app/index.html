@@ -7921,6 +7921,11 @@ button, .btn, .retours-btn {
                     <button onclick="confirmCancelTicket()" style="background:#e74c3c; color:white; padding:10px; border-radius:6px; font-size:0.88rem;">🚫 Annuler ce ticket</button>
                 </div>
             </div>
+            <div id="receipt-dev-actions" style="display:none; border-top:2px dashed #334155; padding-top:10px; margin-top:10px;">
+                <p style="font-size:0.74rem; color:#334155; font-weight:bold; margin:0 0 8px 0; text-align:center;">🛠️ Admin-Développeur</p>
+                <button onclick="_sellerEditOpen()" style="width:100%; background:linear-gradient(135deg,#0f172a,#334155); color:white; padding:10px; border-radius:6px; font-size:0.88rem; font-weight:700;">👤 Modifier le vendeur du ticket</button>
+                <div id="receipt-seller-log" style="font-size:0.72rem; color:#64748b; margin-top:6px; text-align:center; font-weight:600;"></div>
+            </div>
         </div>
     </div>
 
@@ -28173,6 +28178,85 @@ logout = function(skipConfirmation = false) {
     function closeReceipt() { document.getElementById('receipt-modal').style.display = 'none'; window._currentReceiptSale = null; }
 
     // ===== ANNULATION TICKET =====
+    /* ── Changement de vendeur d'un ticket (réservé à l'Admin-Développeur) — fenêtre de choix ── */
+    function _sellerPicker(sale, userList, onPick) {
+        var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+        var cols = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4d7c0f'];
+        var col = function (k) { var h = 0; for (var i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) | 0; return cols[Math.abs(h) % cols.length]; };
+        var L = (userList || []).filter(function (u) { return u && u.id && u.username; });
+        var cur = L.filter(function (u) { return (sale.cashierId && String(u.id) === String(sale.cashierId)) || (!sale.cashierId && String(u.username).toLowerCase() === String(sale.cashier || '').toLowerCase()); })[0];
+        var sel = cur ? cur.id : null;
+        var old = document.getElementById('sp-ov'); if (old) old.remove();
+        var ov = document.createElement('div'); ov.id = 'sp-ov';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.65);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+        var hist = (sale.sellerHistory || []).slice(-3).reverse().map(function (h) { return '<div>• ' + new Date(h.at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) + ' : ' + esc((h.from && h.from.cashier) || '—') + ' → <b>' + esc(h.to && h.to.cashier) + '</b> (par ' + esc(h.by) + (h.motif ? ' · ' + esc(h.motif) : '') + ')</div>'; }).join('');
+        ov.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(440px,100%);max-height:90vh;overflow:auto;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.45)">'
+            + '<div style="background:linear-gradient(135deg,#0f172a,#334155);color:#fff;padding:14px 18px;border-radius:16px 16px 0 0"><div style="font-weight:800;font-size:1.02rem">👤 Modifier le vendeur du ticket</div><div style="font-size:.74rem;opacity:.8;margin-top:2px">Ticket ' + (sale.ticketNum != null ? 'n° ' + esc(sale.ticketNum) + ' · ' : '') + '#' + esc(sale.id) + ' · ' + new Date(sale.date).toLocaleString('fr-FR') + ' · ' + (parseFloat(sale.total) || 0).toFixed(2) + ' €</div><div style="font-size:.7rem;margin-top:6px;display:inline-block;background:rgba(239,68,68,.25);border:1px solid rgba(239,68,68,.6);border-radius:20px;padding:2px 9px">🛠️ Réservé à l’Admin-Développeur</div></div>'
+            + '<div style="padding:14px 18px"><div style="font-size:.78rem;margin-bottom:8px">Vendeur actuel : <b>' + esc(sale.cashier || sale.cashierId || 'Non identifié') + '</b></div>'
+            + '<div id="sp-list" style="display:flex;flex-direction:column;gap:6px">' + L.map(function (u) {
+                return '<button type="button" data-id="' + esc(u.id) + '" style="display:flex;align-items:center;gap:10px;border:2px solid var(--border-color,#e2e8f0);background:var(--bg-card,#fff);color:inherit;border-radius:12px;padding:8px 10px;cursor:pointer;font:inherit;text-align:left">'
+                    + '<span style="width:30px;height:30px;border-radius:50%;background:' + col('u:' + u.id) + ';color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800">' + esc(String(u.username).charAt(0).toUpperCase()) + '</span>'
+                    + '<span style="flex:1"><b>' + esc(u.username) + '</b><br><small style="color:var(--text-muted,#64748b)">' + (u.role === 'admin' ? '👑 Administrateur' : '💼 Caissier') + ' · ' + esc(u.id) + '</small></span>'
+                    + (cur && u.id === cur.id ? '<span style="font-size:.68rem;font-weight:800;color:#64748b">actuel</span>' : '') + '</button>';
+            }).join('') + '</div>'
+            + '<label style="display:block;font-size:.74rem;font-weight:700;margin:12px 0 4px">Motif (facultatif)</label><input id="sp-motif" maxlength="80" placeholder="ex. erreur de connexion, caisse partagée…" style="width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1.5px solid var(--border-color,#e2e8f0);background:var(--input-bg,#fff);color:inherit;font-size:.86rem">'
+            + (hist ? '<div style="margin-top:10px;font-size:.72rem;color:var(--text-muted,#64748b)"><b>Modifications précédentes</b>' + hist + '</div>' : '')
+            + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button type="button" data-sp="x" style="border:none;background:var(--border-color,#e2e8f0);color:inherit;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer">Annuler</button><button type="button" data-sp="ok" disabled style="border:none;background:#2563eb;color:#fff;border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer;opacity:.5">✅ Enregistrer</button></div></div></div>';
+        document.body.appendChild(ov);
+        var ok = ov.querySelector('[data-sp="ok"]');
+        var paint = function () {
+            [].forEach.call(ov.querySelectorAll('#sp-list button'), function (b) { var on = b.getAttribute('data-id') === String(sel); b.style.borderColor = on ? '#2563eb' : 'var(--border-color,#e2e8f0)'; b.style.background = on ? 'rgba(37,99,235,.14)' : 'var(--bg-card,#fff)'; });
+            var changed = sel && (!cur || String(sel) !== String(cur.id)); ok.disabled = !changed; ok.style.opacity = changed ? '1' : '.5';
+        };
+        paint();
+        ov.addEventListener('click', function (e) {
+            if (e.target === ov || e.target.closest('[data-sp="x"]')) { ov.remove(); return; }
+            var b = e.target.closest('#sp-list button'); if (b) { sel = b.getAttribute('data-id'); paint(); return; }
+            if (e.target.closest('[data-sp="ok"]') && !ok.disabled) {
+                var u = L.filter(function (x) { return String(x.id) === String(sel); })[0]; if (!u) return;
+                var motif = (document.getElementById('sp-motif').value || '').trim();
+                ov.remove(); onPick(u, motif);
+            }
+        });
+    }
+    function _sellerApply(sale, u, motif, by) {
+        sale.sellerHistory = (sale.sellerHistory || []).concat([{ at: new Date().toISOString(), by: by || 'Admin-Développeur', motif: motif || '', from: { cashier: sale.cashier || null, cashierId: sale.cashierId || null }, to: { cashier: u.username, cashierId: u.id } }]);
+        sale.cashier = u.username; sale.cashierId = u.id;
+        return sale;
+    }
+    function _isDevNow() { try { return !!(currentUser && (currentUser.isMaster || currentUser.id === 'USR-MASTER')); } catch (e) { return false; } }
+    window._sellerEditOpen = function () {
+        if (!_isDevNow()) { showScanToast('⛔ Réservé à l’Admin-Développeur', 'error'); return; }
+        const sale = window._currentReceiptSale; if (!sale) return;
+        let U = []; try { U = (typeof users !== 'undefined' && Array.isArray(users) && users.length) ? users : JSON.parse(localStorage.getItem('covo_users') || '[]'); } catch (e) {}
+        _sellerPicker(sale, U, function (u, motif) {
+            const idx = salesHistory.findIndex(s => s.id === sale.id);
+            if (idx === -1) { showScanToast('⚠️ Ticket introuvable'); return; }
+            _sellerApply(salesHistory[idx], u, motif, currentUser.username || 'Admin-Développeur');
+            localStorage.setItem('covo_sales_history', JSON.stringify(salesHistory));
+            try { const now = new Date().toISOString(); localStorage.setItem('covo_last_local_change', now); localStorage.setItem('covo_drive_pending', now); } catch (e) {}
+            if (typeof window._gdTriggerSalesSave === 'function') window._gdTriggerSalesSave();
+            showScanToast('👤 Vendeur du ticket modifié : ' + u.username, 'success');
+            try { if (typeof window.showReceipt === 'function') window.showReceipt(salesHistory[idx]); else showReceipt(salesHistory[idx]); } catch (e) {}
+            window._currentReceiptSale = salesHistory[idx];
+            try { window._sellerSync && window._sellerSync(); } catch (e) {}
+            try { if (typeof renderStatsHistory === 'function') renderStatsHistory(); } catch (e) {}
+        });
+    };
+    /* bouton visible uniquement pour l'Admin-Développeur, à chaque ouverture d'un ticket */
+    (function () {
+        function sync() {
+            const m = document.getElementById('receipt-modal'), box = document.getElementById('receipt-dev-actions'); if (!m || !box) return;
+            const sale = window._currentReceiptSale, dev = _isDevNow();
+            box.style.display = dev && sale ? 'block' : 'none';
+            const log = document.getElementById('receipt-seller-log');
+            if (log) { const h = sale && sale.sellerHistory && sale.sellerHistory[sale.sellerHistory.length - 1]; log.textContent = sale ? '👤 Vendeur actuel : ' + (sale.cashier || sale.cashierId || 'non identifié') + (h ? ' · modifié le ' + new Date(h.at).toLocaleString('fr-FR') + ' (avant : ' + ((h.from && h.from.cashier) || '—') + ')' : '') : ''; }
+        }
+        window._sellerSync = sync;
+        function boot() { const m = document.getElementById('receipt-modal'); if (!m) return setTimeout(boot, 500); new MutationObserver(sync).observe(m, { attributes: true, attributeFilter: ['style', 'class'] }); sync(); }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
+    })();
+
     window.confirmCancelTicket = function() {
         const sale = window._currentReceiptSale;
         if (!sale) return;
