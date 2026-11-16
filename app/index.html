@@ -5307,9 +5307,28 @@ button, .btn, .retours-btn {
                     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                         <select id="stats-history-filter" onchange="renderStatsHistory()" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; cursor:pointer;">
                             <option value="today">Aujourd'hui</option>
+                            <option value="yesterday">Hier</option>
                             <option value="week">7 derniers jours</option>
+                            <option value="30">30 derniers jours</option>
                             <option value="month" selected>Ce mois</option>
+                            <option value="lastmonth">Mois dernier</option>
                             <option value="all">Tout l'historique</option>
+                            <option value="custom">📅 Dates personnalisées…</option>
+                        </select>
+                        <span id="stats-history-custom" style="display:none;align-items:center;gap:4px;font-size:.78rem;color:var(--text-main);">du <input type="date" id="stats-history-from" onchange="renderStatsHistory()" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; cursor:pointer;padding:5px 6px;"> au <input type="date" id="stats-history-to" onchange="renderStatsHistory()" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; cursor:pointer;padding:5px 6px;"></span>
+                        <select id="stats-history-seller" onchange="renderStatsHistory()" title="Filtrer par vendeur" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; cursor:pointer;font-weight:700;">
+                            <option value="">👥 Tous les vendeurs</option>
+                        </select>
+                        <select id="stats-history-method" onchange="renderStatsHistory()" title="Filtrer par mode de paiement" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; cursor:pointer;">
+                            <option value="">💳 Tous modes</option>
+                            <option value="cb">💳 Carte</option>
+                            <option value="cash">💶 Espèces</option>
+                            <option value="mixed">💳💶 Mixte</option>
+                            <option value="ticket">🎟️ Ticket resto</option>
+                            <option value="credit">📒 Crédit</option>
+                            <option value="echel">📅 Échelonné</option>
+                            <option value="points">🎁 Points</option>
+                            <option value="retour">↩️ Retours</option>
                         </select>
                         <div style="position:relative;">
                             <input type="text" id="stats-history-search" oninput="renderStatsHistory(); showArticleSuggestions(this.value)" onfocus="showArticleSuggestions(this.value)" onblur="setTimeout(()=>hideArticleSuggestions(),200)" placeholder="🔍 Article, ticket, caissier..." style="padding:6px 10px; border-radius:6px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-main); font-size:0.85rem; width:220px;">
@@ -24011,111 +24030,227 @@ logout = function(skipConfirmation = false) {
         if (el) el.style.display = 'none';
     };
 
+    /* ═══ Statistiques → Historique des ventes (v2) : période libre, vendeur, mode, indicateurs,
+       graphique CA empilé par vendeur, répartition vendeurs, vue cartes / tableau triable, export CSV ═══ */
+    var _shView = (function () { try { return localStorage.getItem('covo_stats_hist_view') === 'table' ? 'table' : 'cards'; } catch (e) { return 'cards'; } })();
+    var _shSort = { k: 'date', d: -1 };
+    var _SH_COLORS = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4d7c0f'];
+    function _shEsc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function _shEur(v) { return (parseFloat(v) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function _shKey(d) { var x = new Date(d); return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0'); }
+    function _shUsers() { try { if (typeof users !== 'undefined' && Array.isArray(users) && users.length) return users; } catch (e) {} try { return JSON.parse(localStorage.getItem('covo_users') || '[]') || []; } catch (e) { return []; } }
+    function _shSeller(s, U) {
+        U = U || _shUsers();
+        var u = s.cashierId ? U.find(function (x) { return x && String(x.id) === String(s.cashierId); }) : null;
+        if (!u && s.cashier) u = U.find(function (x) { return x && String(x.username || '').toLowerCase() === String(s.cashier).toLowerCase(); });
+        var name = (u && u.username) || s.cashier || s.cashierId || '';
+        return { key: u ? 'u:' + u.id : (s.cashierId ? 'u:' + s.cashierId : (name ? 'n:' + String(name).toLowerCase() : '?')), name: name || 'Non identifié' };
+    }
+    function _shColor(k) { var h = 0; for (var i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) | 0; return k === '?' ? '#94a3b8' : _SH_COLORS[Math.abs(h) % _SH_COLORS.length]; }
+    function _shDot(a, sz) { sz = sz || 18; return '<span style="width:' + sz + 'px;height:' + sz + 'px;border-radius:50%;background:' + _shColor(a.key) + ';color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:' + Math.round(sz * .5) + 'px;font-weight:800;flex-shrink:0;">' + _shEsc(String(a.name).charAt(0).toUpperCase()) + '</span>'; }
+    function _shMethod(s) {
+        if (s.type === 'retour_article') return ['↩️', 'Retour'];
+        return ({ cb: ['💳', 'Carte'], cash: ['💶', 'Espèces'], mixed: ['💳💶', 'Mixte'], ticket: ['🎟️', 'Ticket resto'], credit: ['📒', 'Crédit'], echel: ['📅', 'Échelonné'], points: ['🎁', 'Points'] })[s.method] || ['💳💶', 'Mixte'];
+    }
+    function _shRange(filter) {
+        var now = new Date(), d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+        var day = function (n) { var x = new Date(d0); x.setDate(x.getDate() + n); return x; };
+        var end = new Date(now); end.setHours(23, 59, 59, 999);
+        if (filter === 'today') return [d0, end, 'Aujourd’hui'];
+        if (filter === 'yesterday') { var y = day(-1), ye = new Date(y); ye.setHours(23, 59, 59, 999); return [y, ye, 'Hier']; }
+        if (filter === 'week') return [day(-6), end, '7 derniers jours'];
+        if (filter === '30') return [day(-29), end, '30 derniers jours'];
+        if (filter === 'month') return [new Date(now.getFullYear(), now.getMonth(), 1), end, 'Ce mois'];
+        if (filter === 'lastmonth') return [new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999), 'Mois dernier'];
+        if (filter === 'custom') {
+            var f = (document.getElementById('stats-history-from') || {}).value, t = (document.getElementById('stats-history-to') || {}).value;
+            var a = f ? new Date(f + 'T00:00:00') : new Date(2000, 0, 1), b = t ? new Date(t + 'T23:59:59') : end;
+            if (a > b) { var tmp = a; a = new Date(b); a.setHours(0, 0, 0, 0); b = new Date(tmp); b.setHours(23, 59, 59, 999); }
+            return [a, b, (f ? 'Du ' + a.toLocaleDateString('fr-FR') : 'Depuis le début') + (t ? ' au ' + b.toLocaleDateString('fr-FR') : ' à aujourd’hui')];
+        }
+        return [null, null, 'Tout l’historique'];
+    }
+    window._shSetSeller = function (k) { var el = document.getElementById('stats-history-seller'); if (!el) return; el.value = el.value === k ? '' : k; renderStatsHistory(); };
+    window._shSetView = function (v) { _shView = v; try { localStorage.setItem('covo_stats_hist_view', v); } catch (e) {} renderStatsHistory(); };
+    window._shSortBy = function (k) { _shSort = _shSort.k === k ? { k: k, d: -_shSort.d } : { k: k, d: (k === 'seller' || k === 'method') ? 1 : -1 }; renderStatsHistory(); };
+    window._shCSV = function () {
+        var L = window._statsHistorySales || [], U = _shUsers();
+        var rows = [['Date', 'Heure', 'Ticket', 'N° caisse', 'Vendeur', 'Mode', 'Articles', 'Total']].concat(L.map(function (s) {
+            var d = new Date(s.date); return [d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), s.id, s.ticketNum == null ? '' : s.ticketNum, _shSeller(s, U).name, _shMethod(s)[1], (s.items || []).length, (parseFloat(s.total) || 0).toFixed(2).replace('.', ',')];
+        }));
+        var csv = '﻿' + rows.map(function (r) { return r.map(function (c) { c = String(c); return /[;"\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); }).join('\r\n');
+        var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = 'historique_ventes_' + _shKey(new Date()) + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+    };
+
     function renderStatsHistory() {
         const filterEl = document.getElementById('stats-history-filter');
         const searchEl = document.getElementById('stats-history-search');
         if (!filterEl) return;
-
         const filter = filterEl.value;
         const search = (searchEl ? searchEl.value : '').toLowerCase().trim();
+        const custom = document.getElementById('stats-history-custom'); if (custom) custom.style.display = filter === 'custom' ? 'inline-flex' : 'none';
+        const R = _shRange(filter), U = _shUsers();
+        const sellerEl = document.getElementById('stats-history-seller'), methodEl = document.getElementById('stats-history-method');
 
-        const now = new Date();
-        const today = new Date(now); today.setHours(0, 0, 0, 0);
-        const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 7); weekAgo.setHours(0,0,0,0);
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-        let filtered = [...salesHistory].reverse().filter(s => {
-            if (s.cancelled) return false; // exclure les tickets annulés
-            const d = new Date(s.date);
-            if (filter === 'today') { const sd = new Date(d); sd.setHours(0,0,0,0); return sd.getTime() === today.getTime(); }
-            if (filter === 'week') return d >= weekAgo;
-            if (filter === 'month') return d >= monthStart;
-            return true;
+        // période (tickets annulés exclus)
+        let periodSales = [...salesHistory].reverse().filter(s => {
+            if (s.cancelled) return false;
+            if (!R[0]) return true;
+            const d = new Date(s.date); return d >= R[0] && d <= R[1];
         });
+        // liste des vendeurs de la période (pour le filtre)
+        if (sellerEl) {
+            const cur = sellerEl.value, m = {};
+            U.forEach(u => { if (u && u.id) m['u:' + u.id] = u.username || u.id; });
+            periodSales.forEach(s => { const v = _shSeller(s, U); if (!m[v.key]) m[v.key] = v.name; });
+            sellerEl.innerHTML = '<option value="">👥 Tous les vendeurs</option>' + Object.keys(m).sort((a, b) => m[a].localeCompare(m[b], 'fr')).map(k => '<option value="' + _shEsc(k) + '"' + (k === cur ? ' selected' : '') + '>👤 ' + _shEsc(m[k]) + '</option>').join('');
+            if (cur && !m[cur]) sellerEl.value = '';
+            sellerEl.style.borderColor = sellerEl.value ? _shColor(sellerEl.value) : '';
+        }
+        const sk = sellerEl ? sellerEl.value : '', mk = methodEl ? methodEl.value : '';
+        let filtered = periodSales;
+        if (mk) filtered = filtered.filter(s => (mk === 'retour' ? s.type === 'retour_article' : s.method === mk && s.type !== 'retour_article'));
 
         // Recherche multi-critères : article (priorité), ticket#, caissier, montant
-        const isArticleSearch = search && salesHistory.some(s => s.items.some(i => i.name.toLowerCase().includes(search)));
+        const isArticleSearch = search && salesHistory.some(s => (s.items || []).some(i => String(i.name || '').toLowerCase().includes(search)));
         if (search) {
             filtered = filtered.filter(s =>
-                s.items.some(i => i.name.toLowerCase().includes(search)) ||
-                String(s.id).includes(search) ||
+                (s.items || []).some(i => String(i.name || '').toLowerCase().includes(search)) ||
+                String(s.id).includes(search) || String(s.ticketNum == null ? '' : s.ticketNum) === search.replace(/^#/, '') ||
                 (s.cashierId || s.cashier || '').toLowerCase().includes(search) ||
-                s.total.toFixed(2).includes(search)
+                (parseFloat(s.total) || 0).toFixed(2).includes(search)
             );
         }
+        const beforeSeller = filtered;
+        if (sk) filtered = filtered.filter(s => _shSeller(s, U).key === sk);
 
-        // Résumé
-        const totalAmount = filtered.reduce((sum, s) => sum + s.total, 0);
+        // ── indicateurs
+        const tot = filtered.reduce((a, s) => a + (parseFloat(s.total) || 0), 0), n = filtered.length;
+        const nItems = filtered.reduce((a, s) => a + (s.items || []).length, 0);
+        const days = {}; filtered.forEach(s => { const k = _shKey(s.date); days[k] = (days[k] || 0) + (parseFloat(s.total) || 0); });
+        const nDays = Object.keys(days).length, bestDay = Object.keys(days).sort((a, b) => days[b] - days[a])[0];
+        const hours = {}; filtered.forEach(s => { const h = new Date(s.date).getHours(); hours[h] = (hours[h] || 0) + 1; });
+        const bestHour = Object.keys(hours).sort((a, b) => hours[b] - hours[a])[0];
         const summaryEl = document.getElementById('stats-history-summary');
-        const articleMatchLabel = search && isArticleSearch
-            ? `<span style="background:#e67e22; color:white; padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:600;">🛒 Article: "${search}"</span>`
-            : '';
-        summaryEl.innerHTML = `
-            ${articleMatchLabel}
-            <span style="background:var(--primary); color:white; padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:600;">${filtered.length} ticket${filtered.length > 1 ? 's' : ''}</span>
-            <span style="background:var(--success); color:white; padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:600;">Total: ${totalAmount.toFixed(2)}€</span>
-            <span style="background:#6c757d; color:white; padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:600;">Moy: ${filtered.length > 0 ? (totalAmount / filtered.length).toFixed(2) : '0.00'}€/ticket</span>
-        `;
+        const tile = (c1, c2, lbl, val, sub) => '<div style="flex:1;min-width:130px;border-radius:12px;padding:10px 12px;color:#fff;background:linear-gradient(135deg,' + c1 + ',' + c2 + ');box-shadow:0 3px 10px rgba(0,0,0,.12);"><div style="font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.3px;opacity:.9;">' + lbl + '</div><div style="font-size:1.15rem;font-weight:900;font-variant-numeric:tabular-nums;">' + val + '</div><div style="font-size:.66rem;opacity:.85;">' + sub + '</div></div>';
+        let sh = '<div style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:.78rem;font-weight:800;color:var(--primary,#2563eb);">📅 ' + _shEsc(R[2]) + (sk ? ' · 👤 ' + _shEsc((sellerEl.options[sellerEl.selectedIndex] || {}).text || '').replace('👤 ', '') : '') + (search && isArticleSearch ? ' · <span style="background:#e67e22;color:#fff;padding:2px 9px;border-radius:12px;">🛒 « ' + _shEsc(search) + ' »</span>' : '') + '</div>';
+        sh += '<div style="display:flex;gap:8px;flex-wrap:wrap;width:100%;">'
+            + tile('#2563eb', '#1d4ed8', 'Chiffre d’affaires', _shEur(tot), n + ' ticket' + (n > 1 ? 's' : ''))
+            + tile('#7c3aed', '#5b21b6', 'Panier moyen', _shEur(n ? tot / n : 0), (n ? (nItems / n).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : '0') + ' article(s) / ticket')
+            + tile('#059669', '#047857', 'CA moyen / jour', _shEur(nDays ? tot / nDays : 0), nDays + ' jour' + (nDays > 1 ? 's' : '') + ' de vente')
+            + tile('#d97706', '#b45309', 'Meilleur jour', bestDay ? _shEur(days[bestDay]) : '—', bestDay ? new Date(bestDay + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' }) : '')
+            + tile('#db2777', '#9d174d', 'Heure de pointe', bestHour != null ? bestHour + 'h – ' + (+bestHour + 1) + 'h' : '—', bestHour != null ? hours[bestHour] + ' ticket(s)' : '')
+            + '</div>';
 
-        // Liste
-        window._statsHistorySales = filtered;
+        // ── vendeurs de la sélection (sans le filtre vendeur, pour comparer)
+        const SM = {}; beforeSeller.forEach(s => { const v = _shSeller(s, U), a = SM[v.key] = SM[v.key] || { key: v.key, name: v.name, ca: 0, n: 0 }; a.ca += parseFloat(s.total) || 0; a.n++; });
+        const SL = Object.keys(SM).map(k => SM[k]).sort((a, b) => b.ca - a.ca), stot = SL.reduce((a, x) => a + x.ca, 0) || 1;
+        if (SL.length) {
+            sh += '<div style="width:100%;"><div style="display:flex;height:10px;border-radius:6px;overflow:hidden;margin:2px 0 6px;">' + SL.map(a => '<i title="' + _shEsc(a.name) + ' : ' + _shEur(a.ca) + '" style="width:' + (a.ca / stot * 100).toFixed(2) + '%;background:' + _shColor(a.key) + ';opacity:' + (sk && sk !== a.key ? '.3' : '1') + '"></i>').join('') + '</div>'
+                + '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + SL.map(a => '<button type="button" onclick="_shSetSeller(decodeURIComponent(\'' + encodeURIComponent(a.key).replace(/'/g, '%27') + '\'))" title="Cliquer pour filtrer sur ce vendeur" style="display:inline-flex;align-items:center;gap:6px;border:1.5px solid ' + (sk === a.key ? _shColor(a.key) : 'var(--border-color)') + ';background:' + (sk === a.key ? _shColor(a.key) + '1a' : 'var(--bg-card)') + ';color:var(--text-main);border-radius:20px;padding:4px 10px 4px 4px;cursor:pointer;font-size:.76rem;font-weight:700;">' + _shDot(a, 20) + _shEsc(a.name) + ' <b style="color:#059669;">' + _shEur(a.ca) + '</b><span style="color:var(--gray);font-weight:600;">· ' + a.n + ' t. · ' + Math.round(a.ca / stot * 100) + ' %</span></button>').join('') + '</div></div>';
+        }
+
+        // ── graphique : CA par jour (ou par heure pour un seul jour), empilé par vendeur
+        const singleDay = nDays <= 1 && (filter === 'today' || filter === 'yesterday' || (filter === 'custom' && R[0] && R[1] - R[0] < 864e5));
+        let buckets = [];
+        if (n) {
+            if (singleDay) { for (let h = 6; h <= 23; h++) buckets.push({ k: h, l: h + 'h', s: {}, ca: 0, n: 0 }); }
+            else {
+                const ks = Object.keys(days).sort(); let a0 = R[0] ? new Date(R[0]) : new Date(ks[0] + 'T00:00:00'); const b0 = R[1] && R[1] < new Date() ? new Date(R[1]) : new Date();
+                if (!R[0] || (b0 - a0) / 864e5 > 92) a0 = new Date(ks[0] + 'T00:00:00');
+                const weekly = (b0 - a0) / 864e5 > 62;
+                for (let d = new Date(a0); d <= b0; d.setDate(d.getDate() + (weekly ? 7 : 1))) buckets.push({ k: _shKey(d), l: d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), s: {}, ca: 0, n: 0, w: weekly });
+            }
+            const idx = {}; buckets.forEach((b, i) => idx[b.k] = i);
+            filtered.forEach(s => {
+                const d = new Date(s.date); let bi;
+                if (singleDay) bi = idx[d.getHours()];
+                else if (buckets[0] && buckets[0].w) { const off = Math.floor((new Date(_shKey(d) + 'T12:00:00') - new Date(buckets[0].k + 'T12:00:00')) / (7 * 864e5)); bi = off >= 0 && off < buckets.length ? off : undefined; }
+                else bi = idx[_shKey(d)];
+                if (bi == null) return; const b = buckets[bi], v = _shSeller(s, U), t = parseFloat(s.total) || 0;
+                b.ca += t; b.n++; b.s[v.key] = (b.s[v.key] || 0) + t;
+            });
+        }
+        if (n && buckets.length) {
+            const W = 720, H = 170, pl = 40, pb = 22, pt = 8, cw = (W - pl - 6) / buckets.length, mx = Math.max(1, ...buckets.map(b => b.ca));
+            let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;color:var(--text-main);">';
+            [0, .5, 1].forEach(f => { const y = pt + (H - pt - pb) * (1 - f); svg += '<line x1="' + pl + '" x2="' + (W - 6) + '" y1="' + y + '" y2="' + y + '" stroke="currentColor" stroke-opacity=".1"/><text x="' + (pl - 5) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9.5" fill="currentColor" fill-opacity=".55">' + Math.round(mx * f) + '</text>'; });
+            const every = Math.ceil(buckets.length / 14);
+            buckets.forEach((b, i) => {
+                const x = pl + i * cw, bw = Math.max(2, cw * .7), bx = x + (cw - bw) / 2; let yb = H - pb;
+                const tip = b.l + (b.w ? ' (semaine)' : '') + ' — ' + _shEur(b.ca) + ' · ' + b.n + ' ticket(s)' + SL.filter(a => b.s[a.key]).map(a => '\n' + a.name + ' : ' + _shEur(b.s[a.key])).join('');
+                svg += '<g><title>' + _shEsc(tip) + '</title><rect x="' + x + '" y="' + pt + '" width="' + cw + '" height="' + (H - pt - pb) + '" fill="transparent"/>';
+                SL.forEach(a => { const v = b.s[a.key] || 0; if (!v) return; const hh = (H - pt - pb) * v / mx; yb -= hh; svg += '<rect x="' + bx.toFixed(1) + '" y="' + yb.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(.5, hh - .6).toFixed(1) + '" rx="2" fill="' + _shColor(a.key) + '"/>'; });
+                svg += '</g>';
+                if (i % every === 0) svg += '<text x="' + (x + cw / 2).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="9" fill="currentColor" fill-opacity=".6">' + b.l + '</text>';
+            });
+            svg += '</svg>';
+            sh += '<div style="width:100%;border:1px solid var(--border-color);border-radius:12px;padding:8px 10px;"><div style="font-size:.68rem;font-weight:800;color:var(--gray);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px;">📈 CA ' + (singleDay ? 'par heure' : (buckets[0].w ? 'par semaine' : 'par jour')) + ' et par vendeur <span style="text-transform:none;font-weight:600;">(survolez une colonne)</span></div>' + svg + '</div>';
+        }
+        // barre d'outils de la liste
+        sh += '<div style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;"><span style="font-size:.78rem;font-weight:700;color:var(--text-main);">🧾 ' + n + ' ticket' + (n > 1 ? 's' : '') + ' · ' + _shEur(tot) + '</span><span style="display:inline-flex;gap:6px;">'
+            + '<span style="display:inline-flex;border:1.5px solid var(--border-color);border-radius:8px;overflow:hidden;">' + [['cards', '🗂️ Cartes'], ['table', '📋 Tableau']].map(v => '<button type="button" onclick="_shSetView(\'' + v[0] + '\')" style="border:none;padding:5px 11px;font-size:.74rem;font-weight:700;cursor:pointer;background:' + (_shView === v[0] ? 'var(--primary,#2563eb)' : 'var(--bg-card)') + ';color:' + (_shView === v[0] ? '#fff' : 'var(--text-main)') + ';">' + v[1] + '</button>').join('') + '</span>'
+            + '<button type="button" onclick="_shCSV()" ' + (n ? '' : 'disabled ') + 'style="border:1.5px solid var(--border-color);background:var(--bg-card);color:var(--text-main);border-radius:8px;padding:5px 11px;font-size:.74rem;font-weight:700;cursor:pointer;">⬇️ CSV</button></span></div>';
+        summaryEl.innerHTML = sh;
+        summaryEl.style.cssText = 'display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;';
+
+        // ── liste
         const listEl = document.getElementById('stats-history-list');
+        if (_shView === 'table') {
+            const val = (s, k) => k === 'date' ? new Date(s.date).getTime() : k === 'num' ? (parseFloat(s.ticketNum != null ? s.ticketNum : s.id) || 0) : k === 'seller' ? _shSeller(s, U).name.toLowerCase() : k === 'method' ? _shMethod(s)[1] : k === 'items' ? (s.items || []).length : (parseFloat(s.total) || 0);
+            filtered = filtered.slice().sort((a, b) => { const x = val(a, _shSort.k), y = val(b, _shSort.k); return (x < y ? -1 : x > y ? 1 : 0) * _shSort.d; });
+        }
+        window._statsHistorySales = filtered;
         if (filtered.length === 0) {
-            listEl.innerHTML = `<p style="text-align:center; color:var(--gray); padding:30px 0;">Aucune vente${search ? ` pour "${search}"` : ' pour cette période'}</p>`;
+            listEl.innerHTML = `<p style="text-align:center; color:var(--gray); padding:30px 0;">Aucune vente${search ? ` pour "${_shEsc(search)}"` : ' pour cette sélection'}</p>`;
+            return;
+        }
+        if (_shView === 'table') {
+            const th = (k, l, r) => '<th onclick="_shSortBy(\'' + k + '\')" style="position:sticky;top:0;background:var(--bg-card,#fff);padding:7px 9px;font-size:.66rem;text-transform:uppercase;letter-spacing:.3px;cursor:pointer;white-space:nowrap;text-align:' + (r ? 'right' : 'left') + ';color:' + (_shSort.k === k ? 'var(--primary,#2563eb)' : 'var(--gray)') + ';">' + l + (_shSort.k === k ? (_shSort.d < 0 ? ' ▼' : ' ▲') : '') + '</th>';
+            listEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:.78rem;font-variant-numeric:tabular-nums;"><thead><tr>' + th('date', 'Date / heure') + th('num', 'Ticket') + th('seller', 'Vendeur') + th('method', 'Mode') + th('items', 'Art.', 1) + th('total', 'Montant', 1) + '</tr></thead><tbody>'
+                + filtered.map((s, idx) => { const v = _shSeller(s, U), m = _shMethod(s); return '<tr onclick="showStatsTicket(' + idx + ')" style="cursor:pointer;border-top:1px solid var(--border-color);" onmouseover="this.style.background=\'rgba(37,99,235,.06)\'" onmouseout="this.style.background=\'\'"><td style="padding:6px 9px;white-space:nowrap;">' + new Date(s.date).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) + '</td><td style="padding:6px 9px;"><b>' + (s.ticketNum != null ? 'n° ' + _shEsc(s.ticketNum) : '#' + s.id) + '</b></td><td style="padding:6px 9px;"><span style="display:inline-flex;align-items:center;gap:6px;">' + _shDot(v) + _shEsc(v.name) + '</span></td><td style="padding:6px 9px;white-space:nowrap;">' + m[0] + ' ' + m[1] + '</td><td style="padding:6px 9px;text-align:right;">' + (s.items || []).length + '</td><td style="padding:6px 9px;text-align:right;font-weight:800;color:var(--success);">' + (parseFloat(s.total) || 0).toFixed(2) + ' €</td></tr>'; }).join('')
+                + '</tbody><tfoot><tr><td colspan="4" style="padding:7px 9px;font-weight:900;border-top:2px solid var(--border-color);position:sticky;bottom:0;background:var(--bg-card,#fff);">Total · ' + n + ' tickets · panier moyen ' + _shEur(tot / n) + '</td><td style="border-top:2px solid var(--border-color);position:sticky;bottom:0;background:var(--bg-card,#fff);text-align:right;font-weight:900;padding:7px 9px;">' + nItems + '</td><td style="border-top:2px solid var(--border-color);position:sticky;bottom:0;background:var(--bg-card,#fff);text-align:right;font-weight:900;padding:7px 9px;">' + _shEur(tot) + '</td></tr></tfoot></table>';
             return;
         }
 
         listEl.innerHTML = filtered.map((s, idx) => {
-            const methodIcon = s.method === 'cb' ? '💳' : s.method === 'mixed' ? '💳💶' : '💶';
-            const methodLabel = s.method === 'cb' ? 'Carte' : s.method === 'mixed' ? 'Mixte' : 'Espèces';
+            const m = _shMethod(s), v = _shSeller(s, U);
             const dateStr = new Date(s.date).toLocaleString('fr-FR');
-
-            // Articles avec mise en évidence des correspondances de recherche
-            const matchedItems = search ? s.items.filter(i => i.name.toLowerCase().includes(search)) : [];
-            const otherItems = search ? s.items.filter(i => !i.name.toLowerCase().includes(search)) : s.items;
-
+            const its = s.items || [];
+            const matchedItems = search ? its.filter(i => String(i.name || '').toLowerCase().includes(search)) : [];
+            const otherItems = search ? its.filter(i => !String(i.name || '').toLowerCase().includes(search)) : its;
             let itemsHTML = '';
             if (matchedItems.length > 0) {
-                // Articles correspondants en premier, mis en évidence
                 itemsHTML += matchedItems.map(i => {
-                    const nameIdx = i.name.toLowerCase().indexOf(search);
-                    const highlighted = i.name.substring(0, nameIdx) +
-                        `<strong style="color:var(--primary); background:rgba(var(--primary-rgb,52,152,219),0.13); border-radius:3px; padding:0 2px;">${i.name.substring(nameIdx, nameIdx + search.length)}</strong>` +
-                        i.name.substring(nameIdx + search.length);
-                    return `<span style="display:inline-flex; align-items:center; gap:3px; background:rgba(var(--primary-rgb,52,152,219),0.1); border:1px solid var(--primary); border-radius:12px; padding:1px 8px; font-size:0.72rem; margin:1px;">✓ ${highlighted}</span>`;
+                    const nm = String(i.name || ''), p = nm.toLowerCase().indexOf(search);
+                    return '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(var(--primary-rgb,52,152,219),0.1);border:1px solid var(--primary);border-radius:12px;padding:1px 8px;font-size:0.72rem;margin:1px;">✓ ' + _shEsc(nm.substring(0, p)) + '<strong style="color:var(--primary);">' + _shEsc(nm.substring(p, p + search.length)) + '</strong>' + _shEsc(nm.substring(p + search.length)) + (i.quantity > 1 ? ' ×' + i.quantity : '') + '</span>';
                 }).join('');
-                if (otherItems.length > 0) {
-                    itemsHTML += `<span style="font-size:0.72rem; color:var(--gray); margin-left:4px;">+${otherItems.length} autre${otherItems.length > 1 ? 's' : ''}</span>`;
-                }
+                if (otherItems.length > 0) itemsHTML += `<span style="font-size:0.72rem; color:var(--gray); margin-left:4px;">+${otherItems.length} autre${otherItems.length > 1 ? 's' : ''}</span>`;
             } else {
-                // Affichage normal
-                const preview = s.items.slice(0, 3).map(i => i.name).join(', ');
-                itemsHTML = `<span style="font-size:0.73rem; color:var(--gray);">${preview}${s.items.length > 3 ? ` +${s.items.length - 3}` : ''}</span>`;
+                const preview = its.slice(0, 3).map(i => _shEsc(i.name)).join(', ');
+                itemsHTML = `<span style="font-size:0.73rem; color:var(--gray);">${preview}${its.length > 3 ? ` +${its.length - 3}` : ''}</span>`;
             }
-
-            const borderStyle = matchedItems.length > 0 ? 'border:1.5px solid var(--primary);' : 'border:1px solid var(--border-color);';
-
+            const col = _shColor(v.key);
             return `
                 <div onclick="showStatsTicket(${idx})"
-                    style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-main, #f8f9fa); padding:11px 14px; margin-bottom:7px; border-radius:8px; cursor:pointer; ${borderStyle} transition:box-shadow 0.15s, transform 0.1s; color:var(--text-main);"
+                    style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card,#fff); color:var(--text-main); padding:10px 14px; margin-bottom:7px; border-radius:10px; cursor:pointer; border:1px solid ${matchedItems.length ? 'var(--primary)' : 'var(--border-color)'}; border-left:4px solid ${col}; transition:box-shadow 0.15s, transform 0.1s;"
                     onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.13)'; this.style.transform='translateY(-1px)';"
                     onmouseout="this.style.boxShadow='none'; this.style.transform='translateY(0)';"
                     title="Cliquer pour voir l'aperçu du ticket">
                     <div style="display:flex; align-items:center; gap:12px; min-width:0; flex:1;">
-                        <div style="background:var(--primary); color:white; border-radius:7px; padding:7px 10px; font-size:1rem; flex-shrink:0;">🧾</div>
+                        ${_shDot(v, 34)}
                         <div style="min-width:0; flex:1;">
-                            <div style="font-weight:700; font-size:0.95rem;">Ticket <span style="color:var(--primary);">#${s.id}</span></div>
-                            <div style="font-size:0.75rem; color:var(--gray); margin-top:2px;">${dateStr} &bull; ${s.cashierId || s.cashier}</div>
+                            <div style="font-weight:700; font-size:0.93rem;">Ticket <span style="color:var(--primary);">${s.ticketNum != null ? 'n° ' + _shEsc(s.ticketNum) : '#' + s.id}</span> <span style="font-size:.72rem;font-weight:700;color:${col};">· ${_shEsc(v.name)}</span></div>
+                            <div style="font-size:0.74rem; color:var(--gray); margin-top:2px;">📅 ${dateStr}${s.ticketNum != null ? ' · #' + s.id : ''}</div>
                             <div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:2px; align-items:center;">${itemsHTML}</div>
                         </div>
                     </div>
                     <div style="text-align:right; flex-shrink:0; margin-left:10px;">
-                        <div style="font-weight:700; color:var(--success); font-size:1.05rem;">${s.total.toFixed(2)}€</div>
-                        <div style="font-size:0.75rem; color:var(--gray);">${methodIcon} ${methodLabel}</div>
-                        <div style="font-size:0.7rem; color:var(--gray);">${s.items.length} art.</div>
+                        <div style="font-weight:800; color:var(--success); font-size:1.05rem;">${(parseFloat(s.total) || 0).toFixed(2)}€</div>
+                        <div style="font-size:0.74rem; color:var(--gray);">${m[0]} ${m[1]}</div>
+                        <div style="font-size:0.7rem; color:var(--gray);">${its.length} art.</div>
                     </div>
-                </div>
-            `;
+                </div>`;
         }).join('');
     }
 
