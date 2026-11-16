@@ -1070,6 +1070,13 @@ return tinf_uncompress;
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
                         <div>
+                            <label style="display:block;font-size:0.66rem;font-weight:800;color:var(--text-muted,#999);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">👤 Vendeur</label>
+                            <select id="cashier-hist-seller" onchange="filterCashierHistory(document.getElementById('cashier-hist-search').value)"
+                                style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;font-weight:700;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                                <option value="">Tous les vendeurs</option>
+                            </select>
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.66rem;font-weight:800;color:var(--text-muted,#999);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Mode de paiement</label>
                             <select id="cashier-hist-method" onchange="filterCashierHistory(document.getElementById('cashier-hist-search').value)"
                                 style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
@@ -1147,10 +1154,15 @@ return tinf_uncompress;
                 <!-- ══ STATS RAPIDES CLIQUABLES ════════════════════════════════ -->
                 <div id="cashier-hist-stats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;"></div>
 
+                <!-- ══ ANALYSE PAR VENDEUR (filtre vendeur × dates) ═════════════ -->
+                <div id="hist-seller-dash"></div>
+
                 <!-- ══ RAPPORT DU JOUR ═════════════════════════════════════════ -->
                 <div id="cashier-hist-day-report" style="display:none;margin-bottom:16px;"></div>
 
                 <!-- ══ LISTE DES TICKETS ═══════════════════════════════════════ -->
+                <div id="hist-list-bar"></div>
+                <div id="hist-tbl-view" style="display:none;"></div>
                 <div id="cashier-hist-list" style="max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div>
 
             </div>
@@ -1534,6 +1546,9 @@ function filterCashierHistory(searchVal) {
         // Traçabilité fidélité : distingue les tickets liés à un compte fidélité de ceux sans.
         if (loyaltyFilter === 'with') sales = sales.filter(s => !!s.loyaltyCustomerName);
         if (loyaltyFilter === 'without') sales = sales.filter(s => !s.loyaltyCustomerName);
+        // Vendeur (identifiant du compte connecté au moment de la vente)
+        const sellerKey = document.getElementById('cashier-hist-seller')?.value || '';
+        if (sellerKey && typeof _histSellerOf === 'function') { const _u = _histUsers(); sales = sales.filter(s => _histSellerOf(s, _u).key === sellerKey); }
         if (selectedDate) {
             sales = sales.filter(s => _histDateKey(s.date) === selectedDate);
         } else if (window._histAgendaRange) {
@@ -3597,6 +3612,283 @@ window.cpMaybeShowInstallBanner = function(){
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   HISTORIQUE PRO — ANALYSE PAR VENDEUR (filtre vendeur × dates, tableau de bord, vue tableau)
+   • Filtre « Vendeur » combiné avec l'agenda (plage), le jour précis, le mode, le statut…
+   • Tableau de bord sur la sélection : indicateurs, CA par jour empilé par vendeur (survol = détail,
+     clic = ce jour), classement des vendeurs (clic = filtrer), carte de chaleur heure × jour,
+     répartition des modes de paiement.
+   • Liste des tickets : vue « Cartes » ou « Tableau » (colonnes triables).
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._histDashInstalled) return; window._histDashInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+    function eur(n, d) { return num(n).toLocaleString('fr-FR', { minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d }) + ' €'; }
+    function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+    function dk(d) { return _histDateKey(d); }
+    function addDays(k, n) { var d = new Date(k + 'T12:00:00'); d.setDate(d.getDate() + n); return dk(d); }
+    function dayDiff(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5); }
+    function monday(k) { var d = new Date(k + 'T12:00:00'), w = (d.getDay() + 6) % 7; d.setDate(d.getDate() - w); return dk(d); }
+    function fmtD(k, o) { return new Date(k + 'T12:00:00').toLocaleDateString('fr-FR', o || { day: '2-digit', month: 'short' }); }
+    var VIEW = ls('covo_hist_view') === 'table' ? 'table' : 'cards', OPEN = ls('covo_hist_dash') !== '0', SORT = { k: 'date', d: -1 };
+
+    var CSS = [
+        '#hist-seller-dash{margin-bottom:14px}',
+        '.hd-card{background:var(--bg-card,#fff);border:1.5px solid var(--border-color,#e0e0e0);border-radius:14px;box-shadow:0 2px 10px rgba(0,0,0,.04);padding:14px 16px;color:var(--text-main,#2c3e50)}',
+        '.hd-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}',
+        '.hd-tt{font-size:.74rem;font-weight:800;color:var(--text-muted,#888);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:6px}',
+        '.hd-tt i{display:inline-flex;width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#7c3aed,#2563eb);align-items:center;justify-content:center;font-style:normal;font-size:.8rem}',
+        '.hd-sub{font-size:.8rem;font-weight:800;color:#2563eb}',
+        '.hd-btn{border:1.5px solid var(--border-color,#e0e0e0);background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);border-radius:8px;padding:5px 10px;font-size:.74rem;font-weight:700;cursor:pointer}',
+        '.hd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:12px 0}',
+        '.hd-k{border-radius:12px;padding:10px 12px;background:linear-gradient(135deg,var(--c1),var(--c2));color:#fff;position:relative;overflow:hidden}',
+        '.hd-k b{display:block;font-size:1.15rem;font-weight:900;font-variant-numeric:tabular-nums}.hd-k span{font-size:.68rem;font-weight:700;opacity:.9;text-transform:uppercase;letter-spacing:.3px}.hd-k small{display:block;font-size:.68rem;opacity:.85;margin-top:2px}',
+        '.hd-k:after{content:"";position:absolute;right:-18px;top:-18px;width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,.12)}',
+        '.hd-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(260px,1fr);gap:12px}',
+        '@media(max-width:900px){.hd-grid{grid-template-columns:minmax(0,1fr)}}',
+        '.hd-box{border:1px solid var(--border-color,#e5e7eb);border-radius:12px;padding:10px 12px;min-width:0}',
+        '.hd-bt{font-size:.72rem;font-weight:800;color:var(--text-muted,#777);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px;display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}',
+        '.hd-chart{position:relative}.hd-chart svg{display:block;width:100%;height:auto}.hd-chart rect.b{cursor:pointer;transition:opacity .12s}.hd-chart g.col:hover rect.b{opacity:.82}',
+        '.hd-tip{position:absolute;pointer-events:none;background:#0f172a;color:#fff;border-radius:9px;padding:8px 10px;font-size:.72rem;box-shadow:0 8px 20px rgba(0,0,0,.3);z-index:5;min-width:150px;display:none;white-space:nowrap}',
+        '.hd-tip .r{display:flex;align-items:center;gap:6px;justify-content:space-between}.hd-tip i{width:9px;height:9px;border-radius:2px;display:inline-block}',
+        '.hd-leg{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:.7rem;font-weight:700}.hd-leg span{display:inline-flex;align-items:center;gap:4px}.hd-leg i{width:10px;height:10px;border-radius:3px;display:inline-block}',
+        '.hd-rank{display:flex;flex-direction:column;gap:6px}',
+        '.hd-row{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;border:1.5px solid transparent;border-radius:10px;padding:6px 7px;cursor:pointer;background:none;color:inherit;font:inherit;text-align:left}',
+        '.hd-row:hover{background:rgba(37,99,235,.06)}.hd-row.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 10%,transparent)}',
+        '.hd-pos{font-weight:900;font-size:.8rem;color:var(--text-muted,#999);text-align:center}',
+        '.hd-nm{font-weight:800;font-size:.82rem;display:flex;align-items:center;gap:6px;min-width:0}.hd-nm span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        '.hd-bar{height:7px;border-radius:4px;background:var(--border-color,#eee);margin-top:4px;overflow:hidden}.hd-bar i{display:block;height:100%;border-radius:4px}',
+        '.hd-meta{font-size:.66rem;color:var(--text-muted,#999);margin-top:2px}',
+        '.hd-val{text-align:right;font-weight:900;font-size:.86rem;font-variant-numeric:tabular-nums}.hd-val small{display:block;font-size:.64rem;color:var(--text-muted,#999);font-weight:700}',
+        '.hd-heat{display:grid;grid-template-columns:34px repeat(18,1fr);gap:2px;font-size:.6rem;color:var(--text-muted,#999)}',
+        '.hd-heat div{height:16px;border-radius:3px;display:flex;align-items:center;justify-content:center}',
+        '.hd-heat .c{background:rgba(37,99,235,var(--a));cursor:default}',
+        '.hd-pay{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:6px 0}.hd-pay i{display:block;height:100%}',
+        '.hd-payl{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:4px 10px;font-size:.72rem}.hd-payl span{display:flex;justify-content:space-between;gap:6px}',
+        '#hist-list-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin:0 0 8px}',
+        '#hist-list-bar .seg{display:inline-flex;border:1.5px solid var(--border-color,#e0e0e0);border-radius:9px;overflow:hidden}',
+        '#hist-list-bar .seg button{border:none;background:var(--bg-card,#fff);color:var(--text-main,#2c3e50);padding:6px 12px;font-weight:700;font-size:.76rem;cursor:pointer}',
+        '#hist-list-bar .seg button.on{background:#2563eb;color:#fff}',
+        '#hist-tbl-view{max-height:560px;overflow:auto;border:1.5px solid var(--border-color,#e0e0e0);border-radius:10px;background:var(--bg-card,#fff)}',
+        '#hist-tbl-view table{width:100%;border-collapse:collapse;font-size:.78rem;font-variant-numeric:tabular-nums}',
+        '#hist-tbl-view th{position:sticky;top:0;background:var(--bg-body,#f4f7f6);text-align:left;padding:8px 10px;font-size:.66rem;text-transform:uppercase;letter-spacing:.3px;color:var(--text-muted,#888);cursor:pointer;white-space:nowrap;user-select:none;z-index:1}',
+        '#hist-tbl-view th.r,#hist-tbl-view td.r{text-align:right}#hist-tbl-view th.on{color:#2563eb}',
+        '#hist-tbl-view td{padding:7px 10px;border-top:1px solid var(--border-color,#eee);white-space:nowrap}',
+        '#hist-tbl-view tr.x td{opacity:.5;text-decoration:line-through}#hist-tbl-view tbody tr{cursor:pointer}#hist-tbl-view tbody tr:hover td{background:rgba(37,99,235,.06)}',
+        '#hist-tbl-view tfoot td{position:sticky;bottom:0;background:var(--bg-body,#f4f7f6);font-weight:900;border-top:2px solid var(--border-color,#ddd)}'
+    ].join('\n');
+
+    function sellersAll() {
+        var users = _histUsers(), m = {}, S = [];
+        try { S = JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch (e) {}
+        users.forEach(function (u) { if (u && u.id) m['u:' + u.id] = { key: 'u:' + u.id, name: u.username || u.id }; });
+        S.forEach(function (s) { var v = _histSellerOf(s, users); if (!m[v.key]) m[v.key] = { key: v.key, name: v.name }; });
+        return Object.keys(m).map(function (k) { return m[k]; }).sort(function (a, b) { return a.name.localeCompare(b.name, 'fr'); });
+    }
+    function fillSellerSelect() {
+        var sel = $('cashier-hist-seller'); if (!sel) return;
+        var cur = sel.value, L = sellersAll();
+        sel.innerHTML = '<option value="">Tous les vendeurs</option>' + L.map(function (a) { return '<option value="' + esc(a.key) + '"' + (a.key === cur ? ' selected' : '') + '>👤 ' + esc(a.name) + '</option>'; }).join('');
+        if (cur && !L.some(function (a) { return a.key === cur; })) sel.value = '';
+        var a = L.filter(function (x) { return x.key === sel.value; })[0];
+        window._histSellerFilterName = a ? String(a.name).toLowerCase() : null;
+        sel.style.borderColor = sel.value ? _histSellerColor(sel.value) : '';
+        sel.style.boxShadow = sel.value ? '0 0 0 2px ' + _histSellerColor(sel.value) + '33' : '';
+    }
+    window._histSetSeller = function (k) {
+        var sel = $('cashier-hist-seller'); if (!sel) return;
+        sel.value = sel.value === k ? '' : k;
+        filterCashierHistory(($('cashier-hist-search') || {}).value || '');
+    };
+    window._histPickDay = function (k) {
+        var d = $('cashier-hist-date'); if (!d) return;
+        d.value = d.value === k ? '' : k;
+        filterCashierHistory(($('cashier-hist-search') || {}).value || '');
+    };
+
+    function scopeLabel() {
+        var d = ($('cashier-hist-date') || {}).value, r = window._histAgendaRange;
+        if (d) return fmtD(d, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+        if (window._histTimeFilter === 'today') return 'Aujourd’hui';
+        if (r) return 'Du ' + fmtD(r.start) + ' au ' + fmtD(r.end, { day: '2-digit', month: 'short', year: 'numeric' });
+        return 'Toute la période';
+    }
+
+    function dashboard(sales) {
+        var box = $('hist-seller-dash'); if (!box) return;
+        var users = _histUsers(), valid = sales.filter(function (s) { return !s.cancelled; });
+        var sk = ($('cashier-hist-seller') || {}).value || '', sName = window._histSellerFilterName;
+        var head = '<div class="hd-hd"><div class="hd-tt"><i>📊</i>Analyse des ventes par vendeur</div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="hd-sub">📅 ' + esc(scopeLabel()) + (sk ? ' · 👤 ' + esc((sellersAll().filter(function (a) { return a.key === sk; })[0] || {}).name || '') : '') + '</span>'
+            + (sk ? '<button class="hd-btn" onclick="_histSetSeller(\'\')">✕ Tous les vendeurs</button>' : '')
+            + '<button class="hd-btn" id="hd-toggle">' + (OPEN ? '▾ Masquer' : '▸ Afficher') + '</button></div></div>';
+        if (!OPEN) { box.innerHTML = '<div class="hd-card">' + head + '</div>'; bindToggle(); return; }
+        if (!valid.length) { box.innerHTML = '<div class="hd-card">' + head + '<div style="text-align:center;padding:24px;color:var(--text-muted,#999);font-size:.85rem">Aucune vente validée pour cette sélection.</div></div>'; bindToggle(); return; }
+
+        // — agrégats
+        var ca = 0, items = 0, byDay = {}, bySeller = {}, heat = {}, pay = _histPayEmpty(), keys = [];
+        valid.forEach(function (s) {
+            var t = num(s.total), k = dk(s.date), v = _histSellerOf(s, users), d = new Date(s.date);
+            ca += t; items += (s.items || []).reduce(function (a, it) { return a + (it.unitType === 'kg' || it.weight ? 1 : num(it.quantity || it.qty || 1)); }, 0);
+            (byDay[k] = byDay[k] || { ca: 0, n: 0, s: {} }); byDay[k].ca += t; byDay[k].n++; byDay[k].s[v.key] = (byDay[k].s[v.key] || 0) + t;
+            var a = bySeller[v.key] = bySeller[v.key] || { key: v.key, name: v.name, role: v.role, id: v.id, ca: 0, n: 0, days: {} }; a.ca += t; a.n++; a.days[k] = (a.days[k] || 0) + t;
+            var h = d.getHours(), w = (d.getDay() + 6) % 7, hk = w + '_' + h; heat[hk] = (heat[hk] || 0) + t;
+            try { _histPayAdd(pay, s); } catch (e) {}
+        });
+        var dayKeys = Object.keys(byDay).sort(), first = dayKeys[0], last = dayKeys[dayKeys.length - 1];
+        var r = window._histAgendaRange, dsel = ($('cashier-hist-date') || {}).value;
+        if (dsel) first = last = dsel; else if (r) { first = r.start < first ? r.start : first; last = r.end > last ? r.end : last; }
+        if (last > dk(new Date())) last = dk(new Date());
+        var span = dayDiff(first, last) + 1, weekly = span > 62;
+        var B = [];
+        if (weekly) { for (var m0 = monday(first); m0 <= last; m0 = addDays(m0, 7)) B.push({ k: m0, l: 'sem. ' + fmtD(m0), days: [] }); }
+        else for (var k0 = first; k0 <= last; k0 = addDays(k0, 1)) B.push({ k: k0, l: fmtD(k0, { weekday: 'short', day: '2-digit', month: 'short' }), days: [k0] });
+        var bIdx = {}; B.forEach(function (b, i) { bIdx[b.k] = i; b.ca = 0; b.s = {}; b.n = 0; });
+        dayKeys.forEach(function (k) { var bi = bIdx[weekly ? monday(k) : k]; if (bi == null) return; var b = B[bi], D = byDay[k]; b.ca += D.ca; b.n += D.n; if (weekly) b.days.push(k); Object.keys(D.s).forEach(function (sk2) { b.s[sk2] = (b.s[sk2] || 0) + D.s[sk2]; }); });
+        var SL = Object.keys(bySeller).map(function (k) { return bySeller[k]; }).sort(function (a, b) { return b.ca - a.ca; });
+        var activeDays = dayKeys.length, best = dayKeys.slice().sort(function (a, b) { return byDay[b].ca - byDay[a].ca; })[0];
+
+        // — indicateurs
+        var K = [
+            ['Chiffre d’affaires', eur(ca), valid.length + ' tickets validés', '#2563eb', '#1d4ed8'],
+            ['Panier moyen', eur(ca / valid.length), (items / valid.length).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' article(s) / ticket', '#7c3aed', '#5b21b6'],
+            ['CA moyen / jour', eur(ca / Math.max(1, activeDays)), activeDays + ' jour' + (activeDays > 1 ? 's' : '') + ' de vente', '#059669', '#047857'],
+            ['Meilleur jour', eur(byDay[best].ca), fmtD(best, { weekday: 'short', day: '2-digit', month: 'short' }) + ' · ' + byDay[best].n + ' tickets', '#d97706', '#b45309'],
+            ['Vendeurs', String(SL.length), SL[0] ? '🥇 ' + SL[0].name + ' · ' + Math.round(SL[0].ca / ca * 100) + ' %' : '', '#db2777', '#9d174d']
+        ];
+        var h = '<div class="hd-card">' + head + '<div class="hd-kpis">' + K.map(function (x) { return '<div class="hd-k" style="--c1:' + x[3] + ';--c2:' + x[4] + '"><span>' + x[0] + '</span><b>' + esc(x[1]) + '</b><small>' + esc(x[2]) + '</small></div>'; }).join('') + '</div>';
+
+        // — graphique empilé
+        var W = 720, H = 210, pl = 46, pr = 8, pt = 10, pb = 34, cw = (W - pl - pr) / B.length, max = Math.max.apply(null, B.map(function (b) { return b.ca; }).concat([1]));
+        var step = Math.pow(10, Math.floor(Math.log10(max))), nice = Math.ceil(max / step) * step; if (nice / step <= 2) step /= 2; max = Math.ceil(max / step) * step;
+        var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="CA par jour et par vendeur">';
+        for (var g = 0; g <= max + 1e-9; g += step) { var y = pt + (H - pt - pb) * (1 - g / max); svg += '<line x1="' + pl + '" x2="' + (W - pr) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="currentColor" stroke-opacity=".1"/><text x="' + (pl - 6) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="currentColor" fill-opacity=".55">' + Math.round(g).toLocaleString('fr-FR') + '</text>'; }
+        var lblEvery = Math.ceil(B.length / 12);
+        B.forEach(function (b, i) {
+            var x = pl + i * cw, bw = Math.max(2, cw * .72), bx = x + (cw - bw) / 2, yb = H - pb;
+            svg += '<g class="col" data-i="' + i + '"><rect x="' + x.toFixed(1) + '" y="' + pt + '" width="' + cw.toFixed(1) + '" height="' + (H - pt - pb) + '" fill="transparent"/>';
+            SL.forEach(function (a) { var v = b.s[a.key] || 0; if (v <= 0) return; var hh = (H - pt - pb) * v / max; yb -= hh; svg += '<rect class="b" x="' + bx.toFixed(1) + '" y="' + yb.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(.5, hh - .8).toFixed(1) + '" rx="' + Math.min(3, bw / 3).toFixed(1) + '" fill="' + _histSellerColor(a.key) + '"/>'; });
+            svg += '</g>';
+            if (i % lblEvery === 0) svg += '<text x="' + (x + cw / 2).toFixed(1) + '" y="' + (H - pb + 14) + '" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity=".6">' + esc(weekly ? fmtD(b.k) : fmtD(b.k, { day: '2-digit', month: '2-digit' })) + '</text>';
+        });
+        svg += '</svg>';
+        h += '<div class="hd-grid"><div class="hd-box"><div class="hd-bt"><span>📈 CA ' + (weekly ? 'par semaine' : 'par jour') + ' et par vendeur</span><span class="hd-leg">' + SL.map(function (a) { return '<span><i style="background:' + _histSellerColor(a.key) + '"></i>' + esc(a.name) + '</span>'; }).join('') + '</span></div>'
+            + '<div class="hd-chart" id="hd-chart">' + svg + '<div class="hd-tip" id="hd-tip"></div></div>'
+            + '<div style="font-size:.66rem;color:var(--text-muted,#999);margin-top:2px">Survolez une colonne pour le détail · ' + (weekly ? 'sélectionnez une plage plus courte (≤ 2 mois) pour le détail jour par jour' : 'cliquez sur une colonne pour n’afficher que ce jour') + '</div></div>';
+
+        // — classement
+        var maxS = SL[0] ? SL[0].ca : 1;
+        h += '<div class="hd-box"><div class="hd-bt"><span>🏆 Classement des vendeurs</span><span style="text-transform:none;font-weight:600">clic = filtrer</span></div><div class="hd-rank">' + SL.map(function (a, i) {
+            var col = _histSellerColor(a.key), spark = B.map(function (b) { return b.s[a.key] || 0; }), smax = Math.max.apply(null, spark.concat([1]));
+            var pts = spark.map(function (v, j) { return (spark.length < 2 ? 30 : j / (spark.length - 1) * 60).toFixed(1) + ',' + (16 - v / smax * 14).toFixed(1); }).join(' ');
+            var nd = Object.keys(a.days).length;
+            return '<button type="button" class="hd-row' + (sk === a.key ? ' on' : '') + '" style="--c:' + col + '" onclick="_histSetSeller(decodeURIComponent(\'' + encodeURIComponent(a.key).replace(/'/g, '%27') + '\'))">'
+                + '<span class="hd-pos">' + (i < 3 ? ['🥇', '🥈', '🥉'][i] : i + 1) + '</span>'
+                + '<span style="min-width:0"><span class="hd-nm">' + _histSellerDot(a, 18) + '<span>' + esc(a.name) + '</span><svg width="60" height="18" viewBox="0 0 60 18" style="flex-shrink:0;margin-left:auto"><polyline points="' + pts + '" fill="none" stroke="' + col + '" stroke-width="1.6" stroke-linejoin="round"/></svg></span>'
+                + '<span class="hd-bar"><i style="width:' + (a.ca / maxS * 100).toFixed(1) + '%;background:' + col + '"></i></span>'
+                + '<span class="hd-meta">' + a.n + ' tickets · panier ' + eur(a.ca / a.n) + ' · ' + nd + ' jour' + (nd > 1 ? 's' : '') + ' · ' + eur(a.ca / Math.max(1, nd)) + '/jour</span></span>'
+                + '<span class="hd-val">' + eur(a.ca) + '<small>' + Math.round(a.ca / ca * 100) + ' %</small></span></button>';
+        }).join('') + '</div></div></div>';
+
+        // — carte de chaleur + paiements
+        var hmax = 0; Object.keys(heat).forEach(function (k) { hmax = Math.max(hmax, heat[k]); });
+        var J = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'], HRS = []; for (var hh2 = 6; hh2 <= 23; hh2++) HRS.push(hh2);
+        var hm = '<div class="hd-heat"><div></div>' + HRS.map(function (x) { return '<div>' + (x % 2 ? '' : x + 'h') + '</div>'; }).join('');
+        J.forEach(function (j, wi) { hm += '<div style="justify-content:flex-start;font-weight:700">' + j + '</div>' + HRS.map(function (x) { var v = heat[wi + '_' + x] || 0; return '<div class="c" style="--a:' + (v ? (.12 + .88 * v / hmax).toFixed(2) : '.04') + '" title="' + j + ' ' + x + 'h–' + (x + 1) + 'h : ' + eur(v) + '"></div>'; }).join(''); });
+        hm += '</div>';
+        var pcats = _HIST_PAY_CATS.filter(function (c) { return pay[c.k] > 0.004; }), ptot = pcats.reduce(function (t, c) { return t + pay[c.k]; }, 0) || 1;
+        h += '<div class="hd-grid" style="margin-top:12px"><div class="hd-box"><div class="hd-bt"><span>🔥 Affluence : CA par heure et par jour de semaine</span><span style="text-transform:none;font-weight:600">plus foncé = plus de ventes</span></div>' + hm + '</div>'
+            + '<div class="hd-box"><div class="hd-bt"><span>💳 Modes de paiement</span></div><div class="hd-pay">' + pcats.map(function (c) { return '<i style="width:' + (pay[c.k] / ptot * 100).toFixed(2) + '%;background:' + c.color + '" title="' + c.label + ' : ' + eur(pay[c.k]) + '"></i>'; }).join('') + '</div>'
+            + '<div class="hd-payl">' + pcats.map(function (c) { return '<span><span><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + c.color + ';margin-right:4px"></i>' + c.icon + ' ' + c.label + '</span><b>' + eur(pay[c.k]) + ' · ' + Math.round(pay[c.k] / ptot * 100) + '%</b></span>'; }).join('') + '</div></div></div>';
+        h += '</div>';
+        box.innerHTML = h; bindToggle();
+
+        // — survol / clic du graphique
+        var chart = $('hd-chart'), tip = $('hd-tip');
+        if (chart) {
+            chart.addEventListener('mousemove', function (e) {
+                var g2 = e.target.closest && e.target.closest('g.col'); if (!g2) { tip.style.display = 'none'; return; }
+                var b = B[+g2.getAttribute('data-i')]; if (!b) return;
+                var rows = SL.filter(function (a) { return b.s[a.key]; }).map(function (a) { return '<div class="r"><span><i style="background:' + _histSellerColor(a.key) + '"></i> ' + esc(a.name) + '</span><b>' + eur(b.s[a.key]) + '</b></div>'; }).join('');
+                tip.innerHTML = '<div style="font-weight:800;margin-bottom:4px">' + esc(weekly ? 'Semaine du ' + fmtD(b.k, { day: '2-digit', month: 'long' }) : fmtD(b.k, { weekday: 'long', day: '2-digit', month: 'long' })) + '</div>' + (rows || '<div style="opacity:.7">Aucune vente</div>') + (b.ca ? '<div class="r" style="border-top:1px solid rgba(255,255,255,.2);margin-top:4px;padding-top:4px"><span>Total · ' + b.n + ' tickets</span><b>' + eur(b.ca) + '</b></div>' : '');
+                var rc = chart.getBoundingClientRect(), x = e.clientX - rc.left + 14, y = e.clientY - rc.top + 10;
+                tip.style.display = 'block'; if (x + tip.offsetWidth > rc.width) x = e.clientX - rc.left - tip.offsetWidth - 14; tip.style.left = Math.max(0, x) + 'px'; tip.style.top = y + 'px';
+            });
+            chart.addEventListener('mouseleave', function () { tip.style.display = 'none'; });
+            chart.addEventListener('click', function (e) { var g2 = e.target.closest && e.target.closest('g.col'); if (!g2 || weekly) return; var b = B[+g2.getAttribute('data-i')]; if (b && b.ca) _histPickDay(b.k); });
+        }
+    }
+    function bindToggle() { var t = $('hd-toggle'); if (t) t.onclick = function () { OPEN = !OPEN; ls('covo_hist_dash', OPEN ? '1' : '0'); dashboard(window._histDashLast || []); }; }
+
+    /* ── liste : barre (compte + bascule) et vue tableau triable ── */
+    function methodLbl(s) { return s.type === 'retour_article' ? '↩️ Retour' : ({ cb: '💳 Carte', cash: '💶 Espèces', ticket: '🎟️ Ticket resto', credit: '📒 Crédit', echel: '📅 Échelonné', points: '🎁 Points' })[s.method] || '💳💶 Mixte'; }
+    function listBar(sorted) {
+        var bar = $('hist-list-bar'); if (!bar) return;
+        var v = sorted.filter(function (s) { return !s.cancelled; }), tot = v.reduce(function (a, s) { return a + num(s.total); }, 0);
+        bar.innerHTML = '<div style="font-size:.8rem;font-weight:700;color:var(--text-main,#2c3e50)">🧾 <b>' + sorted.length + '</b> ticket' + (sorted.length > 1 ? 's' : '') + ' affiché' + (sorted.length > 1 ? 's' : '') + ' · <b style="color:#059669">' + eur(tot) + '</b> validés</div>'
+            + '<div class="seg"><button type="button" data-v="cards" class="' + (VIEW === 'cards' ? 'on' : '') + '">🗂️ Cartes</button><button type="button" data-v="table" class="' + (VIEW === 'table' ? 'on' : '') + '">📋 Tableau</button></div>';
+        bar.querySelector('.seg').onclick = function (e) { var b = e.target.closest('button'); if (!b) return; VIEW = b.dataset.v; ls('covo_hist_view', VIEW); listBar(window._sortedSalesHistory || []); applyView(); };
+    }
+    var COLS = [['date', 'Date / heure'], ['num', 'Ticket'], ['seller', 'Vendeur'], ['method', 'Mode'], ['items', 'Art.', 'r'], ['client', 'Client'], ['total', 'Montant', 'r']];
+    function val(s, k, users) {
+        if (k === 'date') return new Date(s.date).getTime();
+        if (k === 'num') return num(s.ticketNum != null ? s.ticketNum : s.id);
+        if (k === 'seller') return _histSellerOf(s, users).name.toLowerCase();
+        if (k === 'method') return methodLbl(s);
+        if (k === 'items') return (s.items || []).length;
+        if (k === 'client') return String(s.creditCustomerName || s.loyaltyCustomerName || '').toLowerCase();
+        return num(s.total);
+    }
+    function table() {
+        var el = $('hist-tbl-view'); if (!el) return;
+        var sorted = window._sortedSalesHistory || [], users = _histUsers();
+        var rows = sorted.map(function (s, i) { return { s: s, i: i }; });
+        rows.sort(function (a, b) { var x = val(a.s, SORT.k, users), y = val(b.s, SORT.k, users); return (x < y ? -1 : x > y ? 1 : 0) * SORT.d; });
+        var tot = 0, n = 0;
+        var body = rows.map(function (r) {
+            var s = r.s, v = _histSellerOf(s, users); if (!s.cancelled) { tot += num(s.total); n++; }
+            return '<tr class="' + (s.cancelled ? 'x' : '') + '" onclick="showTicketFromHistory(' + r.i + ')"><td>' + new Date(s.date).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) + '</td>'
+                + '<td><b>' + (s.ticketNum != null ? 'n° ' + esc(s.ticketNum) : '#' + esc(s.id)) + '</b>' + (s.cancelled ? ' 🚫' : '') + '</td>'
+                + '<td><span style="display:inline-flex;align-items:center;gap:6px">' + _histSellerDot(v, 18) + esc(v.name) + '</span></td>'
+                + '<td>' + methodLbl(s) + '</td><td class="r">' + (s.items || []).length + '</td>'
+                + '<td>' + esc(s.creditCustomerName || s.loyaltyCustomerName || '—') + '</td><td class="r"><b>' + num(s.total).toFixed(2) + ' €</b></td></tr>';
+        }).join('');
+        el.innerHTML = '<table><thead><tr>' + COLS.map(function (c) { return '<th data-k="' + c[0] + '" class="' + (c[2] || '') + (SORT.k === c[0] ? ' on' : '') + '">' + c[1] + (SORT.k === c[0] ? (SORT.d < 0 ? ' ▼' : ' ▲') : '') + '</th>'; }).join('') + '</tr></thead><tbody>'
+            + (body || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted,#999)">Aucun ticket pour cette sélection.</td></tr>') + '</tbody>'
+            + (n ? '<tfoot><tr><td colspan="4">Total validé · ' + n + ' ticket' + (n > 1 ? 's' : '') + '</td><td></td><td>Panier moyen ' + eur(tot / n) + '</td><td class="r">' + eur(tot) + '</td></tr></tfoot>' : '') + '</table>';
+        el.querySelector('thead').onclick = function (e) { var th = e.target.closest('th'); if (!th) return; var k = th.dataset.k; SORT = SORT.k === k ? { k: k, d: -SORT.d } : { k: k, d: k === 'date' || k === 'total' || k === 'items' || k === 'num' ? -1 : 1 }; table(); };
+    }
+    function applyView() {
+        var list = $('cashier-hist-list'), tv = $('hist-tbl-view'); if (!list || !tv) return;
+        if (VIEW === 'table') { list.style.display = 'none'; tv.style.display = ''; table(); }
+        else { tv.style.display = 'none'; list.style.display = 'flex'; }
+    }
+
+    function after(sales) {
+        if (!$('hd-css')) { var st = document.createElement('style'); st.id = 'hd-css'; st.textContent = CSS; document.head.appendChild(st); }
+        fillSellerSelect();
+        window._histDashLast = sales;
+        try { dashboard(sales); } catch (e) { console.warn('[Analyse vendeurs]', e); }
+        listBar(window._sortedSalesHistory || []); applyView();
+    }
+    function boot() {
+        if (typeof window.renderCashierHistory !== 'function' || !$('cashier-hist-list') || typeof _histSellerOf !== 'function') { if ((boot.n = (boot.n || 0) + 1) < 400) setTimeout(boot, 300); return; }
+        var orig = window.renderCashierHistory;
+        window.renderCashierHistory = function (salesData) {
+            var r = orig.apply(this, arguments);
+            var sales = salesData !== undefined ? salesData : (function () { try { return JSON.parse(localStorage.getItem('covo_sales_history')) || []; } catch (e) { return []; } })();
+            after(sales);
+            return r;
+        };
+        fillSellerSelect();
+        try { filterCashierHistory(($('cashier-hist-search') || {}).value || ''); } catch (e) {}
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
+})();
+</script>
 </body>
 </html>
 <script>
@@ -3657,6 +3949,7 @@ window.cpMaybeShowInstallBanner = function(){
     }
     function visible(x, f) {
         if (f.status === 'cancelled' || f.loyalty === 'with') return false;
+        if (window._histSellerFilterName && String(x.p.createdBy || '').toLowerCase() !== window._histSellerFilterName) return false;
         if (f.method) { var ok = METHOD_MAP[f.method]; if (!ok || ok.indexOf(x.p.mode || 'especes') < 0) return false; }
         var k = dkey(x.t);
         if (f.date) { if (k !== f.date) return false; }
