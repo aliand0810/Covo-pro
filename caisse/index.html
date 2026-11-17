@@ -2000,6 +2000,7 @@ function _cxFinalizeSale(args) {
         change: change
     };
     if (pickedClient) { sale.clientId = pickedClient.id; sale.clientName = pickedClient.name || ''; }
+    if (window._cxSumupPending) { sale.sumup = window._cxSumupPending; window._cxSumupPending = null; }
     sale.ticketNum = cxNextTicketNum(sale.id);
 
     // Historique des ventes
@@ -2246,6 +2247,9 @@ function _cxReceiptPaymentHTML(sale) {
     }
     if ((sale.method === 'credit' || sale.method === 'echel') && sale.clientName) {
         html += '<div class="cx-receipt-line"><span>Client</span><span>' + cxEsc(sale.clientName) + '</span></div>';
+    }
+    if (sale.sumup) {
+        html += '<div class="cx-receipt-line"><span>Terminal SumUp</span><span>' + (sale.sumup.manual ? 'validé manuellement' : cxEsc(sale.sumup.card || 'Carte') + (sale.sumup.txCode ? ' · ' + cxEsc(sale.sumup.txCode) : '')) + '</span></div>';
     }
     return html;
 }
@@ -4931,6 +4935,282 @@ function cxResvRefreshUi() {
     function boot() {
         inject();
         new MutationObserver(function () { if (iT) return; iT = setTimeout(function () { iT = null; inject(); }, 300); }).observe(document.body, { childList: true, subtree: true });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   CAISSE PRO — TERMINAL SUMUP (API Cloud SumUp)
+   Paiement CB (ou part CB d'un paiement mixte) : le montant du panier est envoyé au terminal SumUp,
+   Caisse Pro suit le paiement (carte présentée, code PIN…) et ne valide la vente qu'une fois le
+   paiement ACCEPTÉ par SumUp. Refus / annulation : la vente n'est pas enregistrée.
+   Réglages (⚙️ SumUp) : clé API, code marchand (détecté), clé d'affiliation (facultative),
+   association du terminal par code d'appairage (Connexions → API / Cloud API → Connecter).
+   Les identifiants restent sur CET ordinateur (localStorage « covo_sumup_cfg », jamais synchronisés).
+   ════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._cxSumupInstalled) return; window._cxSumupInstalled = true;
+    var API = 'https://api.sumup.com', KEY = 'covo_sumup_cfg';
+    function $(id) { return document.getElementById(id); }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(v) { return (Math.round(v * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function cfg() { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { return {}; } }
+    function saveCfg(c) { try { localStorage.setItem(KEY, JSON.stringify(c)); } catch (e) {} chip(); }
+    function ready(c) { c = c || cfg(); return !!(c.enabled !== false && c.apiKey && c.merchant && c.readerId); }
+    function req(method, path, body, c) {
+        c = c || cfg();
+        return fetch(API + path, { method: method, headers: Object.assign({ 'Authorization': 'Bearer ' + c.apiKey, 'Accept': 'application/json' }, body ? { 'Content-Type': 'application/json' } : {}), body: body ? JSON.stringify(body) : undefined })
+            .then(function (r) { return r.text().then(function (t) { var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {} return { ok: r.ok, status: r.status, data: j }; }); });
+    }
+    function errMsg(r) {
+        if (!r) return 'connexion impossible';
+        var d = r.data || {}, m = d.message || d.error_message || (d.errors && (d.errors.detail || d.errors.message)) || d.detail || d.title || '';
+        if (r.status === 401) return 'clé API refusée (401)';
+        if (r.status === 403) return 'accès refusé (403) — vérifiez les droits de la clé API';
+        if (r.status === 404) return 'introuvable (404) — terminal ou code marchand incorrect';
+        if (r.status === 422) return 'requête refusée (422)' + (m ? ' : ' + m : '') + ' — le terminal est-il allumé, connecté et sur l’écran d’accueil ?';
+        return 'erreur ' + r.status + (m ? ' : ' + m : '');
+    }
+
+    /* ── Montant CB à envoyer selon le mode de règlement ── */
+    function cbAmount() {
+        var m = typeof cxPayMethod !== 'undefined' ? cxPayMethod : 'cb', total = typeof cxCartTotal === 'function' ? cxCartTotal() : 0;
+        if (m === 'cb') return Math.round(total * 100) / 100;
+        if (m === 'ticket') return cfg().sendTicket === false ? 0 : Math.round(total * 100) / 100;
+        if (m === 'mixed') { var v = parseFloat((($('cx-mixed-cb') || {}).value || '').replace(',', '.')) || 0; return Math.round(v * 100) / 100; }
+        return 0;
+    }
+
+    /* ── Paiement sur le terminal ── */
+    var PAY = null;
+    function stateLabel(s) {
+        return ({ IDLE: '⏳ Envoi au terminal…', SELECTING_TIP: '💶 Le client choisit un pourboire…', WAITING_FOR_CARD: '💳 Présentez la carte sur le terminal…', WAITING_FOR_PIN: '🔢 Saisie du code PIN…', WAITING_FOR_SIGNATURE: '✍️ Signature demandée…', UPDATING_FIRMWARE: '⚙️ Le terminal se met à jour…' })[s] || '⏳ En attente du terminal…';
+    }
+    function modal(html) {
+        var ov = $('sumup-pay-ov');
+        if (!ov) { ov = document.createElement('div'); ov.id = 'sumup-pay-ov'; ov.style.cssText = 'position:fixed;inset:0;z-index:2147482000;background:rgba(15,23,42,.72);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit'; document.body.appendChild(ov); }
+        ov.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(420px,100%);border-radius:18px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.45);text-align:center">' + html + '</div>';
+        return ov;
+    }
+    function head(sub) { return '<div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;padding:14px 18px;text-align:left;display:flex;align-items:center;gap:10px"><span style="font-size:1.5rem">💳</span><div><div style="font-weight:800">Paiement par carte — SumUp</div><div style="font-size:.74rem;opacity:.8">' + esc(sub) + '</div></div></div>'; }
+    function closeModal() { var ov = $('sumup-pay-ov'); if (ov) ov.remove(); }
+    function startPayment(amount, onSuccess) {
+        var c = cfg(), cid = null, t0 = Date.now(), alive = true, tr = typeof cxPayMethod !== 'undefined' && cxPayMethod === 'ticket';
+        PAY = { amount: amount, stop: function () { alive = false; } };
+        var view = function (state, extra, buttons) {
+            var ov = modal(head(c.readerName || 'Terminal SumUp') + '<div style="padding:20px 18px 16px"><div style="font-size:.78rem;font-weight:700;color:var(--text-muted,#64748b);text-transform:uppercase;letter-spacing:.4px">' + (tr ? '🎟️ Ticket restaurant · ' : '') + 'Montant envoyé au terminal</div>'
+                + '<div style="font-size:2.4rem;font-weight:900;margin:4px 0 10px;font-variant-numeric:tabular-nums">' + eur(amount) + '</div>'
+                + '<div id="sumup-state" style="font-weight:700;font-size:.95rem;min-height:1.4em">' + state + '</div>' + (extra || '')
+                + '<div style="display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap">' + (buttons || '') + '</div></div>');
+            ov.onclick = function (e) {
+                var b = e.target.closest('[data-su]'); if (!b) return; var a = b.getAttribute('data-su');
+                if (a === 'cancel') { alive = false; req('POST', '/v0.1/merchants/' + encodeURIComponent(c.merchant) + '/readers/' + encodeURIComponent(c.readerId) + '/terminate', {}, c).catch(function () {}); closeModal(); toast('Paiement SumUp annulé — la vente n’est pas enregistrée', 'info'); }
+                else if (a === 'close') closeModal();
+                else if (a === 'retry') { closeModal(); startPayment(amount, onSuccess); }
+                else if (a === 'manual') { if (confirm('Valider la vente SANS confirmation SumUp ?\n\nÀ n’utiliser que si le ticket du terminal indique « Paiement accepté » pour ' + eur(amount) + '.')) { closeModal(); onSuccess({ manual: true, amount: amount, at: new Date().toISOString() }); } }
+            };
+        };
+        var spin = '<div style="margin:12px auto 0;width:34px;height:34px;border-radius:50%;border:4px solid rgba(37,99,235,.2);border-top-color:#2563eb;animation:suSpin 1s linear infinite"></div><style>@keyframes suSpin{to{transform:rotate(360deg)}}</style>';
+        var cancelBtn = '<button data-su="cancel" style="border:none;background:#fee2e2;color:#b91c1c;border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer">✕ Annuler le paiement</button>';
+        view('⏳ Envoi du montant au terminal…', spin, cancelBtn);
+        var body = { total_amount: { value: Math.round(amount * 100), currency: c.currency || 'EUR', minor_unit: 2 }, description: (c.label || 'Caisse Pro') + (typeof cxPayMethod !== 'undefined' && cxPayMethod === 'ticket' ? ' — Ticket restaurant' : '') + ' — ' + eur(amount) };
+        if (c.affKey && c.affApp) body.affiliate = { app_id: c.affApp, key: c.affKey };
+        var fail = function (msg) {
+            if (!alive) return; alive = false;
+            view('<span style="color:#dc2626">❌ ' + esc(msg) + '</span>', '<div style="font-size:.78rem;color:var(--text-muted,#64748b);margin-top:8px">La vente n’a pas été enregistrée.</div>',
+                '<button data-su="retry" style="border:none;background:#2563eb;color:#fff;border-radius:10px;padding:10px 16px;font-weight:800;cursor:pointer">🔄 Renvoyer au terminal</button>'
+                + '<button data-su="close" style="border:none;background:var(--border-color,#e2e8f0);color:inherit;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer">Fermer</button>'
+                + '<button data-su="manual" style="border:none;background:none;color:var(--text-muted,#64748b);text-decoration:underline;font-size:.74rem;cursor:pointer;flex-basis:100%">Le terminal indique « accepté » ? Valider manuellement</button>');
+        };
+        req('POST', '/v0.1/merchants/' + encodeURIComponent(c.merchant) + '/readers/' + encodeURIComponent(c.readerId) + '/checkout', body, c).then(function (r) {
+            if (!alive) return;
+            if (!r.ok) return fail('Le terminal n’a pas accepté la demande : ' + errMsg(r));
+            cid = r.data && r.data.data && r.data.data.client_transaction_id;
+            view('💳 Présentez la carte sur le terminal…', spin, cancelBtn);
+            poll();
+        }).catch(function () { fail('Connexion à SumUp impossible (internet ?)'); });
+        function poll() {
+            if (!alive) return;
+            if (Date.now() - t0 > 180000) return fail('Pas de réponse du terminal après 3 minutes');
+            var pStatus = req('GET', '/v0.1/merchants/' + encodeURIComponent(c.merchant) + '/readers/' + encodeURIComponent(c.readerId) + '/status', null, c).then(function (r) {
+                var d = r.ok && r.data && (r.data.data || r.data); var st = d && (d.state || (d.status && d.status.state)); if (st && alive) { var el = $('sumup-state'); if (el) el.textContent = stateLabel(st); }
+            }).catch(function () {});
+            var pTx = cid ? req('GET', '/v2.1/merchants/' + encodeURIComponent(c.merchant) + '/transactions?client_transaction_id=' + encodeURIComponent(cid), null, c).then(function (r) {
+                if (!alive || !r.ok || !r.data) return;
+                var s = String(r.data.status || '').toUpperCase();
+                if (s === 'SUCCESSFUL' || s === 'PAID') {
+                    alive = false;
+                    var info = { txCode: r.data.transaction_code || '', txId: r.data.id || '', clientTxId: cid, amount: amount, card: r.data.card ? ((r.data.card.type || '') + (r.data.card.last_4_digits ? ' •••• ' + r.data.card.last_4_digits : '')) : '', at: new Date().toISOString(), reader: c.readerName || '' };
+                    modal(head('Paiement accepté') + '<div style="padding:22px 18px"><div style="font-size:3rem">✅</div><div style="font-size:1.8rem;font-weight:900">' + eur(amount) + '</div><div style="font-weight:700;color:#16a34a;margin-top:4px">Paiement accepté' + (info.card ? ' · ' + esc(info.card) : '') + '</div>' + (info.txCode ? '<div style="font-size:.74rem;color:var(--text-muted,#64748b);margin-top:4px">Transaction ' + esc(info.txCode) + '</div>' : '') + '</div>');
+                    setTimeout(function () { closeModal(); onSuccess(info); }, 1100);
+                } else if (s === 'FAILED' || s === 'CANCELLED') fail(s === 'CANCELLED' ? 'Paiement annulé sur le terminal' : 'Paiement refusé par la banque ou annulé');
+            }).catch(function () {}) : Promise.resolve();
+            Promise.all([pStatus, pTx]).then(function () { if (alive) setTimeout(poll, 2000); });
+        }
+    }
+
+    /* ── Interception de « Valider la vente » ── */
+    function hook() {
+        var orig = window.cxValidateSale; if (typeof orig !== 'function' || orig._sumup) return false;
+        var w = function () {
+            var c = cfg(), amount = cbAmount();
+            if (window._cxSumupBypass || !ready(c) || !(amount > 0) || !cartLen()) return orig.apply(this, arguments);
+            // contrôles du mode mixte avant d'envoyer au terminal
+            if (cxPayMethod === 'mixed') { var tot = cxCartTotal(), cash = parseFloat((($('cx-mixed-cash') || {}).value || '').replace(',', '.')) || 0; if (amount + cash < tot - 0.001) { toast('❌ Montant total insuffisant', 'error'); return; } }
+            var self = this, args = arguments;
+            startPayment(amount, function (info) {
+                if (cxPayMethod === 'ticket') info.kind = 'ticket';
+                window._cxSumupPending = info;
+                window._cxSumupBypass = true;
+                try { orig.apply(self, args); } finally { window._cxSumupBypass = false; setTimeout(function () { window._cxSumupPending = null; }, 3000); }
+                if (info && !info.manual) toast('✅ Paiement SumUp accepté — vente enregistrée', 'success');
+            });
+        };
+        w._sumup = true; window.cxValidateSale = w; return true;
+    }
+
+    /* ── Pastille d'état + bouton « Envoyer le montant au terminal » (CB et mixte) ── */
+    function chip() {
+        var sel = $('cx-payment-method'); if (!sel) return;
+        var el = $('cx-sumup-chip');
+        if (!el) {
+            el = document.createElement('div'); el.id = 'cx-sumup-chip';
+            el.style.cssText = 'margin:-4px 0 10px;padding:8px 10px;border-radius:12px;font-size:.78rem;font-weight:700;border:1.5px solid';
+            sel.parentNode.insertBefore(el, sel.nextSibling);
+            el.addEventListener('click', function (e) {
+                if (e.target.closest('[data-su="cfg"]')) { openSettings(); return; }
+                if (e.target.closest('[data-su="send"]')) sendNow();
+                if (e.target.closest('[data-su="paper"]')) { window._cxSumupBypass = true; try { window.cxValidateSale(); } finally { window._cxSumupBypass = false; } }
+            });
+        }
+        var m = typeof cxPayMethod !== 'undefined' ? cxPayMethod : sel.value, c = cfg(), amt = cbAmount(), n = cartLen();
+        el.style.display = (m === 'cb' || m === 'mixed' || (m === 'ticket' && c.sendTicket !== false)) ? 'block' : 'none';
+        var ok = ready(c), can = ok && n > 0 && amt > 0;
+        var sendBtn = '<button data-su="send" type="button"' + (can || !ok ? '' : ' disabled') + ' style="width:100%;margin-top:8px;border:none;border-radius:10px;padding:11px 12px;font-weight:900;font-size:.92rem;cursor:' + (can || !ok ? 'pointer' : 'not-allowed') + ';color:#fff;background:' + (can ? 'linear-gradient(135deg,#1e3a8a,#2563eb)' : ok ? '#94a3b8' : 'linear-gradient(135deg,#334155,#64748b)') + ';box-shadow:' + (can ? '0 4px 12px rgba(37,99,235,.35)' : 'none') + '">'
+            + (ok ? '📤 Envoyer ' + (amt > 0 ? eur(amt) : 'le montant') + (m === 'ticket' ? ' (ticket resto)' : '') + ' sur le terminal' : '📤 Envoyer le montant sur le terminal') + '</button>'
+            + (m === 'ticket' && ok && n ? '<button data-su="paper" type="button" style="width:100%;margin-top:6px;border:1.5px dashed var(--border-color,#cbd5e1);background:transparent;color:inherit;border-radius:10px;padding:7px;font-weight:700;font-size:.76rem;cursor:pointer">🧾 Ticket restaurant papier : valider sans le terminal</button>' : '')
+            + (ok && !can ? '<div style="font-size:.7rem;font-weight:600;margin-top:4px;opacity:.75;text-align:center">' + (n ? (m === 'mixed' ? 'Saisissez la part CB pour l’envoyer au terminal' : 'Montant nul') : 'Panier vide') + '</div>' : '')
+            + (!ok ? '<div style="font-size:.7rem;font-weight:600;margin-top:4px;opacity:.75;text-align:center">Reliez d’abord votre terminal SumUp (⚙️)</div>' : '');
+        if (ok) { el.style.borderColor = '#16a34a'; el.style.background = 'rgba(22,163,74,.08)'; el.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>🟢 SumUp · <b>' + esc(c.readerName || 'Terminal') + '</b>' + (m === 'mixed' ? ' — part CB' : m === 'ticket' ? ' — carte ticket restaurant (Swile, Edenred, Up…)' : '') + '</span><button data-su="cfg" type="button" style="border:none;background:none;cursor:pointer;font-size:1rem" title="Réglages SumUp">⚙️</button></div>' + sendBtn; }
+        else { el.style.borderColor = 'var(--border-color,#cbd5e1)'; el.style.background = 'transparent'; el.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>⚪ Terminal SumUp ' + (c.apiKey && c.enabled === false ? 'désactivé' : 'non relié') + '</span><button data-su="cfg" type="button" style="border:1.5px solid #2563eb;background:#2563eb;color:#fff;border-radius:8px;padding:4px 9px;font-weight:800;cursor:pointer;font-size:.74rem">⚙️ Relier SumUp</button></div>' + sendBtn; }
+    }
+    function cartLen() { try { return (typeof cart !== 'undefined' && cart && cart.length) || 0; } catch (e) { return 0; } }
+    function sendNow() {
+        var c = cfg();
+        if (!ready(c)) { openSettings(); return; }
+        if (!cartLen()) { toast('⚠️ Panier vide', 'info'); return; }
+        if (!(cbAmount() > 0)) { toast(cxPayMethod === 'mixed' ? 'Saisissez d’abord la part CB' : 'Montant nul', 'info'); return; }
+        window.cxValidateSale();   // envoie au terminal puis enregistre la vente une fois le paiement accepté
+    }
+    window._cxSumupSend = sendNow;
+
+    /* ── Réglages ── */
+    function openSettings() {
+        var c = cfg();
+        var ov = document.createElement('div'); ov.id = 'sumup-cfg-ov';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:2147481000;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+        var inp = 'width:100%;box-sizing:border-box;padding:9px 11px;border-radius:9px;border:1.5px solid var(--border-color,#cbd5e1);background:var(--input-bg,#fff);color:inherit;font-size:.86rem';
+        var lbl = 'display:block;font-size:.72rem;font-weight:800;margin:10px 0 4px;color:var(--text-muted,#64748b);text-transform:uppercase;letter-spacing:.3px';
+        var btn = 'border:none;border-radius:9px;padding:9px 13px;font-weight:800;cursor:pointer;font-size:.82rem';
+        ov.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(560px,100%);max-height:92vh;overflow:auto;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.45)">'
+            + '<div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:10px"><span style="font-size:1.4rem">💳</span><div style="flex:1"><div style="font-weight:800">Terminal de paiement SumUp</div><div style="font-size:.74rem;opacity:.8">Envoi automatique du montant CB au terminal (API Cloud SumUp)</div></div><button data-c="x" style="' + btn + ';background:rgba(255,255,255,.15);color:#fff">✕</button></div>'
+            + '<div style="padding:6px 18px 16px">'
+            + '<div style="font-size:.8rem;margin:10px 0;padding:10px 12px;border-radius:10px;background:rgba(37,99,235,.08);line-height:1.5"><b>1.</b> Dans votre espace SumUp (me.sumup.com) : <b>Paramètres → Pour les développeurs → Clés API</b>, créez une clé et collez-la ci-dessous.<br><b>2.</b> Sur le terminal (déconnecté de votre compte) : menu <b>Connexions → API</b> (ou <b>Cloud API</b>) → <b>Connecter</b> : un code d’appairage s’affiche (valable 5 min).<br><b>3.</b> Saisissez ce code et cliquez sur <b>Relier le terminal</b>.</div>'
+            + '<label style="' + lbl + '">Clé API SumUp</label><div style="display:flex;gap:6px"><input id="su-key" type="password" autocomplete="off" placeholder="sup_sk_…" value="' + esc(c.apiKey || '') + '" style="' + inp + '"><button data-c="check" style="' + btn + ';background:#0f172a;color:#fff;white-space:nowrap">🔑 Vérifier</button></div>'
+            + '<div id="su-me" style="font-size:.76rem;margin-top:5px;color:var(--text-muted,#64748b)">' + (c.merchant ? 'Compte : <b>' + esc(c.merchantName || '') + '</b> · code marchand <b>' + esc(c.merchant) + '</b>' : 'Le code marchand est détecté automatiquement.') + '</div>'
+            + '<label style="' + lbl + '">Terminal</label><div id="su-readers" style="font-size:.82rem">' + (c.readerId ? '✅ <b>' + esc(c.readerName || c.readerId) + '</b> <span style="color:var(--text-muted,#64748b)">(' + esc(c.readerId) + ')</span>' : 'Aucun terminal relié.') + '</div>'
+            + '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><input id="su-pair" maxlength="16" placeholder="Code d’appairage (ex. 4F7K2Q)" style="' + inp + ';flex:1;min-width:150px;text-transform:uppercase;letter-spacing:.1em;font-weight:800"><input id="su-name" maxlength="40" placeholder="Nom (ex. Caisse 1)" value="Caisse Pro" style="' + inp + ';flex:1;min-width:120px"><button data-c="pair" style="' + btn + ';background:#2563eb;color:#fff">🔗 Relier le terminal</button></div>'
+            + '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button data-c="list" style="' + btn + ';background:var(--border-color,#e2e8f0);color:inherit">📋 Terminaux déjà reliés</button><button data-c="status" style="' + btn + ';background:var(--border-color,#e2e8f0);color:inherit">📶 État du terminal</button></div>'
+            + '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:.8rem;font-weight:700">Options avancées</summary>'
+            + '<label style="' + lbl + '">Clé d’affiliation (facultative)</label><input id="su-aff" placeholder="Affiliate key" value="' + esc(c.affKey || '') + '" style="' + inp + '">'
+            + '<label style="' + lbl + '">Identifiant d’application de la clé d’affiliation</label><input id="su-affapp" placeholder="ex. com.covo.caissepro" value="' + esc(c.affApp || '') + '" style="' + inp + '">'
+            + '<label style="' + lbl + '">Libellé sur le terminal</label><input id="su-label" maxlength="40" value="' + esc(c.label || 'Caisse Pro') + '" style="' + inp + '"></details>'
+            + '<label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:700;font-size:.86rem"><input id="su-on" type="checkbox"' + (c.enabled !== false ? ' checked' : '') + '> Envoyer automatiquement les paiements CB au terminal</label>'
+            + '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:700;font-size:.86rem"><input id="su-tr" type="checkbox"' + (c.sendTicket !== false ? ' checked' : '') + '> Envoyer aussi les tickets restaurant (cartes Swile, Edenred, Up, Pluxee…) au terminal</label>'
+            + '<div id="su-msg" style="font-size:.8rem;font-weight:700;margin-top:10px;min-height:1.2em"></div>'
+            + '<div style="font-size:.7rem;color:var(--text-muted,#64748b);margin-top:6px">💾 Chaque modification est enregistrée automatiquement sur cet ordinateur. 🔒 La clé API n’est ni synchronisée ni sauvegardée sur Drive.</div>'
+            + '<div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px;flex-wrap:wrap"><button data-c="forget" style="' + btn + ';background:#fee2e2;color:#b91c1c">🗑️ Oublier ce terminal</button><span style="display:flex;align-items:center;gap:8px"><span id="su-saved" style="font-size:.74rem;font-weight:800;color:#16a34a;opacity:0;transition:opacity .2s">✓ Enregistré automatiquement</span><button data-c="save" style="' + btn + ';background:#16a34a;color:#fff">✅ Terminé</button></span></div>'
+            + '</div></div>';
+        document.body.appendChild(ov);
+        var msg = function (t, ok) { var m = $('su-msg'); m.style.color = ok === false ? '#dc2626' : ok ? '#16a34a' : 'inherit'; m.innerHTML = t; };
+        var cur = function () { var x = cfg(); x.apiKey = ($('su-key').value || '').trim(); x.affKey = ($('su-aff').value || '').trim(); x.affApp = ($('su-affapp').value || '').trim(); x.label = ($('su-label').value || '').trim() || 'Caisse Pro'; x.enabled = $('su-on').checked; x.sendTicket = $('su-tr').checked; return x; };
+        var savedT = null;
+        var autoSave = function () {
+            saveCfg(cur());
+            var s = $('su-saved'); if (s) { s.style.opacity = '1'; clearTimeout(savedT); savedT = setTimeout(function () { if ($('su-saved')) $('su-saved').style.opacity = '0'; }, 1600); }
+        };
+        var debT = null;
+        ov.addEventListener('input', function (e) { if (!e.target.matches('#su-key,#su-aff,#su-affapp,#su-label')) return; clearTimeout(debT); debT = setTimeout(autoSave, 400); });
+        ov.addEventListener('change', function (e) { if (e.target.matches('#su-key,#su-aff,#su-affapp,#su-label,#su-on,#su-tr')) { clearTimeout(debT); autoSave(); } });
+        // clé API collée : vérification et détection du code marchand automatiques
+        var keyT = null;
+        $('su-key').addEventListener('input', function () { var v = (this.value || '').trim(); clearTimeout(keyT); if (v.length < 20) return; keyT = setTimeout(function () { var x = cur(); if (x.merchant && x.apiKey === v && cfg()._keyOk === v) return; msg('⏳ Vérification de la clé…'); me(x).then(function (y) { y._keyOk = v; saveCfg(y); msg('✅ Clé API valide — enregistrée', true); }).catch(function (r) { msg('❌ ' + esc(errMsg(r)), false); }); }, 700); });
+        var close = function () { clearTimeout(debT); saveCfg(cur()); ov.remove(); };
+        var me = function (x) {
+            return req('GET', '/v0.1/me', null, x).then(function (r) {
+                if (!r.ok) throw r;
+                var mp = (r.data && (r.data.merchant_profile || r.data)) || {};
+                x.merchant = mp.merchant_code || (r.data && r.data.merchant_code) || x.merchant;
+                x.merchantName = mp.company_name || mp.doing_business_as && mp.doing_business_as.business_name || (r.data && r.data.account && r.data.account.username) || '';
+                if (!x.merchant) throw { status: 0, data: { message: 'code marchand non trouvé' } };
+                saveCfg(x); $('su-me').innerHTML = 'Compte : <b>' + esc(x.merchantName) + '</b> · code marchand <b>' + esc(x.merchant) + '</b>'; return x;
+            });
+        };
+        ov.addEventListener('click', function (e) {
+            if (e.target === ov) { close(); return; }
+            var b = e.target.closest('[data-c]'); if (!b) return; var a = b.getAttribute('data-c'), x = cur();
+            if (a === 'x' || a === 'save') { close(); if (a === 'save') toast(ready() ? '✅ Terminal SumUp prêt' : 'Réglages SumUp enregistrés', ready() ? 'success' : 'info'); return; }
+            if (!x.apiKey && a !== 'forget') { msg('Saisissez d’abord la clé API SumUp', false); return; }
+            if (a === 'check') { msg('⏳ Vérification…'); me(x).then(function () { msg('✅ Clé API valide', true); }).catch(function (r) { msg('❌ ' + esc(errMsg(r)), false); }); }
+            if (a === 'pair') {
+                var code = ($('su-pair').value || '').trim().toUpperCase().replace(/\s+/g, ''), name = ($('su-name').value || '').trim() || 'Caisse Pro';
+                if (!code) { msg('Saisissez le code d’appairage affiché sur le terminal', false); return; }
+                msg('⏳ Appairage du terminal…');
+                (x.merchant ? Promise.resolve(x) : me(x)).then(function (x2) {
+                    return req('POST', '/v0.1/merchants/' + encodeURIComponent(x2.merchant) + '/readers', { pairing_code: code, name: name }, x2).then(function (r) {
+                        if (!r.ok) throw r;
+                        var d = r.data || {}; x2.readerId = d.id; x2.readerName = d.name || name; saveCfg(x2);
+                        $('su-readers').innerHTML = '✅ <b>' + esc(x2.readerName) + '</b> <span style="color:var(--text-muted,#64748b)">(' + esc(x2.readerId) + ')</span>';
+                        msg('✅ Terminal relié : les paiements CB lui seront envoyés', true);
+                    });
+                }).catch(function (r) { msg('❌ Appairage impossible : ' + esc(errMsg(r)) + '<br><span style="font-weight:600">Le code expire au bout de 5 minutes : générez-en un nouveau sur le terminal.</span>', false); });
+            }
+            if (a === 'list') {
+                msg('⏳ Recherche des terminaux…');
+                (x.merchant ? Promise.resolve(x) : me(x)).then(function (x2) {
+                    return req('GET', '/v0.1/merchants/' + encodeURIComponent(x2.merchant) + '/readers', null, x2).then(function (r) {
+                        if (!r.ok) throw r;
+                        var L = (r.data && (r.data.items || r.data.data || r.data)) || []; if (!Array.isArray(L)) L = [];
+                        if (!L.length) { msg('Aucun terminal relié à ce compte : utilisez un code d’appairage.'); return; }
+                        $('su-readers').innerHTML = L.map(function (d) { return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer"><input type="radio" name="su-r" value="' + esc(d.id) + '" data-n="' + esc(d.name || '') + '"' + (d.id === x2.readerId ? ' checked' : '') + '> <b>' + esc(d.name || d.id) + '</b> <span style="color:var(--text-muted,#64748b)">' + esc((d.device && d.device.model) || '') + ' · ' + esc(d.status || '') + '</span></label>'; }).join('');
+                        [].forEach.call(ov.querySelectorAll('input[name="su-r"]'), function (rd) { rd.onchange = function () { var y = cfg(); y.readerId = this.value; y.readerName = this.getAttribute('data-n') || this.value; saveCfg(y); msg('✅ Terminal « ' + esc(y.readerName) + ' » sélectionné', true); }; });
+                        msg('Choisissez le terminal de cette caisse.');
+                    });
+                }).catch(function (r) { msg('❌ ' + esc(errMsg(r)), false); });
+            }
+            if (a === 'status') {
+                var y = cfg(); if (!y.readerId || !y.merchant) { msg('Reliez d’abord un terminal', false); return; }
+                y.apiKey = x.apiKey; msg('⏳ Interrogation du terminal…');
+                req('GET', '/v0.1/merchants/' + encodeURIComponent(y.merchant) + '/readers/' + encodeURIComponent(y.readerId) + '/status', null, y).then(function (r) {
+                    if (!r.ok) throw r; var d = (r.data && (r.data.data || r.data)) || {};
+                    msg('📶 ' + esc(d.status || '—') + (d.state ? ' · ' + esc(stateLabel(d.state)) : '') + (d.battery_level != null ? ' · 🔋 ' + esc(Math.round(d.battery_level)) + ' %' : '') + (d.connection_type ? ' · ' + esc(d.connection_type) : ''), d.status !== 'OFFLINE');
+                }).catch(function (r) { msg('❌ ' + esc(errMsg(r)), false); });
+            }
+            if (a === 'forget') { if (!confirm('Oublier le terminal SumUp sur cet ordinateur ?')) return; var z = cfg(); delete z.readerId; delete z.readerName; saveCfg(z); $('su-readers').textContent = 'Aucun terminal relié.'; msg('Terminal oublié.'); }
+        });
+    }
+    window._cxSumupSettings = openSettings;
+
+    function boot() {
+        if (!hook()) return setTimeout(boot, 300);
+        var o = window.cxSelectPayMethod;
+        if (typeof o === 'function' && !o._sumup) { var w2 = function () { var r = o.apply(this, arguments); try { chip(); } catch (e) {} return r; }; w2._sumup = true; window.cxSelectPayMethod = w2; }
+        ['cxComputeChange', 'cxRenderCart'].forEach(function (fn) { var f = window[fn]; if (typeof f === 'function' && !f._sumup) { var w3 = function () { var r = f.apply(this, arguments); try { chip(); } catch (e) {} return r; }; w3._sumup = true; window[fn] = w3; } });
+        document.addEventListener('input', function (e) { if (e.target && (e.target.id === 'cx-mixed-cb' || e.target.id === 'cx-mixed-cash')) try { chip(); } catch (x) {} });
+        chip();
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
