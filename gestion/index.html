@@ -10380,8 +10380,8 @@ function _bilanCompute() {
         // ventes après une réinitialisation du compteur (voir historique_pro.html) — la date
         // permet de reconnaître le BON ticket à l'œil ; la correction elle-même (voir sRef,
         // window._bilanFixAnomaly) s'appuie sur sale.id, jamais ambigu.
-        const tDateTxt = sale.date ? new Date(sale.date).toLocaleDateString('fr-FR') : '?';
-        const tLabel = 'ticket #' + (sale.ticketNum != null ? sale.ticketNum : sale.id) + ' du ' + tDateTxt;
+        const tDateTxt = sale.date ? (new Date(sale.date).toLocaleDateString('fr-FR') + ' à ' + new Date(sale.date).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'})) : '?';
+        const tLabel = 'ticket ' + (sale.ticketNum != null ? 'n°' + sale.ticketNum + ' — N° complet #' + sale.id : '#' + sale.id) + ' du ' + tDateTxt;
         const sRef = f => ({ store:'covo_sales_history', id:sale.id, field:f });
         const rawTotal = _bilanSafeNum(sale.total, tLabel+' (total)', key, sRef('total'));
         const rawCash = Math.max(0, _bilanSafeNum(sale.receivedCash, tLabel+' (espèces)', key, sRef('receivedCash')) - Math.max(0, parseFloat(sale.change) || 0)); // la monnaie rendue sort des espèces (comme Historique Pro)
@@ -11350,6 +11350,53 @@ function _bilanDedupeAnomalies(list) {
     return out;
 }
 let _bilanAnomalyDeduped = [];
+// Détail lisible d'une anomalie de ticket : N° complet (13 chiffres), heure, caissier, panier, cause probable
+// et valeur de correction proposée (cohérente avec le panier, au lieu de 0 €).
+function _bilanAnomSale(a) {
+    if (!a || !a.ref || a.ref.store !== 'covo_sales_history') return null;
+    try { return (JSON.parse(localStorage.getItem('covo_sales_history') || '[]')).find(x => String(x.id) === String(a.ref.id)) || null; } catch (e) { return null; }
+}
+function _bilanAnomSuggest(a, s) {
+    if (!s) return 0;
+    const r2 = n => Math.round((+n || 0) * 100) / 100;
+    const ok = n => isFinite(+n) && Math.abs(+n) <= BILAN_SANE_CAP ? (+n || 0) : 0;
+    const itemsTot = (s.items || []).reduce((t, it) => t + ok((+it.price || 0) * (+it.quantity || +it.qty || 1)), 0);
+    const total = Math.abs(+s.total || 0) <= BILAN_SANE_CAP ? (+s.total || 0) : itemsTot;
+    const f = a.ref.field;
+    if (f === 'total') return r2(itemsTot || 0);
+    if (f === 'receivedCash' || f === 'received') {
+        if (s.method === 'mixed') return r2(Math.max(0, total - ok(s.receivedCB) - ok(s.receivedTicket)));
+        return s.method === 'cash' || f === 'received' ? r2(total) : 0;
+    }
+    if (f === 'receivedCB') return s.method === 'cb' ? r2(total) : (s.method === 'mixed' ? r2(Math.max(0, total - ok(s.receivedCash) - ok(s.receivedTicket))) : 0);
+    if (f === 'receivedTicket') return s.method === 'ticket' ? r2(total) : 0;
+    return 0;
+}
+function _bilanAnomInfo(a) {
+    const s = _bilanAnomSale(a);
+    const digits = String(Math.trunc(Math.abs(+a.value || 0))).length;
+    const isCode = digits >= 8;
+    let html = '';
+    if (s) {
+        const d = s.date ? new Date(s.date) : null;
+        const modes = { cash:'Espèces', cb:'Carte bancaire', mixed:'Mixte', ticket:'Ticket restaurant', credit:'Crédit', echel:'Échelonné' };
+        const items = (s.items || []).slice(0, 6).map(it => _esc((it.name || 'Article').replace(' 🏷️','')) + ' ×' + (it.quantity || it.qty || 1)).join(', ') + ((s.items || []).length > 6 ? ' …' : '');
+        const tot = Math.abs(+s.total || 0) <= BILAN_SANE_CAP ? _devisFmtEUR(+s.total || 0) : '⚠️ aberrant';
+        html += '<div style="flex-basis:100%;font-size:0.74rem;line-height:1.5;padding:6px 8px;margin-top:2px;border-radius:8px;background:rgba(122,74,18,0.06);">'
+            + '🧾 <strong>Ticket n°' + _esc(String(s.ticketNum != null ? s.ticketNum : '—')) + '</strong> · N° complet <strong style="font-family:monospace;font-size:0.82rem;letter-spacing:.5px;user-select:all;">#' + _esc(String(s.id)) + '</strong>'
+            + ' <button type="button" onclick="(navigator.clipboard&&navigator.clipboard.writeText(\'' + _esc(String(s.id)) + '\'));showScanToast(\'N° copié\',\'success\')" style="padding:1px 6px;border-radius:5px;border:1px solid #e0c9a6;background:transparent;font-size:0.68rem;cursor:pointer;" title="Copier le N° complet">📋</button>'
+            + (d ? ' · 📅 ' + d.toLocaleDateString('fr-FR') + ' à ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'}) : '')
+            + ' · 👤 ' + _esc(s.cashier || 'Non identifié')
+            + ' · 💳 ' + (modes[s.method] || _esc(s.method || '?'))
+            + ' · Total panier : <strong>' + tot + '</strong>'
+            + (items ? '<br>🛒 ' + items : '')
+            + '</div>';
+    }
+    if (isCode) {
+        html += '<div style="flex-basis:100%;font-size:0.72rem;color:#b45309;margin-top:2px;">🔍 Cause probable : ce nombre (' + digits + ' chiffres) est un <strong>code-barres scanné dans le champ « ' + (a.ref && /CB/.test(a.ref.field) ? 'Part CB' : 'Montant reçu') + ' »</strong> au lieu du champ de scan ; la douchette a envoyé « Entrée » et la vente a été validée. Désormais Caisse Pro et COVO Pro bloquent ce cas.</div>';
+    }
+    return { html, suggest: _bilanAnomSuggest(a, s) };
+}
 function _bilanRenderAnomalyBanner() {
     const host = document.getElementById('bilan-anomaly-banner');
     if (!host) return;
@@ -11357,18 +11404,20 @@ function _bilanRenderAnomalyBanner() {
     if (!_bilanAnomalyDeduped.length) { host.style.display = 'none'; host.innerHTML = ''; return; }
     const rows = _bilanAnomalyDeduped.slice(0, 8).map((a, idx) => {
         const moisTxt = a.key ? _bilanLabelOf(a.key) : '?';
+        const _info = _bilanAnomInfo(a);
         const fixUI = a.ref
-            ? ('<input type="number" step="0.01" value="0" id="bilan-anomaly-fix-input-'+idx+'" style="width:90px;padding:4px 6px;border-radius:6px;border:1px solid #e0c9a6;font-size:0.76rem;" title="Valeur corrigée à enregistrer (0€ par défaut)">'
+            ? ('<input type="number" step="0.01" value="'+_info.suggest+'" id="bilan-anomaly-fix-input-'+idx+'" style="width:90px;padding:4px 6px;border-radius:6px;border:1px solid #e0c9a6;font-size:0.76rem;" title="Valeur corrigée à enregistrer (0€ par défaut)">'
                + '<button type="button" onclick="window._bilanFixAnomaly('+idx+')" style="padding:4px 10px;border-radius:6px;border:none;background:#e38737;color:#fff;font-size:0.72rem;font-weight:700;cursor:pointer;">✅ Corriger</button>')
             : '<span style="font-size:0.7rem;color:var(--text-muted,#a08050);">non corrigible automatiquement</span>';
         return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:6px 0;'+(idx>0?'border-top:1px dashed rgba(122,74,18,0.2);':'')+'">'
             + '<span style="font-size:0.78rem;">'+_esc(moisTxt)+' — '+_esc(a.label)+' : <strong>'+_devisFmtEUR(a.value)+'</strong></span>'
             + '<span style="display:flex;align-items:center;gap:6px;">'+fixUI+'</span>'
+            + _info.html
             + '</div>';
     }).join('');
     const more = _bilanAnomalyDeduped.length > 8 ? ('<div style="margin-top:4px;font-size:0.76rem;">… et '+(_bilanAnomalyDeduped.length-8)+' autre(s), toujours exclue(s) du calcul.</div>') : '';
     host.innerHTML = '<div style="font-weight:800;margin-bottom:4px;">⚠️ '+_bilanAnomalyDeduped.length+' valeur(s) aberrante(s) détectée(s) et ignorée(s) dans le calcul</div>'
-        + '<div style="font-size:0.78rem;margin-bottom:6px;">Ces montants dépassent '+_devisFmtEUR(BILAN_SANE_CAP)+' pour une seule transaction — probablement une erreur de saisie ou une donnée corrompue. Ils sont exclus du bilan (comptés comme 0€) pour ne pas fausser les totaux. Le nom indique le ticket/règlement/achat concerné avec sa date, pour le retrouver sans ambiguïté même si son numéro affiché est partagé par un autre. Saisissez la valeur correcte (0€ par défaut) puis « Corriger » pour la remplacer directement dans vos données :</div>'
+        + '<div style="font-size:0.78rem;margin-bottom:6px;">Ces montants dépassent '+_devisFmtEUR(BILAN_SANE_CAP)+' pour une seule transaction — probablement une erreur de saisie ou une donnée corrompue. Ils sont exclus du bilan (comptés comme 0€) pour ne pas fausser les totaux. Le nom indique le ticket/règlement/achat concerné avec sa date, pour le retrouver sans ambiguïté même si son numéro affiché est partagé par un autre. La valeur proposée est recalculée à partir du ticket (ex. total du panier pour des espèces) : vérifiez-la puis « Corriger » pour la remplacer directement dans vos données :</div>'
         + rows + more;
     host.style.display = 'block';
 }
@@ -11386,10 +11435,17 @@ window._bilanFixAnomaly = function(idx) {
             const i = list.findIndex(s => String(s.id) === String(ref.id));
             if (i === -1) { showScanToast('⚠️ Ticket introuvable (peut-être déjà modifié)', 'info'); return; }
             list[i][ref.field] = newVal;
+            const _s = list[i], _r2 = n => Math.round((+n || 0) * 100) / 100;
+            if (['receivedCash','received','receivedCB','receivedTicket','total'].indexOf(ref.field) !== -1 && ['cash','mixed'].indexOf(_s.method) !== -1) {
+                if (_s.method === 'cash') { if (ref.field === 'received') _s.receivedCash = newVal; else if (ref.field === 'receivedCash') _s.received = newVal; }
+                else _s.received = _r2((+_s.receivedCash || 0) + (+_s.receivedCB || 0) + (+_s.receivedTicket || 0));
+                _s.change = _r2(Math.max(0, (+_s.received || 0) - (+_s.total || 0)));
+            }
+            _s.anomalyFix = (_s.anomalyFix || []).concat([{ field: ref.field, from: a.value, to: newVal, at: new Date().toISOString() }]);
             localStorage.setItem('covo_sales_history', JSON.stringify(list));
             if (typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) {
                 const si = salesHistory.findIndex(s => String(s.id) === String(ref.id));
-                if (si !== -1) salesHistory[si][ref.field] = newVal;
+                if (si !== -1) salesHistory[si] = list[i];
             }
         } else if (ref.store === 'covo_devis') {
             const list = JSON.parse(localStorage.getItem('covo_devis') || '[]');
