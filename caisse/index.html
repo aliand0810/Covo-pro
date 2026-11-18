@@ -1967,6 +1967,7 @@ function cxValidateSale() {
         change = 0;
     }
 
+    if (window._covoAmtGuard && window._covoAmtGuard({ received: received, cash: receivedCash, cb: receivedCB, ticket: receivedTicket, change: change })) return;
     var _cxSaleArgs = { method: method, pickedClient: pickedClient, total: total, received: received, receivedCash: receivedCash, receivedCB: receivedCB, receivedTicket: receivedTicket, change: change };
 
     // Carte fidélité utilisée (vente à crédit / échéancier) : vérification d'identité
@@ -5299,6 +5300,60 @@ function cxResvRefreshUi() {
         chip();
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ══ Garde « montant reçu » : un code-barres scanné dans un champ montant ne doit JAMAIS devenir un encaissement ══
+   Bug constaté : la douchette tape les chiffres du code-barres + Entrée dans le champ « Montant reçu » s'il a le focus
+   → vente validée avec ex. 58 935 049 501 503 € d'espèces (signalée ensuite comme valeur aberrante dans Gestion Pro).
+   1) Saisie : ≥ 8 chiffres sans virgule dans un champ montant = code-barres → champ vidé, article ajouté au panier.
+   2) Validation : montant > 100 000 € ou monnaie à rendre ≥ 1 000 € → vente bloquée. */
+(function () {
+    var IDS = ['cx-amount-received','cx-mixed-cb','cx-mixed-cash'];
+    function addFn(id) { cxAddToCart(id); }
+    function toast(m, t) { try { showScanToast(m, t || 'error'); } catch (e) { try { alert(m); } catch (x) {} } }
+    function isCode(v) { return /^\d{8,}$/.test(String(v == null ? '' : v).trim()); }
+    function prods() { try { return products || []; } catch (e) { return window.products || []; } }
+    function findProd(code) {
+        var c = [code, code.slice(0, 13), code.slice(-13), code.slice(0, 12), code.slice(-12), code.slice(0, 8), code.slice(-8)];
+        var list = prods();
+        for (var i = 0; i < c.length; i++) {
+            for (var j = 0; j < list.length; j++) {
+                var p = list[j];
+                if ((p.barcode && String(p.barcode) === c[i]) || (p.barcodeInternal && String(p.barcodeInternal) === c[i])) return p;
+            }
+        }
+        return null;
+    }
+    function fire(el) { try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {} }
+    function handle(el) {
+        var code = String(el.value).trim();
+        el.value = ''; fire(el);
+        var p = findProd(code);
+        if (p) { try { addFn(p.id); } catch (e) {} toast('📦 Code-barres scanné dans le champ montant : « ' + (p.name || code) + ' » ajouté au panier. Saisissez le montant reçu.', 'info'); }
+        else toast('⛔ Code-barres (' + code + ') scanné dans le champ montant — champ vidé. Saisissez le montant reçu à la main.', 'error');
+        try { el.focus(); } catch (e) {}
+    }
+    var timers = {};
+    document.addEventListener('keydown', function (e) {
+        var t = e.target; if (!t || IDS.indexOf(t.id) === -1) return;
+        if (e.key === 'Enter' && isCode(t.value)) { e.preventDefault(); e.stopImmediatePropagation(); clearTimeout(timers[t.id]); handle(t); }
+    }, true);
+    document.addEventListener('input', function (e) {
+        var t = e.target; if (!t || IDS.indexOf(t.id) === -1) return;
+        clearTimeout(timers[t.id]);
+        if (isCode(t.value)) timers[t.id] = setTimeout(function () { if (isCode(t.value)) handle(t); }, 180);
+    }, true);
+    window._covoAmtGuard = function (v) {
+        var cap = 100000, bad = null;
+        ['received', 'cash', 'cb', 'ticket'].forEach(function (k) { var n = +v[k] || 0; if (!bad && Math.abs(n) > cap) bad = n; });
+        var chg = +v.change || 0;
+        if (!bad && chg >= 1000) bad = +v.received || chg;
+        if (bad == null) return false;
+        IDS.forEach(function (id) { var el = document.getElementById(id); if (el && el.value !== '') { el.value = ''; fire(el); } });
+        toast('⛔ Vente bloquée : montant reçu anormal (' + Number(bad).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' €). Un code-barres a sûrement été scanné dans le champ montant. Ressaisissez le montant.', 'error');
+        return true;
+    };
 })();
 </script>
 </body>
