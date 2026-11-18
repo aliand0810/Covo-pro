@@ -75508,3 +75508,174 @@ function covoQrPrint(o) {
     if (document.head) css(); else document.addEventListener('DOMContentLoaded', css);
 })();
 </script>
+<script>
+/* ══ Fenêtre d'accueil / synchronisation : couleurs du thème choisi + changement de thème sur place
+      + contraste automatique (textes multicolores lisibles sur fond clair comme sur fond sombre) ══ */
+(function () {
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    var MODAL = 'admin-welcome-modal';
+    function parse(c) {
+        var m = String(c || '').match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/i);
+        if (!m) return null;
+        var a = m[4] == null ? 1 : (/%$/.test(m[4]) ? parseFloat(m[4]) / 100 : +m[4]);
+        return [+m[1], +m[2], +m[3], a];
+    }
+    function hexRgb(h) { h = String(h || '').trim(); var m = h.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i); if (!m) return parse(h); var x = m[1]; if (x.length === 3) x = x.split('').map(function (c) { return c + c; }).join(''); return [parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16), 1]; }
+    function lum(c) { var f = function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); }
+    function contrast(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+    function blend(top, under) { var a = top[3]; return [top[0] * a + under[0] * (1 - a), top[1] * a + under[1] * (1 - a), top[2] * a + under[2] * (1 - a), 1]; }
+    function toHsl(c) { var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), h = 0, s = 0, l = (mx + mn) / 2; if (mx !== mn) { var d = mx - mn; s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h /= 6; } return [h, s, l]; }
+    function fromHsl(h, s, l) { var f = function (p, q, t) { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1 / 6) return p + (q - p) * 6 * t; if (t < 1 / 2) return q; if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6; return p; }; if (!s) return [l * 255, l * 255, l * 255, 1]; var q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q; return [f(p, q, h + 1 / 3) * 255, f(p, q, h) * 255, f(p, q, h - 1 / 3) * 255, 1]; }
+    function rgbStr(c) { return 'rgb(' + Math.round(c[0]) + ',' + Math.round(c[1]) + ',' + Math.round(c[2]) + ')'; }
+    function themeVar(n, d) { var v = getComputedStyle(document.body).getPropertyValue(n); return (v && v.trim()) || d; }
+    function isDarkTheme() { var bg = hexRgb(themeVar('--bg-body', '#12151f')) || [18, 21, 31, 1]; return lum(bg) < 0.22; }
+    function gradColor(img) { var cs = String(img || '').match(/rgba?\([^)]+\)|#[0-9a-f]{3,6}\b/gi); if (!cs) return null; var acc = [0, 0, 0], n = 0; cs.forEach(function (c) { var p = hexRgb(c); if (p) { acc[0] += p[0]; acc[1] += p[1]; acc[2] += p[2]; n++; } }); return n ? [acc[0] / n, acc[1] / n, acc[2] / n, 1] : null; }
+    function effBg(el, root, base) {
+        var layers = [];
+        for (var n = el; n && n !== document.body; n = n.parentElement) {
+            var cs = getComputedStyle(n), g = cs.backgroundImage && cs.backgroundImage !== 'none' ? gradColor(cs.backgroundImage) : null;
+            if (g) { layers.push(g); break; }
+            var b = parse(cs.backgroundColor); if (b && b[3] > 0.01) { layers.push(b); if (b[3] >= 0.99) break; }
+            if (n === root) break;
+        }
+        var c = base;
+        for (var i = layers.length - 1; i >= 0; i--) c = layers[i][3] >= 0.99 ? layers[i] : blend(layers[i], c);
+        return c;
+    }
+    function fixColor(fg, bg, target) {
+        if (contrast(fg, bg) >= target) return null;
+        var hsl = toHsl(fg), lightBg = lum(bg) > 0.35, l = hsl[2];
+        for (var k = 0; k < 24; k++) {
+            l = lightBg ? Math.max(0, l - 0.04) : Math.min(1, l + 0.04);
+            var c = fromHsl(hsl[0], hsl[1], l);
+            if (contrast(c, bg) >= target) return c;
+            if (l <= 0 || l >= 1) break;
+        }
+        return lightBg ? [20, 20, 28, 1] : [245, 245, 250, 1];
+    }
+    function setProp(el, prop, val, key) {
+        if (el.getAttribute('data-awo-' + key) == null) el.setAttribute('data-awo-' + key, (el.style.getPropertyValue(prop) || '') + '|' + (el.style.getPropertyPriority(prop) || ''));
+        el.style.setProperty(prop, val, 'important');
+    }
+    function restore(root) {
+        ['color', 'bg', 'bd'].forEach(function (key) {
+            var prop = key === 'color' ? 'color' : key === 'bg' ? 'background-color' : 'border-color';
+            Array.prototype.forEach.call(root.querySelectorAll('[data-awo-' + key + ']'), function (el) {
+                var o = el.getAttribute('data-awo-' + key).split('|'); el.style.removeProperty(prop); if (o[0]) el.style.setProperty(prop, o[0], o[1] || ''); el.removeAttribute('data-awo-' + key);
+            });
+        });
+    }
+    var busy = false;
+    function adapt() {
+        var modal = $(MODAL); if (!modal || !modal.classList.contains('active')) return;
+        var root = modal.querySelector('.admin-welcome-content'); if (!root) return;
+        busy = true;
+        var dark = isDarkTheme();
+        modal.classList.toggle('aw-th-light', !dark); modal.classList.toggle('aw-th-dark', dark);
+        restore(root);
+        var base = hexRgb(themeVar('--bg-card', dark ? '#18181f' : '#ffffff')) || (dark ? [24, 24, 31, 1] : [255, 255, 255, 1]);
+        var all = root.querySelectorAll('*');
+        // 1) Thème clair : les voiles blancs translucides (pensés pour fond sombre) deviennent des voiles sombres légers
+        if (!dark) Array.prototype.forEach.call(all, function (el) {
+            if (el.closest('.aw-nt-msg span[style]')) return;
+            var cs = getComputedStyle(el), b = parse(cs.backgroundColor);
+            if (b && b[3] > 0 && b[3] < 0.4 && b[0] > 200 && b[1] > 200 && b[2] > 200) setProp(el, 'background-color', 'rgba(0,0,0,' + Math.max(0.035, Math.min(0.09, b[3] * 0.6)).toFixed(3) + ')', 'bg');
+            else if (b && b[3] > 0 && b[3] < 0.6 && b[0] < 40 && b[1] < 40 && b[2] < 60) setProp(el, 'background-color', 'rgba(0,0,0,' + Math.max(0.04, Math.min(0.1, b[3] * 0.35)).toFixed(3) + ')', 'bg');
+            var bd = parse(cs.borderTopColor);
+            if (bd && parseFloat(cs.borderTopWidth) > 0 && bd[3] < 0.6 && bd[0] > 200 && bd[1] > 200 && bd[2] > 200) setProp(el, 'border-color', 'rgba(0,0,0,' + Math.max(0.1, Math.min(0.22, bd[3] * 0.9)).toFixed(3) + ')', 'bd');
+        });
+        // 2) Contraste texte / fond, élément par élément (y compris les textes en couleur des messages)
+        Array.prototype.forEach.call(all, function (el) {
+            var tag = el.tagName;
+            var hasText = /^(INPUT|TEXTAREA|SELECT)$/.test(tag) || el.isContentEditable && el.getAttribute('contenteditable') === 'true' ||
+                Array.prototype.some.call(el.childNodes, function (n) { return n.nodeType === 3 && /\S/.test(n.data); });
+            if (!hasText || /^(SCRIPT|STYLE|OPTION)$/.test(tag)) return;
+            var cs = getComputedStyle(el), fg = parse(cs.color); if (!fg) return;
+            var bg = effBg(el, root, base); fg = fg[3] < 1 ? blend(fg, bg) : fg;
+            var colored = toHsl(fg)[1] > 0.35 && Math.abs(toHsl(fg)[2] - 0.5) < 0.4;
+            var nc = fixColor(fg, bg, colored ? 3.2 : 4.5);
+            if (nc) setProp(el, 'color', rgbStr(nc), 'color');
+        });
+        busy = false;
+    }
+    var t = null;
+    function schedule() { if (busy) return; clearTimeout(t); t = setTimeout(function () { requestAnimationFrame(adapt); }, 90); }
+
+    /* ── Styles liés au thème ── */
+    function css() {
+        if ($('aw-theme-css')) return;
+        var s = document.createElement('style'); s.id = 'aw-theme-css';
+        s.textContent = '#admin-welcome-modal .admin-welcome-content{background:linear-gradient(160deg,var(--bg-body,#1a1a2e) 0%,var(--bg-card-2,#16213e) 100%)!important;color:var(--text-main,#fff);border-color:var(--border-color,rgba(255,255,255,.1))!important}'
+            + '#admin-welcome-modal .admin-welcome-header{background:var(--header-bg,linear-gradient(135deg,#e74c3c,#c0392b))!important;gap:8px}'
+            + '#admin-welcome-modal .admin-welcome-card .card-value{color:var(--primary,#e74c3c)!important}'
+            + '#admin-welcome-modal .admin-welcome-body{scrollbar-color:var(--primary,#e74c3c) transparent}'
+            + '#admin-welcome-modal .admin-welcome-body::-webkit-scrollbar-thumb{background:var(--primary,#e74c3c)}'
+            + '#admin-welcome-modal.aw-th-light input::placeholder,#admin-welcome-modal.aw-th-light textarea::placeholder{color:rgba(0,0,0,.45)!important}'
+            + '#admin-welcome-modal.aw-th-light #aw-fmt-ed:empty:before{color:rgba(0,0,0,.45)}'
+            + '#admin-welcome-modal.aw-th-light .aw-fmt-bar .sw{border-color:rgba(0,0,0,.35)}'
+            + '#aw-theme-btn{background:rgba(255,255,255,.18);border:none;color:#fff;height:32px;padding:0 11px;border-radius:16px;cursor:pointer;font-size:.82rem;font-weight:800;display:inline-flex;align-items:center;gap:5px;margin-left:auto;flex-shrink:0}'
+            + '#aw-theme-btn:hover{background:rgba(255,255,255,.3)}'
+            + '#aw-theme-pop{position:absolute;top:58px;right:14px;z-index:5;width:min(360px,calc(100% - 28px));max-height:60vh;overflow:auto;background:var(--bg-card,#1f1f29);color:var(--text-main,#fff);border:1px solid var(--border-color,#333);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.45);padding:12px}'
+            + '#aw-theme-pop .aw-tp-h{display:flex;align-items:center;justify-content:space-between;font-weight:900;font-size:.9rem;margin-bottom:8px}'
+            + '#aw-theme-pop .aw-tp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}'
+            + '#aw-theme-pop .aw-tp-q{display:flex;gap:6px;margin-bottom:10px}#aw-theme-pop .aw-tp-q button{flex:1;padding:7px;border-radius:9px;border:1px solid var(--border-color,#444);background:var(--bg-card-2,transparent);color:inherit;font-weight:800;cursor:pointer}'
+            + '#admin-welcome-modal .admin-welcome-content{position:relative}';
+        document.head.appendChild(s);
+    }
+    /* ── Bouton « 🎨 Thème » dans l'en-tête de la fenêtre ── */
+    function addBtn() {
+        var head = document.querySelector('#' + MODAL + ' .admin-welcome-header'); if (!head || $('aw-theme-btn')) return;
+        var b = document.createElement('button'); b.type = 'button'; b.id = 'aw-theme-btn'; b.title = 'Changer le thème des couleurs'; b.innerHTML = '🎨 <span>Thème</span>';
+        var close = head.querySelector('button[onclick*="closeAdminWelcomeModal"]'); head.insertBefore(b, close || null);
+        b.addEventListener('click', function (e) { e.stopPropagation(); togglePop(); });
+    }
+    function themesHtml() {
+        try { if (typeof window.renderColorThemeSelector === 'function') window.renderColorThemeSelector(); } catch (e) {}
+        var src = $('color-theme-grid-header') || $('color-theme-grid');
+        return src ? src.innerHTML : '';
+    }
+    function togglePop(force) {
+        var pop = $('aw-theme-pop');
+        if (pop && force !== true) { pop.remove(); return; }
+        var content = document.querySelector('#' + MODAL + ' .admin-welcome-content'); if (!content) return;
+        if (!pop) { pop = document.createElement('div'); pop.id = 'aw-theme-pop'; content.appendChild(pop); }
+        var cur = localStorage.getItem('covo_color_theme') || 'neobank';
+        pop.innerHTML = '<div class="aw-tp-h"><span>🎨 Thème de COVO Pro</span><button type="button" data-tp="x" style="border:none;background:transparent;color:inherit;font-size:1rem;cursor:pointer">✕</button></div>'
+            + '<div class="aw-tp-q"><button type="button" data-tp="light">☀️ Clair</button><button type="button" data-tp="dark">🌙 Sombre</button></div>'
+            + '<div class="aw-tp-grid">' + themesHtml() + '</div>'
+            + '<div style="font-size:.7rem;opacity:.7;margin-top:8px">Le thème s’applique à toute l’application ; les textes en couleur des messages sont ajustés pour rester lisibles.</div>';
+        pop.setAttribute('data-cur', cur);
+    }
+    document.addEventListener('click', function (e) {
+        var pop = $('aw-theme-pop'); if (!pop) return;
+        var q = e.target.closest('[data-tp]');
+        if (q && pop.contains(q)) {
+            var k = q.getAttribute('data-tp');
+            if (k === 'x') { pop.remove(); return; }
+            if (k === 'light' || k === 'dark') { try { window.applyColorTheme(k === 'light' ? 'day' : 'neobank'); } catch (er) {} return; }
+        }
+        if (!pop.contains(e.target) && e.target.id !== 'aw-theme-btn' && !e.target.closest('#aw-theme-btn')) pop.remove();
+    });
+    // Le thème change (ici ou ailleurs) → fenêtre recolorée, grille mise à jour
+    function hookApply() {
+        var f = window.applyColorTheme; if (typeof f !== 'function' || f._aw) return;
+        var w = function () { var r = f.apply(this, arguments); setTimeout(function () { if ($('aw-theme-pop')) togglePop(true); adapt(); }, 30); return r; };
+        w._aw = true; window.applyColorTheme = w;
+    }
+    window._awThemeAdapt = adapt;
+    function boot() {
+        css(); addBtn(); hookApply();
+        var modal = $(MODAL); if (!modal) return setTimeout(boot, 500);
+        new MutationObserver(function (ms) {
+            if (ms.some(function (m) { return m.type === 'attributes'; })) { addBtn(); schedule(); return; }
+            schedule();
+        }).observe(modal, { childList: true, subtree: true, characterData: true });
+        new MutationObserver(schedule).observe(modal, { attributes: true, attributeFilter: ['class'] });
+        new MutationObserver(function () { schedule(); }).observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
+        window.addEventListener('storage', function (e) { if (e.key === 'covo_color_theme') schedule(); });
+        setTimeout(hookApply, 3000);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
