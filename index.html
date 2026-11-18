@@ -4944,11 +4944,14 @@ button, .btn, .retours-btn {
                     <button onclick="printNoBarcodeList()" title="Imprimer les articles sans code-barres avec un code-barres interne scannable et leur photo"
                         style="background:rgba(255,255,255,0.16);color:white;padding:6px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,0.3);cursor:pointer;font-weight:700;font-size:0.79rem;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"
                         onmouseover="this.style.background='rgba(255,255,255,0.26)'" onmouseout="this.style.background='rgba(255,255,255,0.16)'">🖨️ Imprimer sans code-barre</button>
+                    <button onclick="openCreatedBarcodes()" title="Retrouver les articles dont le code-barres a été créé (interne COVO, saisi à la main, code magasin)"
+                        style="background:rgba(255,255,255,0.16);color:white;padding:6px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,0.3);cursor:pointer;font-weight:700;font-size:0.79rem;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">🔖 Codes créés <span id="bcm-count" style="background:rgba(255,255,255,0.3);border-radius:10px;padding:1px 6px;font-size:0.72rem;font-weight:600;">–</span></button>
                     <div style="width:1px;height:24px;background:rgba(255,255,255,0.2);flex-shrink:0;"></div>
                     <select id="filter-category" onchange="_saveAndRender()"
                         style="padding:6px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.13);color:#fff;font-size:0.79rem;cursor:pointer;outline:none;">
                         <option value="all" style="background:#2c3e50;color:#fff;">Toutes catégories</option>
                         <option value="__no_barcode__" style="background:#2c3e50;color:#fff;">🏷️ Sans code-barre</option>
+                        <option value="__made_barcode__" style="background:#2c3e50;color:#fff;">🔖 Code-barre créé</option>
                     </select>
                     <select id="adv-filter-sort" onchange="_saveAndRender()"
                         style="padding:6px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.13);color:#fff;font-size:0.79rem;cursor:pointer;outline:none;">
@@ -5007,6 +5010,13 @@ button, .btn, .retours-btn {
                             <option value="low">🟠 Stock faible (&lt;5)</option>
                             <option value="normal">🟢 Normal</option>
                             <option value="high">🔵 Élevé (&gt;50)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem;font-weight:700;color:#8e44ad;text-transform:uppercase;display:block;margin-bottom:4px;">🚫 Ruptures</label>
+                        <select id="adv-filter-hideout" onchange="_saveAndRender()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                            <option value="">Afficher les ruptures</option>
+                            <option value="hide">🚫 Masquer les ruptures (stock &lt; 1)</option>
                         </select>
                     </div>
                     <div>
@@ -20208,7 +20218,7 @@ function toggleInfoSection(headerElement) {
         'filter-category','adv-filter-sort','adv-filter-cost',
         'adv-filter-stock','adv-filter-dlc','adv-filter-promo',
         'adv-filter-etat','adv-filter-image','adv-filter-desc',
-        'adv-filter-night','adv-filter-tva'
+        'adv-filter-night','adv-filter-tva','adv-filter-hideout'
     ];
 
     // Compter les filtres actifs (hors catégorie et tri par défaut)
@@ -20232,7 +20242,7 @@ function toggleInfoSection(headerElement) {
         // Exclure catégorie et tri du badge (comptés séparément)
         var advCount = 0;
         ['adv-filter-cost','adv-filter-stock','adv-filter-dlc','adv-filter-promo',
-         'adv-filter-etat','adv-filter-image','adv-filter-desc','adv-filter-night','adv-filter-tva'].forEach(function(id) {
+         'adv-filter-etat','adv-filter-image','adv-filter-desc','adv-filter-night','adv-filter-tva','adv-filter-hideout'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el && el.value) advCount++;
         });
@@ -23089,6 +23099,7 @@ logout = function(skipConfirmation = false) {
         const fDesc     = (document.getElementById('adv-filter-desc')   || {}).value || '';
         const fNight    = (document.getElementById('adv-filter-night')  || {}).value || '';
         const fTva      = (document.getElementById('adv-filter-tva')    || {}).value || '';
+        const fHideOut  = (document.getElementById('adv-filter-hideout') || {}).value || '';
 
         const today = new Date(); today.setHours(0,0,0,0);
 
@@ -23098,7 +23109,9 @@ logout = function(skipConfirmation = false) {
                 ? true
                 : cat === '__no_barcode__'
                     ? !hasBarcode
-                    : p.category === cat;
+                    : cat === '__made_barcode__'
+                        ? !!(window._covoBcOrigin && window._covoBcOrigin(p))
+                        : p.category === cat;
             // Recherche intelligente (accents, pluriels, catégorie, description, n° de fiche, familles « boisson »…) — boîte à outils
             const searchMatch = (typeof window._covoProdMatch === 'function') ? window._covoProdMatch(p, search) : (p.name.toLowerCase().includes(search) || (p.barcode && p.barcode.includes(search)));
             if (!catMatch || !searchMatch) return false;
@@ -23119,6 +23132,7 @@ logout = function(skipConfirmation = false) {
             if (fStock === 'low'    && !(stock > 0 && stock < (isKg2 ? 0.5 : 5))) return false;
             if (fStock === 'normal' && !(stock >= (isKg2 ? 0.5 : 5) && stock <= 50)) return false;
             if (fStock === 'high'   && stock <= 50) return false;
+            if (fHideOut === 'hide' && stock < 1) return false;   // masquer les ruptures : stock inférieur à 1
 
             // ── Filtre DLC ──
             if (fDlc) {
@@ -27086,6 +27100,7 @@ logout = function(skipConfirmation = false) {
             const cur = select.value;
             select.innerHTML = '<option value="all">Toutes catégories</option>'
                 + '<option value="__no_barcode__"' + (cur === '__no_barcode__' ? ' selected' : '') + '>🏷️ Sans code-barre</option>'
+                + '<option value="__made_barcode__"' + (cur === '__made_barcode__' ? ' selected' : '') + '>🔖 Code-barre créé</option>'
                 + echCats.map(c => `<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
         }
         // Formulaire nouveau produit
@@ -41020,6 +41035,7 @@ function refreshEchCategorySelects() {
         const cur3 = prodFilter.value;
         prodFilter.innerHTML = '<option value="all">Toutes catégories</option>'
             + '<option value="__no_barcode__"' + (cur3 === '__no_barcode__' ? ' selected' : '') + '>🏷️ Sans code-barre</option>'
+            + '<option value="__made_barcode__"' + (cur3 === '__made_barcode__' ? ' selected' : '') + '>🔖 Code-barre créé</option>'
             + cats.map(c => `<option value="${c}"${c===cur3?' selected':''}>${c}</option>`).join('');
     }
 
@@ -61417,7 +61433,7 @@ window._rachatRender=function(filter){
         var cat = curCat(), out = [];
         prods().forEach(function (p, i) {
             if (!p) return;
-            if (cat !== 'all' && cat !== '__no_barcode__' && p.category !== cat) return;
+            if (cat !== 'all' && cat !== '__no_barcode__' && cat !== '__made_barcode__' && p.category !== cat) return;
             if (typeof isAdmin !== 'undefined' && !isAdmin && p.active === false) return;
             if (window._covoProdMatch(p, q)) out.push({ p: p, i: i });
         });
@@ -66273,7 +66289,8 @@ function covoQrPrint(o) {
         ['exp', '❌ DLC dépassée', 'adv-filter-dlc', 'expired', function (p) { var d = dlcDays(p); return d != null && d < 0; }],
         ['noimg', '🖼️ Sans photo', 'adv-filter-image', 'no', function (p) { return !p.img; }],
         ['nocost', '💰 Sans prix d’achat', 'adv-filter-cost', 'missing', function (p) { return p.costPrice == null || p.costPrice === ''; }],
-        ['hidden', '👁️ Masqués', 'adv-filter-etat', 'disabled', function (p) { return p.active === false; }, true]
+        ['hidden', '👁️ Masqués', 'adv-filter-etat', 'disabled', function (p) { return p.active === false; }, true],
+        ['hideout', '🚫 Masquer ruptures (&lt; 1)', 'adv-filter-hideout', 'hide', function (p) { return (+p.stock || 0) < 1; }]
     ];
 
     /* ───────────── Styles ───────────── */
@@ -66423,7 +66440,7 @@ function covoQrPrint(o) {
         // Outils existants regroupés
         var tools = $('pz-tools');
         var find = function (sel) { return banner ? banner.querySelector(sel) : document.querySelector(sel); };
-        var moved = [find('button[onclick^="openNoBarcodeSearch"]'), find('button[onclick^="printNoBarcodeList"]'), $('adv-filter-sort'), $('adv-filter-btn'), find('button[onclick="clearFilters()"]'), $('tva-mode-btn'), $('ez-toggle-all-btn')];
+        var moved = [find('button[onclick^="openNoBarcodeSearch"]'), find('button[onclick^="printNoBarcodeList"]'), find('button[onclick^="openCreatedBarcodes"]'), $('adv-filter-sort'), $('adv-filter-btn'), find('button[onclick="clearFilters()"]'), $('tva-mode-btn'), $('ez-toggle-all-btn')];
         moved.forEach(function (el) { if (el) { el.classList.add('pz-tool'); tools.appendChild(el); } });
         var cat = $('filter-category'); if (cat) { cat.style.display = 'none'; tools.appendChild(cat); }
         var sp = document.createElement('span'); sp.className = 'sp'; tools.appendChild(sp); try { window._pzCashierEditBtn && window._pzCashierEditBtn(); } catch (e) {}
@@ -66476,7 +66493,8 @@ function covoQrPrint(o) {
         var noBc = act.filter(function (p) { return !(p.barcode && String(p.barcode).trim().length >= 6); }).length;
         $('pz-cats').innerHTML = '<button type="button" class="pz-cat' + (cur === 'all' ? ' on' : '') + '" data-cat="all" style="--c:#0f172a"><i></i>Tous les rayons <em>' + act.length + '</em></button>'
             + keys.map(function (c2) { return '<button type="button" class="pz-cat' + (cur === c2 ? ' on' : '') + '" data-cat="' + esc(c2) + '" style="--c:' + catColor(c2) + '"><i></i>' + esc(c2) + ' <em>' + cats[c2] + '</em></button>'; }).join('')
-            + (opts.indexOf('__no_barcode__') >= 0 && noBc ? '<button type="button" class="pz-cat' + (cur === '__no_barcode__' ? ' on' : '') + '" data-cat="__no_barcode__" style="--c:#e67e22"><i></i>🏷️ Sans code-barres <em>' + noBc + '</em></button>' : '');
+            + (opts.indexOf('__no_barcode__') >= 0 && noBc ? '<button type="button" class="pz-cat' + (cur === '__no_barcode__' ? ' on' : '') + '" data-cat="__no_barcode__" style="--c:#e67e22"><i></i>🏷️ Sans code-barres <em>' + noBc + '</em></button>' : '')
+            + (function () { var mk = act.filter(function (p) { return window._covoBcOrigin && window._covoBcOrigin(p); }).length; return opts.indexOf('__made_barcode__') >= 0 && mk ? '<button type="button" class="pz-cat' + (cur === '__made_barcode__' ? ' on' : '') + '" data-cat="__made_barcode__" style="--c:#1d4ed8"><i></i>🔖 Code-barre créé <em>' + mk + '</em></button>' : ''; })();
         // Filtres rapides
         var anyOn = QF.some(function (q) { return val(q[2]) === q[3]; }) || ['adv-filter-night', 'adv-filter-tva', 'adv-filter-desc'].some(function (id) { return !!val(id); });
         $('pz-quick').innerHTML = QF.filter(function (q) { return !q[5] || adm; }).map(function (q) { var n = (q[0] === 'hidden' ? all.filter(function (p) { return p && p.active === false; }) : act).filter(q[4]).length, on = val(q[2]) === q[3]; return '<button type="button" class="pz-q' + (on ? ' on' : '') + (n || on ? '' : ' zero') + '" data-qf="' + q[0] + '">' + q[1] + ' <em>' + n + '</em></button>'; }).join('')
@@ -66554,7 +66572,7 @@ function covoQrPrint(o) {
         build(); syncBar(); decorate();
         var q = false;
         new MutationObserver(function () { if (q) return; q = true; requestAnimationFrame(function () { q = false; decorate(); syncBar(); }); }).observe($('product-list'), { childList: true });
-        ['adv-filter-stock', 'adv-filter-promo', 'adv-filter-dlc', 'adv-filter-image', 'adv-filter-cost', 'adv-filter-etat', 'adv-filter-night', 'adv-filter-tva', 'adv-filter-desc'].forEach(function (id) { var e = $(id); if (e) e.addEventListener('change', function () { setTimeout(syncBar, 0); }); });
+        ['adv-filter-stock', 'adv-filter-promo', 'adv-filter-dlc', 'adv-filter-image', 'adv-filter-cost', 'adv-filter-etat', 'adv-filter-night', 'adv-filter-tva', 'adv-filter-desc', 'adv-filter-hideout'].forEach(function (id) { var e = $(id); if (e) e.addEventListener('change', function () { setTimeout(syncBar, 0); }); });
         window.addEventListener('storage', function (e) { if (e.key === 'covo_products') setTimeout(syncBar, 50); });
         // Le statut administrateur peut changer après la connexion
         var lastAdm = admin(); setInterval(function () { var a = admin(); if (a !== lastAdm) { lastAdm = a; syncBar(); } }, 2000);
@@ -75052,5 +75070,143 @@ function covoQrPrint(o) {
         setInterval(function () { try { onChange(); } catch (e) {} }, 700); // filet : toute modification du panier, quel que soit le chemin
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ══ Codes-barres créés (internes COVO « 21… », saisis à la main, codes magasin « 2… ») ══
+   - Retrouver à tout moment les articles dont le code-barres a été CRÉÉ (et non scanné sur un emballage fournisseur).
+   - Saisie au clavier d'un code-barres dans une fiche article (lente, touche par touche) → l'article est marqué
+     « code saisi à la main » ; un code lu par la douchette (rafale de caractères) est un vrai code fournisseur. */
+(function () {
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function P() { try { return products || []; } catch (e) { return []; } }
+    function adm() { try { return !!isAdmin; } catch (e) { return false; } }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function origin(p) {
+        if (!p || !p.barcode) return null;
+        var b = String(p.barcode).trim(); if (!b) return null;
+        if (p.barcodeInternal && /^21\d{11}$/.test(b)) return 'internal';
+        if (p.barcodeManual) return 'manual';
+        if (/^2\d{12}$/.test(b)) return 'store';
+        return null;
+    }
+    var OR = { internal: ['Interne COVO', '#e67e22', 'Créé par COVO Pro (impression « sans code-barre »)'], manual: ['Saisi à la main', '#2563eb', 'Tapé au clavier dans la fiche article'], store: ['Code magasin', '#0f766e', 'Code « 2… » réservé aux magasins (pas un code fournisseur)'] };
+    window._covoBcOrigin = origin;
+    window._covoBcCreatedList = function () { return P().filter(function (p) { return p && origin(p) && (adm() || p.active !== false); }); };
+
+    // ── Détection saisie manuelle / douchette dans les champs code-barres des fiches ──
+    var IDS = ['edit-barcode', 'new-barcode', 'pem-barcode'], st = {}, seen = {};   // seen[valeur] = 'manual' | 'scan'
+    document.addEventListener('keydown', function (e) {
+        var t = e.target; if (!t || IDS.indexOf(t.id) === -1) return;
+        var s = st[t.id] = st[t.id] || { times: [] };
+        if (e.key && e.key.length === 1) { s.times.push(Date.now()); if (s.times.length > 40) s.times.shift(); }
+        if (e.key === 'Enter') classify(t);
+    }, true);
+    document.addEventListener('paste', function (e) { var t = e.target; if (t && IDS.indexOf(t.id) !== -1) { st[t.id] = { times: [], paste: true }; setTimeout(function () { classify(t); }, 0); } }, true);
+    document.addEventListener('change', function (e) { var t = e.target; if (t && IDS.indexOf(t.id) !== -1) classify(t); }, true);
+    function classify(t) {
+        var v = String(t.value || '').trim(); if (v.length < 4) return;
+        var s = st[t.id] || { times: [] }, n = Math.min(v.length, s.times.length), src = null;
+        if (s.paste) src = 'manual';
+        else if (n >= 4) {
+            var ts = s.times.slice(-n), span = (ts[ts.length - 1] - ts[0]) / Math.max(1, ts.length - 1);
+            src = span < 35 ? 'scan' : 'manual';                                       // douchette : < 35 ms entre deux caractères
+        }
+        if (src) seen[v] = { src: src, at: Date.now() };
+        st[t.id] = { times: [] };
+    }
+    IDS.forEach(function (id) { document.addEventListener('blur', function (e) { if (e.target && e.target.id === id) classify(e.target); }, true); });
+    // Les fiches enregistrées : on compare les codes-barres avant / après pour marquer l'origine
+    var snap = null;
+    function scanChanges() {
+        var list = P(); if (!list.length) return;
+        var cur = {}; list.forEach(function (p) { if (p && p.id != null) cur[String(p.id)] = String(p.barcode || '').trim(); });
+        if (!snap) { snap = cur; return; }
+        var dirty = 0, u = null; try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {}
+        list.forEach(function (p) {
+            if (!p || p.id == null) return; var k = String(p.id), v = cur[k];
+            if (snap[k] === v) return;
+            var info = seen[v];
+            if (v && info && Date.now() - info.at < 30 * 60000) {
+                if (info.src === 'manual') { if (!p.barcodeManual) { p.barcodeManual = true; p.barcodeManualAt = new Date().toISOString(); p.barcodeManualBy = u && (u.username || u.name) || ''; if (snap[k]) p.barcodeOld = p.barcodeOld || snap[k]; dirty++; } }
+                else if (p.barcodeManual || p.barcodeInternal) { delete p.barcodeManual; delete p.barcodeManualAt; delete p.barcodeManualBy; if (p.barcodeInternal && !/^21\d{11}$/.test(v)) delete p.barcodeInternal; dirty++; }
+            } else if (!v && (p.barcodeManual || p.barcodeInternal)) { delete p.barcodeManual; delete p.barcodeInternal; dirty++; }
+        });
+        snap = cur;
+        if (dirty) {
+            try { if (typeof window.saveAll === 'function') window.saveAll(); else localStorage.setItem('covo_products', JSON.stringify(list)); } catch (e) { try { localStorage.setItem('covo_products', JSON.stringify(list)); } catch (x) {} }
+            badge();
+        }
+    }
+    setInterval(scanChanges, 1500);
+
+    function badge() { var b = $('bcm-count'); if (b) b.textContent = window._covoBcCreatedList().length; }
+    setInterval(badge, 4000);
+
+    // ── Fenêtre « Codes-barres créés » ──
+    var F = { q: '', cat: '', org: '' };
+    function rows() {
+        var q = F.q.trim().toLowerCase();
+        return window._covoBcCreatedList().filter(function (p) {
+            if (F.cat && (p.category || 'Sans catégorie') !== F.cat) return false;
+            if (F.org && origin(p) !== F.org) return false;
+            if (q && (String(p.name || '') + ' ' + p.barcode + ' ' + (p.barcodeOld || '') + ' ' + (p.category || '')).toLowerCase().indexOf(q) === -1) return false;
+            return true;
+        }).sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || ''), 'fr'); });
+    }
+    function img(p) { var s = p.img || p.image || ''; try { if (!s && typeof window._covoImgLink === 'function') s = window._covoImgLink(p) || ''; } catch (e) {} return s && /^(data:image\/|https?:\/\/)/.test(String(s)) ? String(s) : ''; }
+    function render() {
+        var o = $('bcm-ov'); if (!o) return;
+        var all = window._covoBcCreatedList(), r = rows(), cnt = { internal: 0, manual: 0, store: 0 };
+        all.forEach(function (p) { cnt[origin(p)]++; });
+        var cats = {}; all.forEach(function (p) { cats[p.category || 'Sans catégorie'] = 1; });
+        var sel = 'padding:7px 9px;border-radius:8px;border:1.5px solid var(--border-color,#ddd);background:var(--input-bg,#fff);color:var(--text-main,#222);font-size:.82rem';
+        o.querySelector('.bcm-body').innerHTML =
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
+            + ['', 'internal', 'manual', 'store'].map(function (k) { var on = F.org === k, lab = k ? OR[k][0] : 'Tous', n = k ? cnt[k] : all.length, col = k ? OR[k][1] : '#334155'; return '<button type="button" data-org="' + k + '" title="' + (k ? esc(OR[k][2]) : '') + '" style="padding:6px 12px;border-radius:999px;border:1.5px solid ' + col + ';background:' + (on ? col : 'transparent') + ';color:' + (on ? '#fff' : col) + ';font-weight:800;font-size:.8rem;cursor:pointer">' + lab + ' · ' + n + '</button>'; }).join('')
+            + '</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
+            + '<input type="search" data-f="q" value="' + esc(F.q) + '" placeholder="🔎 Nom, code-barres, ancien code…" style="flex:1;min-width:180px;' + sel + '">'
+            + '<select data-f="cat" style="' + sel + '"><option value="">Toutes catégories</option>' + Object.keys(cats).sort().map(function (c) { return '<option' + (F.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>'
+            + '<button type="button" data-a="print" style="padding:7px 12px;border:none;border-radius:8px;background:#e67e22;color:#fff;font-weight:800;cursor:pointer">🖨️ Imprimer les étiquettes (' + r.length + ')</button>'
+            + '<button type="button" data-a="csv" style="padding:7px 12px;border:none;border-radius:8px;background:#0f766e;color:#fff;font-weight:800;cursor:pointer">⬇️ CSV</button></div>'
+            + (r.length ? '<div style="display:grid;gap:6px">' + r.map(function (p) {
+                var o2 = OR[origin(p)], im = img(p), s = +p.stock || 0;
+                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--bg-card-2,rgba(0,0,0,.035));border-left:4px solid ' + o2[1] + '">'
+                    + (im ? '<img src="' + esc(im) + '" style="width:42px;height:42px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.visibility=\'hidden\'">' : '<div style="width:42px;height:42px;border-radius:8px;background:rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center;flex-shrink:0">📦</div>')
+                    + '<div style="flex:1;min-width:0"><div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(p.name) + (p.active === false ? ' <span style="font-size:.7rem;opacity:.6">(masqué)</span>' : '') + '</div>'
+                    + '<div style="font-size:.74rem;opacity:.8">' + esc(p.category || 'Sans catégorie') + ' · stock <b style="color:' + (s < 1 ? '#dc2626' : 'inherit') + '">' + s + '</b>' + (p.barcodeOld ? ' · ancien code <span style="font-family:monospace">' + esc(p.barcodeOld) + '</span>' : '') + (p.barcodeManualAt ? ' · saisi le ' + new Date(p.barcodeManualAt).toLocaleDateString('fr-FR') + (p.barcodeManualBy ? ' par ' + esc(p.barcodeManualBy) : '') : '') + '</div></div>'
+                    + '<div style="text-align:right;flex-shrink:0"><div style="font-family:monospace;font-weight:800;letter-spacing:.5px;user-select:all">' + esc(p.barcode) + '</div><span style="display:inline-block;margin-top:2px;padding:1px 8px;border-radius:999px;background:' + o2[1] + '22;color:' + o2[1] + ';font-size:.68rem;font-weight:800" title="' + esc(o2[2]) + '">' + o2[0] + '</span></div>'
+                    + '<button type="button" data-edit="' + esc(p.id) + '" title="Ouvrir la fiche (remplacer par le vrai code-barres fournisseur)" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;flex-shrink:0">✏️</button></div>';
+            }).join('') + '</div>' : '<div style="padding:30px;text-align:center;opacity:.7">Aucun article avec un code-barres créé' + (F.q || F.cat || F.org ? ' pour ce filtre' : '') + '.</div>')
+            + '<div style="margin-top:10px;font-size:.74rem;opacity:.75">💡 Un code tapé au clavier dans une fiche article est noté « saisi à la main » ; un code lu à la douchette est considéré comme un vrai code fournisseur (l’article sort de cette liste).</div>';
+    }
+    function csv(r) {
+        var L = ['Article;Catégorie;Code-barres;Origine;Ancien code;Stock;Saisi le;Par'].concat(r.map(function (p) { return [p.name, p.category || '', p.barcode, OR[origin(p)][0], p.barcodeOld || '', p.stock || 0, p.barcodeManualAt ? new Date(p.barcodeManualAt).toLocaleDateString('fr-FR') : '', p.barcodeManualBy || ''].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(';'); }));
+        var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + L.join('\r\n')], { type: 'text/csv;charset=utf-8' })); a.download = 'codes_barres_crees.csv'; document.body.appendChild(a); a.click(); a.remove();
+    }
+    window.openCreatedBarcodes = function () {
+        var o = $('bcm-ov'); if (o) o.remove();
+        o = document.createElement('div'); o.id = 'bcm-ov';
+        o.style.cssText = 'position:fixed;inset:0;z-index:8900;background:rgba(0,0,0,.7);display:flex;justify-content:center;align-items:flex-start;padding:30px 12px;overflow:auto';
+        o.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#222);width:100%;max-width:820px;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45)">'
+            + '<div style="display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#1d4ed8,#e67e22);color:#fff"><div style="flex:1"><div style="font-weight:900;font-size:1.08rem">🔖 Articles avec un code-barres créé</div><div style="font-size:.76rem;opacity:.9">Codes internes COVO, codes saisis à la main et codes magasin — à remplacer par le code fournisseur dès que possible</div></div><button type="button" data-a="x" style="border:none;background:rgba(255,255,255,.22);color:#fff;border-radius:10px;width:36px;height:36px;font-size:1.1rem;cursor:pointer">✕</button></div>'
+            + '<div class="bcm-body" style="padding:14px 18px"></div></div>';
+        document.body.appendChild(o);
+        o.addEventListener('click', function (e) {
+            if (e.target === o) { o.remove(); return; }
+            var b = e.target.closest('[data-a],[data-org],[data-edit]'); if (!b) return;
+            if (b.hasAttribute('data-org')) { F.org = b.getAttribute('data-org'); render(); return; }
+            if (b.hasAttribute('data-edit')) { var id = b.getAttribute('data-edit'), p = P().find(function (x) { return String(x.id) === id; }); o.remove(); try { if (adm() && typeof window.openProductEditModal === 'function') window.openProductEditModal(p ? p.id : id); else openCashierEditModal(p ? p.id : id); } catch (er) { toast('Impossible d’ouvrir la fiche', 'error'); } return; }
+            var a = b.getAttribute('data-a');
+            if (a === 'x') o.remove();
+            if (a === 'csv') csv(rows());
+            if (a === 'print') { var r = rows(); if (!r.length) return; try { _nbcShow(_nbcHtml(r, F.q, F.cat || '__all__')); } catch (er) { toast('Impression indisponible', 'error'); } }
+        });
+        o.addEventListener('input', function (e) { var f = e.target.getAttribute('data-f'); if (f === 'q') { F.q = e.target.value; clearTimeout(o.t); o.t = setTimeout(function () { render(); var i = o.querySelector('[data-f="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); } });
+        o.addEventListener('change', function (e) { var f = e.target.getAttribute('data-f'); if (f === 'cat') { F.cat = e.target.value; render(); } });
+        render();
+    };
 })();
 </script>
