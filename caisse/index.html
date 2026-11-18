@@ -5356,5 +5356,326 @@ function cxResvRefreshUi() {
     };
 })();
 </script>
+<script>
+/* ══ Journal des articles annulés / non validés + rappel « panier oublié » ══
+   Base partagée (même appareil) entre Caisse Pro et COVO Pro : localStorage 'covo_cart_audit'.
+   Types : retire (article retiré), qte (quantité diminuée), vide (panier vidé / annulé),
+           non_valide (page fermée ou rechargée avec un panier en cours). */
+(function () {
+    'use strict';
+    var APP = 'caisse';
+    var KEY = 'covo_cart_audit', CFGK = 'covo_cart_audit_cfg', PENDK = 'covo_cart_audit_pending_' + APP, MAX = 20000;
+    var APP_LABEL = 'Caisse Pro';
+    function getCart() { return cart; }
+    function cartRoot() { var b = $('cx-validate-btn'); return b ? b.closest('.cx-btn-row').parentNode : null; }
+    function emptyNow() { cart = []; try { var a = $('cx-amount-received'); if (a) a.value = ''; cxRenderCart(); cxRenderProducts(); cxUpdateCartBadge(); if (typeof cxComputeChange === 'function') cxComputeChange(); } catch (e) {} }
+    function goValidate() { var b = $('cx-validate-btn'); if (b) { b.scrollIntoView({ block: 'center', behavior: 'smooth' }); b.classList.add('ca-glow'); setTimeout(function () { b.classList.remove('ca-glow'); }, 4500); } toast('👉 Choisissez le mode de paiement puis « Valider la vente »', 'info'); }
+    function hook() {
+        var f = window._cxFinalizeSale; window._cxFinalizeSale = function () { markSale(); return f.apply(this, arguments); };
+        var r = window.cxRenderCart; window.cxRenderCart = function () { var x = r.apply(this, arguments); try { onChange(); } catch (e) {} return x; };
+        var c = window.cxClearCart; window.cxClearCart = function () { clearing = 'Panier vidé (bouton « Vider »)'; try { return c.apply(this, arguments); } finally { try { onChange(); } catch (e) {} clearing = null; } };
+    }
+    function addButton() {
+        var row = document.querySelector('.cx-btn-row'); if (!row || $('ca-btn')) return;
+        var b = document.createElement('button'); b.id = 'ca-btn'; b.type = 'button';
+        b.style.cssText = 'width:100%;margin-top:6px;padding:8px;border-radius:10px;border:1px dashed var(--border-color,rgba(0,0,0,.2));background:transparent;color:var(--text-muted,#888);font-weight:700;font-size:.8rem;cursor:pointer';
+        b.textContent = '🕘 Articles annulés / paniers non validés'; b.onclick = openHist;
+        row.parentNode.insertBefore(b, row.nextSibling);
+    }
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(n) { return (Math.round((+n || 0) * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem(CFGK) || '{}') || {}; } catch (e) {} if (c.delay == null) c.delay = 90; if (c.sound == null) c.sound = true; return c; }
+    function saveCfg(c) { try { localStorage.setItem(CFGK, JSON.stringify(c)); } catch (e) {} }
+    function user() {
+        var u = null; try { u = currentUser; } catch (e) {}
+        if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} }
+        return u || {};
+    }
+    function uname(u) { return u.username || u.name || 'Non identifié'; }
+    function isAdmin() { var u = user(); return !!(u.role === 'admin' || u.role === 'manager' || u.isMaster || u.id === 'USR-MASTER'); }
+    function load() { try { return JSON.parse(localStorage.getItem(KEY) || '[]') || []; } catch (e) { return []; } }
+    function store(list) {
+        if (list.length > MAX) list = list.slice(list.length - MAX);
+        try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) { try { localStorage.setItem(KEY, JSON.stringify(list.slice(-5000))); } catch (x) {} }
+    }
+    function prodOf(id) { try { return (products || []).find(function (p) { return String(p.id) === String(id); }) || null; } catch (e) { return null; } }
+    function lineKey(it) { return String(it.id) + '|' + (it.unitType || '') + '|' + (it.variant || it.variantId || ''); }
+    function snap() {
+        var m = {}, c = []; try { c = getCart() || []; } catch (e) {}
+        c.forEach(function (it) {
+            var k = lineKey(it); var q = +it.quantity || +it.qty || 1;
+            if (!m[k]) { var p = prodOf(it.id) || {}; m[k] = { id: it.id, name: String(it.name || p.name || 'Article').replace(' 🏷️', ''), barcode: it.barcode || p.barcode || p.barcodeInternal || '', price: +it.price || 0, unitType: it.unitType || 'unit', qty: 0 }; }
+            m[k].qty = Math.round((m[k].qty + q) * 1000) / 1000;
+        });
+        return m;
+    }
+    function size(m) { return Object.keys(m).length; }
+    var prev = {}, cartId = null, cartStart = null, lastSaleAt = 0, clearing = null, reminded = 0, lastAct = Date.now(), lastChange = Date.now();
+
+    // Une vente validée = le panier vidé ensuite n'est PAS une annulation (voir hook() : fonction de validation enveloppée)
+    function markSale() { lastSaleAt = Date.now(); }
+
+    function logEvents(rows) {
+        if (!rows.length) return;
+        var list = load(); rows.forEach(function (r) { list.push(r); }); store(list);
+    }
+    function ev(type, l, qty, reason, extra) {
+        var u = user();
+        return Object.assign({
+            id: 'CA' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            at: new Date().toISOString(), app: APP_LABEL, type: type, reason: reason || '',
+            cashier: uname(u), cashierId: u.id || null,
+            productId: l.id, name: l.name, barcode: String(l.barcode || ''), unitType: l.unitType,
+            qty: qty, price: l.price, amount: Math.round(qty * l.price * 100) / 100,
+            cartId: cartId, cartStart: cartStart
+        }, extra || {});
+    }
+    function persistPending(m) {
+        try { if (size(m)) localStorage.setItem(PENDK, JSON.stringify({ cartId: cartId, cartStart: cartStart, user: user(), at: new Date().toISOString(), lines: m })); else localStorage.removeItem(PENDK); } catch (e) {}
+    }
+    function onChange() {
+        var now = snap(), rows = [];
+        var validated = (Date.now() - lastSaleAt) < 8000 && !size(now);
+        if (!size(prev) && size(now)) { cartId = 'P' + Date.now().toString(36); cartStart = new Date().toISOString(); reminded = 0; }
+        if (!validated) {
+            var emptied = size(prev) > 0 && !size(now);
+            Object.keys(prev).forEach(function (k) {
+                var a = prev[k], b = now[k];
+                var d = Math.round((a.qty - (b ? b.qty : 0)) * 1000) / 1000;
+                if (d <= 0) return;
+                var type = !b ? (emptied && (clearing || size(prev) > 1) ? 'vide' : 'retire') : 'qte';
+                var reason = clearing || (type === 'vide' ? 'Panier vidé' : type === 'retire' ? 'Article retiré du panier' : 'Quantité diminuée');
+                rows.push(ev(type, a, d, reason, { cartLines: size(prev) }));
+            });
+        }
+        logEvents(rows);
+        clearing = null;
+        if (JSON.stringify(Object.keys(now).map(function (k) { return k + now[k].qty; })) !== JSON.stringify(Object.keys(prev).map(function (k) { return k + prev[k].qty; }))) lastChange = Date.now();
+        prev = now;
+        if (!size(now)) { cartId = null; cartStart = null; hideRemind(); }
+        persistPending(now);
+    }
+    // Panier resté en cours alors que l'application s'est fermée sans prévenir (plantage, appli tuée)
+    function recoverPending() {
+        var p = null; try { p = JSON.parse(localStorage.getItem(PENDK) || 'null'); } catch (e) {}
+        if (!p || !p.lines) return;
+        var u = p.user || {}, rows = [];
+        Object.keys(p.lines).forEach(function (k) { var l = p.lines[k];
+            rows.push({ id: 'CA' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: p.at || new Date().toISOString(), app: APP_LABEL, type: 'non_valide', reason: 'Application fermée sans valider ni annuler', cashier: uname(u), cashierId: u.id || null, productId: l.id, name: l.name, barcode: String(l.barcode || ''), unitType: l.unitType, qty: l.qty, price: l.price, amount: Math.round(l.qty * l.price * 100) / 100, cartId: p.cartId, cartStart: p.cartStart, cartLines: size(p.lines) }); });
+        logEvents(rows);
+        try { localStorage.removeItem(PENDK); } catch (e) {}
+    }
+    window.addEventListener('pagehide', function () {
+        var m = snap(); if (!size(m)) return;
+        var rows = Object.keys(m).map(function (k) { return ev('non_valide', m[k], m[k].qty, 'Page fermée ou rechargée avec le panier en cours', { cartLines: size(m) }); });
+        logEvents(rows); try { localStorage.removeItem(PENDK); } catch (e) {}
+    });
+    window.addEventListener('beforeunload', function (e) { if (size(snap())) { e.preventDefault(); e.returnValue = 'Attention, vous avez oublié de valider ou d’annuler le panier.'; return e.returnValue; } });
+
+    // ── Rappel « panier oublié » ──
+    ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) { document.addEventListener(t, function (e) { var r = null; try { r = cartRoot(); } catch (x) {} if (r && e.target && r.contains(e.target)) lastAct = Date.now(); }, true); });
+    // ── Alarme sonore en crescendo : monte jusqu'au volume maximal et ne s'arrête qu'à une intervention ──
+    // Contexte audio « débloqué » au premier clic/touche (règle des navigateurs : pas de son sans geste préalable),
+    // puis les bips sont PROGRAMMÉS à l'avance dans le moteur audio : ils continuent même si l'onglet est en
+    // arrière-plan ou l'écran éteint (les minuteries JavaScript, elles, sont ralenties dans ces cas).
+    var AC = null, alarm = null, lastAny = Date.now(), titleT = null, origTitle = document.title, wake = null;
+    function ac() {
+        if (!AC) { try { var A = window.AudioContext || window.webkitAudioContext; AC = new A(); } catch (e) { AC = null; } }
+        if (AC && AC.state === 'suspended') { try { AC.resume(); } catch (e) {} }
+        return AC;
+    }
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (t) { document.addEventListener(t, function () { ac(); }, { capture: true, passive: true }); });
+    function scheduleBeeps(fromIdx, count) {
+        var c = AC; if (!c || !alarm) return;
+        var t = Math.max(c.currentTime + 0.05, alarm.next);
+        for (var i = fromIdx; i < fromIdx + count; i++) {
+            var vol = Math.min(1, 0.03 * Math.pow(1.15, i));            // ≈ 0,03 → 1 en ~25 bips (~35 s), puis volume maximal
+            var gap = Math.max(0.45, 1.6 - i * 0.03);                  // le rythme s'accélère aussi
+            [0, 0.18].forEach(function (dt, j) {
+                var o = c.createOscillator(), g = c.createGain();
+                o.type = 'square'; o.frequency.value = j ? 1320 : 880;
+                g.gain.setValueAtTime(0.0001, t + dt); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol * 0.6), t + dt + 0.02);
+                g.gain.setValueAtTime(Math.max(0.0002, vol * 0.6), t + dt + 0.13); g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.16);
+                o.connect(g); g.connect(alarm.out); o.start(t + dt); o.stop(t + dt + 0.17);
+            });
+            t += gap;
+        }
+        alarm.next = t; alarm.idx = fromIdx + count;
+    }
+    function startAlarm() {
+        if (alarm || !cfg().sound) return;
+        var c = ac(); if (!c) return;
+        var out = c.createGain(); out.gain.value = 1; out.connect(c.destination);
+        alarm = { out: out, next: 0, idx: 0, at: Date.now() };
+        scheduleBeeps(0, 240);                                         // ~4 à 5 minutes programmées d'avance
+        alarm.refill = setInterval(function () { if (alarm && AC && alarm.next - AC.currentTime < 120) scheduleBeeps(alarm.idx, 120); }, 20000);
+        var n = 0; clearInterval(titleT); titleT = setInterval(function () { document.title = (n++ % 2) ? '⚠️ PANIER NON VALIDÉ' : origTitle; }, 1000);
+        try { if (window.Notification && Notification.permission === 'granted') { var nt = new Notification('⚠️ Panier non validé — ' + APP_LABEL, { body: 'Vous avez oublié de valider ou d’annuler le panier.', tag: 'covo-cart-' + APP, requireInteraction: true }); nt.onclick = function () { try { window.focus(); } catch (e) {} stopAlarm(); nt.close(); }; alarm.notif = nt; } } catch (e) {}
+        var st = $('ca-alarm-state'); if (st) st.style.display = 'block';
+    }
+    function stopAlarm() {
+        if (!alarm) return;
+        try { alarm.out.disconnect(); } catch (e) {}
+        clearInterval(alarm.refill); try { alarm.notif && alarm.notif.close(); } catch (e) {}
+        alarm = null; clearInterval(titleT); document.title = origTitle;
+        var st = $('ca-alarm-state'); if (st) st.style.display = 'none';
+    }
+    // Toute intervention sur l'ordinateur (souris, clavier, tactile, retour sur la fenêtre) coupe l'alarme
+    ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) { document.addEventListener(t, function () { lastAny = Date.now(); if (alarm && Date.now() - alarm.at > 600) stopAlarm(); }, { capture: true, passive: true }); });
+    window.addEventListener('focus', function () { lastAny = Date.now(); if (alarm && Date.now() - alarm.at > 600) stopAlarm(); });
+    // Empêche la mise en veille de l'ordinateur / de l'écran tant qu'un panier est en cours
+    function wakeSync(hasCart) {
+        try {
+            if (hasCart && cfg().wake !== false && !wake && navigator.wakeLock && document.visibilityState === 'visible') {
+                wake = 'pending'; navigator.wakeLock.request('screen').then(function (w) { wake = w; w.addEventListener('release', function () { wake = null; }); }).catch(function () { wake = null; });
+            } else if ((!hasCart || cfg().wake === false) && wake && wake !== 'pending') { wake.release(); wake = null; }
+        } catch (e) {}
+    }
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { wake = (wake && wake !== 'pending' && !wake.released) ? wake : null; var h = false; try { h = (getCart() || []).length > 0; } catch (e) {} wakeSync(h); } });
+    function hideRemind() { stopAlarm(); var o = $('ca-remind'); if (o) o.remove(); }
+    function showRemind() {
+        if ($('ca-remind')) { startAlarm(); return; }
+        var m = snap(); if (!size(m)) return;
+        reminded++;
+        var tot = 0, lines = Object.keys(m).map(function (k) { var l = m[k]; tot += l.qty * l.price; return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dashed rgba(0,0,0,.08)"><span>' + esc(l.name) + ' <span style="opacity:.6">×' + l.qty + '</span></span><b>' + eur(l.qty * l.price) + '</b></div>'; }).join('');
+        var since = cartStart ? Math.max(1, Math.round((Date.now() - new Date(cartStart).getTime()) / 60000)) : 1;
+        var o = document.createElement('div'); o.id = 'ca-remind';
+        o.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+        o.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#222);max-width:440px;width:100%;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);animation:caPulse 1.2s ease-in-out 2">'
+            + '<div style="background:linear-gradient(135deg,#f59e0b,#dc2626);color:#fff;padding:16px 18px;text-align:center"><div style="font-size:2rem">⚠️</div><div style="font-weight:900;font-size:1.15rem;line-height:1.25">Attention, vous avez oublié de valider le panier<br>ou d’annuler le panier.</div><div style="font-size:.8rem;opacity:.9;margin-top:4px">Panier en cours depuis ' + since + ' min · ' + size(m) + ' article(s)</div></div>'
+            + '<div style="padding:12px 18px;max-height:34vh;overflow:auto;font-size:.86rem">' + lines + '<div style="display:flex;justify-content:space-between;padding-top:8px;font-size:1rem"><b>Total</b><b>' + eur(tot) + '</b></div></div>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 18px 12px">'
+            + '<button type="button" data-r="ok" style="padding:12px;border:none;border-radius:10px;background:#16a34a;color:#fff;font-weight:800;cursor:pointer">✅ Valider le panier</button>'
+            + '<button type="button" data-r="cancel" style="padding:12px;border:none;border-radius:10px;background:#dc2626;color:#fff;font-weight:800;cursor:pointer">🗑️ Annuler le panier</button></div>'
+            + '<div id="ca-alarm-state" style="display:none;margin:0 18px 10px;padding:6px 10px;border-radius:8px;background:rgba(220,38,38,.1);color:#dc2626;font-size:.78rem;font-weight:700;text-align:center">🔊 Alarme en cours (de plus en plus fort) — bougez la souris ou appuyez sur une touche pour la couper</div>'
+            + '<div style="padding:0 18px 14px;text-align:center"><button type="button" data-r="later" style="padding:8px 14px;border:1px solid rgba(0,0,0,.15);border-radius:10px;background:transparent;color:inherit;cursor:pointer;font-size:.82rem">⏳ Client encore présent — rappeler plus tard</button></div></div>';
+        if (!$('ca-style')) { var st = document.createElement('style'); st.id = 'ca-style'; st.textContent = '@keyframes caPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}@keyframes caGlow{0%,100%{box-shadow:0 0 0 0 rgba(22,163,74,.0)}50%{box-shadow:0 0 0 8px rgba(22,163,74,.45)}}.ca-glow{animation:caGlow 1s ease-in-out 4}'; document.head.appendChild(st); }
+        document.body.appendChild(o); startAlarm();
+        o.querySelector('[data-r="ok"]').onclick = function () { hideRemind(); lastAct = Date.now(); try { goValidate(); } catch (e) {} };
+        o.querySelector('[data-r="cancel"]').onclick = function () { hideRemind(); clearing = 'Panier annulé après le rappel « panier oublié »'; try { emptyNow(); } catch (e) {} try { onChange(); } catch (e) {} clearing = null; toast('🗑️ Panier annulé — enregistré dans l’historique des annulations', 'info'); };
+        o.querySelector('[data-r="later"]').onclick = function () { hideRemind(); lastAct = Date.now(); };
+    }
+    setInterval(function () {
+        var c = cfg();
+        var hasCart = false; try { hasCart = (getCart() || []).length > 0; } catch (e) {}
+        wakeSync(hasCart);
+        if (!hasCart || !c.delay) return;
+        if (!$('ca-remind')) { if (Date.now() - Math.max(lastAct, lastChange) >= c.delay * 1000) showRemind(); }
+        else if (!alarm && Date.now() - lastAny >= c.delay * 1000) startAlarm();   // fenêtre restée ouverte : l'alarme repart
+    }, 3000);
+
+    // ── Historique des annulations ──
+    var F = { period: 'today', from: '', to: '', who: '', type: '', app: '', q: '' };
+    var TYPES = { retire: ['Article retiré', '#f59e0b'], qte: ['Quantité diminuée', '#eab308'], vide: ['Panier annulé', '#dc2626'], non_valide: ['Non validé', '#7c3aed'] };
+    function range() {
+        var d0 = new Date(); d0.setHours(0, 0, 0, 0); var day = 864e5, a = null, b = null;
+        switch (F.period) {
+            case 'today': a = d0; break;
+            case 'yesterday': a = new Date(d0 - day); b = d0; break;
+            case 'week': a = new Date(d0 - 6 * day); break;
+            case '30': a = new Date(d0 - 29 * day); break;
+            case 'month': a = new Date(d0.getFullYear(), d0.getMonth(), 1); break;
+            case 'custom': a = F.from ? new Date(F.from + 'T00:00:00') : null; b = F.to ? new Date(new Date(F.to + 'T00:00:00').getTime() + day) : null; break;
+        }
+        return [a, b];
+    }
+    function filtered() {
+        var r = range(), u = user(), adm = isAdmin(), q = F.q.trim().toLowerCase();
+        return load().filter(function (e) {
+            var t = new Date(e.at);
+            if (r[0] && t < r[0]) return false; if (r[1] && t >= r[1]) return false;
+            if (!adm && String(e.cashierId || e.cashier) !== String(u.id || uname(u)) && e.cashier !== uname(u)) return false;
+            if (F.who && e.cashier !== F.who) return false;
+            if (F.type && e.type !== F.type) return false;
+            if (F.app && e.app !== F.app) return false;
+            if (q && (e.name + ' ' + e.barcode + ' ' + e.cashier).toLowerCase().indexOf(q) === -1) return false;
+            return true;
+        }).reverse();
+    }
+    function csv(rows) {
+        var h = ['Date', 'Heure', 'Application', 'Caissier', 'Type', 'Motif', 'Article', 'Code-barres', 'Quantité', 'Prix unitaire', 'Montant', 'Panier'];
+        var L = [h.join(';')].concat(rows.map(function (e) { var d = new Date(e.at); return [d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR'), e.app, e.cashier, (TYPES[e.type] || [e.type])[0], e.reason, e.name, e.barcode, String(e.qty).replace('.', ','), String(e.price).replace('.', ','), String(e.amount).replace('.', ','), e.cartId || ''].map(function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(';'); }));
+        var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + L.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+        a.download = 'articles_annules_' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+    }
+    function render() {
+        var o = $('ca-hist'); if (!o) return;
+        var rows = filtered(), all = load(), adm = isAdmin();
+        var who = {}, apps = {}; all.forEach(function (e) { who[e.cashier] = 1; apps[e.app] = 1; });
+        var nArt = 0, amt = 0, carts = {}, nv = {}, top = {}, per = {};
+        rows.forEach(function (e) {
+            nArt += +e.qty || 0; amt += +e.amount || 0;
+            if (e.type === 'vide') carts[e.cartId || e.at] = 1; if (e.type === 'non_valide') nv[e.cartId || e.at] = 1;
+            var tk = e.name; top[tk] = top[tk] || { n: 0, a: 0 }; top[tk].n += +e.qty || 0; top[tk].a += +e.amount || 0;
+            per[e.cashier] = per[e.cashier] || { n: 0, a: 0 }; per[e.cashier].n += +e.qty || 0; per[e.cashier].a += +e.amount || 0;
+        });
+        var topL = Object.keys(top).sort(function (a, b) { return top[b].a - top[a].a; }).slice(0, 5);
+        var perL = Object.keys(per).sort(function (a, b) { return per[b].a - per[a].a; });
+        var maxA = perL.length ? per[perL[0]].a || 1 : 1;
+        var sel = function (id, cur, opts) { return '<select data-f="' + id + '" style="padding:7px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit">' + opts.map(function (x) { return '<option value="' + esc(x[0]) + '"' + (x[0] === cur ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>'; };
+        var kpi = function (ic, lab, val, col) { return '<div style="flex:1;min-width:120px;padding:10px 12px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04));border-left:4px solid ' + col + '"><div style="font-size:.72rem;opacity:.75">' + ic + ' ' + lab + '</div><div style="font-weight:900;font-size:1.2rem">' + val + '</div></div>'; };
+        var c = cfg();
+        o.querySelector('.ca-body').innerHTML =
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">'
+            + sel('period', F.period, [['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['week', '7 jours'], ['30', '30 jours'], ['month', 'Ce mois'], ['all', 'Tout'], ['custom', 'Dates…']])
+            + (F.period === 'custom' ? '<input type="date" data-f="from" value="' + F.from + '" style="padding:6px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit"> → <input type="date" data-f="to" value="' + F.to + '" style="padding:6px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit">' : '')
+            + (adm ? sel('who', F.who, [['', 'Tous les caissiers']].concat(Object.keys(who).sort().map(function (w) { return [w, w]; }))) : '')
+            + sel('type', F.type, [['', 'Tous les types'], ['retire', 'Articles retirés'], ['qte', 'Quantités diminuées'], ['vide', 'Paniers annulés'], ['non_valide', 'Non validés']])
+            + sel('app', F.app, [['', 'Caisse + COVO']].concat(Object.keys(apps).sort().map(function (w) { return [w, w]; })))
+            + '<input type="search" data-f="q" value="' + esc(F.q) + '" placeholder="🔎 Article, code-barres…" style="flex:1;min-width:150px;padding:7px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit">'
+            + '<button type="button" data-a="csv" style="padding:7px 12px;border:none;border-radius:8px;background:#0f766e;color:#fff;font-weight:700;cursor:pointer">⬇️ CSV</button></div>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
+            + kpi('🧾', 'Articles annulés', (Math.round(nArt * 1000) / 1000).toLocaleString('fr-FR'), '#f59e0b')
+            + kpi('💶', 'Montant annulé', eur(amt), '#dc2626')
+            + kpi('🗑️', 'Paniers annulés', Object.keys(carts).length, '#b91c1c')
+            + kpi('⏸️', 'Paniers non validés', Object.keys(nv).length, '#7c3aed') + '</div>'
+            + (rows.length ? '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:10px">'
+                + '<div style="padding:10px 12px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04))"><div style="font-weight:800;font-size:.82rem;margin-bottom:6px">🏆 Articles les plus annulés</div>' + topL.map(function (k, i) { return '<div style="display:flex;justify-content:space-between;font-size:.8rem;padding:2px 0"><span>' + (i + 1) + '. ' + esc(k) + ' <span style="opacity:.6">×' + (Math.round(top[k].n * 1000) / 1000) + '</span></span><b>' + eur(top[k].a) + '</b></div>'; }).join('') + '</div>'
+                + '<div style="padding:10px 12px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04))"><div style="font-weight:800;font-size:.82rem;margin-bottom:6px">👤 Par caissier</div>' + perL.map(function (k) { return '<div style="font-size:.8rem;padding:2px 0"><div style="display:flex;justify-content:space-between"><span>' + esc(k) + '</span><b>' + eur(per[k].a) + ' <span style="opacity:.6;font-weight:400">(' + (Math.round(per[k].n * 1000) / 1000) + ' art.)</span></b></div><div style="height:5px;border-radius:3px;background:rgba(220,38,38,.12);margin-top:2px"><div style="height:5px;border-radius:3px;background:#dc2626;width:' + Math.max(3, per[k].a / maxA * 100) + '%"></div></div></div>'; }).join('') + '</div></div>' : '')
+            + '<div style="overflow:auto;border-radius:10px;border:1px solid var(--border-color,rgba(0,0,0,.1))"><table style="width:100%;border-collapse:collapse;font-size:.8rem;min-width:760px"><thead><tr style="background:var(--bg-card-2,rgba(0,0,0,.05));text-align:left">'
+            + ['Date / heure', 'Appli', 'Caissier', 'Type', 'Article', 'Code-barres', 'Qté', 'P.U.', 'Montant'].map(function (h) { return '<th style="padding:8px">' + h + '</th>'; }).join('') + '</tr></thead><tbody>'
+            + (rows.length ? rows.slice(0, 500).map(function (e) { var d = new Date(e.at), t = TYPES[e.type] || [e.type, '#888']; return '<tr style="border-top:1px solid var(--border-color,rgba(0,0,0,.07))" title="' + esc(e.reason) + (e.cartId ? ' · panier ' + esc(e.cartId) : '') + '"><td style="padding:7px 8px;white-space:nowrap">' + d.toLocaleDateString('fr-FR') + ' <b>' + d.toLocaleTimeString('fr-FR') + '</b></td><td style="padding:7px 8px">' + esc(e.app) + '</td><td style="padding:7px 8px">' + esc(e.cashier) + '</td><td style="padding:7px 8px"><span style="display:inline-block;padding:2px 8px;border-radius:999px;background:' + t[1] + '22;color:' + t[1] + ';font-weight:800;white-space:nowrap">' + t[0] + '</span><div style="font-size:.68rem;opacity:.7">' + esc(e.reason) + '</div></td><td style="padding:7px 8px;font-weight:700">' + esc(e.name) + '</td><td style="padding:7px 8px;font-family:monospace">' + esc(e.barcode || '—') + '</td><td style="padding:7px 8px">' + e.qty + (e.unitType === 'kg' ? ' kg' : '') + '</td><td style="padding:7px 8px;white-space:nowrap">' + eur(e.price) + '</td><td style="padding:7px 8px;font-weight:800;white-space:nowrap">' + eur(e.amount) + '</td></tr>'; }).join('')
+                : '<tr><td colspan="9" style="padding:24px;text-align:center;opacity:.7">Aucun article annulé ou non validé sur cette période.</td></tr>')
+            + '</tbody></table></div>' + (rows.length > 500 ? '<div style="font-size:.75rem;opacity:.7;margin-top:6px">500 premières lignes affichées — export CSV pour tout voir.</div>' : '')
+            + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;padding:10px 12px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04));font-size:.82rem"><b>⏰ Rappel « panier oublié »</b> après '
+            + sel('delay', String(c.delay), [['0', 'désactivé'], ['30', '30 secondes'], ['60', '1 minute'], ['90', '1 min 30'], ['120', '2 minutes'], ['180', '3 minutes'], ['300', '5 minutes']]) + ' sans action'
+            + '<label style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-f="sound"' + (c.sound ? ' checked' : '') + '> 🔊 alarme en crescendo</label>'
+            + '<label style="display:flex;align-items:center;gap:5px" title="Garde l\'écran et l\'ordinateur allumés tant qu\'un panier est en cours"><input type="checkbox" data-f="wake"' + (c.wake !== false ? ' checked' : '') + '> 💡 empêcher la mise en veille</label>'
+            + '<button type="button" data-a="test" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer">▶️ Tester l\'alarme</button>'
+            + (window.Notification ? (Notification.permission === 'granted' ? '<span style="opacity:.75">🔔 Notifications Windows : activées</span>' : '<button type="button" data-a="notif" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer">🔔 Activer les notifications Windows</button>') : '')
+            + (adm ? '' : '<span style="opacity:.7">Vous voyez uniquement vos propres annulations.</span>') + '</div>';
+    }
+    function openHist() {
+        var o = $('ca-hist'); if (o) o.remove();
+        o = document.createElement('div'); o.id = 'ca-hist';
+        o.style.cssText = 'position:fixed;inset:0;z-index:100040;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow:auto';
+        o.innerHTML = '<div style="background:var(--bg-main,var(--bg-card,#fff));color:var(--text-main,#222);width:100%;max-width:1100px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"><div><div style="font-weight:900;font-size:1.1rem">🕘 Articles annulés & paniers non validés</div><div style="font-size:.76rem;opacity:.85">Tout article scanné puis retiré, panier vidé, ou panier abandonné (Caisse Pro + COVO Pro, sur cet appareil)</div></div><button type="button" data-a="x" style="border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:10px;width:36px;height:36px;font-size:1.1rem;cursor:pointer">✕</button></div>'
+            + '<div class="ca-body" style="padding:14px 18px"></div></div>';
+        document.body.appendChild(o);
+        o.addEventListener('click', function (e) { if (e.target === o) o.remove(); var a = e.target.closest('[data-a]'); if (!a) return; if (a.getAttribute('data-a') === 'x') o.remove(); if (a.getAttribute('data-a') === 'csv') csv(filtered());
+            if (a.getAttribute('data-a') === 'test') { ac(); stopAlarm(); var c0 = cfg(); if (!c0.sound) { toast('Activez d\u2019abord « alarme en crescendo »', 'info'); return; } startAlarm(); if (alarm) alarm.at = Date.now() + 2400; toast('🔊 Test : l\u2019alarme monte… bougez la souris pour la couper', 'info'); }
+            if (a.getAttribute('data-a') === 'notif') { try { Notification.requestPermission().then(function () { render(); }); } catch (e) {} } });
+        var onF = function (e) { var f = e.target.getAttribute && e.target.getAttribute('data-f'); if (!f) return;
+            if (f === 'delay' || f === 'sound' || f === 'wake') { var c = cfg(); if (f === 'delay') c.delay = +e.target.value; else c[f] = e.target.checked; saveCfg(c); toast('✅ Réglage du rappel enregistré', 'success'); return; }
+            F[f] = e.target.value; if (f === 'q') { clearTimeout(onF.t); onF.t = setTimeout(render, 250); } else render(); };
+        o.addEventListener('change', onF); o.addEventListener('input', function (e) { if (e.target.getAttribute('data-f') === 'q') onF(e); });
+        render();
+    }
+    window._covoCartAuditOpen = openHist;
+    window._covoCartAuditRemind = showRemind;
+
+    function boot() {
+        recoverPending();
+        hook();
+        prev = snap(); if (size(prev)) { cartId = 'P' + Date.now().toString(36); cartStart = new Date().toISOString(); }
+        addButton();
+        setInterval(function () { try { onChange(); } catch (e) {} }, 700); // filet : toute modification du panier, quel que soit le chemin
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 </body>
 </html>
