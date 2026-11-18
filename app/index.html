@@ -4944,11 +4944,14 @@ button, .btn, .retours-btn {
                     <button onclick="printNoBarcodeList()" title="Imprimer les articles sans code-barres avec un code-barres interne scannable et leur photo"
                         style="background:rgba(255,255,255,0.16);color:white;padding:6px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,0.3);cursor:pointer;font-weight:700;font-size:0.79rem;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;"
                         onmouseover="this.style.background='rgba(255,255,255,0.26)'" onmouseout="this.style.background='rgba(255,255,255,0.16)'">🖨️ Imprimer sans code-barre</button>
+                    <button onclick="openCreatedBarcodes()" title="Retrouver les articles dont le code-barres a été créé (interne COVO, saisi à la main, code magasin)"
+                        style="background:rgba(255,255,255,0.16);color:white;padding:6px 10px;border-radius:8px;border:1.5px solid rgba(255,255,255,0.3);cursor:pointer;font-weight:700;font-size:0.79rem;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;">🔖 Codes créés <span id="bcm-count" style="background:rgba(255,255,255,0.3);border-radius:10px;padding:1px 6px;font-size:0.72rem;font-weight:600;">–</span></button>
                     <div style="width:1px;height:24px;background:rgba(255,255,255,0.2);flex-shrink:0;"></div>
                     <select id="filter-category" onchange="_saveAndRender()"
                         style="padding:6px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.13);color:#fff;font-size:0.79rem;cursor:pointer;outline:none;">
                         <option value="all" style="background:#2c3e50;color:#fff;">Toutes catégories</option>
                         <option value="__no_barcode__" style="background:#2c3e50;color:#fff;">🏷️ Sans code-barre</option>
+                        <option value="__made_barcode__" style="background:#2c3e50;color:#fff;">🔖 Code-barre créé</option>
                     </select>
                     <select id="adv-filter-sort" onchange="_saveAndRender()"
                         style="padding:6px 10px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.13);color:#fff;font-size:0.79rem;cursor:pointer;outline:none;">
@@ -5007,6 +5010,13 @@ button, .btn, .retours-btn {
                             <option value="low">🟠 Stock faible (&lt;5)</option>
                             <option value="normal">🟢 Normal</option>
                             <option value="high">🔵 Élevé (&gt;50)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem;font-weight:700;color:#8e44ad;text-transform:uppercase;display:block;margin-bottom:4px;">🚫 Ruptures</label>
+                        <select id="adv-filter-hideout" onchange="_saveAndRender()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border-color,#e0e0e0);border-radius:7px;font-size:0.82rem;background:var(--input-bg,#fff);color:var(--text-main,#2c3e50);">
+                            <option value="">Afficher les ruptures</option>
+                            <option value="hide">🚫 Masquer les ruptures (stock &lt; 1)</option>
                         </select>
                     </div>
                     <div>
@@ -20208,7 +20218,7 @@ function toggleInfoSection(headerElement) {
         'filter-category','adv-filter-sort','adv-filter-cost',
         'adv-filter-stock','adv-filter-dlc','adv-filter-promo',
         'adv-filter-etat','adv-filter-image','adv-filter-desc',
-        'adv-filter-night','adv-filter-tva'
+        'adv-filter-night','adv-filter-tva','adv-filter-hideout'
     ];
 
     // Compter les filtres actifs (hors catégorie et tri par défaut)
@@ -20232,7 +20242,7 @@ function toggleInfoSection(headerElement) {
         // Exclure catégorie et tri du badge (comptés séparément)
         var advCount = 0;
         ['adv-filter-cost','adv-filter-stock','adv-filter-dlc','adv-filter-promo',
-         'adv-filter-etat','adv-filter-image','adv-filter-desc','adv-filter-night','adv-filter-tva'].forEach(function(id) {
+         'adv-filter-etat','adv-filter-image','adv-filter-desc','adv-filter-night','adv-filter-tva','adv-filter-hideout'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el && el.value) advCount++;
         });
@@ -23089,6 +23099,7 @@ logout = function(skipConfirmation = false) {
         const fDesc     = (document.getElementById('adv-filter-desc')   || {}).value || '';
         const fNight    = (document.getElementById('adv-filter-night')  || {}).value || '';
         const fTva      = (document.getElementById('adv-filter-tva')    || {}).value || '';
+        const fHideOut  = (document.getElementById('adv-filter-hideout') || {}).value || '';
 
         const today = new Date(); today.setHours(0,0,0,0);
 
@@ -23098,7 +23109,9 @@ logout = function(skipConfirmation = false) {
                 ? true
                 : cat === '__no_barcode__'
                     ? !hasBarcode
-                    : p.category === cat;
+                    : cat === '__made_barcode__'
+                        ? !!(window._covoBcOrigin && window._covoBcOrigin(p))
+                        : p.category === cat;
             // Recherche intelligente (accents, pluriels, catégorie, description, n° de fiche, familles « boisson »…) — boîte à outils
             const searchMatch = (typeof window._covoProdMatch === 'function') ? window._covoProdMatch(p, search) : (p.name.toLowerCase().includes(search) || (p.barcode && p.barcode.includes(search)));
             if (!catMatch || !searchMatch) return false;
@@ -23119,6 +23132,7 @@ logout = function(skipConfirmation = false) {
             if (fStock === 'low'    && !(stock > 0 && stock < (isKg2 ? 0.5 : 5))) return false;
             if (fStock === 'normal' && !(stock >= (isKg2 ? 0.5 : 5) && stock <= 50)) return false;
             if (fStock === 'high'   && stock <= 50) return false;
+            if (fHideOut === 'hide' && stock < 1) return false;   // masquer les ruptures : stock inférieur à 1
 
             // ── Filtre DLC ──
             if (fDlc) {
@@ -27086,6 +27100,7 @@ logout = function(skipConfirmation = false) {
             const cur = select.value;
             select.innerHTML = '<option value="all">Toutes catégories</option>'
                 + '<option value="__no_barcode__"' + (cur === '__no_barcode__' ? ' selected' : '') + '>🏷️ Sans code-barre</option>'
+                + '<option value="__made_barcode__"' + (cur === '__made_barcode__' ? ' selected' : '') + '>🔖 Code-barre créé</option>'
                 + echCats.map(c => `<option value="${c}"${c===cur?' selected':''}>${c}</option>`).join('');
         }
         // Formulaire nouveau produit
@@ -29184,6 +29199,7 @@ logout = function(skipConfirmation = false) {
     document.addEventListener('keypress', function(e) {
         if (e.target.tagName === 'INPUT') return;  // search-bar gère son propre scan
         if (e.target.tagName === 'TEXTAREA') return;
+        if (e.target.isContentEditable || e.target.tagName === 'SELECT') return;  // zone de texte enrichi (notifications…) : pas un scan
 
         // Touche Entrée : déclencher immédiatement si buffer non vide
         if (e.key === 'Enter') {
@@ -41020,6 +41036,7 @@ function refreshEchCategorySelects() {
         const cur3 = prodFilter.value;
         prodFilter.innerHTML = '<option value="all">Toutes catégories</option>'
             + '<option value="__no_barcode__"' + (cur3 === '__no_barcode__' ? ' selected' : '') + '>🏷️ Sans code-barre</option>'
+            + '<option value="__made_barcode__"' + (cur3 === '__made_barcode__' ? ' selected' : '') + '>🔖 Code-barre créé</option>'
             + cats.map(c => `<option value="${c}"${c===cur3?' selected':''}>${c}</option>`).join('');
     }
 
@@ -48563,6 +48580,7 @@ function initAdminSections() {
                 createdBy:  (user && user.username) || 'Administrateur',
                 subject:    String(o.subject || '').trim(),
                 message:    String(o.message || '').trim(),
+                messageHtml: o.messageHtml ? String(o.messageHtml).slice(0, 20000) : '',
                 priority:   ({ info: 1, important: 1, urgent: 1 })[o.priority] ? o.priority : 'info',
                 recipients: ({ all: 1, admin: 1, caissier: 1 })[o.recipients] ? o.recipients : 'all',
                 driveFiles: [],
@@ -59024,7 +59042,8 @@ window._rachatRender=function(filter){
             + '<div class="aw-nt-subj">' + esc(n.subject || '(sans objet)') + '</div>'
             + '<div class="aw-nt-prev">' + esc(String(n.message || '').replace(/\s+/g, ' ').slice(0, 160)) + '</div>'
             + '</div><span class="aw-nt-chev">▼</span></div>'
-            + '<div class="aw-nt-body"><div class="aw-nt-msg">' + esc(n.message || '') + '</div>';
+            + '<div class="aw-nt-body"><div class="aw-nt-msg">' + (n.messageHtml && window._awFmtSafe ? window._awFmtSafe(n.messageHtml) : esc(n.message || '')) + '</div>'
+            + (typeof window._awTtsBar === 'function' ? window._awTtsBar(n) : '');
         if (n.driveFiles && n.driveFiles.length) {
             h += '<div class="aw-nt-files">' + n.driveFiles.map(function (f) {
                 return f && f.url
@@ -59311,6 +59330,7 @@ window._rachatRender=function(filter){
                 if (!String(ui.cMsg).trim()) { ui.cErr = '⚠️ Le message est obligatoire.'; break; }
                 if (!api) { ui.cErr = 'Module de notifications indisponible.'; break; }
                 var n = api.add({ subject: ui.cSubj, message: ui.cMsg, priority: ui.cPrio, recipients: ui.cRcpt,
+                                  messageHtml: (typeof window._awFmtTake === 'function' ? window._awFmtTake() : ''),
                                   products: (typeof window._awCmpProductsTake === 'function' ? window._awCmpProductsTake() : []),
                                   appro: (typeof window._awCmpApproTake === 'function' ? window._awCmpApproTake() : []) });
                 ui.open[n.id] = true;
@@ -59967,7 +59987,8 @@ window._rachatRender=function(filter){
             + '<div class="cu-meta">De ' + esc(n.createdBy || 'Administrateur') + ' · ' + esc(fmt(n.createdAt)) + ' · ' + (R[n.recipients || 'all'] || R.all) + '</div>'
             + '</div>'
             + '<div class="cu-body"><div class="cu-subj" id="cu-subj">' + esc(n.subject || 'Message urgent') + '</div>'
-            + '<div class="cu-msg">' + esc(n.message || '') + '</div>'
+            + '<div class="cu-msg">' + (n.messageHtml && window._awFmtSafe ? window._awFmtSafe(n.messageHtml) : esc(n.message || '')) + '</div>'
+            + (typeof window._awTtsBar === 'function' ? window._awTtsBar(n) : '')
             + ((n.driveFiles && n.driveFiles.length) ? '<div class="cu-files">' + n.driveFiles.map(function (f) {
                 return f && f.url ? '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">📄 ' + esc(f.name || 'Pièce jointe') + ' ↗</a>' : '';
             }).join('') + '</div>' : '')
@@ -61417,7 +61438,7 @@ window._rachatRender=function(filter){
         var cat = curCat(), out = [];
         prods().forEach(function (p, i) {
             if (!p) return;
-            if (cat !== 'all' && cat !== '__no_barcode__' && p.category !== cat) return;
+            if (cat !== 'all' && cat !== '__no_barcode__' && cat !== '__made_barcode__' && p.category !== cat) return;
             if (typeof isAdmin !== 'undefined' && !isAdmin && p.active === false) return;
             if (window._covoProdMatch(p, q)) out.push({ p: p, i: i });
         });
@@ -66273,7 +66294,8 @@ function covoQrPrint(o) {
         ['exp', '❌ DLC dépassée', 'adv-filter-dlc', 'expired', function (p) { var d = dlcDays(p); return d != null && d < 0; }],
         ['noimg', '🖼️ Sans photo', 'adv-filter-image', 'no', function (p) { return !p.img; }],
         ['nocost', '💰 Sans prix d’achat', 'adv-filter-cost', 'missing', function (p) { return p.costPrice == null || p.costPrice === ''; }],
-        ['hidden', '👁️ Masqués', 'adv-filter-etat', 'disabled', function (p) { return p.active === false; }, true]
+        ['hidden', '👁️ Masqués', 'adv-filter-etat', 'disabled', function (p) { return p.active === false; }, true],
+        ['hideout', '🚫 Masquer ruptures (&lt; 1)', 'adv-filter-hideout', 'hide', function (p) { return (+p.stock || 0) < 1; }]
     ];
 
     /* ───────────── Styles ───────────── */
@@ -66423,7 +66445,7 @@ function covoQrPrint(o) {
         // Outils existants regroupés
         var tools = $('pz-tools');
         var find = function (sel) { return banner ? banner.querySelector(sel) : document.querySelector(sel); };
-        var moved = [find('button[onclick^="openNoBarcodeSearch"]'), find('button[onclick^="printNoBarcodeList"]'), $('adv-filter-sort'), $('adv-filter-btn'), find('button[onclick="clearFilters()"]'), $('tva-mode-btn'), $('ez-toggle-all-btn')];
+        var moved = [find('button[onclick^="openNoBarcodeSearch"]'), find('button[onclick^="printNoBarcodeList"]'), find('button[onclick^="openCreatedBarcodes"]'), $('adv-filter-sort'), $('adv-filter-btn'), find('button[onclick="clearFilters()"]'), $('tva-mode-btn'), $('ez-toggle-all-btn')];
         moved.forEach(function (el) { if (el) { el.classList.add('pz-tool'); tools.appendChild(el); } });
         var cat = $('filter-category'); if (cat) { cat.style.display = 'none'; tools.appendChild(cat); }
         var sp = document.createElement('span'); sp.className = 'sp'; tools.appendChild(sp); try { window._pzCashierEditBtn && window._pzCashierEditBtn(); } catch (e) {}
@@ -66476,7 +66498,8 @@ function covoQrPrint(o) {
         var noBc = act.filter(function (p) { return !(p.barcode && String(p.barcode).trim().length >= 6); }).length;
         $('pz-cats').innerHTML = '<button type="button" class="pz-cat' + (cur === 'all' ? ' on' : '') + '" data-cat="all" style="--c:#0f172a"><i></i>Tous les rayons <em>' + act.length + '</em></button>'
             + keys.map(function (c2) { return '<button type="button" class="pz-cat' + (cur === c2 ? ' on' : '') + '" data-cat="' + esc(c2) + '" style="--c:' + catColor(c2) + '"><i></i>' + esc(c2) + ' <em>' + cats[c2] + '</em></button>'; }).join('')
-            + (opts.indexOf('__no_barcode__') >= 0 && noBc ? '<button type="button" class="pz-cat' + (cur === '__no_barcode__' ? ' on' : '') + '" data-cat="__no_barcode__" style="--c:#e67e22"><i></i>🏷️ Sans code-barres <em>' + noBc + '</em></button>' : '');
+            + (opts.indexOf('__no_barcode__') >= 0 && noBc ? '<button type="button" class="pz-cat' + (cur === '__no_barcode__' ? ' on' : '') + '" data-cat="__no_barcode__" style="--c:#e67e22"><i></i>🏷️ Sans code-barres <em>' + noBc + '</em></button>' : '')
+            + (function () { var mk = act.filter(function (p) { return window._covoBcOrigin && window._covoBcOrigin(p); }).length; return opts.indexOf('__made_barcode__') >= 0 && mk ? '<button type="button" class="pz-cat' + (cur === '__made_barcode__' ? ' on' : '') + '" data-cat="__made_barcode__" style="--c:#1d4ed8"><i></i>🔖 Code-barre créé <em>' + mk + '</em></button>' : ''; })();
         // Filtres rapides
         var anyOn = QF.some(function (q) { return val(q[2]) === q[3]; }) || ['adv-filter-night', 'adv-filter-tva', 'adv-filter-desc'].some(function (id) { return !!val(id); });
         $('pz-quick').innerHTML = QF.filter(function (q) { return !q[5] || adm; }).map(function (q) { var n = (q[0] === 'hidden' ? all.filter(function (p) { return p && p.active === false; }) : act).filter(q[4]).length, on = val(q[2]) === q[3]; return '<button type="button" class="pz-q' + (on ? ' on' : '') + (n || on ? '' : ' zero') + '" data-qf="' + q[0] + '">' + q[1] + ' <em>' + n + '</em></button>'; }).join('')
@@ -66554,7 +66577,7 @@ function covoQrPrint(o) {
         build(); syncBar(); decorate();
         var q = false;
         new MutationObserver(function () { if (q) return; q = true; requestAnimationFrame(function () { q = false; decorate(); syncBar(); }); }).observe($('product-list'), { childList: true });
-        ['adv-filter-stock', 'adv-filter-promo', 'adv-filter-dlc', 'adv-filter-image', 'adv-filter-cost', 'adv-filter-etat', 'adv-filter-night', 'adv-filter-tva', 'adv-filter-desc'].forEach(function (id) { var e = $(id); if (e) e.addEventListener('change', function () { setTimeout(syncBar, 0); }); });
+        ['adv-filter-stock', 'adv-filter-promo', 'adv-filter-dlc', 'adv-filter-image', 'adv-filter-cost', 'adv-filter-etat', 'adv-filter-night', 'adv-filter-tva', 'adv-filter-desc', 'adv-filter-hideout'].forEach(function (id) { var e = $(id); if (e) e.addEventListener('change', function () { setTimeout(syncBar, 0); }); });
         window.addEventListener('storage', function (e) { if (e.key === 'covo_products') setTimeout(syncBar, 50); });
         // Le statut administrateur peut changer après la connexion
         var lastAdm = admin(); setInterval(function () { var a = admin(); if (a !== lastAdm) { lastAdm = a; syncBar(); } }, 2000);
@@ -74853,37 +74876,94 @@ function covoQrPrint(o) {
 
     // ── Rappel « panier oublié » ──
     ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) { document.addEventListener(t, function (e) { var r = null; try { r = cartRoot(); } catch (x) {} if (r && e.target && r.contains(e.target)) lastAct = Date.now(); }, true); });
-    function beep() {
-        if (!cfg().sound) return;
-        try { var A = window.AudioContext || window.webkitAudioContext; var ac = new A(); [0, 0.25].forEach(function (t) { var o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.15); }); setTimeout(function () { try { ac.close(); } catch (e) {} }, 800); } catch (e) {}
+    // ── Alarme sonore en crescendo : monte jusqu'au volume maximal et ne s'arrête qu'à une intervention ──
+    // Contexte audio « débloqué » au premier clic/touche (règle des navigateurs : pas de son sans geste préalable),
+    // puis les bips sont PROGRAMMÉS à l'avance dans le moteur audio : ils continuent même si l'onglet est en
+    // arrière-plan ou l'écran éteint (les minuteries JavaScript, elles, sont ralenties dans ces cas).
+    var AC = null, alarm = null, lastAny = Date.now(), titleT = null, origTitle = document.title, wake = null;
+    function ac() {
+        if (!AC) { try { var A = window.AudioContext || window.webkitAudioContext; AC = new A(); } catch (e) { AC = null; } }
+        if (AC && AC.state === 'suspended') { try { AC.resume(); } catch (e) {} }
+        return AC;
     }
-    function hideRemind() { var o = $('ca-remind'); if (o) o.remove(); }
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (t) { document.addEventListener(t, function () { ac(); }, { capture: true, passive: true }); });
+    function scheduleBeeps(fromIdx, count) {
+        var c = AC; if (!c || !alarm) return;
+        var t = Math.max(c.currentTime + 0.05, alarm.next);
+        for (var i = fromIdx; i < fromIdx + count; i++) {
+            var vol = Math.min(1, 0.03 * Math.pow(1.15, i));            // ≈ 0,03 → 1 en ~25 bips (~35 s), puis volume maximal
+            var gap = Math.max(0.45, 1.6 - i * 0.03);                  // le rythme s'accélère aussi
+            [0, 0.18].forEach(function (dt, j) {
+                var o = c.createOscillator(), g = c.createGain();
+                o.type = 'square'; o.frequency.value = j ? 1320 : 880;
+                g.gain.setValueAtTime(0.0001, t + dt); g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol * 0.6), t + dt + 0.02);
+                g.gain.setValueAtTime(Math.max(0.0002, vol * 0.6), t + dt + 0.13); g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.16);
+                o.connect(g); g.connect(alarm.out); o.start(t + dt); o.stop(t + dt + 0.17);
+            });
+            t += gap;
+        }
+        alarm.next = t; alarm.idx = fromIdx + count;
+    }
+    function startAlarm() {
+        if (alarm || !cfg().sound) return;
+        var c = ac(); if (!c) return;
+        var out = c.createGain(); out.gain.value = 1; out.connect(c.destination);
+        alarm = { out: out, next: 0, idx: 0, at: Date.now() };
+        scheduleBeeps(0, 240);                                         // ~4 à 5 minutes programmées d'avance
+        alarm.refill = setInterval(function () { if (alarm && AC && alarm.next - AC.currentTime < 120) scheduleBeeps(alarm.idx, 120); }, 20000);
+        var n = 0; clearInterval(titleT); titleT = setInterval(function () { document.title = (n++ % 2) ? '⚠️ PANIER NON VALIDÉ' : origTitle; }, 1000);
+        try { if (window.Notification && Notification.permission === 'granted') { var nt = new Notification('⚠️ Panier non validé — ' + APP_LABEL, { body: 'Vous avez oublié de valider ou d’annuler le panier.', tag: 'covo-cart-' + APP, requireInteraction: true }); nt.onclick = function () { try { window.focus(); } catch (e) {} stopAlarm(); nt.close(); }; alarm.notif = nt; } } catch (e) {}
+        var st = $('ca-alarm-state'); if (st) st.style.display = 'block';
+    }
+    function stopAlarm() {
+        if (!alarm) return;
+        try { alarm.out.disconnect(); } catch (e) {}
+        clearInterval(alarm.refill); try { alarm.notif && alarm.notif.close(); } catch (e) {}
+        alarm = null; clearInterval(titleT); document.title = origTitle;
+        var st = $('ca-alarm-state'); if (st) st.style.display = 'none';
+    }
+    // Toute intervention sur l'ordinateur (souris, clavier, tactile, retour sur la fenêtre) coupe l'alarme
+    ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) { document.addEventListener(t, function () { lastAny = Date.now(); if (alarm && Date.now() - alarm.at > 600) stopAlarm(); }, { capture: true, passive: true }); });
+    window.addEventListener('focus', function () { lastAny = Date.now(); if (alarm && Date.now() - alarm.at > 600) stopAlarm(); });
+    // Empêche la mise en veille de l'ordinateur / de l'écran tant qu'un panier est en cours
+    function wakeSync(hasCart) {
+        try {
+            if (hasCart && cfg().wake !== false && !wake && navigator.wakeLock && document.visibilityState === 'visible') {
+                wake = 'pending'; navigator.wakeLock.request('screen').then(function (w) { wake = w; w.addEventListener('release', function () { wake = null; }); }).catch(function () { wake = null; });
+            } else if ((!hasCart || cfg().wake === false) && wake && wake !== 'pending') { wake.release(); wake = null; }
+        } catch (e) {}
+    }
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') { wake = (wake && wake !== 'pending' && !wake.released) ? wake : null; var h = false; try { h = (getCart() || []).length > 0; } catch (e) {} wakeSync(h); } });
+    function hideRemind() { stopAlarm(); var o = $('ca-remind'); if (o) o.remove(); }
     function showRemind() {
-        if ($('ca-remind')) return;
+        if ($('ca-remind')) { startAlarm(); return; }
         var m = snap(); if (!size(m)) return;
         reminded++;
         var tot = 0, lines = Object.keys(m).map(function (k) { var l = m[k]; tot += l.qty * l.price; return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dashed rgba(0,0,0,.08)"><span>' + esc(l.name) + ' <span style="opacity:.6">×' + l.qty + '</span></span><b>' + eur(l.qty * l.price) + '</b></div>'; }).join('');
         var since = cartStart ? Math.max(1, Math.round((Date.now() - new Date(cartStart).getTime()) / 60000)) : 1;
         var o = document.createElement('div'); o.id = 'ca-remind';
-        o.style.cssText = 'position:fixed;inset:0;z-index:100050;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+        o.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
         o.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#222);max-width:440px;width:100%;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);animation:caPulse 1.2s ease-in-out 2">'
             + '<div style="background:linear-gradient(135deg,#f59e0b,#dc2626);color:#fff;padding:16px 18px;text-align:center"><div style="font-size:2rem">⚠️</div><div style="font-weight:900;font-size:1.15rem;line-height:1.25">Attention, vous avez oublié de valider le panier<br>ou d’annuler le panier.</div><div style="font-size:.8rem;opacity:.9;margin-top:4px">Panier en cours depuis ' + since + ' min · ' + size(m) + ' article(s)</div></div>'
             + '<div style="padding:12px 18px;max-height:34vh;overflow:auto;font-size:.86rem">' + lines + '<div style="display:flex;justify-content:space-between;padding-top:8px;font-size:1rem"><b>Total</b><b>' + eur(tot) + '</b></div></div>'
             + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 18px 12px">'
             + '<button type="button" data-r="ok" style="padding:12px;border:none;border-radius:10px;background:#16a34a;color:#fff;font-weight:800;cursor:pointer">✅ Valider le panier</button>'
             + '<button type="button" data-r="cancel" style="padding:12px;border:none;border-radius:10px;background:#dc2626;color:#fff;font-weight:800;cursor:pointer">🗑️ Annuler le panier</button></div>'
+            + '<div id="ca-alarm-state" style="display:none;margin:0 18px 10px;padding:6px 10px;border-radius:8px;background:rgba(220,38,38,.1);color:#dc2626;font-size:.78rem;font-weight:700;text-align:center">🔊 Alarme en cours (de plus en plus fort) — bougez la souris ou appuyez sur une touche pour la couper</div>'
             + '<div style="padding:0 18px 14px;text-align:center"><button type="button" data-r="later" style="padding:8px 14px;border:1px solid rgba(0,0,0,.15);border-radius:10px;background:transparent;color:inherit;cursor:pointer;font-size:.82rem">⏳ Client encore présent — rappeler plus tard</button></div></div>';
         if (!$('ca-style')) { var st = document.createElement('style'); st.id = 'ca-style'; st.textContent = '@keyframes caPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}@keyframes caGlow{0%,100%{box-shadow:0 0 0 0 rgba(22,163,74,.0)}50%{box-shadow:0 0 0 8px rgba(22,163,74,.45)}}.ca-glow{animation:caGlow 1s ease-in-out 4}'; document.head.appendChild(st); }
-        document.body.appendChild(o); beep();
+        document.body.appendChild(o); startAlarm();
         o.querySelector('[data-r="ok"]').onclick = function () { hideRemind(); lastAct = Date.now(); try { goValidate(); } catch (e) {} };
         o.querySelector('[data-r="cancel"]').onclick = function () { hideRemind(); clearing = 'Panier annulé après le rappel « panier oublié »'; try { emptyNow(); } catch (e) {} try { onChange(); } catch (e) {} clearing = null; toast('🗑️ Panier annulé — enregistré dans l’historique des annulations', 'info'); };
         o.querySelector('[data-r="later"]').onclick = function () { hideRemind(); lastAct = Date.now(); };
     }
     setInterval(function () {
-        var c = cfg(); if (!c.delay) return;
+        var c = cfg();
         var hasCart = false; try { hasCart = (getCart() || []).length > 0; } catch (e) {}
-        if (!hasCart) return;
-        if (Date.now() - Math.max(lastAct, lastChange) >= c.delay * 1000) showRemind();
+        wakeSync(hasCart);
+        if (!hasCart || !c.delay) return;
+        if (!$('ca-remind')) { if (Date.now() - Math.max(lastAct, lastChange) >= c.delay * 1000) showRemind(); }
+        else if (!alarm && Date.now() - lastAny >= c.delay * 1000) startAlarm();   // fenêtre restée ouverte : l'alarme repart
     }, 3000);
 
     // ── Historique des annulations ──
@@ -74961,7 +75041,10 @@ function covoQrPrint(o) {
             + '</tbody></table></div>' + (rows.length > 500 ? '<div style="font-size:.75rem;opacity:.7;margin-top:6px">500 premières lignes affichées — export CSV pour tout voir.</div>' : '')
             + '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;padding:10px 12px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04));font-size:.82rem"><b>⏰ Rappel « panier oublié »</b> après '
             + sel('delay', String(c.delay), [['0', 'désactivé'], ['30', '30 secondes'], ['60', '1 minute'], ['90', '1 min 30'], ['120', '2 minutes'], ['180', '3 minutes'], ['300', '5 minutes']]) + ' sans action'
-            + '<label style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-f="sound"' + (c.sound ? ' checked' : '') + '> 🔔 bip sonore</label>'
+            + '<label style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-f="sound"' + (c.sound ? ' checked' : '') + '> 🔊 alarme en crescendo</label>'
+            + '<label style="display:flex;align-items:center;gap:5px" title="Garde l\'écran et l\'ordinateur allumés tant qu\'un panier est en cours"><input type="checkbox" data-f="wake"' + (c.wake !== false ? ' checked' : '') + '> 💡 empêcher la mise en veille</label>'
+            + '<button type="button" data-a="test" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer">▶️ Tester l\'alarme</button>'
+            + (window.Notification ? (Notification.permission === 'granted' ? '<span style="opacity:.75">🔔 Notifications Windows : activées</span>' : '<button type="button" data-a="notif" style="padding:6px 10px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer">🔔 Activer les notifications Windows</button>') : '')
             + (adm ? '' : '<span style="opacity:.7">Vous voyez uniquement vos propres annulations.</span>') + '</div>';
     }
     function openHist() {
@@ -74972,9 +75055,11 @@ function covoQrPrint(o) {
             + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"><div><div style="font-weight:900;font-size:1.1rem">🕘 Articles annulés & paniers non validés</div><div style="font-size:.76rem;opacity:.85">Tout article scanné puis retiré, panier vidé, ou panier abandonné (Caisse Pro + COVO Pro, sur cet appareil)</div></div><button type="button" data-a="x" style="border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:10px;width:36px;height:36px;font-size:1.1rem;cursor:pointer">✕</button></div>'
             + '<div class="ca-body" style="padding:14px 18px"></div></div>';
         document.body.appendChild(o);
-        o.addEventListener('click', function (e) { if (e.target === o) o.remove(); var a = e.target.closest('[data-a]'); if (!a) return; if (a.getAttribute('data-a') === 'x') o.remove(); if (a.getAttribute('data-a') === 'csv') csv(filtered()); });
+        o.addEventListener('click', function (e) { if (e.target === o) o.remove(); var a = e.target.closest('[data-a]'); if (!a) return; if (a.getAttribute('data-a') === 'x') o.remove(); if (a.getAttribute('data-a') === 'csv') csv(filtered());
+            if (a.getAttribute('data-a') === 'test') { ac(); stopAlarm(); var c0 = cfg(); if (!c0.sound) { toast('Activez d\u2019abord « alarme en crescendo »', 'info'); return; } startAlarm(); if (alarm) alarm.at = Date.now() + 2400; toast('🔊 Test : l\u2019alarme monte… bougez la souris pour la couper', 'info'); }
+            if (a.getAttribute('data-a') === 'notif') { try { Notification.requestPermission().then(function () { render(); }); } catch (e) {} } });
         var onF = function (e) { var f = e.target.getAttribute && e.target.getAttribute('data-f'); if (!f) return;
-            if (f === 'delay' || f === 'sound') { var c = cfg(); if (f === 'delay') c.delay = +e.target.value; else c.sound = e.target.checked; saveCfg(c); toast('✅ Réglage du rappel enregistré', 'success'); return; }
+            if (f === 'delay' || f === 'sound' || f === 'wake') { var c = cfg(); if (f === 'delay') c.delay = +e.target.value; else c[f] = e.target.checked; saveCfg(c); toast('✅ Réglage du rappel enregistré', 'success'); return; }
             F[f] = e.target.value; if (f === 'q') { clearTimeout(onF.t); onF.t = setTimeout(render, 250); } else render(); };
         o.addEventListener('change', onF); o.addEventListener('input', function (e) { if (e.target.getAttribute('data-f') === 'q') onF(e); });
         render();
@@ -74990,5 +75075,436 @@ function covoQrPrint(o) {
         setInterval(function () { try { onChange(); } catch (e) {} }, 700); // filet : toute modification du panier, quel que soit le chemin
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ══ Codes-barres créés (internes COVO « 21… », saisis à la main, codes magasin « 2… ») ══
+   - Retrouver à tout moment les articles dont le code-barres a été CRÉÉ (et non scanné sur un emballage fournisseur).
+   - Saisie au clavier d'un code-barres dans une fiche article (lente, touche par touche) → l'article est marqué
+     « code saisi à la main » ; un code lu par la douchette (rafale de caractères) est un vrai code fournisseur. */
+(function () {
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function P() { try { return products || []; } catch (e) { return []; } }
+    function adm() { try { return !!isAdmin; } catch (e) { return false; } }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function origin(p) {
+        if (!p || !p.barcode) return null;
+        var b = String(p.barcode).trim(); if (!b) return null;
+        if (p.barcodeInternal && /^21\d{11}$/.test(b)) return 'internal';
+        if (p.barcodeManual) return 'manual';
+        if (/^2\d{12}$/.test(b)) return 'store';
+        return null;
+    }
+    var OR = { internal: ['Interne COVO', '#e67e22', 'Créé par COVO Pro (impression « sans code-barre »)'], manual: ['Saisi à la main', '#2563eb', 'Tapé au clavier dans la fiche article'], store: ['Code magasin', '#0f766e', 'Code « 2… » réservé aux magasins (pas un code fournisseur)'] };
+    window._covoBcOrigin = origin;
+    window._covoBcCreatedList = function () { return P().filter(function (p) { return p && origin(p) && (adm() || p.active !== false); }); };
+
+    // ── Détection saisie manuelle / douchette dans les champs code-barres des fiches ──
+    var IDS = ['edit-barcode', 'new-barcode', 'pem-barcode'], st = {}, seen = {};   // seen[valeur] = 'manual' | 'scan'
+    document.addEventListener('keydown', function (e) {
+        var t = e.target; if (!t || IDS.indexOf(t.id) === -1) return;
+        var s = st[t.id] = st[t.id] || { times: [] };
+        if (e.key && e.key.length === 1) { s.times.push(Date.now()); if (s.times.length > 40) s.times.shift(); }
+        if (e.key === 'Enter') classify(t);
+    }, true);
+    document.addEventListener('paste', function (e) { var t = e.target; if (t && IDS.indexOf(t.id) !== -1) { st[t.id] = { times: [], paste: true }; setTimeout(function () { classify(t); }, 0); } }, true);
+    document.addEventListener('change', function (e) { var t = e.target; if (t && IDS.indexOf(t.id) !== -1) classify(t); }, true);
+    function classify(t) {
+        var v = String(t.value || '').trim(); if (v.length < 4) return;
+        var s = st[t.id] || { times: [] }, n = Math.min(v.length, s.times.length), src = null;
+        if (s.paste) src = 'manual';
+        else if (n >= 4) {
+            var ts = s.times.slice(-n), span = (ts[ts.length - 1] - ts[0]) / Math.max(1, ts.length - 1);
+            src = span < 35 ? 'scan' : 'manual';                                       // douchette : < 35 ms entre deux caractères
+        }
+        if (src) seen[v] = { src: src, at: Date.now() };
+        st[t.id] = { times: [] };
+    }
+    IDS.forEach(function (id) { document.addEventListener('blur', function (e) { if (e.target && e.target.id === id) classify(e.target); }, true); });
+    // Les fiches enregistrées : on compare les codes-barres avant / après pour marquer l'origine
+    var snap = null;
+    function scanChanges() {
+        var list = P(); if (!list.length) return;
+        var cur = {}; list.forEach(function (p) { if (p && p.id != null) cur[String(p.id)] = String(p.barcode || '').trim(); });
+        if (!snap) { snap = cur; return; }
+        var dirty = 0, u = null; try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {}
+        list.forEach(function (p) {
+            if (!p || p.id == null) return; var k = String(p.id), v = cur[k];
+            if (snap[k] === v) return;
+            var info = seen[v];
+            if (v && info && Date.now() - info.at < 30 * 60000) {
+                if (info.src === 'manual') { if (!p.barcodeManual) { p.barcodeManual = true; p.barcodeManualAt = new Date().toISOString(); p.barcodeManualBy = u && (u.username || u.name) || ''; if (snap[k]) p.barcodeOld = p.barcodeOld || snap[k]; dirty++; } }
+                else if (p.barcodeManual || p.barcodeInternal) { delete p.barcodeManual; delete p.barcodeManualAt; delete p.barcodeManualBy; if (p.barcodeInternal && !/^21\d{11}$/.test(v)) delete p.barcodeInternal; dirty++; }
+            } else if (!v && (p.barcodeManual || p.barcodeInternal)) { delete p.barcodeManual; delete p.barcodeInternal; dirty++; }
+        });
+        snap = cur;
+        if (dirty) {
+            try { if (typeof window.saveAll === 'function') window.saveAll(); else localStorage.setItem('covo_products', JSON.stringify(list)); } catch (e) { try { localStorage.setItem('covo_products', JSON.stringify(list)); } catch (x) {} }
+            badge();
+        }
+    }
+    setInterval(scanChanges, 1500);
+
+    function badge() { var b = $('bcm-count'); if (b) b.textContent = window._covoBcCreatedList().length; }
+    setInterval(badge, 4000);
+
+    // ── Fenêtre « Codes-barres créés » ──
+    var F = { q: '', cat: '', org: '' };
+    function rows() {
+        var q = F.q.trim().toLowerCase();
+        return window._covoBcCreatedList().filter(function (p) {
+            if (F.cat && (p.category || 'Sans catégorie') !== F.cat) return false;
+            if (F.org && origin(p) !== F.org) return false;
+            if (q && (String(p.name || '') + ' ' + p.barcode + ' ' + (p.barcodeOld || '') + ' ' + (p.category || '')).toLowerCase().indexOf(q) === -1) return false;
+            return true;
+        }).sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || ''), 'fr'); });
+    }
+    function img(p) { var s = p.img || p.image || ''; try { if (!s && typeof window._covoImgLink === 'function') s = window._covoImgLink(p) || ''; } catch (e) {} return s && /^(data:image\/|https?:\/\/)/.test(String(s)) ? String(s) : ''; }
+    function render() {
+        var o = $('bcm-ov'); if (!o) return;
+        var all = window._covoBcCreatedList(), r = rows(), cnt = { internal: 0, manual: 0, store: 0 };
+        all.forEach(function (p) { cnt[origin(p)]++; });
+        var cats = {}; all.forEach(function (p) { cats[p.category || 'Sans catégorie'] = 1; });
+        var sel = 'padding:7px 9px;border-radius:8px;border:1.5px solid var(--border-color,#ddd);background:var(--input-bg,#fff);color:var(--text-main,#222);font-size:.82rem';
+        o.querySelector('.bcm-body').innerHTML =
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
+            + ['', 'internal', 'manual', 'store'].map(function (k) { var on = F.org === k, lab = k ? OR[k][0] : 'Tous', n = k ? cnt[k] : all.length, col = k ? OR[k][1] : '#334155'; return '<button type="button" data-org="' + k + '" title="' + (k ? esc(OR[k][2]) : '') + '" style="padding:6px 12px;border-radius:999px;border:1.5px solid ' + col + ';background:' + (on ? col : 'transparent') + ';color:' + (on ? '#fff' : col) + ';font-weight:800;font-size:.8rem;cursor:pointer">' + lab + ' · ' + n + '</button>'; }).join('')
+            + '</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">'
+            + '<input type="search" data-f="q" value="' + esc(F.q) + '" placeholder="🔎 Nom, code-barres, ancien code…" style="flex:1;min-width:180px;' + sel + '">'
+            + '<select data-f="cat" style="' + sel + '"><option value="">Toutes catégories</option>' + Object.keys(cats).sort().map(function (c) { return '<option' + (F.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>'
+            + '<button type="button" data-a="print" style="padding:7px 12px;border:none;border-radius:8px;background:#e67e22;color:#fff;font-weight:800;cursor:pointer">🖨️ Imprimer les étiquettes (' + r.length + ')</button>'
+            + '<button type="button" data-a="csv" style="padding:7px 12px;border:none;border-radius:8px;background:#0f766e;color:#fff;font-weight:800;cursor:pointer">⬇️ CSV</button></div>'
+            + (r.length ? '<div style="display:grid;gap:6px">' + r.map(function (p) {
+                var o2 = OR[origin(p)], im = img(p), s = +p.stock || 0;
+                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--bg-card-2,rgba(0,0,0,.035));border-left:4px solid ' + o2[1] + '">'
+                    + (im ? '<img src="' + esc(im) + '" style="width:42px;height:42px;object-fit:cover;border-radius:8px;flex-shrink:0" onerror="this.style.visibility=\'hidden\'">' : '<div style="width:42px;height:42px;border-radius:8px;background:rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center;flex-shrink:0">📦</div>')
+                    + '<div style="flex:1;min-width:0"><div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(p.name) + (p.active === false ? ' <span style="font-size:.7rem;opacity:.6">(masqué)</span>' : '') + '</div>'
+                    + '<div style="font-size:.74rem;opacity:.8">' + esc(p.category || 'Sans catégorie') + ' · stock <b style="color:' + (s < 1 ? '#dc2626' : 'inherit') + '">' + s + '</b>' + (p.barcodeOld ? ' · ancien code <span style="font-family:monospace">' + esc(p.barcodeOld) + '</span>' : '') + (p.barcodeManualAt ? ' · saisi le ' + new Date(p.barcodeManualAt).toLocaleDateString('fr-FR') + (p.barcodeManualBy ? ' par ' + esc(p.barcodeManualBy) : '') : '') + '</div></div>'
+                    + '<div style="text-align:right;flex-shrink:0"><div style="font-family:monospace;font-weight:800;letter-spacing:.5px;user-select:all">' + esc(p.barcode) + '</div><span style="display:inline-block;margin-top:2px;padding:1px 8px;border-radius:999px;background:' + o2[1] + '22;color:' + o2[1] + ';font-size:.68rem;font-weight:800" title="' + esc(o2[2]) + '">' + o2[0] + '</span></div>'
+                    + '<button type="button" data-edit="' + esc(p.id) + '" title="Ouvrir la fiche (remplacer par le vrai code-barres fournisseur)" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:transparent;color:inherit;cursor:pointer;flex-shrink:0">✏️</button></div>';
+            }).join('') + '</div>' : '<div style="padding:30px;text-align:center;opacity:.7">Aucun article avec un code-barres créé' + (F.q || F.cat || F.org ? ' pour ce filtre' : '') + '.</div>')
+            + '<div style="margin-top:10px;font-size:.74rem;opacity:.75">💡 Un code tapé au clavier dans une fiche article est noté « saisi à la main » ; un code lu à la douchette est considéré comme un vrai code fournisseur (l’article sort de cette liste).</div>';
+    }
+    function csv(r) {
+        var L = ['Article;Catégorie;Code-barres;Origine;Ancien code;Stock;Saisi le;Par'].concat(r.map(function (p) { return [p.name, p.category || '', p.barcode, OR[origin(p)][0], p.barcodeOld || '', p.stock || 0, p.barcodeManualAt ? new Date(p.barcodeManualAt).toLocaleDateString('fr-FR') : '', p.barcodeManualBy || ''].map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(';'); }));
+        var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + L.join('\r\n')], { type: 'text/csv;charset=utf-8' })); a.download = 'codes_barres_crees.csv'; document.body.appendChild(a); a.click(); a.remove();
+    }
+    window.openCreatedBarcodes = function () {
+        var o = $('bcm-ov'); if (o) o.remove();
+        o = document.createElement('div'); o.id = 'bcm-ov';
+        o.style.cssText = 'position:fixed;inset:0;z-index:8900;background:rgba(0,0,0,.7);display:flex;justify-content:center;align-items:flex-start;padding:30px 12px;overflow:auto';
+        o.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#222);width:100%;max-width:820px;border-radius:16px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45)">'
+            + '<div style="display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#1d4ed8,#e67e22);color:#fff"><div style="flex:1"><div style="font-weight:900;font-size:1.08rem">🔖 Articles avec un code-barres créé</div><div style="font-size:.76rem;opacity:.9">Codes internes COVO, codes saisis à la main et codes magasin — à remplacer par le code fournisseur dès que possible</div></div><button type="button" data-a="x" style="border:none;background:rgba(255,255,255,.22);color:#fff;border-radius:10px;width:36px;height:36px;font-size:1.1rem;cursor:pointer">✕</button></div>'
+            + '<div class="bcm-body" style="padding:14px 18px"></div></div>';
+        document.body.appendChild(o);
+        o.addEventListener('click', function (e) {
+            if (e.target === o) { o.remove(); return; }
+            var b = e.target.closest('[data-a],[data-org],[data-edit]'); if (!b) return;
+            if (b.hasAttribute('data-org')) { F.org = b.getAttribute('data-org'); render(); return; }
+            if (b.hasAttribute('data-edit')) { var id = b.getAttribute('data-edit'), p = P().find(function (x) { return String(x.id) === id; }); o.remove(); try { if (adm() && typeof window.openProductEditModal === 'function') window.openProductEditModal(p ? p.id : id); else openCashierEditModal(p ? p.id : id); } catch (er) { toast('Impossible d’ouvrir la fiche', 'error'); } return; }
+            var a = b.getAttribute('data-a');
+            if (a === 'x') o.remove();
+            if (a === 'csv') csv(rows());
+            if (a === 'print') { var r = rows(); if (!r.length) return; try { _nbcShow(_nbcHtml(r, F.q, F.cat || '__all__')); } catch (er) { toast('Impression indisponible', 'error'); } }
+        });
+        o.addEventListener('input', function (e) { var f = e.target.getAttribute('data-f'); if (f === 'q') { F.q = e.target.value; clearTimeout(o.t); o.t = setTimeout(function () { render(); var i = o.querySelector('[data-f="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250); } });
+        o.addEventListener('change', function (e) { var f = e.target.getAttribute('data-f'); if (f === 'cat') { F.cat = e.target.value; render(); } });
+        render();
+    };
+})();
+</script>
+<script>
+/* ══ Notifications (accueil COVO Pro) : dictée vocale, correcteur, mise en forme (gras, souligné, italique, couleur)
+      et assistant de lecture vocale des messages reçus ══
+   - Le message reste enregistré en texte simple (n.message, lu tel quel par les autres applis) ;
+     la version mise en forme est enregistrée à part (n.messageHtml), nettoyée avant affichage. */
+(function () {
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    var COLORS = [['#e74c3c', 'Rouge'], ['#f39c12', 'Orange'], ['#f1c40f', 'Jaune'], ['#2ecc71', 'Vert'], ['#3498db', 'Bleu'], ['#9b59b6', 'Violet']];
+
+    /* ── Nettoyage du HTML (seuls gras / italique / souligné / couleur / retours à la ligne sont gardés) ── */
+    function safeColor(c) { c = String(c || '').trim(); return /^#[0-9a-f]{3,8}$/i.test(c) || /^rgba?\(\s*[\d.\s,%]+\)$/i.test(c) ? c : ''; }
+    function clean(node, out) {
+        Array.prototype.forEach.call(node.childNodes, function (n) {
+            if (n.nodeType === 3) { out.appendChild(document.createTextNode(n.data)); return; }
+            if (n.nodeType !== 1) return;
+            var tag = n.tagName, el = null;
+            if (!/^(SPAN|FONT)$/.test(tag) && n.getAttribute && /(?:^|;)\s*color\s*:/i.test(n.getAttribute('style') || '')) {
+                var c0 = safeColor(((n.getAttribute('style') || '').match(/(?:^|;)\s*color\s*:\s*([^;]+)/i) || [])[1]);
+                if (c0) { var sp0 = document.createElement('span'); sp0.style.color = c0; out.appendChild(sp0); var cl = n.cloneNode(true); cl.style.removeProperty('color'); var tmp = document.createElement('div'); tmp.appendChild(cl); clean(tmp, sp0); return; }
+            }
+            if (tag === 'BR') { out.appendChild(document.createElement('br')); return; }
+            if (/^(B|STRONG)$/.test(tag)) el = document.createElement('b');
+            else if (/^(I|EM)$/.test(tag)) el = document.createElement('i');
+            else if (tag === 'U') el = document.createElement('u');
+            else if (/^(DIV|P)$/.test(tag)) el = document.createElement('div');
+            else if (/^(SPAN|FONT)$/.test(tag)) {
+                var st = n.getAttribute('style') || '', col = safeColor(n.getAttribute('color') || ((st.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i) || [])[1]));
+                var bold = /font-weight\s*:\s*(bold|[6-9]00)/i.test(st), und = /text-decoration[^;]*underline/i.test(st), ita = /font-style\s*:\s*italic/i.test(st);
+                var wrap = out;
+                if (col) { var s = document.createElement('span'); s.style.color = col; wrap.appendChild(s); wrap = s; }
+                if (bold) { var b = document.createElement('b'); wrap.appendChild(b); wrap = b; }
+                if (und) { var u = document.createElement('u'); wrap.appendChild(u); wrap = u; }
+                if (ita) { var i2 = document.createElement('i'); wrap.appendChild(i2); wrap = i2; }
+                clean(n, wrap); return;
+            }
+            else if (/^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG|SVG|VIDEO|AUDIO|LINK|META)$/.test(tag)) return;
+            if (el) { out.appendChild(el); clean(n, el); } else clean(n, out);
+        });
+        return out;
+    }
+    function safe(html) {
+        var t = document.createElement('template'); t.innerHTML = String(html || '');
+        var box = document.createElement('div'); clean(t.content, box);
+        return box.innerHTML;
+    }
+    window._awFmtSafe = safe;
+    function plainOf(el) {
+        var s = '';
+        (function walk(n, first) {
+            Array.prototype.forEach.call(n.childNodes, function (c, i) {
+                if (c.nodeType === 3) s += c.data;
+                else if (c.nodeType === 1) {
+                    if (c.tagName === 'BR') { s += '\n'; return; }
+                    var blk = /^(DIV|P)$/.test(c.tagName);
+                    if (blk && s && !/\n$/.test(s)) s += '\n';
+                    walk(c);
+                }
+            });
+        })(el);
+        return s.replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    /* ── Éditeur : remplace la zone « Message » du formulaire ── */
+    var store = { html: '' }, lastTarget = 'ed', savedRange = null;
+    window._awFmtTake = function () { var ed = $('aw-fmt-ed'); var h = ed ? safe(ed.innerHTML) : safe(store.html); store.html = ''; var hasFmt = /<(b|i|u|span)[ >]/i.test(h); return hasFmt ? h : ''; };
+    function sync() {
+        var ed = $('aw-fmt-ed'), ta = $('aw-cmp-msg'); if (!ed || !ta) return;
+        store.html = ed.innerHTML;
+        ta.value = plainOf(ed);
+        try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+    }
+    function css() {
+        if ($('aw-fmt-css')) return;
+        var s = document.createElement('style'); s.id = 'aw-fmt-css';
+        s.textContent = '.aw-fmt-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:2px 0 6px}'
+            + '.aw-fmt-bar button{min-width:30px;height:30px;padding:0 8px;border-radius:7px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.07);color:#fff;font-size:.8rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px}'
+            + '.aw-fmt-bar button:hover{background:rgba(255,255,255,.16)}.aw-fmt-bar .sep{width:1px;height:20px;background:rgba(255,255,255,.18);margin:0 3px}'
+            + '.aw-fmt-bar .sw{min-width:20px;width:20px;height:20px;padding:0;border-radius:50%;border:2px solid rgba(255,255,255,.55)}'
+            + '.aw-fmt-bar button.rec{background:#dc2626;border-color:#dc2626;animation:awFmtRec 1s ease-in-out infinite}@keyframes awFmtRec{50%{box-shadow:0 0 0 5px rgba(220,38,38,.35)}}'
+            + '#aw-fmt-ed{min-height:78px;max-height:260px;overflow:auto;padding:9px 11px;border-radius:9px;border:1.5px solid rgba(255,255,255,.18);background:rgba(0,0,0,.25);color:#fff;font-size:.86rem;line-height:1.55;outline:none;white-space:pre-wrap;word-break:break-word}'
+            + '#aw-fmt-ed:focus{border-color:#fff}#aw-fmt-ed:empty:before{content:attr(data-ph);opacity:.45}'
+            + '.aw-fmt-live{font-size:.74rem;color:#fca5a5;min-height:0;margin-top:4px;font-style:italic}'
+            + '.aw-fmt-fix{margin-top:6px;padding:8px 10px;border-radius:9px;background:rgba(46,204,113,.12);border:1px solid rgba(46,204,113,.35);font-size:.76rem;color:#d1fae5}'
+            + '.aw-fmt-fix s{opacity:.7;color:#fca5a5}.aw-fmt-fix b{color:#86efac}.aw-fmt-fix button{margin-left:6px;padding:2px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.3);background:transparent;color:#fff;cursor:pointer;font-size:.72rem}'
+            + '.aw-tts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:7px}.aw-tts button,.aw-tts select{height:28px;padding:0 10px;border-radius:7px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#fff;font-size:.76rem;font-weight:700;cursor:pointer}'
+            + '.aw-tts select option{color:#111}.aw-tts button.on{background:#2563eb;border-color:#2563eb}.aw-nt-msg u{text-decoration-thickness:2px}';
+        document.head.appendChild(s);
+    }
+    function mount() {
+        var ta = $('aw-cmp-msg'); if (!ta || ta.getAttribute('data-fmt') === '1') return;
+        css(); ta.setAttribute('data-fmt', '1'); ta.style.display = 'none';
+        var bar = document.createElement('div'); bar.className = 'aw-fmt-bar'; bar.id = 'aw-fmt-bar';
+        bar.innerHTML = '<button type="button" data-fx="mic" title="Dicter le texte (micro)">🎤 Dicter</button><span class="sep"></span>'
+            + '<button type="button" data-fx="bold" title="Gras (Ctrl+B)"><b>G</b></button>'
+            + '<button type="button" data-fx="underline" title="Souligné (Ctrl+U)"><u>S</u></button>'
+            + '<button type="button" data-fx="italic" title="Italique (Ctrl+I)"><i>I</i></button><span class="sep"></span>'
+            + COLORS.map(function (c) { return '<button type="button" class="sw" data-fx="color" data-c="' + c[0] + '" title="Texte ' + c[1].toLowerCase() + '" style="background:' + c[0] + '"></button>'; }).join('')
+            + '<button type="button" data-fx="clear" title="Effacer la mise en forme du texte sélectionné">🧹</button><span class="sep"></span>'
+            + '<button type="button" data-fx="fix" title="Corriger l’orthographe, la grammaire et la ponctuation">✨ Corriger</button>'
+            + '<button type="button" data-fx="read" title="Écouter le message">🔊</button>';
+        var ed = document.createElement('div'); ed.id = 'aw-fmt-ed'; ed.contentEditable = 'true'; ed.setAttribute('data-ph', 'Votre message… (sélectionnez un mot pour le mettre en gras, souligné ou en couleur)'); ed.setAttribute('role', 'textbox'); ed.setAttribute('aria-multiline', 'true');
+        ed.innerHTML = store.html ? safe(store.html) : (ta.value ? ta.value.split('\n').map(function (l) { var d = document.createElement('div'); d.textContent = l; return l ? d.outerHTML : '<div><br></div>'; }).join('') : '');
+        var live = document.createElement('div'); live.className = 'aw-fmt-live'; live.id = 'aw-fmt-live';
+        ta.parentNode.insertBefore(bar, ta); ta.parentNode.insertBefore(ed, ta); ta.parentNode.insertBefore(live, ta.nextSibling);
+        ed.addEventListener('input', sync);
+        ed.addEventListener('focus', function () { lastTarget = 'ed'; });
+        ed.addEventListener('keyup', saveSel); ed.addEventListener('mouseup', saveSel);
+        ed.addEventListener('paste', function (e) { e.preventDefault(); var t = (e.clipboardData || window.clipboardData).getData('text/plain'); document.execCommand('insertText', false, t); });
+        var subj = $('aw-cmp-subj'); if (subj) subj.addEventListener('focus', function () { lastTarget = 'subj'; });
+        bar.addEventListener('mousedown', function (e) { if (e.target.closest('button')) e.preventDefault(); });   // garde la sélection
+        sync();
+    }
+    function saveSel() { var s = window.getSelection(), ed = $('aw-fmt-ed'); if (s && s.rangeCount && ed && ed.contains(s.anchorNode)) savedRange = s.getRangeAt(0).cloneRange(); }
+    function restoreSel() { var ed = $('aw-fmt-ed'); if (!ed) return; ed.focus(); var s = window.getSelection(); if (savedRange && ed.contains(savedRange.startContainer)) { s.removeAllRanges(); s.addRange(savedRange); } else { var r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); s.removeAllRanges(); s.addRange(r); } }
+    function hasSel() { var s = window.getSelection(), ed = $('aw-fmt-ed'); return s && s.rangeCount && !s.isCollapsed && ed && ed.contains(s.anchorNode); }
+    new MutationObserver(function () { if ($('aw-cmp-msg') && !$('aw-fmt-ed')) mount(); }).observe(document.documentElement, { childList: true, subtree: true });
+    document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-aw="cmp-cancel"]'); if (b) { store.html = ''; stopMic(); } if (e.target.closest && e.target.closest('[data-aw="cmp-send"]')) stopMic(); }, true);
+
+    document.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('#aw-fmt-bar [data-fx]'); if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        var fx = b.getAttribute('data-fx');
+        if (fx === 'mic') { toggleMic(b); return; }
+        if (fx === 'fix') { fixText(b); return; }
+        if (fx === 'read') { var ed0 = $('aw-fmt-ed'); speak(plainOf(ed0) ? 'Votre message. ' + plainOf(ed0) : '', b); return; }
+        restoreSel();
+        if (!hasSel()) { toast('Sélectionnez d’abord le texte à mettre en forme', 'info'); return; }
+        try { document.execCommand('styleWithCSS', false, false); } catch (x) {}
+        if (fx === 'bold' || fx === 'underline' || fx === 'italic') document.execCommand(fx);
+        else if (fx === 'color') { try { document.execCommand('styleWithCSS', false, true); } catch (x) {} document.execCommand('foreColor', false, b.getAttribute('data-c')); }
+        else if (fx === 'clear') document.execCommand('removeFormat');
+        saveSel(); sync();
+    }, true);
+
+    /* ── Dictée vocale ── */
+    var rec = null, recOn = false;
+    function stopMic() { recOn = false; try { rec && rec.stop(); } catch (e) {} var b = document.querySelector('#aw-fmt-bar [data-fx="mic"]'); if (b) { b.classList.remove('rec'); b.innerHTML = '🎤 Dicter'; } var l = $('aw-fmt-live'); if (l) l.textContent = ''; }
+    function punct(t) {
+        return (' ' + t + ' ')
+            .replace(/\s(point d'interrogation|point d’interrogation)\s/gi, '? ')
+            .replace(/\s(point d'exclamation|point d’exclamation)\s/gi, '! ')
+            .replace(/\s(point à la ligne|point a la ligne)\s/gi, '.\n')
+            .replace(/\s(à la ligne|a la ligne|nouvelle ligne|retour à la ligne)\s/gi, '\n')
+            .replace(/\s(deux points|deux-points)\s/gi, ' : ')
+            .replace(/\s(point virgule|point-virgule)\s/gi, ' ; ')
+            .replace(/\svirgule\s/gi, ', ')
+            .replace(/\spoint final\s/gi, '. ')
+            .replace(/\s(ouvrez|ouvrir) la parenthèse\s/gi, ' (').replace(/\s(fermez|fermer) la parenthèse\s/gi, ') ')
+            .replace(/\s+([,.])/g, '$1').replace(/ +\n/g, '\n').replace(/\n +/g, '\n').replace(/^\s+|\s+$/g, '');
+    }
+    function insertDictated(text) {
+        if (!text) return;
+        if (lastTarget === 'subj' && $('aw-cmp-subj')) { var s = $('aw-cmp-subj'); var v = s.value; s.value = (v && !/\s$/.test(v) ? v + ' ' : v) + text.replace(/\n/g, ' '); s.dispatchEvent(new Event('input', { bubbles: true })); return; }
+        var ed = $('aw-fmt-ed'); if (!ed) return;
+        restoreSel();
+        var before = plainOf(ed);
+        var cap = !before || /[.!?]\s*$/.test(before) || /\n$/.test(before);
+        if (cap) text = text.charAt(0).toUpperCase() + text.slice(1);
+        text = text.replace(/([.!?]\s+|\n)([a-zàâçéèêëîïôûùüÿñæœ])/g, function (m, a, c) { return a + c.toUpperCase(); });
+        var need = before && !/[\s(]$/.test(before) ? ' ' : '';
+        text.split('\n').forEach(function (part, i) { if (i) document.execCommand('insertLineBreak'); var t = (i === 0 ? need : '') + part; if (t) document.execCommand('insertText', false, t); });
+        saveSel(); sync();
+    }
+    function toggleMic(btn) {
+        if (recOn) { stopMic(); return; }
+        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) { toast('🎤 La dictée n’est pas disponible dans ce navigateur (utilisez Chrome ou Edge)', 'error'); return; }
+        rec = new SR(); rec.lang = 'fr-FR'; rec.continuous = true; rec.interimResults = true;
+        rec.onresult = function (ev) {
+            var interim = '';
+            for (var i = ev.resultIndex; i < ev.results.length; i++) {
+                var r = ev.results[i];
+                if (r.isFinal) insertDictated(punct(r[0].transcript)); else interim += r[0].transcript;
+            }
+            var l = $('aw-fmt-live'); if (l) l.textContent = interim ? '🎙️ ' + interim + '…' : '🎙️ Je vous écoute… (dites « virgule », « point », « à la ligne »)';
+        };
+        rec.onerror = function (ev) { if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') toast('🎤 Micro refusé : autorisez le micro pour ce site (icône 🔒 à gauche de l’adresse)', 'error'); else if (ev.error !== 'no-speech' && ev.error !== 'aborted') toast('🎤 Dictée interrompue (' + ev.error + ')', 'info'); };
+        rec.onend = function () { if (recOn) { try { rec.start(); } catch (e) { stopMic(); } } };
+        try { rec.start(); recOn = true; btn.classList.add('rec'); btn.innerHTML = '⏹️ Stop'; var l = $('aw-fmt-live'); if (l) l.textContent = '🎙️ Je vous écoute… (dites « virgule », « point », « à la ligne »)'; if (lastTarget !== 'subj') { var ed = $('aw-fmt-ed'); if (ed && !savedRange) { ed.focus(); var r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); saveSel(); } } }
+        catch (e) { toast('🎤 Impossible de démarrer la dictée', 'error'); }
+    }
+
+    /* ── Correcteur : LanguageTool (orthographe / grammaire) + typographie française, mise en forme conservée ── */
+    function segments(ed) {
+        var segs = [], txt = '';
+        (function walk(n) {
+            Array.prototype.forEach.call(n.childNodes, function (c) {
+                if (c.nodeType === 3) { segs.push({ node: c, start: txt.length }); txt += c.data; }
+                else if (c.nodeType === 1) { if (c.tagName === 'BR') { txt += '\n'; return; } if (/^(DIV|P)$/.test(c.tagName) && txt && !/\n$/.test(txt)) txt += '\n'; walk(c); }
+            });
+        })(ed);
+        return { segs: segs, text: txt };
+    }
+    function applyFixes(ed, fixes) {
+        var S = segments(ed), done = [];
+        fixes.sort(function (a, b) { return b.off - a.off; }).forEach(function (f) {
+            var seg = null; for (var i = S.segs.length - 1; i >= 0; i--) { if (S.segs[i].start <= f.off) { seg = S.segs[i]; break; } }
+            if (!seg) return; var lo = f.off - seg.start; if (lo + f.len > seg.node.data.length) return;
+            var from = seg.node.data.substr(lo, f.len); if (from === f.rep) return;
+            seg.node.data = seg.node.data.slice(0, lo) + f.rep + seg.node.data.slice(lo + f.len);
+            done.unshift({ from: from, to: f.rep, why: f.why });
+        });
+        return done;
+    }
+    function localFixes(text) {
+        var out = [], re;
+        var add = function (rx, fn, why) { rx.lastIndex = 0; var m; while ((m = rx.exec(text))) { var r = fn(m); if (r != null && r !== m[0]) out.push({ off: m.index, len: m[0].length, rep: r, why: why }); } };
+        add(/ {2,}/g, function () { return ' '; }, 'espace en double');
+        add(/ +([,.])/g, function (m) { return m[1]; }, 'espace avant la ponctuation');
+        add(/([,;:!?])(?=[A-Za-zÀ-ÿ])/g, function (m) { return m[1] === ',' ? ', ' : m[1]; }, 'espace après la virgule');
+        add(/(^|[.!?]\s+|\n)([a-zàâçéèêëîïôûùüÿ])/g, function (m) { return m[1] + m[2].toUpperCase(); }, 'majuscule en début de phrase');
+        add(/\b(\d+)[.,](\d{1,2}) ?(€|euros?)\b/gi, function (m) { return m[1] + ',' + (m[2].length === 1 ? m[2] + '0' : m[2]) + ' €'; }, 'montant en euros');
+        return out;
+    }
+    function fixText(btn) {
+        var ed = $('aw-fmt-ed'); if (!ed) return;
+        var before = ed.innerHTML, S = segments(ed); if (!S.text.trim()) { toast('Écrivez ou dictez d’abord un message', 'info'); return; }
+        btn.disabled = true; btn.innerHTML = '⏳ Correction…';
+        var finish = function (remote, offline) {
+            var fixes = (remote || []).slice();
+            var taken = fixes.map(function (f) { return [f.off, f.off + f.len]; });
+            localFixes(S.text).forEach(function (f) { if (!taken.some(function (t) { return f.off < t[1] && f.off + f.len > t[0]; })) fixes.push(f); });
+            var done = applyFixes(ed, fixes); sync();
+            btn.disabled = false; btn.innerHTML = '✨ Corriger';
+            var old = $('aw-fmt-fixbox'); if (old) old.remove();
+            var box = document.createElement('div'); box.className = 'aw-fmt-fix'; box.id = 'aw-fmt-fixbox';
+            box.innerHTML = (done.length ? '✅ <b>' + done.length + ' correction' + (done.length > 1 ? 's' : '') + '</b> : ' + done.slice(0, 12).map(function (d) { return '<s>' + escH(d.from.replace(/ /g, '·')) + '</s> → <b>' + escH(d.to.replace(/ /g, '·') || '∅') + '</b>'; }).join(' · ') + (done.length > 12 ? ' …' : '') : '✅ Aucune faute trouvée.')
+                + (offline ? '<div style="opacity:.8;margin-top:3px">ℹ️ Correcteur en ligne injoignable : seules la ponctuation et les majuscules ont été vérifiées.</div>' : '')
+                + (done.length ? '<button type="button" data-undo="1">↩️ Annuler</button>' : '') + '<button type="button" data-close="1">OK</button>';
+            box.addEventListener('mousedown', function (e) { e.preventDefault(); });
+            box.addEventListener('click', function (e) { if (e.target.getAttribute('data-undo')) { ed.innerHTML = before; sync(); box.remove(); toast('↩️ Corrections annulées', 'info'); } if (e.target.getAttribute('data-close')) box.remove(); });
+            var live = $('aw-fmt-live'); (live || ed).parentNode.insertBefore(box, (live || ed).nextSibling);
+        };
+        var ctl = window.AbortController ? new AbortController() : null, to = setTimeout(function () { try { ctl && ctl.abort(); } catch (e) {} }, 9000);
+        fetch('https://api.languagetool.org/v2/check', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'language=fr&text=' + encodeURIComponent(S.text), signal: ctl ? ctl.signal : undefined })
+            .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+            .then(function (j) {
+                clearTimeout(to);
+                var fx = (j.matches || []).filter(function (m) { return m.replacements && m.replacements.length; }).map(function (m) { return { off: m.offset, len: m.length, rep: m.replacements[0].value, why: m.shortMessage || m.message || '' }; });
+                finish(fx, false);
+            })
+            .catch(function () { clearTimeout(to); finish([], true); });
+    }
+    function escH(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+    /* ── Assistant de lecture vocale ── */
+    var speaking = null;
+    function voice() {
+        var vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
+        var fr = vs.filter(function (v) { return /^fr/i.test(v.lang); });
+        return fr.find(function (v) { return /google|natural|neural|online/i.test(v.name); }) || fr.find(function (v) { return /fr-FR/i.test(v.lang); }) || fr[0] || null;
+    }
+    function rate() { try { return +(localStorage.getItem('covo_tts_rate') || 1) || 1; } catch (e) { return 1; } }
+    function stopSpeak() { try { speechSynthesis.cancel(); } catch (e) {} if (speaking && speaking.btn) { speaking.btn.classList.remove('on'); speaking.btn.innerHTML = speaking.label; } speaking = null; }
+    function speak(text, btn) {
+        if (!window.speechSynthesis) { toast('🔊 Lecture vocale indisponible dans ce navigateur', 'error'); return; }
+        if (speaking && speaking.btn === btn) { if (speechSynthesis.paused) { speechSynthesis.resume(); btn.innerHTML = '⏸️ Pause'; } else { speechSynthesis.pause(); btn.innerHTML = '▶️ Reprendre'; } return; }
+        stopSpeak(); if (!text) { toast('Rien à lire', 'info'); return; }
+        var parts = String(text).replace(/\s*\n+\s*/g, '. ').match(/[^.!?]+[.!?]*/g) || [text];
+        speaking = { btn: btn, label: btn.innerHTML };
+        if (btn.closest('.aw-tts')) { btn.classList.add('on'); btn.innerHTML = '⏸️ Pause'; }
+        parts.forEach(function (p, i) {
+            var u = new SpeechSynthesisUtterance(p.trim()); u.lang = 'fr-FR'; var v = voice(); if (v) u.voice = v; u.rate = rate();
+            if (i === parts.length - 1) u.onend = function () { if (speaking && speaking.btn === btn) stopSpeak(); };
+            speechSynthesis.speak(u);
+        });
+    }
+    function textOfNotif(n) {
+        var P = { info: 'Information', important: 'Message important', urgent: 'Message urgent' };
+        var msg = n.message || ''; if (!msg && n.messageHtml) { var d = document.createElement('div'); d.innerHTML = safe(n.messageHtml); msg = plainOf(d); }
+        return (P[n.priority] || 'Message') + ' de ' + (n.createdBy || 'l’administrateur') + '. Sujet : ' + (n.subject || 'sans objet') + '. ' + msg;
+    }
+    window._awTtsBar = function (n) {
+        if (!window.speechSynthesis) return '';
+        var r = rate();
+        return '<div class="aw-tts" data-tts-id="' + escH(n.id) + '"><button type="button" data-tts="play">🔊 Écouter</button><button type="button" data-tts="stop" title="Arrêter">⏹️</button>'
+            + '<select data-tts="rate" title="Vitesse de lecture">' + [[0.8, 'Lent'], [1, 'Normal'], [1.25, 'Rapide'], [1.5, 'Très rapide']].map(function (x) { return '<option value="' + x[0] + '"' + (Math.abs(x[0] - r) < 0.01 ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></div>';
+    };
+    function notifById(id) { try { return (window._notifLoad ? window._notifLoad() : JSON.parse(localStorage.getItem('covo_admin_notifications') || '[]')).find(function (x) { return String(x.id) === String(id); }); } catch (e) { return null; } }
+    document.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('.aw-tts [data-tts]'); if (!b || b.tagName === 'SELECT') return;
+        e.preventDefault(); e.stopPropagation();
+        var box = b.closest('.aw-tts'), n = notifById(box.getAttribute('data-tts-id'));
+        if (b.getAttribute('data-tts') === 'stop') { stopSpeak(); return; }
+        if (n) speak(textOfNotif(n), b);
+    }, true);
+    document.addEventListener('change', function (e) { var s = e.target.closest && e.target.closest('.aw-tts [data-tts="rate"]'); if (!s) return; try { localStorage.setItem('covo_tts_rate', s.value); } catch (x) {} toast('🔊 Vitesse de lecture : ' + s.options[s.selectedIndex].text, 'info'); }, true);
+    try { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = function () {}; } catch (e) {}
+    if (document.head) css(); else document.addEventListener('DOMContentLoaded', css);
 })();
 </script>
