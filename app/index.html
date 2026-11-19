@@ -45923,14 +45923,15 @@ function initAdminSections() {
             if (!p) return;
             var isKg    = p.unitType === 'kg';
             var before  = parseFloat(p.stock || 0);
-            var counted = parseFloat(counts[id]) || 0;
+            var _mv = (window._invtSession && window._invtSession.effectiveDate && window._invtMovesSince) ? window._invtMovesSince(p, window._invtSession.effectiveDate) : 0;
+            var counted = (parseFloat(counts[id]) || 0) + _mv;
             var after   = isKg ? parseFloat(counted.toFixed(3)) : Math.round(counted);
             if (after < before - 0.0001) {
                 var lostQty = parseFloat((before - after).toFixed(3));
                 var unitP   = parseFloat(isKg ? (p.pricePerKg || p.price || 0) : (p.price || 0));
                 _preEcarts.push({
                     id: id, name: p.name || '—',
-                    theorique: before, compte: after,
+                    theorique: before - _mv, compte: after - _mv,
                     lostQty: lostQty, unit: isKg ? 'kg' : 'u.',
                     lostVal: parseFloat((lostQty * unitP).toFixed(2))
                 });
@@ -45999,14 +46000,15 @@ function initAdminSections() {
         var total   = prods.filter(function(p) { return p.active !== false; }).length;
 
         // Mettre à jour les stocks ET les métadonnées inventaire
-        var today = new Date().toISOString();
+        var _eff = (window._invtSession && window._invtSession.effectiveDate) || null;   // date RÉELLE du comptage (inventaire papier saisi plus tard)
+        var today = _eff || new Date().toISOString();
         // ── Accumulateurs de pertes ───────────────────────────────────────────
         var _invtPertes     = [];
         var _invtPertesVal  = 0;
         Object.keys(counts).forEach(function(id) {
             var p = prods.find(function(x) { return String(x.id) === String(id); });
             if (p) {
-                var newQty = parseFloat(counts[id]) || 0;
+                var newQty = (parseFloat(counts[id]) || 0) + (_eff && window._invtMovesSince ? window._invtMovesSince(p, _eff) : 0);   // compté + mouvements enregistrés depuis le comptage
                 var isKg   = p.unitType === 'kg';
                 var before = parseFloat(p.stock || 0);
                 var after  = isKg ? parseFloat(newQty.toFixed(3)) : Math.round(newQty);
@@ -46014,7 +46016,7 @@ function initAdminSections() {
                 if (Math.abs(before - after) > 0.0001) {
                     p.stock = after;
                     if (typeof window._logStockChange === 'function') {
-                        window._logStockChange(p, before, after, 'inventaire', 'Inventaire validé', {});
+                        window._logStockChange(p, before, after, 'inventaire', (_eff && window._invtEffReason ? window._invtEffReason(p, counts[id], _eff) : 'Inventaire validé'), {});
                     }
                 }
                 // ── Détection automatique des pertes ─────────────────────────────────
@@ -46030,6 +46032,7 @@ function initAdminSections() {
                     }
                 }
                 p.lastInventoryDate = today;
+                if (window._invtSession && window._invtSession.dlc && window._invtSession.dlc[id] && typeof window._invtApplyDlc === 'function') window._invtApplyDlc(id, window._invtSession.dlc[id]);
                 p.lastInventoryQty  = counts[id];
                 p.lastInventoryDiff = after - before;
             }
@@ -46046,6 +46049,10 @@ function initAdminSections() {
         var inv = {
             id:            'INVT-' + Date.now(),
             date:          today,
+            recordedAt:    new Date().toISOString(),
+            effectiveDate: _eff,
+            paperList:     (window._invtSession && window._invtSession.paperList) || null,
+            dlc:           (window._invtSession && window._invtSession.dlc) || {},
             caissier:      (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.username || currentUser.name || currentUser.id) : 'Inconnu',
             counted:       counted,
             total:         total,
@@ -72546,14 +72553,15 @@ function covoQrPrint(o) {
             if (!p) return;
             var isKg    = p.unitType === 'kg';
             var before  = parseFloat(p.stock || 0);
-            var counted = parseFloat(counts[id]) || 0;
+            var _mv = (window._invtSession && window._invtSession.effectiveDate && window._invtMovesSince) ? window._invtMovesSince(p, window._invtSession.effectiveDate) : 0;
+            var counted = (parseFloat(counts[id]) || 0) + _mv;
             var after   = isKg ? parseFloat(counted.toFixed(3)) : Math.round(counted);
             if (after < before - 0.0001) {
                 var lostQty = parseFloat((before - after).toFixed(3));
                 var unitP   = parseFloat(isKg ? (p.pricePerKg || p.price || 0) : (p.price || 0));
                 _preEcarts.push({
                     id: id, name: p.name || '—',
-                    theorique: before, compte: after,
+                    theorique: before - _mv, compte: after - _mv,
                     lostQty: lostQty, unit: isKg ? 'kg' : 'u.',
                     lostVal: parseFloat((lostQty * unitP).toFixed(2))
                 });
@@ -72651,7 +72659,8 @@ function covoQrPrint(o) {
         var total   = prods.filter(function(p) { return p.active !== false; }).length;
 
         // Mettre à jour les stocks ET les métadonnées inventaire
-        var today = new Date().toISOString();
+        var _eff = (window._invtSession && window._invtSession.effectiveDate) || null;   // date RÉELLE du comptage (inventaire papier saisi plus tard)
+        var today = _eff || new Date().toISOString();
         // ── Accumulateurs de pertes ───────────────────────────────────────────
         var _invtPertes     = [];
         var _invtPertesVal  = 0;
@@ -72662,7 +72671,7 @@ function covoQrPrint(o) {
         Object.keys(counts).forEach(function(id) {
             var p = prods.find(function(x) { return String(x.id) === String(id); });
             if (p) {
-                var newQty = parseFloat(counts[id]) || 0;
+                var newQty = (parseFloat(counts[id]) || 0) + (_eff && window._invtMovesSince ? window._invtMovesSince(p, _eff) : 0);   // compté + mouvements enregistrés depuis le comptage
                 var isKg   = p.unitType === 'kg';
                 var before = parseFloat(p.stock || 0);
                 var after  = isKg ? parseFloat(newQty.toFixed(3)) : Math.round(newQty);
@@ -72672,7 +72681,7 @@ function covoQrPrint(o) {
                 if (Math.abs(before - after) > 0.0001) {
                     p.stock = after;
                     if (typeof window._logStockChange === 'function') {
-                        window._logStockChange(p, before, after, 'inventaire', _isSaisie ? '✏️ Erreur de saisie — stock corrigé à l\'inventaire (pas de perte)' : 'Inventaire validé', _isSaisie ? { motif: 'saisie', source: 'inventaire', qty: parseFloat((before - after).toFixed(3)) } : {});
+                        window._logStockChange(p, before, after, 'inventaire', _isSaisie ? '✏️ Erreur de saisie — stock corrigé à l\'inventaire (pas de perte)' : (_eff && window._invtEffReason ? window._invtEffReason(p, counts[id], _eff) : 'Inventaire validé'), _isSaisie ? { motif: 'saisie', source: 'inventaire', qty: parseFloat((before - after).toFixed(3)) } : {});
                     }
                 }
                 if (_isSaisie) {
@@ -72693,6 +72702,7 @@ function covoQrPrint(o) {
                     }
                 }
                 p.lastInventoryDate = today;
+                if (window._invtSession && window._invtSession.dlc && window._invtSession.dlc[id] && typeof window._invtApplyDlc === 'function') window._invtApplyDlc(id, window._invtSession.dlc[id]);
                 p.lastInventoryQty  = counts[id];
                 p.lastInventoryDiff = after - before;
             }
@@ -72709,6 +72719,10 @@ function covoQrPrint(o) {
         var inv = {
             id:            'INVT-' + Date.now(),
             date:          today,
+            recordedAt:    new Date().toISOString(),
+            effectiveDate: _eff,
+            paperList:     (window._invtSession && window._invtSession.paperList) || null,
+            dlc:           (window._invtSession && window._invtSession.dlc) || {},
             caissier:      (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.username || currentUser.name || currentUser.id) : 'Inconnu',
             counted:       counted,
             total:         total,
@@ -76300,5 +76314,337 @@ function covoQrPrint(o) {
         window.addEventListener('storage', function (e) { if (e.key === 'covo_voice_cfg') { renderStrip(); refreshFab(); if (!isOn()) closePanel(); } });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   INVENTAIRE — LISTE PAPIER, DATE RÉELLE DE L'INVENTAIRE, DLC
+   1) 🖨️ Liste papier : choisir les produits (rayon, emplacement, stock, recherche), imprimer une feuille
+      de comptage (cases Quantité + DLC). Chaque liste imprimée est gardée pour la saisie des résultats.
+   2) 📝 Saisir une liste papier : grille de saisie (quantité + DLC) + 📅 date RÉELLE du comptage.
+   3) Le stock est recalculé à cette date : stock final = quantité comptée + mouvements enregistrés
+      APRÈS le comptage (ventes, réceptions…) ; l'écart (perte / erreur) est mesuré au moment du comptage,
+      et l'historique (inventaire, fiches produits) porte la date réelle. La DLC saisie met à jour la fiche.
+   La date réelle est aussi disponible pendant un inventaire au scanner (bandeau de la session).
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._ivpInstalled) return; window._ivpInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function P() { try { return (products || []).filter(function (p) { return p && p.active !== false; }); } catch (e) { return []; } }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+    function isKg(p) { return p.unitType === 'kg'; }
+    function fmtQ(p, v) { v = +v || 0; return isKg(p) ? v.toFixed(3).replace('.', ',') + ' kg' : String(Math.round(v)); }
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+    function localInput(d) { d = d ? new Date(d) : new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+    function fmtDate(iso) { var d = new Date(iso); return d.toLocaleDateString('fr-FR') + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+    var LKEY = 'covo_invt_paper_lists';
+    function lists() { try { return JSON.parse(localStorage.getItem(LKEY) || '[]') || []; } catch (e) { return []; } }
+    function saveLists(l) { try { localStorage.setItem(LKEY, JSON.stringify(l.slice(0, 30))); } catch (e) {} }
+
+    /* ── Mouvements de stock enregistrés APRÈS la date réelle (hors inventaire et infos) ── */
+    window._invtMovesSince = function (p, iso) {
+        if (!p || !iso) return 0;
+        var t = new Date(iso).getTime(); if (!isFinite(t)) return 0;
+        var sum = 0;
+        (p.stockHistory || []).forEach(function (h) {
+            if (!h || !h.date || new Date(h.date).getTime() <= t) return;
+            if (h.type === 'inventaire' || h.type === 'info' || (h.meta && h.meta.source === 'inventaire')) return;
+            sum += +h.delta || 0;
+        });
+        return isKg(p) ? parseFloat(sum.toFixed(3)) : Math.round(sum);
+    };
+    window._invtEffReason = function (p, counted, iso) {
+        var mv = window._invtMovesSince(p, iso);
+        return 'Inventaire du ' + fmtDate(iso) + ' — compté ' + fmtQ(p, counted) + (mv ? ' ; mouvements depuis : ' + (mv > 0 ? '+' : '') + fmtQ(p, mv) : '');
+    };
+    function effFromInput(v) {
+        if (!v) return null; var d = new Date(v); if (!isFinite(d.getTime())) return null;
+        if (d.getTime() > Date.now() + 60000) return 'future';
+        return Math.abs(Date.now() - d.getTime()) < 5 * 60000 ? null : d.toISOString();      // « maintenant » = pas de recalage
+    }
+
+    /* ── Styles ── */
+    function css() {
+        if ($('ivp-css')) return;
+        var s = document.createElement('style'); s.id = 'ivp-css';
+        s.textContent = [
+            '.ivp-btn{padding:9px 16px;border:none;border-radius:10px;font-weight:800;font-size:.84rem;cursor:pointer;color:#fff;font-family:inherit}',
+            '.ivp-ov{position:fixed;inset:0;z-index:100070;background:rgba(8,12,24,.6);display:flex;align-items:flex-start;justify-content:center;padding:24px 12px;overflow:auto}',
+            '.ivp-box{width:min(1000px,100%);background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.45);overflow:hidden;font-family:inherit}',
+            '.ivp-h{display:flex;align-items:center;gap:10px;padding:13px 16px;background:linear-gradient(135deg,#1a5276,#117a65);color:#fff}.ivp-h b{flex:1;font-size:1.02rem}.ivp-h button{border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:9px;width:34px;height:32px;cursor:pointer;font-size:1rem}',
+            '.ivp-tabs{display:flex;gap:6px;padding:10px 16px 0}.ivp-tabs button{border:1.5px solid var(--border-color,#d1d5db);background:transparent;color:inherit;border-radius:999px;padding:6px 14px;font-weight:800;font-size:.8rem;cursor:pointer}.ivp-tabs button.on{background:#1a5276;border-color:#1a5276;color:#fff}',
+            '.ivp-body{padding:12px 16px 16px}.ivp-f{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}',
+            '.ivp-f input,.ivp-f select,.ivp-g input{padding:8px 10px;border-radius:9px;border:1.5px solid var(--border-color,#d1d5db);background:var(--input-bg,#fff);color:inherit;font-size:.84rem;font-family:inherit}',
+            '.ivp-f label{display:flex;align-items:center;gap:5px;font-size:.8rem;font-weight:700}',
+            '.ivp-list{max-height:52vh;overflow:auto;border:1px solid var(--border-color,#e5e7eb);border-radius:12px}',
+            '.ivp-list table,.ivp-g table{width:100%;border-collapse:collapse;font-size:.82rem}.ivp-list th,.ivp-g th{position:sticky;top:0;background:var(--bg-card-2,#f1f5f9);text-align:left;padding:7px 8px;font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;z-index:1}',
+            '.ivp-list td,.ivp-g td{padding:6px 8px;border-top:1px solid var(--border-color,#eef0f3);vertical-align:middle}.ivp-list tr.off td{opacity:.45}',
+            '.ivp-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}.ivp-cnt{font-weight:800;font-size:.85rem}',
+            '.ivp-date{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 12px;border-radius:12px;background:rgba(26,82,118,.08);border:1.5px solid rgba(26,82,118,.3);margin-bottom:10px}.ivp-date b{font-size:.88rem}.ivp-date small{flex-basis:100%;font-size:.74rem;opacity:.8}',
+            '.ivp-g{max-height:56vh;overflow:auto;border:1px solid var(--border-color,#e5e7eb);border-radius:12px}.ivp-g input[type=number]{width:96px}.ivp-g input[type=date]{width:150px}.ivp-g tr.done td{background:rgba(39,174,96,.07)}',
+            '.ivp-th{font-size:.72rem;opacity:.75}.ivp-mv{font-size:.7rem;color:#b45309;font-weight:700}',
+            '#invt-effdate{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0;padding:8px 12px;border-radius:12px;background:rgba(26,82,118,.08);border:1.5px solid rgba(26,82,118,.3);font-size:.82rem;color:var(--text-main,#1f2937)}',
+            '#invt-effdate input{padding:6px 8px;border-radius:8px;border:1.5px solid var(--border-color,#d1d5db);background:var(--input-bg,#fff);color:inherit;font-family:inherit}#invt-effdate small{flex-basis:100%;opacity:.75;font-size:.72rem}',
+            '#invt-scan-dlcwrap{display:flex;align-items:center;gap:5px;flex-shrink:0}#invt-scan-dlcwrap span{font-size:.7rem;color:rgba(255,255,255,.8);font-weight:700}#invt-scan-dlc{padding:5px 6px;border-radius:7px;border:1.5px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:#fff;font-weight:700;font-size:.78rem;color-scheme:dark}'
+        ].join('\n');
+        document.head.appendChild(s);
+    }
+
+    /* ── Boutons dans la section Inventaire ── */
+    function mountButtons() {
+        var r = $('invt-btn-random') || $('invt-btn-start'); if (!r || $('ivp-btn-print')) return;
+        css();
+        var b1 = document.createElement('button'); b1.type = 'button'; b1.id = 'ivp-btn-print'; b1.className = 'ivp-btn'; b1.style.background = 'linear-gradient(135deg,#1a5276,#2471a3)'; b1.innerHTML = '🖨️ Liste papier'; b1.title = 'Choisir les produits et imprimer une feuille de comptage';
+        var b2 = document.createElement('button'); b2.type = 'button'; b2.id = 'ivp-btn-entry'; b2.className = 'ivp-btn'; b2.style.background = 'linear-gradient(135deg,#117a65,#16a085)'; b2.innerHTML = '📝 Saisir une liste papier'; b2.title = 'Saisir les quantités comptées sur papier, avec la date réelle du comptage et les DLC';
+        r.parentNode.insertBefore(b2, r.nextSibling); r.parentNode.insertBefore(b1, r.nextSibling);
+        b1.addEventListener('click', function () { openPicker('print'); });
+        b2.addEventListener('click', function () { openPicker('entry'); });
+    }
+
+    /* ── Sélection des produits ── */
+    var F = { q: '', cat: '', emp: '', stock: 'instock', sort: 'cat', showStock: false, dlc: true, bc: true };
+    var SEL = {}, MODE = 'print';
+    function filtered() {
+        var q = norm(F.q);
+        var l = P().filter(function (p) {
+            var s = +p.stock || 0;
+            if (F.stock === 'instock' && !(s > 0)) return false;
+            if (F.stock === 'out' && s > 0) return false;
+            if (F.cat && (p.category || 'Sans catégorie') !== F.cat) return false;
+            if (F.emp === '__none' && p.emplacement) return false;
+            if (F.emp && F.emp !== '__none' && (p.emplacement || '') !== F.emp) return false;
+            if (q && norm(p.name + ' ' + (p.barcode || '') + ' ' + (p.category || '') + ' ' + (p.emplacement || '')).indexOf(q) < 0) return false;
+            return true;
+        });
+        var key = { cat: function (p) { return (p.category || '') + '\u0000' + p.name; }, emp: function (p) { return (p.emplacement || '￿') + '\u0000' + p.name; }, name: function (p) { return p.name || ''; } }[F.sort];
+        return l.sort(function (a, b) { return String(key(a)).localeCompare(String(key(b)), 'fr'); });
+    }
+    function openPicker(mode) {
+        css(); MODE = mode || 'print';
+        var o = $('ivp-ov'); if (o) o.remove();
+        o = document.createElement('div'); o.id = 'ivp-ov'; o.className = 'ivp-ov';
+        o.innerHTML = '<div class="ivp-box"><div class="ivp-h"><span style="font-size:1.3rem">📋</span><b>Inventaire papier</b><button type="button" data-x="1" title="Fermer">✕</button></div>'
+            + '<div class="ivp-tabs"><button type="button" data-tab="print">🖨️ 1. Choisir et imprimer</button><button type="button" data-tab="entry">📝 2. Saisir les résultats</button></div><div class="ivp-body" id="ivp-body"></div></div>';
+        document.body.appendChild(o);
+        o.addEventListener('click', onClick); o.addEventListener('input', onInput); o.addEventListener('change', onInput);
+        if (!Object.keys(SEL).length) filtered().forEach(function (p) { SEL[p.id] = 1; });
+        render();
+    }
+    function close() { var o = $('ivp-ov'); if (o) o.remove(); }
+    function opt(v, l, cur) { return '<option value="' + esc(v) + '"' + (String(cur) === String(v) ? ' selected' : '') + '>' + esc(l) + '</option>'; }
+    function render() {
+        var o = $('ivp-ov'); if (!o) return;
+        o.querySelectorAll('[data-tab]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === MODE); });
+        var body = $('ivp-body');
+        if (MODE === 'entry') { renderEntryPick(body); return; }
+        var all = P(), cats = {}, emps = {};
+        all.forEach(function (p) { cats[p.category || 'Sans catégorie'] = 1; if (p.emplacement) emps[p.emplacement] = 1; });
+        var l = filtered(), nSel = all.filter(function (p) { return SEL[p.id]; }).length, nShown = l.filter(function (p) { return SEL[p.id]; }).length;
+        body.innerHTML = '<div class="ivp-f">'
+            + '<input type="search" data-f="q" value="' + esc(F.q) + '" placeholder="🔎 Nom, code-barres, rayon…" style="flex:1;min-width:180px">'
+            + '<select data-f="cat">' + opt('', 'Toutes catégories', F.cat) + Object.keys(cats).sort().map(function (c) { return opt(c, c, F.cat); }).join('') + '</select>'
+            + '<select data-f="emp">' + opt('', 'Tous emplacements', F.emp) + opt('__none', 'Sans emplacement', F.emp) + Object.keys(emps).sort().map(function (c) { return opt(c, '📍 ' + c, F.emp); }).join('') + '</select>'
+            + '<select data-f="stock">' + opt('instock', 'Présents en magasin (stock > 0)', F.stock) + opt('all', 'Tous les produits actifs', F.stock) + opt('out', 'En rupture (stock ≤ 0)', F.stock) + '</select>'
+            + '<select data-f="sort">' + opt('cat', 'Trier par catégorie', F.sort) + opt('emp', 'Trier par emplacement (ordre de passage)', F.sort) + opt('name', 'Trier par nom', F.sort) + '</select></div>'
+            + '<div class="ivp-f"><button type="button" class="ivp-btn" data-a="all" style="background:#475569;padding:6px 12px">☑ Tout cocher (' + l.length + ')</button><button type="button" class="ivp-btn" data-a="none" style="background:#94a3b8;padding:6px 12px">☐ Tout décocher</button>'
+            + '<label><input type="checkbox" data-f="showStock"' + (F.showStock ? ' checked' : '') + '> Afficher le stock théorique</label>'
+            + '<label><input type="checkbox" data-f="dlc"' + (F.dlc ? ' checked' : '') + '> Colonne DLC</label>'
+            + '<label><input type="checkbox" data-f="bc"' + (F.bc ? ' checked' : '') + '> Code-barres</label></div>'
+            + '<div class="ivp-list"><table><thead><tr><th style="width:34px"></th><th>Produit</th><th>Catégorie</th><th>Emplacement</th><th>Code-barres</th><th style="text-align:right">Stock</th><th>DLC</th></tr></thead><tbody>'
+            + (l.length ? l.map(function (p) { var on = !!SEL[p.id]; return '<tr class="' + (on ? '' : 'off') + '"><td><input type="checkbox" data-pid="' + esc(p.id) + '"' + (on ? ' checked' : '') + '></td><td><b>' + esc(p.name) + '</b></td><td>' + esc(p.category || '—') + '</td><td>' + esc(p.emplacement || '—') + '</td><td style="font-family:monospace">' + esc(p.barcode || '—') + '</td><td style="text-align:right">' + fmtQ(p, p.stock) + '</td><td>' + (p.expiryDate ? new Date(p.expiryDate).toLocaleDateString('fr-FR') : '—') + '</td></tr>'; }).join('')
+                : '<tr><td colspan="7" style="text-align:center;padding:24px;opacity:.7">Aucun produit pour ces filtres.</td></tr>')
+            + '</tbody></table></div>'
+            + '<div class="ivp-foot"><span class="ivp-cnt">✅ ' + nSel + ' produit(s) sélectionné(s)' + (nSel !== nShown ? ' (dont ' + nShown + ' affichés)' : '') + '</span>'
+            + '<span style="display:flex;gap:8px"><button type="button" class="ivp-btn" data-a="go-entry" style="background:#117a65">📝 Saisir directement</button><button type="button" class="ivp-btn" data-a="print" style="background:#1a5276">🖨️ Imprimer la liste (' + nSel + ')</button></span></div>';
+    }
+    function renderEntryPick(body) {
+        var L = lists();
+        body.innerHTML = '<div style="font-size:.84rem;margin-bottom:10px">Choisissez la liste imprimée à saisir (son numéro figure en haut de la feuille) :</div>'
+            + (L.length ? '<div class="ivp-list"><table><thead><tr><th>Liste</th><th>Imprimée le</th><th>Produits</th><th>Statut</th><th></th></tr></thead><tbody>'
+                + L.map(function (x, i) { return '<tr><td><b>' + esc(x.id) + '</b>' + (x.title ? '<div class="ivp-th">' + esc(x.title) + '</div>' : '') + '</td><td>' + fmtDate(x.createdAt) + '</td><td>' + x.ids.length + '</td><td>' + (x.doneAt ? '✅ saisie le ' + new Date(x.doneAt).toLocaleDateString('fr-FR') + (x.effectiveDate ? ' (inventaire du ' + new Date(x.effectiveDate).toLocaleDateString('fr-FR') + ')' : '') : '⏳ à saisir') + '</td><td><button type="button" class="ivp-btn" data-entry="' + i + '" style="background:#117a65;padding:6px 12px">📝 Saisir</button></td></tr>'; }).join('')
+                + '</tbody></table></div>' : '<div style="padding:24px;text-align:center;opacity:.75">Aucune liste imprimée pour l’instant. Commencez par l’onglet « 1. Choisir et imprimer ».</div>')
+            + '<div class="ivp-foot"><span></span><button type="button" class="ivp-btn" data-a="entry-sel" style="background:#475569">📝 Saisir la sélection actuelle (' + P().filter(function (p) { return SEL[p.id]; }).length + ' produits)</button></div>';
+    }
+    function onInput(e) {
+        var t = e.target, f = t.getAttribute('data-f');
+        if (t.hasAttribute('data-pid')) { if (t.checked) SEL[t.getAttribute('data-pid')] = 1; else delete SEL[t.getAttribute('data-pid')]; t.closest('tr').classList.toggle('off', !t.checked); var c = document.querySelector('#ivp-ov .ivp-cnt'); if (c) c.textContent = '✅ ' + P().filter(function (p) { return SEL[p.id]; }).length + ' produit(s) sélectionné(s)'; var pb = document.querySelector('#ivp-ov [data-a="print"]'); if (pb) pb.textContent = '🖨️ Imprimer la liste (' + P().filter(function (p) { return SEL[p.id]; }).length + ')'; return; }
+        if (!f) return;
+        if (t.type === 'checkbox') F[f] = t.checked; else F[f] = t.value;
+        if (f === 'q' && e.type === 'input') { clearTimeout(onInput.t); onInput.t = setTimeout(function () { render(); var i = document.querySelector('#ivp-ov [data-f="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 220); return; }
+        if (e.type === 'change' || t.tagName === 'SELECT') {
+            if (['cat', 'emp', 'stock'].indexOf(f) >= 0) { SEL = {}; filtered().forEach(function (p) { SEL[p.id] = 1; }); }   // nouveau filtre → la sélection suit le filtre
+            render();
+        }
+    }
+    function onClick(e) {
+        var o = $('ivp-ov');
+        if (e.target === o || e.target.closest('[data-x]')) { close(); return; }
+        var tb = e.target.closest('[data-tab]'); if (tb) { MODE = tb.getAttribute('data-tab'); render(); return; }
+        var en = e.target.closest('[data-entry]'); if (en) { var L = lists(), x = L[+en.getAttribute('data-entry')]; if (x) openEntry(x); return; }
+        var a = e.target.closest('[data-a]'); if (!a) return;
+        var k = a.getAttribute('data-a');
+        if (k === 'all') { filtered().forEach(function (p) { SEL[p.id] = 1; }); render(); }
+        else if (k === 'none') { filtered().forEach(function (p) { delete SEL[p.id]; }); render(); }
+        else if (k === 'print') printList();
+        else if (k === 'go-entry' || k === 'entry-sel') { var ids = selected().map(function (p) { return String(p.id); }); if (!ids.length) { toast('Sélectionnez au moins un produit', 'info'); return; } openEntry({ id: 'SÉLECTION', ids: ids, createdAt: new Date().toISOString() }); }
+    }
+    function selected() { var key = { cat: function (p) { return (p.category || '') + '\u0000' + p.name; }, emp: function (p) { return (p.emplacement || '￿') + '\u0000' + p.name; }, name: function (p) { return p.name || ''; } }[F.sort]; return P().filter(function (p) { return SEL[p.id]; }).sort(function (a, b) { return String(key(a)).localeCompare(String(key(b)), 'fr'); }); }
+
+    /* ── Impression de la feuille de comptage ── */
+    function printList() {
+        var l = selected(); if (!l.length) { toast('Sélectionnez au moins un produit', 'info'); return; }
+        var now = new Date(), id = 'LP-' + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + '-' + pad(now.getHours()) + pad(now.getMinutes());
+        var L = lists(); while (L.some(function (x) { return x.id === id; })) id += 'b';
+        var title = [F.cat, F.emp && F.emp !== '__none' ? '📍 ' + F.emp : '', F.stock === 'instock' ? 'présents en magasin' : F.stock === 'out' ? 'en rupture' : ''].filter(Boolean).join(' · ');
+        L.unshift({ id: id, createdAt: now.toISOString(), ids: l.map(function (p) { return String(p.id); }), title: title }); saveLists(L);
+        var shop = ''; try { shop = (appSettings && (appSettings.shopName || appSettings.storeName)) || ''; } catch (e) {}
+        var u = ''; try { u = (currentUser && (currentUser.username || currentUser.name)) || ''; } catch (e) {}
+        var cols = '<th style="width:28px">N°</th><th>Produit</th>' + (F.bc ? '<th>Code-barres</th>' : '') + '<th>Emplacement</th>' + (F.showStock ? '<th style="text-align:right">Théorique</th>' : '') + '<th style="width:90px">Quantité comptée</th>' + (F.dlc ? '<th style="width:96px">DLC (jj/mm/aa)</th>' : '') + '<th style="width:110px">Observations</th>';
+        var rows = '', lastCat = null;
+        l.forEach(function (p, i) {
+            if (F.sort === 'cat' && (p.category || 'Sans catégorie') !== lastCat) { lastCat = p.category || 'Sans catégorie'; rows += '<tr class="cat"><td colspan="9">' + esc(lastCat) + '</td></tr>'; }
+            rows += '<tr><td class="n">' + (i + 1) + '</td><td><b>' + esc(p.name) + '</b>' + (isKg(p) ? ' <i>(kg)</i>' : '') + '<div class="sub">' + esc(p.category || '') + ' · réf. ' + esc(p.id) + '</div></td>'
+                + (F.bc ? '<td class="mono">' + esc(p.barcode || '—') + '</td>' : '') + '<td>' + esc(p.emplacement || '') + '</td>'
+                + (F.showStock ? '<td style="text-align:right">' + fmtQ(p, p.stock) + '</td>' : '') + '<td class="box"></td>' + (F.dlc ? '<td class="box">' + (p.expiryDate ? '<span class="old">act. ' + new Date(p.expiryDate).toLocaleDateString('fr-FR') + '</span>' : '') + '</td>' : '') + '<td class="box"></td></tr>';
+        });
+        var html = '<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Inventaire ' + id + '</title><style>'
+            + '@page{size:A4;margin:12mm}body{font:11px/1.35 Arial,Helvetica,sans-serif;color:#111;margin:0}h1{font-size:17px;margin:0}.top{display:flex;justify-content:space-between;gap:12px;border-bottom:2px solid #111;padding-bottom:6px;margin-bottom:8px}'
+            + '.meta{font-size:11px}.meta b{font-size:13px}.fill{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 10px}.fill div{border:1.5px solid #111;border-radius:6px;padding:6px 8px;font-weight:bold;min-height:20px}'
+            + 'table{width:100%;border-collapse:collapse}th{background:#e5e7eb;font-size:10px;text-transform:uppercase;text-align:left;padding:5px;border:1px solid #999}td{border:1px solid #999;padding:5px;vertical-align:top}'
+            + 'td.box{height:22px}.n{text-align:center;color:#555}.sub{font-size:9px;color:#555}.mono{font-family:monospace;font-size:10px}.old{font-size:8.5px;color:#777}tr.cat td{background:#f3f4f6;font-weight:bold;font-size:11px;border-left:4px solid #1a5276}tr{page-break-inside:avoid}thead{display:table-header-group}'
+            + '.foot{margin-top:10px;font-size:10px;color:#444}</style></head><body>'
+            + '<div class="top"><div><h1>📋 Feuille d’inventaire</h1><div class="meta">' + esc([shop, title].filter(Boolean).join(' · ')) + '</div></div><div class="meta" style="text-align:right">Liste <b>' + id + '</b><br>Imprimée le ' + fmtDate(now.toISOString()) + (u ? ' par ' + esc(u) : '') + '<br>' + l.length + ' produit(s)</div></div>'
+            + '<div class="fill"><div>📅 Date réelle du comptage : ____ / ____ / ________</div><div>🕒 Heure : ____ h ____</div><div>✍️ Compté par : ______________</div></div>'
+            + '<table><thead><tr>' + cols + '</tr></thead><tbody>' + rows + '</tbody></table>'
+            + '<div class="foot">Saisie : COVO → Inventaire → <b>📝 Saisir une liste papier</b> → liste ' + id + ', puis indiquez la date réelle du comptage : le stock sera recalculé en tenant compte des ventes et réceptions enregistrées depuis.</div>'
+            + '<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>';
+        var w = null; try { w = window.open('', '_blank'); } catch (e) {}
+        if (w && w.document) { w.document.open(); w.document.write(html); w.document.close(); }
+        else {
+            var f = document.createElement('iframe'); f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.appendChild(f);
+            f.contentDocument.open(); f.contentDocument.write(html.replace(/<script>[\s\S]*?<\/script>/, '')); f.contentDocument.close();
+            setTimeout(function () { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) {} setTimeout(function () { f.remove(); }, 2000); }, 300);
+        }
+        toast('🖨️ Liste ' + id + ' imprimée (' + l.length + ' produits) — gardée pour la saisie', 'success');
+        MODE = 'entry'; render();
+    }
+
+    /* ── Saisie des résultats ── */
+    var CUR = null;
+    function openEntry(list) {
+        css(); CUR = list;
+        if (window._invtSession) { toast('⚠️ Un inventaire est déjà en cours : validez-le ou annulez-le avant de saisir une liste papier', 'warning'); return; }
+        var byId = {}; P().forEach(function (p) { byId[String(p.id)] = p; });
+        var l = list.ids.map(function (id) { return byId[String(id)]; }).filter(Boolean);
+        var body = $('ivp-body'); if (!body) return;
+        o_tabs(false);
+        body.innerHTML = '<div class="ivp-date"><b>📅 Date réelle de l’inventaire :</b><input type="datetime-local" id="ivp-eff" value="' + localInput(list.effectiveDate || null) + '" max="' + localInput() + '">'
+            + '<button type="button" class="ivp-btn" data-q="now" style="background:#64748b;padding:5px 10px">Maintenant</button><button type="button" class="ivp-btn" data-q="print" style="background:#64748b;padding:5px 10px">Date d’impression</button>'
+            + '<small>Indiquez quand le comptage a été fait (celle notée sur la feuille). Les ventes et réceptions enregistrées <b>après</b> cette date sont reportées automatiquement : stock final = quantité comptée ± mouvements depuis.</small></div>'
+            + '<div style="font-size:.8rem;margin:0 0 8px"><b>Liste ' + esc(list.id) + '</b> · ' + l.length + ' produit(s) · laissez vide la quantité d’un produit non compté.</div>'
+            + '<div class="ivp-g"><table><thead><tr><th>N°</th><th>Produit</th><th>Théorique à cette date</th><th>Quantité comptée</th><th>DLC</th><th>Stock après</th></tr></thead><tbody>'
+            + l.map(function (p, i) { return '<tr data-row="' + esc(p.id) + '"><td>' + (i + 1) + '</td><td><b>' + esc(p.name) + '</b><div class="ivp-th">' + esc(p.category || '') + (p.emplacement ? ' · 📍 ' + esc(p.emplacement) : '') + (p.barcode ? ' · ' + esc(p.barcode) : '') + '</div></td>'
+                + '<td class="th"></td><td><input type="number" min="0" step="' + (isKg(p) ? '0.001' : '1') + '" data-q-pid="' + esc(p.id) + '" placeholder="—"></td>'
+                + '<td><input type="date" data-d-pid="' + esc(p.id) + '" value="' + esc(p.expiryDate ? String(p.expiryDate).slice(0, 10) : '') + '"></td><td class="after"></td></tr>'; }).join('')
+            + '</tbody></table></div>'
+            + '<div class="ivp-foot"><span class="ivp-cnt" id="ivp-done">0 / ' + l.length + ' saisi(s)</span><span style="display:flex;gap:8px"><button type="button" class="ivp-btn" data-q="back" style="background:#94a3b8">◀ Listes</button><button type="button" class="ivp-btn" data-q="validate" style="background:#27ae60">✅ Valider l’inventaire</button></span></div>';
+        body.oninput = body.onchange = function (e) { if (e.target.id === 'ivp-eff' || e.target.hasAttribute('data-q-pid')) refreshRows(); };
+        body.onclick = function (e) {
+            var b = e.target.closest('[data-q]'); if (!b) return; e.stopPropagation();
+            var k = b.getAttribute('data-q');
+            if (k === 'now') { $('ivp-eff').value = localInput(); refreshRows(); }
+            else if (k === 'print') { $('ivp-eff').value = localInput(list.createdAt); refreshRows(); }
+            else if (k === 'back') { body.oninput = body.onchange = body.onclick = null; o_tabs(true); MODE = 'entry'; render(); }
+            else if (k === 'validate') validateEntry(l);
+        };
+        refreshRows();
+        setTimeout(function () { var f = body.querySelector('[data-q-pid]'); if (f) f.focus(); }, 60);
+    }
+    function o_tabs(show) { var t = document.querySelector('#ivp-ov .ivp-tabs'); if (t) t.style.display = show ? '' : 'none'; }
+    function refreshRows() {
+        var eff = effFromInput(($('ivp-eff') || {}).value), byId = {}, done = 0, total = 0; P().forEach(function (p) { byId[String(p.id)] = p; });
+        document.querySelectorAll('#ivp-body tr[data-row]').forEach(function (tr) {
+            var p = byId[tr.getAttribute('data-row')]; if (!p) return; total++;
+            var mv = eff && eff !== 'future' ? window._invtMovesSince(p, eff) : 0, th = (+p.stock || 0) - mv;
+            tr.querySelector('.th').innerHTML = fmtQ(p, th) + (mv ? '<div class="ivp-mv">' + (mv > 0 ? '+' : '') + fmtQ(p, mv) + ' depuis</div>' : '');
+            var v = tr.querySelector('[data-q-pid]').value, a = tr.querySelector('.after');
+            if (v !== '') { done++; var q = +v || 0, after = q + mv, d = q - th; tr.classList.add('done'); a.innerHTML = '<b>' + fmtQ(p, after) + '</b>' + (Math.abs(d) > 0.0001 ? '<div class="ivp-mv" style="color:' + (d < 0 ? '#c0392b' : '#27ae60') + '">écart ' + (d > 0 ? '+' : '') + fmtQ(p, d) + '</div>' : '<div class="ivp-mv" style="color:#27ae60">✓ juste</div>'); }
+            else { tr.classList.remove('done'); a.textContent = '—'; }
+        });
+        var c = $('ivp-done'); if (c) c.textContent = done + ' / ' + total + ' saisi(s)' + (eff === 'future' ? ' · ⚠️ date dans le futur' : eff ? ' · inventaire du ' + fmtDate(eff) : ' · inventaire daté de maintenant');
+    }
+    function validateEntry(l) {
+        var effRaw = ($('ivp-eff') || {}).value, eff = effFromInput(effRaw);
+        if (eff === 'future') { toast('⚠️ La date réelle ne peut pas être dans le futur', 'warning'); return; }
+        var counts = {}, dlc = {}, n = 0;
+        document.querySelectorAll('#ivp-body [data-q-pid]').forEach(function (i) { if (i.value !== '') { counts[i.getAttribute('data-q-pid')] = parseFloat(i.value) || 0; n++; } });
+        document.querySelectorAll('#ivp-body [data-d-pid]').forEach(function (i) {
+            var pid = i.getAttribute('data-d-pid'), p = P().find(function (x) { return String(x.id) === pid; });
+            if (p && i.value && i.value !== String(p.expiryDate || '').slice(0, 10)) dlc[pid] = i.value;
+        });
+        if (!n && !Object.keys(dlc).length) { toast('Saisissez au moins une quantité (ou une DLC)', 'info'); return; }
+        if (typeof window.invtStartSession !== 'function') { toast('Module inventaire indisponible', 'error'); return; }
+        var list = CUR;
+        window.invtStartSession({ productIds: l.map(function (p) { return String(p.id); }) });
+        var s = window._invtSession; if (!s) return;
+        s.counts = counts; s.dlc = dlc; s.effectiveDate = eff; s.paperList = list.id;
+        // Les DLC seules (sans quantité) sont appliquées aussi
+        Object.keys(dlc).forEach(function (pid) { if (!(pid in counts)) applyDlc(pid, dlc[pid]); });
+        close();
+        var sv = $('invt-effdate-in'); if (sv) sv.value = localInput(eff || null);
+        if (list.id !== 'SÉLECTION') { var L = lists(); L.forEach(function (x) { if (x.id === list.id) { x.doneAt = new Date().toISOString(); x.effectiveDate = eff || new Date().toISOString(); } }); saveLists(L); }
+        toast('📝 ' + n + ' quantité(s) saisie(s)' + (eff ? ' — inventaire daté du ' + fmtDate(eff) : ''), 'success');
+        if (n) window.invtValidateSession(); else { try { window.invtCancelSession(); } catch (e) {} }
+    }
+    function applyDlc(pid, v) {
+        var p = P().find(function (x) { return String(x.id) === String(pid); }); if (!p) return;
+        var old = p.expiryDate || ''; p.expiryDate = v;
+        if (typeof window._logInfoChange === 'function') window._logInfoChange(p, 'DLC (inventaire)', old ? new Date(old).toLocaleDateString('fr-FR') : '—', new Date(v).toLocaleDateString('fr-FR'));
+        try { if (typeof saveAll === 'function') saveAll(); else { var all = JSON.parse(localStorage.getItem('covo_products') || '[]'); var i = all.findIndex(function (x) { return String(x.id) === String(pid); }); if (i >= 0) { all[i].expiryDate = v; localStorage.setItem('covo_products', JSON.stringify(all)); } } } catch (e) {}
+    }
+    window._invtApplyDlc = applyDlc;
+
+    /* ── Session au scanner : date réelle + champ DLC dans la fiche de comptage ── */
+    function mountSessionDate() {
+        var wrap = $('invt-session-wrap'); if (!wrap || $('invt-effdate')) return;
+        css();
+        var d = document.createElement('div'); d.id = 'invt-effdate';
+        d.innerHTML = '<b>📅 Date réelle de l’inventaire :</b><input type="datetime-local" id="invt-effdate-in"><button type="button" class="ivp-btn" id="invt-effdate-now" style="background:#64748b;padding:4px 10px;font-size:.74rem">Maintenant</button><small>Si le comptage a été fait plus tôt, indiquez sa date : les ventes et réceptions enregistrées depuis seront reportées sur le stock compté à la validation.</small>';
+        var info = $('invt-session-info'); var anchor = info && wrap.contains(info) ? info.parentNode : wrap.firstChild;
+        if (anchor && anchor.parentNode === wrap) wrap.insertBefore(d, anchor.nextSibling); else wrap.insertBefore(d, wrap.firstChild);
+        var inp = $('invt-effdate-in'); inp.value = localInput(); inp.max = localInput();
+        inp.addEventListener('change', function () { var e = effFromInput(inp.value); if (e === 'future') { toast('⚠️ Date dans le futur', 'warning'); inp.value = localInput(); e = null; } if (window._invtSession) window._invtSession.effectiveDate = e; toast(e ? '📅 Inventaire daté du ' + fmtDate(e) : '📅 Inventaire daté de maintenant', 'info'); });
+        $('invt-effdate-now').addEventListener('click', function () { inp.value = localInput(); if (window._invtSession) window._invtSession.effectiveDate = null; });
+    }
+    function mountScanDlc() {
+        var q = $('invt-scan-qty'); if (!q || $('invt-scan-dlc')) return;
+        css();
+        var box = q.parentNode, w = document.createElement('div'); w.id = 'invt-scan-dlcwrap';
+        w.innerHTML = '<span>DLC</span><input type="date" id="invt-scan-dlc" title="Date limite (DLC) relevée sur l’article — mise à jour de la fiche à la validation">';
+        box.parentNode.insertBefore(w, box.nextSibling);
+        $('invt-scan-dlc').addEventListener('change', function () {
+            var s = window._invtSession, pid = window._invtScanCurrentPid; if (!s || !pid) return;
+            s.dlc = s.dlc || {}; if (this.value) s.dlc[pid] = this.value; else delete s.dlc[pid];
+        });
+    }
+    var lastPid = null;
+    function syncScanDlc() {
+        var i = $('invt-scan-dlc'), pid = window._invtScanCurrentPid; if (!i || pid === lastPid) return; lastPid = pid;
+        if (!pid) { i.value = ''; return; }
+        var s = window._invtSession || {}, p = P().find(function (x) { return String(x.id) === String(pid); });
+        i.value = (s.dlc && s.dlc[pid]) || (p && p.expiryDate ? String(p.expiryDate).slice(0, 10) : '');
+    }
+    // Nouvelle session : la date repart sur « maintenant »
+    function hookStart() {
+        var f = window.invtStartSession; if (typeof f !== 'function' || f._ivp) return false;
+        var w = function () { var r = f.apply(this, arguments); var inp = $('invt-effdate-in'); if (inp) { inp.value = localInput(); inp.max = localInput(); } lastPid = null; return r; };
+        w._ivp = 1; window.invtStartSession = w; return true;
+    }
+    function tick() { mountButtons(); mountSessionDate(); mountScanDlc(); syncScanDlc(); hookStart(); }
+    setInterval(tick, 700);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick); else tick();
 })();
 </script>
