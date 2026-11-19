@@ -1873,6 +1873,7 @@ if (gate()) onLogged();
         setTimeout(function () { var x = $('tg-x'); if (x) x.focus(); }, 30);
     }
     window.covoTabGuide = open;
+    window._tgData = { G: G, BY: BY, goTab: (typeof goTab === 'function' ? goTab : function (g) { try { if (g && g.go) g.go(); } catch (e) {} }), open: open, cur: function () { return cur; } };
 
     function badge(id, inline) {
         var s = document.createElement('span');
@@ -1915,5 +1916,628 @@ if (gate()) onLogged();
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   COVO PRO — LECTURE VOCALE DES GUIDES + ASSISTANT VOCAL INTERACTIF
+   • Guides (fenêtre « i ») : 🔊 Écouter le guide, 🔊 sur chaque démarche, 🎙️ Me guider.
+   • Assistant (bouton 🎙️ en bas à gauche) : on lui parle ou on écrit (« comment valider mon panier ? »),
+     il trouve la démarche dans les guides, ouvre le bon écran, montre où cliquer (cadre lumineux + flèche)
+     et lit chaque étape ; il passe à l'étape suivante quand on clique sur l'élément montré
+     ou quand on dit « suivant ». Commandes : suivant, précédent, répète, stop.
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._cvInstalled) return; window._cvInstalled = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’']/g, ' ').replace(/[^a-z0-9%€ ]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+    function clean(t) { return String(t || '').replace(/\[\[(.+?)\]\]/g, '« $1 »').replace(/\*\*(.+?)\*\*/g, '$1'); }
+    function speakable(t) { return clean(t).replace(/[«»]/g, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '').replace(/→/g, ', puis ').replace(/\s+/g, ' ').trim(); }
+    function data() { return window._tgData || null; }
+    var APPNAME = (function () { var t = String(document.title || 'COVO Pro').split(/\s[—–-]\s/)[0].trim(); return t || 'COVO Pro'; })();
+    var IS_COVO = !!document.getElementById('tab-products') || /^COVO Pro/i.test(APPNAME);
+    function suggestions() {
+        if (IS_COVO) return ['Comment valider mon panier ?', 'Comment ajouter un nouveau produit ?', 'Comment faire la fin de poste ?', 'Comment faire un inventaire ?', 'Comment mettre un article en promotion ?'];
+        var D = data(), out = []; if (!D) return out;
+        D.G.slice(1).concat(D.G.slice(0, 1)).forEach(function (g) { (g.steps || []).slice(0, 2).forEach(function (st) { if (/sauvegard|synchronis/i.test(st.t) && out.length < 4) return; if (out.length < 5) out.push('Comment ' + st.t.replace(/\s*\(.*?\)\s*$/, '').replace(/^./, function (c) { return c.toLowerCase(); }) + ' ?'); }); });
+        return out;
+    }
+    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem('covo_voice_cfg') || '{}') || {}; } catch (e) {} if (c.voice == null) c.voice = true; if (c.hands == null) c.hands = false; if (c.send !== 'manual') c.send = 'auto'; c.enabled = c.enabled === true; if (!(c.pause >= 800)) c.pause = 1500; return c; }
+    function saveCfg(c) { try { localStorage.setItem('covo_voice_cfg', JSON.stringify(c)); } catch (e) {} }
+
+    /* ───────────── Synthèse vocale ───────────── */
+    var TTS = { q: [], on: false, btn: null };
+    function pickVoice() { var vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [], fr = vs.filter(function (v) { return /^fr/i.test(v.lang); }); return fr.find(function (v) { return /google|natural|neural|online/i.test(v.name); }) || fr.find(function (v) { return /fr-FR/i.test(v.lang); }) || fr[0] || null; }
+    function rate() { try { return +(localStorage.getItem('covo_tts_rate') || 1) || 1; } catch (e) { return 1; } }
+    function stopTalk() { try { speechSynthesis.cancel(); } catch (e) {} TTS.on = false; document.querySelectorAll('.cv-reading').forEach(function (e) { e.classList.remove('cv-reading'); }); if (TTS.btn) { TTS.btn.classList.remove('on'); if (TTS.btn._lab) TTS.btn.innerHTML = TTS.btn._lab; } TTS.btn = null; }
+    // items : [{ text, el? }] — l'élément lu est surligné et amené à l'écran
+    function talk(items, opts) {
+        opts = opts || {};
+        if (!window.speechSynthesis) { if (opts.onend) opts.onend(); return; }
+        stopTalk(); TTS.on = true; TTS.btn = opts.btn || null;
+        if (TTS.btn) { TTS.btn._lab = TTS.btn._lab || TTS.btn.innerHTML; TTS.btn.classList.add('on'); TTS.btn.innerHTML = '⏸️ Pause'; }
+        var list = [], v = pickVoice(), r = rate();
+        items.forEach(function (x) { if (!x || !speakable(x.text)) return; var parts = speakable(x.text).match(/[^.!?;:]+[.!?;:]*|[^.!?;:]+$/g) || [speakable(x.text)], buf = ''; parts.forEach(function (pt) { if ((buf + pt).length > 180 && buf) { list.push({ text: buf, el: x.el }); buf = ''; } buf += pt; }); if (buf.trim()) list.push({ text: buf, el: x.el }); });
+        if (!list.length) { stopTalk(); if (opts.onend) opts.onend(); return; }
+        list.forEach(function (it, i) {
+            var u = new SpeechSynthesisUtterance(it.text); u.lang = 'fr-FR'; if (v) u.voice = v; u.rate = r;
+            u.onstart = function () { document.querySelectorAll('.cv-reading').forEach(function (e) { e.classList.remove('cv-reading'); }); if (it.el) { var d = it.el.closest && it.el.closest('details'); if (d) d.open = true; it.el.classList.add('cv-reading'); try { it.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} } };
+            if (i === list.length - 1) u.onend = function () { var b = TTS.btn; stopTalk(); if (opts.onend) opts.onend(); };
+            speechSynthesis.speak(u);
+        });
+    }
+    function pauseToggle(btn) { if (!TTS.on || TTS.btn !== btn) return false; if (speechSynthesis.paused) { speechSynthesis.resume(); btn.innerHTML = '⏸️ Pause'; } else { speechSynthesis.pause(); btn.innerHTML = '▶️ Reprendre'; } return true; }
+    try { speechSynthesis.getVoices(); speechSynthesis.addEventListener && speechSynthesis.addEventListener('voiceschanged', function () { pickVoice._v = null; }); } catch (e) {}
+
+    /* ───────────── Styles ───────────── */
+    function css() {
+        if ($('cv-css')) return;
+        var s = document.createElement('style'); s.id = 'cv-css';
+        s.textContent = [
+            '.cv-reading{background:rgba(250,204,21,.28)!important;border-radius:8px;box-shadow:0 0 0 2px rgba(250,204,21,.65);transition:background .2s}',
+            '#tg-head .cv-on,#tg-head button.on{background:#facc15!important;color:#111!important;border-color:#facc15!important}',
+            '#tg-main details.st summary .cv-sb{margin-left:auto;display:inline-flex;gap:4px}#tg-main details.st summary .cv-sb + .ch{margin-left:6px}',
+            '#tg-main details.st summary .cv-sb button{border:1px solid var(--border-color,#d1d5db);background:var(--bg-body,#f8fafc);color:var(--text-main,#1f2937);border-radius:8px;padding:3px 8px;font-size:.72rem;font-weight:800;cursor:pointer;font-family:inherit}',
+            '#tg-main details.st summary .cv-sb button:hover{background:#2563eb;color:#fff;border-color:#2563eb}',
+            '#cv-fab{position:fixed;left:16px;bottom:16px;z-index:2147482000;width:54px;height:54px;border-radius:50%;border:none;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;font-size:1.45rem;cursor:pointer;box-shadow:0 8px 24px rgba(37,99,235,.45);display:flex;align-items:center;justify-content:center}',
+            '#cv-fab:hover{transform:scale(1.06)}#cv-fab.listen{animation:cvPulse 1s ease-in-out infinite}@keyframes cvPulse{50%{box-shadow:0 0 0 12px rgba(124,58,237,.25)}}',
+            '#cv-panel{position:fixed;left:16px;bottom:80px;z-index:2147482001;width:min(380px,calc(100vw - 32px));max-height:min(620px,calc(100vh - 110px));display:flex;flex-direction:column;background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:1px solid var(--border-color,#e5e7eb);border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.4);overflow:hidden;font-family:inherit}',
+            '#cv-head{display:flex;align-items:center;gap:8px;padding:11px 12px;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff}#cv-head b{flex:1;font-size:.95rem}',
+            '#cv-head button{border:none;background:rgba(255,255,255,.18);color:#fff;border-radius:9px;height:30px;min-width:30px;padding:0 8px;cursor:pointer;font-weight:800;font-size:.78rem}#cv-head button.off{opacity:.5}',
+            '#cv-log{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:120px}',
+            '.cv-m{max-width:88%;padding:8px 11px;border-radius:13px;font-size:.84rem;line-height:1.5;white-space:pre-wrap}.cv-m.me{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:4px}.cv-m.bot{align-self:flex-start;background:var(--bg-card-2,#f1f5f9);border-bottom-left-radius:4px}',
+            '.cv-chips{display:flex;flex-wrap:wrap;gap:6px}.cv-chips button{border:1px solid rgba(124,58,237,.45);background:rgba(124,58,237,.08);color:inherit;border-radius:999px;padding:5px 10px;font-size:.76rem;font-weight:700;cursor:pointer;text-align:left}',
+            '#cv-step{border-top:1px solid var(--border-color,#e5e7eb);padding:10px 12px;background:rgba(124,58,237,.06)}#cv-step .h{font-size:.72rem;font-weight:900;color:#7c3aed;text-transform:uppercase;letter-spacing:.04em}#cv-step .t{font-size:.86rem;line-height:1.5;margin:4px 0 8px}',
+            '#cv-step .bar{height:5px;border-radius:3px;background:rgba(124,58,237,.15);margin:4px 0 6px}#cv-step .bar i{display:block;height:5px;border-radius:3px;background:#7c3aed}',
+            '#cv-step .b{display:flex;gap:6px}#cv-step .b button{flex:1;border:1px solid var(--border-color,#d1d5db);background:var(--bg-card,#fff);color:inherit;border-radius:9px;padding:7px 4px;font-weight:800;font-size:.76rem;cursor:pointer}#cv-step .b button.pri{background:#7c3aed;color:#fff;border-color:#7c3aed}',
+            '#cv-tbx{margin:0 0 8px;padding:7px 8px;border-radius:12px;border:1px solid var(--tb-line,rgba(0,0,0,.12));background:linear-gradient(135deg,rgba(124,58,237,.10),rgba(37,99,235,.08));color:var(--tb-ink,inherit);font-size:.78rem;transition:box-shadow .3s}',
+            '#cv-tbx b,#cv-act b{display:inline!important}#cv-tbx .cvx-l b{display:block!important}#cv-tbx.flash{box-shadow:0 0 0 3px #a855f7,0 0 18px rgba(168,85,247,.6)}#cv-tbx .cvx-row{display:flex;align-items:center;gap:7px}#cv-tbx .cvx-l{flex:1;display:flex;flex-direction:column;line-height:1.15}#cv-tbx .cvx-l small{color:var(--tb-mute,#64748b);font-size:.68rem}',
+            '.cvx-dot{width:9px;height:9px;border-radius:50%;background:#94a3b8;flex-shrink:0}.cvx-dot.on{background:#22c55e;box-shadow:0 0 6px #22c55e}',
+            '#cv-tbx button,#cv-act button{border:1px solid rgba(124,58,237,.45)!important;background:transparent!important;color:inherit!important;border-radius:9px!important;padding:5px 9px!important;font-size:.74rem!important;font-weight:800!important;cursor:pointer;white-space:nowrap}',
+            '#cv-tbx button.pri,#cv-act button.pri{background:#7c3aed!important;border-color:#7c3aed!important;color:#fff!important}',
+            '#cv-tbx ul,#cv-act ul{margin:6px 0;padding-left:4px;list-style:none}#cv-tbx li,#cv-act li{margin:2px 0;line-height:1.35}.cvx-t{font-size:.84rem}.cvx-n{font-size:.7rem;opacity:.75;margin-bottom:7px;line-height:1.35}.cvx-b{display:flex;gap:6px}',
+            '#cv-act{position:fixed;inset:0;z-index:2147482003;background:rgba(15,23,42,.35);display:flex;align-items:center;justify-content:center;padding:16px}#cv-act .cvx-card{width:min(360px,100%);background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:2px solid #a855f7;border-radius:16px;padding:14px;font-size:.84rem;box-shadow:0 20px 50px rgba(0,0,0,.35)}',
+            '#cv-mode{display:flex;align-items:center;gap:5px;padding:6px 10px 0;font-size:.72rem;font-weight:800;color:var(--text-muted,#64748b);flex-wrap:wrap}#cv-mode button{border:1px solid var(--border-color,#d1d5db);background:transparent;color:inherit;border-radius:999px;padding:3px 9px;font-size:.72rem;font-weight:800;cursor:pointer}#cv-mode button.on{background:#7c3aed;border-color:#7c3aed;color:#fff}#cv-mode select{margin-left:auto;border:1px solid var(--border-color,#d1d5db);background:var(--input-bg,#fff);color:inherit;border-radius:8px;font-size:.72rem;padding:2px 4px}',
+            '#cv-cd{display:none;padding:6px 12px 0}#cv-cd.on{display:block}#cv-cd i{display:block;height:4px;border-radius:2px;background:linear-gradient(90deg,#7c3aed,#22c55e);width:0}#cv-cd span{display:block;font-size:.72rem;font-weight:700;color:#7c3aed;margin-top:3px}',
+            '#cv-in{display:flex;gap:6px;padding:9px 10px;border-top:1px solid var(--border-color,#e5e7eb)}#cv-in input{flex:1;min-width:0;padding:9px 11px;border-radius:11px;border:1.5px solid var(--border-color,#d1d5db);background:var(--input-bg,#fff);color:inherit;font-size:.86rem}',
+            '#cv-in button{border:none;border-radius:11px;min-width:40px;cursor:pointer;font-size:1rem;background:#7c3aed;color:#fff}#cv-in button.mic.listen{background:#dc2626;animation:cvPulse 1s infinite}',
+            '.cv-k{display:inline-block;padding:0 6px;border-radius:6px;background:rgba(100,116,139,.15);border:1px solid rgba(100,116,139,.3);font-weight:800;font-size:.92em}',
+            '.cv-ring{position:fixed;z-index:2147481999;pointer-events:none;border:3px dashed rgba(168,85,247,.85);border-radius:12px;transition:left .2s,top .2s,width .2s,height .2s,opacity .2s}',
+            '.cv-ring.main{border:3px solid #a855f7;box-shadow:0 0 0 3px rgba(255,255,255,.75),0 0 18px 4px rgba(168,85,247,.75);animation:cvRing 1.3s ease-in-out infinite}',
+            '@keyframes cvRing{50%{border-color:#facc15;box-shadow:0 0 0 3px rgba(255,255,255,.75),0 0 26px 9px rgba(250,204,21,.75)}}',
+            '.cv-num{position:absolute;top:-12px;left:-12px;width:24px;height:24px;border-radius:50%;background:#7c3aed;color:#fff;font:900 .78rem/24px system-ui,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.35)}',
+            '#cv-coach{position:fixed;z-index:2147482002;width:min(330px,calc(100vw - 16px));background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:2px solid #a855f7;border-radius:16px;box-shadow:0 14px 40px rgba(0,0,0,.35);font-family:inherit;transition:left .25s ease,top .25s ease}',
+            '#cv-coach:before{content:"";position:absolute;width:16px;height:16px;background:inherit;border:inherit;border-width:0 0 2px 2px;transform:rotate(45deg)}',
+            '#cv-coach[data-side=right]:before{left:-10px;top:calc(var(--ax) - 8px)}#cv-coach[data-side=left]:before{right:-10px;top:calc(var(--ax) - 8px);transform:rotate(-135deg)}',
+            '#cv-coach[data-side=below]:before{top:-10px;left:calc(var(--ax) - 8px);transform:rotate(135deg)}#cv-coach[data-side=above]:before{bottom:-10px;left:calc(var(--ax) - 8px);transform:rotate(-45deg)}#cv-coach[data-side=dock]:before{display:none}',
+            '#cv-coach .cc-h{display:flex;align-items:center;gap:8px;padding:9px 10px 6px;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;border-radius:13px 13px 0 0}',
+            '#cv-coach .cc-step{font-weight:900;font-size:1.05rem;background:rgba(255,255,255,.2);border-radius:9px;padding:1px 8px}#cv-coach .cc-step i{font-style:normal;font-size:.72rem;opacity:.85}',
+            '#cv-coach .cc-t{flex:1;font-weight:800;font-size:.8rem;line-height:1.25}#cv-coach .cc-h button{border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:7px;width:26px;height:24px;cursor:pointer;font-weight:900}',
+            '#cv-coach .cc-bar{height:4px;background:rgba(124,58,237,.15)}#cv-coach .cc-bar i{display:block;height:4px;background:#facc15}',
+            '#cv-coach .cc-row{display:flex;gap:8px;align-items:flex-start;padding:8px 12px 0;font-size:.84rem;line-height:1.4}#cv-coach .cc-ic{font-size:1.05rem;line-height:1.2}',
+            '#cv-coach .cc-do{font-weight:800;font-size:.92rem;color:var(--text-main,#111)}',
+            '#cv-coach .cc-opts{display:flex;flex-direction:column;gap:5px;padding:8px 12px 0}#cv-coach .cc-opts button{display:flex;align-items:center;gap:8px;text-align:left;border:1.5px solid rgba(124,58,237,.45);background:rgba(124,58,237,.07);color:inherit;border-radius:10px;padding:6px 9px;font-size:.82rem;font-weight:700;cursor:pointer}',
+            '#cv-coach .cc-opts button b{width:21px;height:21px;border-radius:50%;background:#7c3aed;color:#fff;font-size:.72rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}#cv-coach .cc-opts button:hover,#cv-coach .cc-opts button.on{background:#7c3aed;color:#fff}',
+            '#cv-coach .cc-txt{margin:8px 12px 0;padding:7px 9px;border-radius:9px;background:var(--bg-card-2,#f1f5f9);font-size:.78rem;line-height:1.5;max-height:120px;overflow:auto;opacity:.92}',
+            '#cv-coach .cc-b{display:flex;gap:6px;padding:9px 12px 11px}#cv-coach .cc-b button{border:1px solid var(--border-color,#d1d5db);background:var(--bg-card,#fff);color:inherit;border-radius:9px;padding:7px 9px;font-weight:800;font-size:.78rem;cursor:pointer}#cv-coach .cc-b button.pri{flex:1;background:#7c3aed;color:#fff;border-color:#7c3aed}#cv-coach .cc-b button:disabled{opacity:.4}',
+            '#cv-coach.small{width:min(260px,calc(100vw - 16px))}',
+            '#cv-fab.guiding{width:auto;min-width:54px;padding:0 12px;border-radius:27px;gap:6px}#cv-fab .cv-fab-n{font-size:.82rem}'
+        ].join('\n');
+        document.head.appendChild(s);
+    }
+
+    /* ───────────── 1) Lecture vocale dans la fenêtre des guides ───────────── */
+    function guideItems(main) {
+        var out = [], add = function (el, txt) { if (el) out.push({ el: el, text: txt != null ? txt : el.textContent }); };
+        add(main.querySelector('.hero h3')); add(main.querySelector('.hero .sub')); add(main.querySelector('.intro'));
+        main.querySelectorAll('.zone').forEach(function (z) { add(z); });
+        main.querySelectorAll('details.st').forEach(function (d, i) { var sm = d.querySelector('summary'); add(sm, 'Démarche ' + (i + 1) + ' : ' + stepTitle(sm) + '.'); d.querySelectorAll('li').forEach(function (li, k) { add(li, 'Étape ' + (k + 1) + '. ' + li.textContent); }); });
+        main.querySelectorAll('ul.tips li').forEach(function (li) { add(li, 'Astuce : ' + li.textContent); });
+        main.querySelectorAll('.faq').forEach(function (f) { add(f); });
+        return out;
+    }
+    function stepTitle(sm) { var c = sm.cloneNode(true); c.querySelectorAll('.n,.ch,.cv-sb').forEach(function (x) { x.remove(); }); return c.textContent.trim(); }
+    function decorateGuide() {
+        var head = $('tg-head'), main = $('tg-main'); if (!head || !main) return;
+        css();
+        if (!$('cv-tg-listen')) {
+            var b = document.createElement('button'); b.type = 'button'; b.id = 'cv-tg-listen'; b.title = 'Écouter ce guide à voix haute'; b.innerHTML = '🔊 Écouter';
+            var b2 = document.createElement('button'); b2.type = 'button'; b2.id = 'cv-tg-ask'; b2.title = 'Poser une question à l’assistant vocal'; b2.innerHTML = '🎙️ Assistant';
+            var x = $('tg-x'); head.insertBefore(b, x); head.insertBefore(b2, x);
+        }
+        main.querySelectorAll('details.st summary').forEach(function (sm, i) {
+            if (sm.querySelector('.cv-sb')) return;
+            var w = document.createElement('span'); w.className = 'cv-sb';
+            w.innerHTML = '<button type="button" data-cv="say" title="Écouter cette démarche">🔊</button><button type="button" data-cv="guide" title="L’assistant me guide à l’écran, étape par étape">🎙️ Me guider</button>';
+            sm.insertBefore(w, sm.querySelector('.ch'));
+        });
+    }
+    document.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t.closest && t.closest('#cv-tg-listen')) { var b = t.closest('#cv-tg-listen'); if (pauseToggle(b)) return; if (TTS.on) { stopTalk(); return; } talk(guideItems($('tg-main')), { btn: b }); return; }
+        if (t.closest && t.closest('#cv-tg-ask')) { openPanel(); return; }
+        var sb = t.closest && t.closest('#tg-main .cv-sb [data-cv]'); if (!sb) return;
+        e.preventDefault(); e.stopPropagation();
+        var d = sb.closest('details.st'), idx = Array.prototype.indexOf.call($('tg-main').querySelectorAll('details.st'), d), D = data();
+        var g = D && D.BY[D.cur ? D.cur() : ''];
+        if (sb.getAttribute('data-cv') === 'say') { d.open = true; var it = [{ el: d.querySelector('summary'), text: stepTitle(d.querySelector('summary')) + '.' }]; d.querySelectorAll('li').forEach(function (li, k) { it.push({ el: li, text: 'Étape ' + (k + 1) + '. ' + li.textContent }); }); talk(it); return; }
+        if (g && g.steps && g.steps[idx]) { stopTalk(); try { var x = $('tg-x'); if (x) x.click(); } catch (er) {} if (!isOn()) { requestActivation(); return; } openPanel(); startGuide(g, idx); }
+    }, true);
+    new MutationObserver(function () { if ($('tg-main')) decorateGuide(); }).observe(document.documentElement, { childList: true, subtree: true });
+
+    /* ───────────── 2) Compréhension des questions ───────────── */
+    var STOP = 'je j me m moi mon ma mes le la les l un une des de du d a au aux et ou en pour par sur dans avec comment faire fait est ce c qu que quoi quel quelle quels quelles il y peux puis pouvez voudrais veux souhaite aimerais besoin svp stp s il te vous plait faut on nous dois doit dois tu ca cela cette cet ces son sa ses leur dire montre montrer explique expliquer aide aider moyen procedure demarche'.split(' ');
+    var SYN = {
+        valider: ['valider', 'encaisser', 'vente', 'payer', 'regler', 'reglement', 'paiement'], encaisser: ['encaisser', 'valider', 'vente', 'paiement'], payer: ['payer', 'encaisser', 'paiement', 'regler'], vendre: ['vente', 'encaisser'], vente: ['vente', 'encaisser'],
+        panier: ['panier', 'caddie', 'vente'], caddie: ['panier'],
+        ajouter: ['ajouter', 'creer', 'nouveau', 'enregistrer'], creer: ['creer', 'nouveau', 'ajouter'], nouveau: ['nouveau', 'creer'], nouvel: ['nouveau', 'creer'], nouvelle: ['nouveau', 'creer'], enregistrer: ['enregistrer', 'creer', 'ajouter'],
+        produit: ['produit', 'article'], produits: ['produit', 'article'], article: ['article', 'produit'], articles: ['article', 'produit'],
+        modifier: ['modifier', 'changer', 'editer', 'corriger'], changer: ['modifier', 'changer'], supprimer: ['supprimer', 'retirer', 'effacer'],
+        rembourser: ['retour', 'rembourser'], retour: ['retour'], promo: ['promotion', 'promo'], promotion: ['promotion'], solde: ['promotion'],
+        cloture: ['cloture', 'fin', 'poste'], cloturer: ['cloture', 'fin', 'poste'], fermer: ['cloture', 'fin'], caisse: ['caisse', 'poste'],
+        sauvegarder: ['sauvegarder', 'synchroniser', 'drive'], synchroniser: ['synchroniser', 'sauvegarder', 'drive'], sauvegarde: ['sauvegarder'],
+        inventaire: ['inventaire', 'stock'], stock: ['stock', 'inventaire'], etiquette: ['etiquette', 'imprimer'], imprimer: ['imprimer', 'etiquette'], ticket: ['ticket'],
+        fidelite: ['fidelite', 'client'], client: ['client', 'fidelite'], credit: ['credit', 'plusieurs'], mixte: ['mixte', 'carte', 'especes'], carte: ['carte', 'cb'], cb: ['carte', 'cb'], especes: ['especes'],
+        chercher: ['trouver', 'rechercher', 'chercher'], trouver: ['trouver', 'rechercher'], rechercher: ['rechercher', 'trouver'], filtrer: ['filtrer', 'trier'], tva: ['tva']
+    };
+    function stem(w) { return w.length > 4 ? w.replace(/(ations?|ements?|ers?|ez|es|s)$/, '') : w; }
+    function toks(s) { return norm(s).split(' ').filter(function (w) { return w && w.length > 1 && STOP.indexOf(w) < 0; }); }
+    function index() {
+        var D = data(); if (!D) return [];
+        if (index._c && index._n === D.G.length) return index._c;
+        var out = [];
+        D.G.forEach(function (g) { (g.steps || []).forEach(function (s, i) { out.push({ g: g, i: i, title: toks(s.t).map(stem), gt: toks(g.t + ' ' + (g.sub || '')).map(stem), body: toks(s.s.join(' ')).map(stem) }); }); });
+        index._c = out; index._n = D.G.length; return out;
+    }
+    function search(q) {
+        var words = toks(q); if (!words.length) return [];
+        var exp = []; words.forEach(function (w) { exp.push({ w: stem(w), k: 1 }); (SYN[w] || []).forEach(function (x) { if (x !== w) exp.push({ w: stem(x), k: 0.7 }); }); });
+        return index().map(function (e) {
+            var s = 0, hitT = 0;
+            exp.forEach(function (x) { if (e.title.indexOf(x.w) >= 0) { s += 3 * x.k; hitT++; } else if (e.gt.indexOf(x.w) >= 0) s += 1 * x.k; else if (e.body.indexOf(x.w) >= 0) s += 0.5 * x.k; });
+            return { e: e, s: s + (hitT ? 0.5 : 0) };
+        }).filter(function (r) { return r.s >= 2; }).sort(function (a, b) { return b.s - a.s; });
+    }
+
+    /* ───────────── 3) Repérer à l'écran l'élément dont parle l'étape ───────────── */
+    function visible(el) { if (!el || !el.getClientRects().length) return false; var r = el.getBoundingClientRect(); if (r.width < 4 || r.height < 4) return false; var cs = getComputedStyle(el); return cs.visibility !== 'hidden' && cs.display !== 'none' && +cs.opacity > 0.05; }
+    function covered(el) {
+        var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+        if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return false;
+        var hide = Array.prototype.slice.call(document.querySelectorAll('.cv-ring,#cv-coach')), pan = $('cv-panel'), fab = $('cv-fab'); hide.forEach(function (z) { z.style.display = 'none'; });
+        var top = document.elementFromPoint(x, y); hide.forEach(function (z) { z.style.display = ''; });
+        if (!top) return false; if ((pan && pan.contains(top)) || (fab && fab.contains(top))) return false;
+        return !(el === top || el.contains(top) || top.contains(el));
+    }
+    var SEL1 = 'button,a,[role=button],[role=tab],.tab,summary,label,select,input[type=button],input[type=submit],[data-sec],[data-svc],[data-v],[data-cat],[data-qf],[data-tab],[onclick]';
+    var SEL2 = 'h1,h2,h3,h4,legend,li,span,div,th,td,p';
+    function scan(sel, nl, lw) {
+        var best = null, bestS = -1, els = document.querySelectorAll(sel);
+        for (var i = 0; i < els.length; i++) {
+            var el = els[i], raw = el.textContent || el.value || el.getAttribute('aria-label') || el.title || '';
+            if (!raw || raw.length > 120) continue;
+            var nt = norm(raw); if (!nt || nt.indexOf(lw[0]) < 0) continue;                     // filtre rapide sur le 1er mot
+            if (el.closest('#cv-panel,#cv-fab,#tg-ov,#cv-coach,.cv-ring')) continue;
+            var sc = 0;
+            if (nt === nl) sc = 10; else if (nt.indexOf(nl) === 0) sc = 7; else if (nt.indexOf(nl) >= 0) sc = 5;
+            else { var nw = nt.split(' '), hit = lw.filter(function (w) { return w.length > 2 && nw.indexOf(w) >= 0; }).length; if (lw.length > 1 && hit / lw.length >= 0.75) sc = 3; }
+            if (!sc || !visible(el)) continue;
+            if (/^(BUTTON|A|SUMMARY|SELECT|LABEL)$/.test(el.tagName) || el.getAttribute('role') === 'button' || el.onclick || el.getAttribute('onclick')) sc += 2;
+            sc -= Math.min(2, nt.length / 60);
+            if (sc > bestS - 6 && covered(el)) sc -= 6;
+            if (sc > bestS || (sc === bestS && best && best.contains(el))) { best = el; bestS = sc; }
+        }
+        return { el: best, s: bestS };
+    }
+    function findTarget(label) {
+        var nl = norm(label); if (!nl || nl.length < 2) return null;
+        var lw = nl.split(' ');
+        var r = scan(SEL1, nl, lw);
+        if (r.s < 6) { var r2 = scan(SEL2, nl, lw); if (r2.s > r.s) r = r2; }
+        return r.s > 1 ? r.el : null;
+    }
+    function labelsOf(text) {
+        var L = [], m, re;
+        m = /^\s*\*\*(.+?)\*\*/.exec(text); if (m) L.push(m[1]);                 // section en tête d'étape (ex. « Identité & photo »)
+        re = /\[\[(.+?)\]\]/g; while ((m = re.exec(text))) L.push(m[1]);         // boutons cités
+        re = /\*\*(.+?)\*\*/g; while ((m = re.exec(text))) if (L.indexOf(m[1]) < 0) L.push(m[1]);
+        return L;
+    }
+    function clickable(el) { return /^(BUTTON|A|SUMMARY|SELECT|LABEL|INPUT)$/.test(el.tagName) || el.getAttribute('role') === 'button' || !!el.onclick || !!el.getAttribute('onclick') || getComputedStyle(el).cursor === 'pointer'; }
+    /* Cadres lumineux (sans assombrir l'écran) + bulle d'explication placée À CÔTÉ de l'élément */
+    var SP = { list: [], raf: 0, info: null };
+    function unspot() { cancelAnimationFrame(SP.raf); SP.list.forEach(function (x) { x.ring.remove(); }); SP.list = []; }
+    function spotMany(targets) {
+        unspot(); css();
+        targets.forEach(function (t, i) {
+            var r = document.createElement('div'); r.className = 'cv-ring' + (i === 0 ? ' main' : '');
+            if (targets.length > 1) r.innerHTML = '<span class="cv-num">' + (i + 1) + '</span>';
+            document.body.appendChild(r); SP.list.push({ el: t.el, ring: r });
+        });
+        if (targets[0]) try { targets[0].el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' }); } catch (e) {}
+        (function loop() {
+            SP.list.forEach(function (x) {
+                if (!document.body.contains(x.el) || !visible(x.el)) { x.ring.style.opacity = '0'; return; }
+                var r = x.el.getBoundingClientRect(); x.ring.style.opacity = '1';
+                x.ring.style.left = (r.left - 5) + 'px'; x.ring.style.top = (r.top - 5) + 'px'; x.ring.style.width = (r.width + 10) + 'px'; x.ring.style.height = (r.height + 10) + 'px';
+            });
+            placeCoach();
+            SP.raf = requestAnimationFrame(loop);
+        })();
+    }
+    function zoneOf(el) {
+        var box = el.closest('[role=dialog],.modal,[id$="-modal"],[id*="modal"],#cart-modal'), ref = box && box !== document.body ? box.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
+        var r = el.getBoundingClientRect(), cx = (r.left + r.width / 2 - ref.left) / Math.max(1, ref.width), cy = (r.top + r.height / 2 - ref.top) / Math.max(1, ref.height);
+        var v = cy < 0.34 ? 'en haut' : cy > 0.66 ? 'en bas' : 'au milieu', h = cx < 0.34 ? 'à gauche' : cx > 0.66 ? 'à droite' : 'au centre';
+        var where = (v === 'au milieu' && h === 'au centre') ? 'au centre' : v + ' ' + h;
+        var name = '';
+        if (box) { var hd = box.querySelector('#pem-header-name,h1,h2,h3,[class*="title"]'); name = hd ? hd.textContent.replace(/\s+/g, ' ').trim().slice(0, 40) : ''; }
+        if (box && box.id === 'cart-modal') name = name || 'Panier';
+        return where + (box ? ' de la fenêtre' + (name ? ' « ' + name + ' »' : '') : (S.g && S.g.t ? ' de l’écran (onglet « ' + S.g.t + ' »)' : ' de l’écran'));
+    }
+    function labelOf(el, fallback) { var t = (el.textContent || el.value || el.getAttribute('aria-label') || el.placeholder || '').replace(/\s+/g, ' ').trim(); return (fallback || t).slice(0, 48); }
+
+    /* ───────────── 4) Panneau de l'assistant et conduite pas à pas ───────────── */
+    var S = { g: null, i: -1, k: 0, waitEl: null, listening: false, rec: null };
+    /* ───────────── Activation depuis la boîte à outils ───────────── */
+    function isOn() { return cfg().enabled === true; }
+    function hasTB() { return !!document.querySelector('#covo-toolbox .tb-body'); }
+    // Bouton rond 🎙️ : seulement pendant un guidage, ou (assistant activé) dans une appli sans boîte à outils
+    function refreshFab() { var need = !!S.g || (isOn() && !hasTB()); var f = $('cv-fab'); if (need && !f) fab(); else if (!need && f) f.remove(); }
+    function tbOpen() {
+        var panel = $('tb-panel'), bub = $('tb-bubble'), root = $('covo-toolbox');
+        if (root && !root.classList.contains('show')) root.classList.add('show');
+        if (bub && bub.offsetParent && (!panel || !panel.offsetParent)) bub.click();
+    }
+    function stripHtml(mode) {
+        if (mode === 'ask') return '<div class="cvx-t">🎙️ <b>Activer l\u2019assistant vocal ?</b></div>'
+            + '<ul><li>🗣️ il répond à vos questions, à voix haute ;</li><li>🎤 il écoute vos questions au micro (dictée) ;</li><li>👆 il vous montre où cliquer, étape par étape.</li></ul>'
+            + '<div class="cvx-n">L\u2019activation vaut pour toutes les applications COVO de cet appareil. Le navigateur peut vous demander l\u2019accès au micro.</div>'
+            + '<div class="cvx-b"><button type="button" data-cvx="yes" class="pri">✅ Activer</button><button type="button" data-cvx="no">Annuler</button></div>';
+        if (isOn()) return '<div class="cvx-row"><span class="cvx-dot on"></span><span class="cvx-l"><b>Assistant vocal</b><small>activé · Alt + A</small></span><button type="button" data-cvx="open" class="pri">💬 Ouvrir</button><button type="button" data-cvx="off" title="Désactiver l\u2019assistant">⏻</button></div>';
+        return '<div class="cvx-row"><span class="cvx-dot"></span><span class="cvx-l"><b>Assistant vocal</b><small>désactivé</small></span><button type="button" data-cvx="ask" class="pri">🎙️ Demander l\u2019activation</button></div>';
+    }
+    function renderStrip(mode) {
+        var x = $('cv-tbx'); if (x) { x.className = mode === 'ask' ? 'ask' : ''; x.innerHTML = stripHtml(mode); }
+        var m = $('cv-act'); if (m) { if (mode === 'ask') m.querySelector('.cvx-card').innerHTML = stripHtml('ask'); else m.remove(); }
+    }
+    function mountStrip() {
+        var body = document.querySelector('#covo-toolbox .tb-body'); if (!body || $('cv-tbx')) return;
+        css();
+        var x = document.createElement('div'); x.id = 'cv-tbx'; body.insertBefore(x, body.firstChild); renderStrip();
+        x.addEventListener('click', onStrip);
+        refreshFab();
+    }
+    function onStrip(e) {
+        var b = e.target.closest('[data-cvx]'); if (!b) return; e.stopPropagation();
+        var k = b.getAttribute('data-cvx');
+        if (k === 'ask') renderStrip('ask');
+        else if (k === 'no') renderStrip();
+        else if (k === 'yes') activate();
+        else if (k === 'open') openPanel();
+        else if (k === 'off') { closePanel(); var c = cfg(); c.enabled = false; saveCfg(c); renderStrip(); refreshFab(); try { showScanToast('🎙️ Assistant vocal désactivé', 'info'); } catch (er) {} }
+    }
+    // Demande d'activation : dans la boîte à outils (ou, si l'appli n'en a pas, dans une petite fenêtre)
+    function requestActivation() {
+        css();
+        if (hasTB()) { mountStrip(); tbOpen(); renderStrip('ask'); var x = $('cv-tbx'); if (x) { x.classList.add('flash'); setTimeout(function () { x.classList.remove('flash'); }, 1600); try { x.scrollIntoView({ block: 'nearest' }); } catch (e) {} } return; }
+        var m = $('cv-act'); if (!m) { m = document.createElement('div'); m.id = 'cv-act'; m.innerHTML = '<div class="cvx-card"></div>'; document.body.appendChild(m); m.addEventListener('click', function (e) { if (e.target === m) { m.remove(); return; } onStrip(e); }); }
+        renderStrip('ask');
+    }
+    function activate() {
+        var done = function (mic) {
+            var c = cfg(); c.enabled = true; saveCfg(c);
+            renderStrip(); refreshFab();
+            try { showScanToast(mic ? '🎙️ Assistant vocal activé — micro autorisé' : '🎙️ Assistant vocal activé (micro non autorisé : vous pouvez écrire vos questions)', mic ? 'success' : 'info'); } catch (er) {}
+            openPanel();
+        };
+        try {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && (window.SpeechRecognition || window.webkitSpeechRecognition))
+                navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) { st.getTracks().forEach(function (t) { t.stop(); }); done(true); }, function () { done(false); });
+            else done(false);
+        } catch (e) { done(false); }
+    }
+    document.addEventListener('keydown', function (e) { if (e.altKey && !e.ctrlKey && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); if (!isOn()) requestActivation(); else if ($('cv-panel')) closePanel(); else openPanel(); } });
+
+    function fab() {
+        if ($('cv-fab') || !document.body) return; css();
+        var b = document.createElement('button'); b.id = 'cv-fab'; b.type = 'button'; b.title = 'Assistant vocal COVO — posez votre question (ex. « comment valider mon panier ? »)'; b.innerHTML = '🎙️';
+        b.addEventListener('click', function () { var p = $('cv-panel'); if (S.g) { if (p) p.style.display = p.style.display === 'none' ? '' : 'none'; else openPanel(); return; } if (p) closePanel(); else openPanel(); });
+        document.body.appendChild(b);
+    }
+    function openPanel() {
+        css();
+        if (!isOn()) { requestActivation(); return; }
+        refreshFab();
+        if ($('cv-panel')) { $('cv-panel').style.display = ''; return; }
+        var c = cfg(), p = document.createElement('div'); p.id = 'cv-panel'; p.setAttribute('role', 'dialog'); p.setAttribute('aria-label', 'Assistant vocal');
+        p.innerHTML = '<div id="cv-head"><span style="font-size:1.2rem">🤖</span><b>Assistant ' + esc(APPNAME) + '</b>'
+            + '<button type="button" data-c="voice" class="' + (c.voice ? '' : 'off') + '" title="Réponses à voix haute">' + (c.voice ? '🔊' : '🔇') + '</button>'
+            + '<button type="button" data-c="hands" class="' + (c.hands ? '' : 'off') + '" title="Mains libres : le micro se rallume après chaque réponse">🎧</button>'
+            + '<button type="button" data-c="x" title="Fermer">✕</button></div>'
+            + '<div id="cv-log" aria-live="polite"></div><div id="cv-step" style="display:none"></div>'
+            + '<div id="cv-mode"><span>Envoi :</span><button type="button" data-c="send-auto" class="' + (c.send === 'auto' ? 'on' : '') + '" title="La question part toute seule quand vous avez fini votre phrase">🤖 Auto (fin de phrase)</button><button type="button" data-c="send-manual" class="' + (c.send === 'manual' ? 'on' : '') + '" title="Vous dictez ou écrivez, puis vous envoyez vous-même avec ➤ (ou dites « envoyer »)">✋ Manuel</button>'
+            + '<select data-c="pause" title="Silence à attendre avant l\u2019envoi automatique">' + [[1000, '1 s'], [1500, '1,5 s'], [2200, '2,2 s'], [3000, '3 s']].map(function (o) { return '<option value="' + o[0] + '"' + (c.pause === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>'
+            + '<div id="cv-cd"><i></i><span></span></div>'
+            + '<form id="cv-in" autocomplete="off"><input id="cv-q" placeholder="Posez votre question… (ou 🎤)" aria-label="Votre question"><button type="button" class="mic" data-c="mic" title="Parler">🎤</button><button type="submit" title="Envoyer">➤</button></form>';
+        document.body.appendChild(p);
+        p.addEventListener('click', onPanelClick);
+        $('cv-in').addEventListener('submit', function (e) { e.preventDefault(); if (S.listening) { if (S.send) S.send(); return; } var v = $('cv-q').value.trim(); if (!v) return; $('cv-q').value = ''; ask(v); });
+        $('cv-q').addEventListener('input', function (e) { if (e.isTrusted && S.listening && S.typing) S.typing(); });
+        p.addEventListener('change', function (e) { if (e.target.getAttribute('data-c') === 'pause') { var c2 = cfg(); c2.pause = +e.target.value; saveCfg(c2); } });
+        if (!S.greeted) {
+            S.greeted = true;
+            bot('Bonjour ! Je suis votre assistant. Demandez-moi comment faire quelque chose dans ' + APPNAME + ' : je vous montre où cliquer et je vous guide étape par étape.', true);
+            chips(suggestions());
+        }
+        setTimeout(function () { var q = $('cv-q'); if (q) q.focus(); }, 50);
+    }
+    function closePanel() { stopListen(); stopTalk(); endGuide(true); var p = $('cv-panel'); if (p) p.remove(); }
+    function log(html, cls) { var l = $('cv-log'); if (!l) return null; var d = document.createElement('div'); d.className = 'cv-m ' + cls; d.innerHTML = html; l.appendChild(d); l.scrollTop = l.scrollHeight; return d; }
+    function me(t) { log(esc(t), 'me'); }
+    function bot(t, say, after) { log(esc(clean(t)).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>'), 'bot'); if (say && cfg().voice) talk([{ text: t }], { onend: function () { if (after) after(); else if (cfg().hands) listen(); } }); else if (after) after(); }
+    function chips(list, onPick) {
+        var l = $('cv-log'); if (!l) return; var d = document.createElement('div'); d.className = 'cv-chips';
+        d.innerHTML = list.map(function (x, i) { return '<button type="button" data-chip="' + i + '">' + esc(typeof x === 'string' ? x : x.label) + '</button>'; }).join('');
+        d.addEventListener('click', function (e) { var b = e.target.closest('[data-chip]'); if (!b) return; var x = list[+b.getAttribute('data-chip')]; if (onPick) onPick(x); else ask(typeof x === 'string' ? x : x.label); });
+        l.appendChild(d); l.scrollTop = l.scrollHeight;
+    }
+    function onPanelClick(e) {
+        var b = e.target.closest('[data-c]'); if (!b) return;
+        var k = b.getAttribute('data-c'), c = cfg();
+        if (k === 'x') closePanel();
+        else if (k === 'voice') { c.voice = !c.voice; saveCfg(c); b.classList.toggle('off', !c.voice); b.innerHTML = c.voice ? '🔊' : '🔇'; if (!c.voice) stopTalk(); }
+        else if (k === 'hands') { c.hands = !c.hands; saveCfg(c); b.classList.toggle('off', !c.hands); bot(c.hands ? 'Mode mains libres activé : après chaque réponse, je vous écoute. Dites « suivant », « répète » ou « stop ».' : 'Mode mains libres désactivé.', true); }
+        else if (k === 'mic') { if (S.listening) { if (S.flush) S.flush(); else stopListen(); } else listen(); }
+        else if (k === 'send-auto' || k === 'send-manual') { c.send = k === 'send-auto' ? 'auto' : 'manual'; saveCfg(c); document.querySelectorAll('#cv-mode [data-c^="send-"]').forEach(function (x) { x.classList.toggle('on', x === b); }); bot(c.send === 'auto' ? 'Envoi automatique : je réponds dès que vous avez fini votre phrase (après un court silence).' : 'Envoi manuel : dictez ou écrivez, corrigez si besoin, puis envoyez avec ➤ (ou dites « envoyer » à la fin).', false); }
+        else if (k === 'next') next(); else if (k === 'prev') prev(); else if (k === 'rep') sayStep(); else if (k === 'stop') endGuide();
+    }
+
+    // Reconnaissance vocale — détection de FIN DE PHRASE (silence + phrase complète) ou envoi MANUEL
+    var CMD = /^(suivant|suivante|ensuite|apres|c est fait|ok|okay|d accord|continue|continuer|vas y|precedent|precedente|retour|repete|repeter|redis|stop|arrete|arreter|annule|annuler|termine)$/;
+    var OPEN_END = /\b(de|du|des|d|le|la|les|l|un|une|mon|ma|mes|ton|ta|votre|vos|ce|cet|cette|ces|pour|et|ou|a|au|aux|comment|sur|dans|avec|en|je|j|est|que|qui|quoi|faire|puis|mais|donc|quand|si|par|entre|veux|voudrais|peux|dois|ajouter|creer|modifier|supprimer|trouver|voir)$/;
+    function countdown(ms, label) {
+        var cd = $('cv-cd'); if (!cd) return;
+        var i = cd.querySelector('i'), sp = cd.querySelector('span');
+        if (!ms) { cd.classList.remove('on'); i.style.transition = 'none'; i.style.width = '0'; return; }
+        cd.classList.add('on'); sp.textContent = label || '';
+        i.style.transition = 'none'; i.style.width = '0'; void i.offsetWidth; i.style.transition = 'width ' + ms + 'ms linear'; i.style.width = '100%';
+    }
+    function listen() {
+        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) { bot('La reconnaissance vocale n’est pas disponible dans ce navigateur : utilisez Chrome ou Edge, ou écrivez votre question.', false); return; }
+        if (S.listening) return; stopTalk();
+        var c = cfg(), manual = c.send === 'manual', q = $('cv-q'), base = q && manual ? q.value.trim() : '';
+        var finals = '', interim = '', timer = null, done = false, started = Date.now(), typed = false;
+        var r = new SR(); r.lang = 'fr-FR'; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
+        S.rec = r; S.listening = true;
+        var mic = document.querySelector('#cv-in .mic'), f = $('cv-fab'); if (mic) { mic.classList.add('listen'); mic.innerHTML = '⏹'; } if (f) f.classList.add('listen');
+        if (q) q.placeholder = manual ? '🎙️ Dictez… puis ➤ pour envoyer (ou dites « envoyer »)' : '🎙️ Je vous écoute… (envoi à la fin de votre phrase)';
+        function text() { return (base + ' ' + finals + ' ' + interim).replace(/\s+/g, ' ').trim(); }
+        function submit() {
+            if (done) return; done = true; clearTimeout(timer); countdown(0);
+            var v = q ? q.value.trim() : text();
+            stopListen(); if (q) q.value = '';
+            if (v) ask(v);
+        }
+        function keepOnly() { if (done) return; done = true; clearTimeout(timer); countdown(0); stopListen(); }   // mode manuel : on garde le texte, sans envoyer
+        S.flush = function () { if (manual) keepOnly(); else submit(); };   // 🎤 : en manuel on arrête d'écouter sans envoyer
+        S.send = submit;                                                   // ➤ / Entrée : envoi immédiat
+        S.typing = function () { typed = true; clearTimeout(timer); countdown(0); };            // l'utilisateur corrige au clavier : plus d'envoi automatique
+        function schedule() {
+            clearTimeout(timer); if (manual || typed) return;
+            var t = text(), n = norm(t); if (!t) { countdown(0); return; }
+            var wait;
+            if (S.g && CMD.test(n)) wait = 250;                                                   // commande de guidage : réaction immédiate
+            else { wait = c.pause; if (OPEN_END.test(n) || n.split(' ').length < 2) wait = c.pause * 2; if (interim) wait += 500; }
+            countdown(wait, OPEN_END.test(n) ? '⏳ Je vous laisse finir votre phrase…' : '✅ Fin de phrase détectée — envoi…');
+            timer = setTimeout(function () { if (interim && Date.now() - S.lastHeard < 900) { schedule(); return; } submit(); }, wait);
+        }
+        r.onresult = function (ev) {
+            interim = ''; finals = '';                                                           // liste complète de la session : jamais de doublon
+            for (var i = 0; i < ev.results.length; i++) { var tr = ev.results[i][0].transcript; if (ev.results[i].isFinal) finals += ' ' + tr; else interim += tr; }
+            S.lastHeard = Date.now();
+            if (q && !typed) q.value = text();
+            var n = norm(text());
+            if (/\b(envoyer|envoie|envoie la question|valide la question)$/.test(n)) { if (q) q.value = text().replace(/\s*(envoyer|envoie la question|envoie|valide la question)\s*[.!?]?$/i, ''); submit(); return; }
+            schedule();
+        };
+        r.onerror = function (ev) {
+            if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { bot('Le micro est bloqué : autorisez-le pour ce site (icône 🔒 à gauche de l’adresse), ou écrivez votre question.', false); done = true; stopListen(); }
+        };
+        r.onend = function () {
+            if (done) return;
+            if (Date.now() - started > 60000) { if (manual) keepOnly(); else submit(); return; }
+            if (manual || typed) { base = (base + ' ' + finals).replace(/\s+/g, ' ').trim(); finals = ''; interim = ''; try { r.start(); } catch (e) { keepOnly(); } return; }       // Chrome coupe après un silence : en manuel on réécoute
+            if (text() && OPEN_END.test(norm(text())) && Date.now() - (S.lastHeard || 0) < c.pause * 2 + 500) { base = (base + ' ' + finals).replace(/\s+/g, ' ').trim(); finals = ''; interim = ''; try { r.start(); return; } catch (e) {} }   // phrase inachevée : on continue d'écouter
+            if (text()) submit(); else { done = true; stopListen(); }
+        };
+        try { r.start(); } catch (e) { stopListen(); }
+    }
+    function stopListen(silent) {
+        S.listening = false; S.flush = null; S.send = null; S.typing = null; countdown(0);
+        try { if (S.rec && !silent) S.rec.abort(); } catch (e) {} S.rec = null;
+        var mic = document.querySelector('#cv-in .mic'); if (mic) { mic.classList.remove('listen'); mic.innerHTML = '🎤'; }
+        var f = $('cv-fab'); if (f) f.classList.remove('listen');
+        var q = $('cv-q'); if (q) q.placeholder = 'Posez votre question… (ou 🎤)';
+    }
+
+    function ask(text) {
+        if (!isOn()) { requestActivation(); return; }
+        if (!$('cv-panel')) openPanel();
+        me(text);
+        var n = norm(text);
+        if (/^(stop|arrete|arreter|annule|annuler|termine|c est bon merci|fin)\b/.test(n)) { if (S.g) endGuide(); else bot('D’accord.', true); return; }
+        if (S.g && /^(suivant|suivante|ensuite|apres|c est fait|ok|okay|d accord|continue|continuer|vas y|go|fait|oui)\b/.test(n)) { next(); return; }
+        if (S.g && /^(precedent|precedente|retour|reviens)\b/.test(n)) { prev(); return; }
+        if (S.g && /^(repete|repeter|redis|encore|pardon|quoi)\b/.test(n)) { sayStep(); return; }
+        if (/^(bonjour|salut|bonsoir|coucou|hello)\b/.test(n) && n.split(' ').length < 4) { bot('Bonjour ! Que voulez-vous faire ? Par exemple : « comment encaisser une vente » ou « comment créer un produit ».', true); return; }
+        if (/^(merci|super|parfait|genial)\b/.test(n)) { bot('Avec plaisir ! Je reste disponible si vous avez une autre question.', true); return; }
+        if (/(que sais tu faire|tu sais faire quoi|aide moi|qui es tu|que peux tu faire)/.test(n)) { bot('Je connais toutes les démarches des guides de COVO Pro. Posez une question commençant par « comment… » : je trouve la démarche, j’ouvre le bon écran et je vous montre où cliquer, étape par étape.', true); return; }
+        var res = search(text);
+        if (!res.length) {
+            bot('Je n’ai pas trouvé de démarche pour cette question. Essayez avec d’autres mots, par exemple : « ajouter un produit », « valider le panier », « retour client », « inventaire ».', true);
+            return;
+        }
+        var top = res[0], alt = res.slice(1, 4).filter(function (r) { return r.s >= top.s * 0.6; });
+        startGuide(top.e.g, top.e.i);
+        if (alt.length) {
+            log('<span style="opacity:.75;font-size:.76rem">Ce n’est pas ça ? Autres démarches :</span>', 'bot');
+            chips(alt.map(function (r) { return { label: r.e.g.steps[r.e.i].t + ' (' + r.e.g.t + ')', r: r }; }), function (x) { startGuide(x.r.e.g, x.r.e.i); });
+        }
+    }
+
+    // Conduite pas à pas
+    function goScreen(g) {
+        var D = data(); if (!D || !g) return;
+        try {
+            if (g.id === 'panier' && IS_COVO) { if (typeof switchTab === 'function') switchTab('products'); setTimeout(function () { var m = $('cart-modal'); if (m && !m.classList.contains('active') && typeof toggleCart === 'function') toggleCart(); }, 150); }
+            else if (g.tab) D.goTab(g);
+        } catch (e) {}
+    }
+    function startGuide(g, i) {
+        endGuide(true);
+        var st = g.steps[i]; S.g = g; S.i = i; S.k = 0;
+        bot('D’accord ! Je vous guide pour « ' + st.t.replace(/\s*\(admin\)/, '') + ' » (' + g.t + '). Il y a ' + st.s.length + ' étape' + (st.s.length > 1 ? 's' : '') + '. Suivez la bulle violette à l’écran.', false);
+        dockPanel(true);
+        goScreen(g);
+        setTimeout(function () { sayStep(true); }, 450);
+    }
+    function curText() { return S.g ? S.g.steps[S.i].s[S.k] : ''; }
+    // Pendant le guidage, le panneau de discussion se range dans le bouton 🎙️ : l'écran reste entièrement visible
+    function dockPanel(on) {
+        refreshFab();
+        var p = $('cv-panel'), f = $('cv-fab');
+        if (p) p.style.display = on ? 'none' : '';
+        if (f) { f.classList.toggle('guiding', !!on); f.innerHTML = on && S.g ? '<span style="font-size:.95rem">🎙️</span><b class="cv-fab-n">' + (S.k + 1) + '/' + S.g.steps[S.i].s.length + '</b>' : '🎙️'; }
+    }
+    function renderStep() { if (S.g) renderCoach(); else { var c = $('cv-coach'); if (c) c.remove(); } }
+    function computeInfo() {
+        var txt = curText(), n = norm(txt), m, re, lead = null, btns = [], bolds = [];
+        m = /^\s*\*\*(.+?)\*\*/.exec(txt); if (m) lead = m[1];                                   // section citée en tête (« Prix & stock »)
+        re = /\[\[(.+?)\]\]/g; while ((m = re.exec(txt))) btns.push(m[1]);                       // boutons / options cités
+        if (!btns.length) { re = /\*\*(.+?)\*\*/g; while ((m = re.exec(txt))) if (m[1] !== lead) bolds.push(m[1]); }
+        var seen = [], find = function (lb) { var el = findTarget(lb); if (!el || seen.indexOf(el) >= 0) return null; seen.push(el); return { el: el, label: lb }; };
+        var sec = lead ? find(lead) : null;
+        var opts0 = btns.concat(bolds).slice(0, 6).map(find).filter(Boolean);
+        var targets = (sec ? [sec] : []).concat(opts0), main = sec || opts0[0], el = main && main.el;
+        var mode = 'none', action = '', opts = [];
+        var secTxt = sec ? 'Ouvrez la section « ' + sec.label + ' »' : '';
+        if (opts0.length >= 2 && (/\bou\b/.test(n) || /choisi|mode|type/.test(n))) {
+            mode = 'choice'; action = (secTxt ? secTxt + ', puis choisissez' : 'Choisissez') + ' l’une de ces options :';
+            opts = opts0.map(function (t, i) { return { n: (sec ? i + 2 : i + 1), label: t.label, el: t.el }; });
+        } else {
+            var t1 = opts0[0], e1 = t1 && t1.el;
+            if (e1 && e1.tagName === 'SELECT') { mode = 'select'; action = (secTxt ? secTxt + ', puis choisissez' : 'Choisissez') + ' dans la liste « ' + t1.label + ' » :'; opts = Array.prototype.slice.call(e1.options).filter(function (o) { return o.value !== '' || e1.options.length < 6; }).slice(0, 8).map(function (o, i) { return { n: i + 1, label: o.textContent.trim(), val: o.value, sel: e1 }; }); }
+            else if (e1 && /^(INPUT|TEXTAREA)$/.test(e1.tagName)) { mode = 'type'; action = (secTxt ? secTxt + ', puis remplissez' : 'Remplissez') + ' le champ « ' + labelOf(e1, t1.label) + ' »'; }
+            else if (sec) { mode = clickable(sec.el) ? 'click' : 'look'; action = secTxt + ' et remplissez les champs décrits ci-dessous' + (e1 ? ' (« ' + t1.label + ' » est le repère n° 2)' : ''); }
+            else if (e1 && clickable(e1)) { mode = 'click'; action = 'Cliquez sur « ' + t1.label + ' »'; }
+            else if (e1) { mode = 'look'; action = 'Regardez la zone « ' + t1.label + ' »'; }
+            else action = /^(saisissez|tapez|remplissez|indiquez)/.test(n) ? 'Remplissez les champs indiqués ci-dessous' : 'Suivez l’explication ci-dessous';
+        }
+        return { targets: targets, el: el, mode: mode, action: action, opts: opts, where: el ? zoneOf(el) : '' };
+    }
+    function renderCoach() {
+        css();
+        var info = SP.info || { targets: [], mode: 'none', action: '', opts: [], where: '' };
+        var st = S.g.steps[S.i], n = st.s.length, c = $('cv-coach');
+        if (!c) { c = document.createElement('div'); c.id = 'cv-coach'; c.setAttribute('role', 'dialog'); c.setAttribute('aria-live', 'polite'); document.body.appendChild(c); c.addEventListener('click', onCoachClick); }
+        var small = !!S.small;
+        c.classList.toggle('small', small);
+        c.innerHTML = '<div class="cc-h"><span class="cc-step">' + (S.k + 1) + '<i>/' + n + '</i></span><span class="cc-t">' + esc(st.t.replace(/\s*\(admin\)/, '')) + '</span>'
+            + '<button type="button" data-cc="min" title="' + (small ? 'Agrandir' : 'Réduire la bulle') + '">' + (small ? '⤢' : '–') + '</button><button type="button" data-cc="stop" title="Arrêter le guidage">✕</button></div>'
+            + '<div class="cc-bar"><i style="width:' + Math.round((S.k + 1) / n * 100) + '%"></i></div>'
+            + (info.where ? '<div class="cc-row"><span class="cc-ic">📍</span><div><b>Où :</b> ' + esc(info.where) + '</div></div>' : '')
+            + '<div class="cc-row cc-do"><span class="cc-ic">👉</span><div>' + esc(info.action).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>') + '</div></div>'
+            + (info.opts.length ? '<div class="cc-opts">' + info.opts.map(function (o, i) { return '<button type="button" data-opt="' + i + '"><b>' + o.n + '</b>' + esc(o.label.replace(/\s+/g, ' ').slice(0, 34)) + '</button>'; }).join('') + '</div>' : '')
+            + (small ? '' : '<div class="cc-txt">' + esc(clean(curText())).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>') + '</div>')
+            + '<div class="cc-b"><button type="button" data-cc="prev"' + (S.k ? '' : ' disabled') + ' title="Étape précédente">◀</button><button type="button" data-cc="rep" title="Répéter">🔁</button>'
+            + '<button type="button" class="pri" data-cc="next">' + (S.k < n - 1 ? 'Suivant ▶' : 'Terminer ✅') + '</button><button type="button" data-cc="chat" title="Ouvrir la discussion">💬</button></div>';
+        c._opts = info.opts; c._side = null;
+        placeCoach(true);
+    }
+    function onCoachClick(e) {
+        var b = e.target.closest('[data-cc],[data-opt]'); if (!b) return;
+        e.stopPropagation();
+        if (b.hasAttribute('data-opt')) {
+            var o = ($('cv-coach')._opts || [])[+b.getAttribute('data-opt')]; if (!o) return;
+            if (o.sel) { o.sel.value = o.val; o.sel.dispatchEvent(new Event('change', { bubbles: true })); o.sel.dispatchEvent(new Event('input', { bubbles: true })); b.parentNode.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); }
+            else if (o.el) { o.el.click(); b.parentNode.querySelectorAll('button').forEach(function (x) { x.classList.remove('on'); }); b.classList.add('on'); }
+            return;
+        }
+        var k = b.getAttribute('data-cc');
+        if (k === 'next') next(); else if (k === 'prev') prev(); else if (k === 'rep') sayStep();
+        else if (k === 'stop') endGuide();
+        else if (k === 'min') { S.small = !S.small; renderCoach(); }
+        else if (k === 'chat') { var p = $('cv-panel'); if (p) p.style.display = p.style.display === 'none' ? '' : 'none'; else openPanel(); }
+    }
+    // Bulle à côté de l'élément (droite, gauche, dessous ou dessus), jamais par-dessus ; sans élément : en bas, au centre
+    function placeCoach(force) {
+        var c = $('cv-coach'); if (!c) return;
+        var main = SP.list[0], cw = c.offsetWidth, ch = c.offsetHeight, m = 14, pos = null;
+        if (main && document.body.contains(main.el) && visible(main.el)) {
+            var r = main.el.getBoundingClientRect();
+            // la bulle évite TOUS les repères (options n° 1, 2, 3…) : on raisonne sur le rectangle qui les englobe
+            var u = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+            SP.list.forEach(function (x) { if (x === main || !document.body.contains(x.el) || !visible(x.el)) return; var q = x.el.getBoundingClientRect(); u.left = Math.min(u.left, q.left); u.top = Math.min(u.top, q.top); u.right = Math.max(u.right, q.right); u.bottom = Math.max(u.bottom, q.bottom); });
+            if ((u.right - u.left) < innerWidth * 0.7 && (u.bottom - u.top) < innerHeight * 0.6) r = { left: u.left, top: u.top, right: u.right, bottom: u.bottom, width: u.right - u.left, height: u.bottom - u.top };
+            var cand = [
+                { s: 'right', x: r.right + m + 6, y: r.top + r.height / 2 - ch / 2 },
+                { s: 'left', x: r.left - cw - m - 6, y: r.top + r.height / 2 - ch / 2 },
+                { s: 'below', x: r.left + r.width / 2 - cw / 2, y: r.bottom + m + 6 },
+                { s: 'above', x: r.left + r.width / 2 - cw / 2, y: r.top - ch - m - 6 }
+            ];
+            for (var i = 0; i < cand.length && !pos; i++) {
+                var q = cand[i], x = Math.max(8, Math.min(innerWidth - cw - 8, q.x)), y = Math.max(8, Math.min(innerHeight - ch - 8, q.y));
+                var overlap = !(x + cw < r.left - 4 || x > r.right + 4 || y + ch < r.top - 4 || y > r.bottom + 4);
+                if (!overlap) pos = { s: q.s, x: x, y: y, ax: Math.max(14, Math.min((q.s === 'below' || q.s === 'above' ? cw : ch) - 14, q.s === 'below' || q.s === 'above' ? r.left + r.width / 2 - x : r.top + r.height / 2 - y)) };
+            }
+        }
+        if (!pos) pos = { s: 'dock', x: Math.max(8, innerWidth / 2 - cw / 2), y: innerHeight - ch - 16, ax: 0 };
+        c.style.left = Math.round(pos.x) + 'px'; c.style.top = Math.round(pos.y) + 'px';
+        if (c._side !== pos.s || force) { c.setAttribute('data-side', pos.s); c._side = pos.s; }
+        c.style.setProperty('--ax', Math.round(pos.ax) + 'px');
+    }
+    function showTarget() {
+        if (S.waitEl) { S.waitEl.removeEventListener('click', onTargetClick, true); S.waitEl = null; }
+        var info = computeInfo(); SP.info = info;
+        spotMany(info.targets);
+        if (info.el && info.mode === 'click' && /^(cliquez|ouvrez|appuyez|touchez|choisissez|selectionnez)/.test(norm(curText()))) { S.waitEl = info.el; info.el.addEventListener('click', onTargetClick, true); }   // passage automatique pour une étape « cliquez sur… »
+        renderCoach(); dockPanel(true);
+        return info.el;
+    }
+    function onTargetClick() { var g = S.g, i = S.i, k = S.k; setTimeout(function () { if (S.g === g && S.i === i && S.k === k) next(); }, 700); }
+    function sayStep(first) {
+        if (!S.g) return;
+        setTimeout(function () { if (S.g) showTarget(); }, first ? 350 : 80);
+        var n = S.g.steps[S.i].s.length, txt = 'Étape ' + (S.k + 1) + (S.k === n - 1 ? ', la dernière' : '') + '. ' + curText();
+        if (cfg().voice) talk([{ text: txt }], { onend: function () { if (cfg().hands && S.g) listen(); } });
+    }
+    function next() {
+        if (!S.g) return; var n = S.g.steps[S.i].s.length;
+        if (S.k >= n - 1) { var t = S.g.steps[S.i].t.replace(/\s*\(admin\)/, ''); endGuide(true); bot('Bravo, c’est terminé : « ' + t + ' ». Avez-vous une autre question ?', true); return; }
+        S.k++; sayStep();
+    }
+    function prev() { if (!S.g || !S.k) return; S.k--; sayStep(); }
+    function endGuide(silent) {
+        if (S.waitEl) { S.waitEl.removeEventListener('click', onTargetClick, true); S.waitEl = null; }
+        unspot(); SP.info = null; var had = !!S.g; S.g = null; S.i = -1; S.k = 0;
+        var c = $('cv-coach'); if (c) c.remove();
+        dockPanel(false);
+        if (had && !silent) { stopTalk(); bot('Guidage arrêté. Posez-moi une autre question quand vous voulez.', true); }
+    }
+    window.addEventListener('resize', function () { placeCoach(true); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.g && !$('tg-ov')) { /* Échap ferme d'abord les fenêtres de l'appli */ } }, true);
+    window.covoVoiceAssistant = { open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S };
+
+    function boot() {
+        if (!document.body) return setTimeout(boot, 300); css(); mountStrip(); refreshFab();
+        new MutationObserver(function () { if (!$('cv-tbx') && document.querySelector('#covo-toolbox .tb-body')) mountStrip(); }).observe(document.body, { childList: true, subtree: true });
+        window.addEventListener('storage', function (e) { if (e.key === 'covo_voice_cfg') { renderStrip(); refreshFab(); if (!isOn()) closePanel(); } });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
 </body>
 </html>
