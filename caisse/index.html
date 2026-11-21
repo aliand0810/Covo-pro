@@ -498,14 +498,40 @@ return tinf_uncompress;
     if (window._cpReadOnlyGuardInstalled) return;
     window._cpReadOnlyGuardInstalled = true;
     var _cpOrigSetItem = Storage.prototype.setItem;
+    // Avertissement « consultation seule » : une seule fenêtre, plus jamais réaffichée une fois acquittée
+    // (acquittement mémorisé par utilisateur ; écrit via le setItem d'origine, hors verrou lecture seule).
+    var _cpRoShown = false;
+    function _cpReadOnlyNotice(cu) {
+        var key = 'covo_ro_ack_' + String(cu.id || cu.username || cu.name || 'user');
+        if (_cpRoShown) return;
+        try { if (window.localStorage.getItem(key)) { _cpRoShown = true; return; } } catch(e) {}
+        if (!document.body) return;
+        _cpRoShown = true;
+        var ov = document.createElement('div');
+        ov.id = 'cp-ro-notice';
+        ov.setAttribute('role', 'alertdialog');
+        ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit;';
+        ov.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#111);max-width:420px;width:100%;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.35);overflow:hidden;">'
+            + '<div style="background:linear-gradient(135deg,#1e3a5f,#2c6fad);color:#fff;padding:16px 20px;font-weight:900;font-size:1.02rem;">👁️ Mode consultation seule</div>'
+            + '<div style="padding:16px 20px;font-size:.88rem;line-height:1.5;">'
+            + 'Ce compte (<b>' + String(cu.username || cu.name || '').replace(/[<>&"]/g, '') + '</b>) est en <b>consultation seule</b> : la sauvegarde a été désactivée par l\'Admin-Développeur.<br><br>'
+            + 'Vous pouvez naviguer, tester le panier et les écrans, mais <b>aucune modification n\'est enregistrée</b> (ventes, stock, réglages…).'
+            + '<div style="font-size:.76rem;color:var(--text-muted,#666);margin-top:10px;">Ce message ne s\'affichera plus pour ce compte une fois acquitté.</div></div>'
+            + '<div style="padding:0 20px 18px;"><button type="button" id="cp-ro-ok" style="width:100%;padding:12px;border:none;border-radius:11px;background:#2c6fad;color:#fff;font-weight:900;font-size:.92rem;cursor:pointer;">✅ J\'ai compris</button></div></div>';
+        document.body.appendChild(ov);
+        var ok = ov.querySelector('#cp-ro-ok');
+        ok.onclick = function() {
+            try { _cpOrigSetItem.call(window.localStorage, key, new Date().toISOString()); } catch(e) {}
+            ov.remove();
+        };
+        setTimeout(function(){ try { ok.focus(); } catch(e) {} }, 30);
+    }
     Storage.prototype.setItem = function(key, value) {
         if (this === window.localStorage && key !== 'covo_current_user') {
             try {
                 var cu = JSON.parse(window.localStorage.getItem('covo_current_user') || 'null');
                 if (cu && cu.readOnly === true) {
-                    if (typeof window.showScanToast === 'function') {
-                        window.showScanToast('👁️ Mode consultation seule — sauvegarde désactivée par l\'Admin-Développeur', 'info');
-                    }
+                    try { _cpReadOnlyNotice(cu); } catch(e2) {}
                     return;
                 }
             } catch(e) {}
@@ -1397,6 +1423,7 @@ function cxSwitchTab(tab) {
 // PRODUITS
 // ═══════════════════════════════════════════════════════════════════════
 function cxRenderProducts() {
+    if (window._cxUI && window._cxUI.renderProducts) return window._cxUI.renderProducts();
     var grid = document.getElementById('cx-products-grid');
     if (!grid) return;
     var q = (document.getElementById('cx-search').value || '').trim().toLowerCase();
@@ -1601,6 +1628,7 @@ function cxClearCart() {
 }
 
 function cxRenderCart() {
+    if (window._cxUI && window._cxUI.renderCart) return window._cxUI.renderCart();
     var wrap = document.getElementById('cx-cart-lines');
     var empty = document.getElementById('cx-cart-empty');
     if (!cart.length) {
@@ -1981,6 +2009,7 @@ function cxValidateSale() {
 
 // ── Finalisation de la vente (après vérification titulaire éventuelle) ──────
 function _cxFinalizeSale(args) {
+    if (window._cxUI && window._cxUI.preFinalize) { try { window._cxUI.preFinalize(); } catch (e) { console.warn('[cxUI]', e); } }
     var method = args.method, pickedClient = args.pickedClient, total = args.total,
         received = args.received, receivedCash = args.receivedCash, receivedCB = args.receivedCB,
         receivedTicket = args.receivedTicket, change = args.change;
@@ -2003,6 +2032,7 @@ function _cxFinalizeSale(args) {
     if (pickedClient) { sale.clientId = pickedClient.id; sale.clientName = pickedClient.name || ''; }
     if (window._cxSumupPending) { sale.sumup = window._cxSumupPending; window._cxSumupPending = null; }
     sale.ticketNum = cxNextTicketNum(sale.id);
+    if (window._cxUI && window._cxUI.decorateSale) { try { window._cxUI.decorateSale(sale); } catch (e) { console.warn('[cxUI]', e); } }
 
     // Historique des ventes
     var hist = [];
@@ -2425,6 +2455,7 @@ function cxDisplayTicketNum(s) {
 }
 
 function cxRenderHistory() {
+    if (window._cxUI && window._cxUI.renderHistory) return window._cxUI.renderHistory();
     var tbody = document.getElementById('cx-hist-tbody');
     var emptyEl = document.getElementById('cx-hist-empty');
     var summaryEl = document.getElementById('cx-hist-summary');
@@ -5227,6 +5258,7 @@ function cxResvRefreshUi() {
             if (a === 'pair') {
                 var raw = ($('su-pair').value || ''), code = raw.toUpperCase().replace(/[^A-Z0-9]/g, ''), name = ($('su-name').value || '').trim() || 'Caisse Pro';
                 if (!code) { msg('Saisissez le code d’appairage affiché sur le terminal', false); return; }
+                if (/^\s*[A-Z0-9]{4}\s*-\s*[A-Z0-9]{4}\s*$/i.test(raw)) { msg('⚠️ <b>' + esc(raw.trim().toUpperCase()) + '</b> est le code de <b>connexion du terminal à votre compte SumUp</b> (écran « Scannez pour vous connecter »), pas le code d’appairage avec la caisse.<br>1️⃣ Scannez le QR du terminal avec l’appareil photo de votre téléphone, connectez-vous à votre compte SumUp et confirmez ce code.<br>2️⃣ Une fois le terminal connecté : menu du terminal → <b>Connexions</b> → <b>API</b> → <b>Connecter</b> : un code de 8-9 caractères <b>sans tiret</b> s’affiche — c’est lui à saisir ici.', false); return; }
                 if (code.length < 8 || code.length > 9) { msg('❌ Le code d’appairage SumUp fait <b>8 ou 9 caractères</b> (lettres et chiffres, ex. 918MPQHZ) — vous en avez saisi ' + code.length + '. Recopiez-le exactement depuis l’écran du terminal.', false); return; }
                 $('su-pair').value = code;
                 msg('⏳ Appairage du terminal…');
@@ -6303,6 +6335,821 @@ function cxResvRefreshUi() {
         if (!document.body) return setTimeout(boot, 300); css(); mountStrip(); refreshFab();
         new MutationObserver(function () { if (!$('cv-tbx') && document.querySelector('#covo-toolbox .tb-body')) mountStrip(); }).observe(document.body, { childList: true, subtree: true });
         window.addEventListener('storage', function (e) { if (e.key === 'covo_voice_cfg') { renderStrip(); refreshFab(); if (!isOn()) closePanel(); } });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+
+<style id="cxui-css">
+/* ===== Caisse Pro — refonte v2 (Produits · Panier · Historique) ===== */
+.cx-tabs { background:var(--bg-card-2,rgba(0,0,0,.04)); margin:12px 16px 0; padding:5px !important; border-radius:14px; gap:5px !important; flex-wrap:nowrap !important; align-items:center; }
+.cx-tab-btn { border:none !important; background:transparent !important; box-shadow:none !important; border-radius:10px !important; transition:background .15s,color .15s; }
+.cx-tab-btn:hover { background:rgba(5,150,105,.08) !important; }
+.cx-tab-btn.active { background:linear-gradient(135deg,#059669,#047857) !important; color:#fff !important; box-shadow:0 3px 10px rgba(5,150,105,.35) !important; }
+.cxui-kbd-chip { flex:0 0 auto; border:none; background:transparent; color:var(--text-muted); font-weight:800; font-size:.78rem; padding:8px 10px; border-radius:9px; cursor:pointer; }
+.cxui-kbd-chip:hover { background:rgba(5,150,105,.1); color:#047857; }
+kbd.cxk { display:inline-block; min-width:22px; padding:1px 6px; border-radius:6px; border:1px solid var(--border-color); border-bottom-width:2px; background:var(--bg-card); font:800 .7rem ui-monospace,Menlo,Consolas,monospace; color:var(--text-main); text-align:center; }
+
+/* Vue côte à côte (ordinateur) */
+#cxui-split { display:block; }
+body.cxui-split #cxui-split { display:grid; grid-template-columns:minmax(0,1fr) 410px; gap:0; align-items:start; }
+body.cxui-split #cx-panel-panier { position:sticky; top:0; max-height:100vh; overflow-y:auto; padding:14px 16px 24px; border-left:1.5px solid var(--border-color); background:var(--bg-card-2,rgba(0,0,0,.02)); box-sizing:border-box; }
+body.cxui-split #cx-panel-produits { padding-bottom:30px; }
+body.cxui-split #cx-cart-fab { display:none !important; }
+body.cxui-split #cx-tabbtn-panier { display:none !important; }
+.cxui-cart-head { display:none; align-items:center; justify-content:space-between; margin-bottom:10px; }
+body.cxui-split .cxui-cart-head { display:flex; }
+.cxui-cart-head .t { font-weight:900; font-size:1rem; }
+.cxui-cart-head .c { font-size:.72rem; font-weight:800; color:#047857; background:rgba(5,150,105,.12); padding:3px 9px; border-radius:20px; }
+
+/* Produits : barre d'outils */
+#cx-cat-filter { display:none !important; }
+.cxui-tools { display:flex; gap:6px; align-items:center; }
+.cxui-seg { display:flex; border:1.5px solid var(--border-color); border-radius:9px; overflow:hidden; }
+.cxui-seg button { border:none; background:var(--bg-card); color:var(--text-muted); padding:8px 10px; font-weight:800; cursor:pointer; font-size:.82rem; }
+.cxui-seg button.on { background:#059669; color:#fff; }
+#cxui-sort { min-width:130px; flex:0 0 auto; font-weight:700; }
+.cxui-chips { display:flex; gap:6px; overflow-x:auto; padding:2px 0 10px; margin-bottom:4px; scrollbar-width:thin; }
+.cxui-chip { flex:0 0 auto; border:1.5px solid var(--border-color); background:var(--bg-card); color:var(--text-main); border-radius:20px; padding:6px 12px; font-weight:800; font-size:.76rem; cursor:pointer; white-space:nowrap; transition:all .12s; }
+.cxui-chip:hover { border-color:#059669; }
+.cxui-chip.on { background:#059669; border-color:#059669; color:#fff; }
+.cxui-chip .n { opacity:.7; font-weight:700; margin-left:3px; }
+.cxui-count { font-size:.72rem; color:var(--text-muted); font-weight:700; margin:-2px 0 8px; }
+
+/* Cartes produits */
+#cx-products-grid .card { cursor:pointer; padding:10px; border-radius:14px; transition:transform .12s, box-shadow .12s, border-color .12s; }
+#cx-products-grid .card:hover { transform:translateY(-2px); border-color:#059669; }
+#cx-products-grid .card:active { transform:scale(.98); }
+#cx-products-grid .card.cxui-in { border-color:#059669; box-shadow:0 0 0 2px rgba(5,150,105,.25),0 4px 14px rgba(0,0,0,.08); }
+.cxui-fav { position:absolute; bottom:6px; right:6px; z-index:7; width:28px; height:28px; border-radius:50%; border:none; background:rgba(255,255,255,.92); box-shadow:0 1px 4px rgba(0,0,0,.2); cursor:pointer; font-size:.9rem; line-height:28px; padding:0; color:#9ca3af; }
+.cxui-fav.on { color:#f59e0b; }
+.cxui-incart { position:absolute; bottom:6px; left:6px; z-index:7; background:#059669; color:#fff; font-weight:900; font-size:.72rem; padding:3px 8px; border-radius:20px; box-shadow:0 2px 6px rgba(5,150,105,.4); }
+#cx-products-grid .btn-buy { padding:8px; font-size:.82rem; border-radius:9px; }
+#cx-products-grid .cx-card-price { font-size:1.05rem; margin:2px 0; }
+/* Vue liste */
+#cx-products-grid.cxui-list { grid-template-columns:1fr !important; gap:6px; }
+#cx-products-grid.cxui-list .card { flex-direction:row; align-items:center; text-align:left; gap:10px; padding:7px 10px; }
+#cx-products-grid.cxui-list .card:hover { transform:none; }
+#cx-products-grid.cxui-list .card-img { width:46px; min-width:46px; height:46px; aspect-ratio:auto; margin:0; font-size:1rem; }
+#cx-products-grid.cxui-list .cxui-fav, #cx-products-grid.cxui-list .cxui-incart { position:static; flex:0 0 auto; }
+#cx-products-grid.cxui-list .cx-card-name { min-height:0; flex:1; }
+#cx-products-grid.cxui-list .cx-card-cat { width:110px; flex:0 0 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#cx-products-grid.cxui-list .cx-card-price { width:90px; text-align:right; }
+#cx-products-grid.cxui-list .cx-card-stock { width:90px; text-align:right; }
+#cx-products-grid.cxui-list .btn-buy { width:auto; margin:0; padding:7px 12px; }
+#cx-products-grid.cxui-list .cx-card-num, #cx-products-grid.cxui-list .low-stock-badge { position:static; flex:0 0 auto; }
+#cx-products-grid.cxui-list .out-badge { position:static; transform:none; font-size:.66rem; padding:2px 6px; border-width:1px; }
+@media (max-width:640px) { #cx-products-grid.cxui-list .cx-card-cat, #cx-products-grid.cxui-list .cx-card-stock { display:none; } }
+
+/* Panier */
+.cx-cart-line { border-radius:12px !important; padding:9px 10px !important; gap:8px !important; transition:border-color .15s; }
+.cx-cart-line { flex-wrap:wrap; row-gap:6px !important; }
+.cx-cart-line .cx-cl-name { flex:1 1 100% !important; }
+.cx-cart-line .cx-qty-ctrl { margin-right:auto; }
+body.cxui-tab-panier #cx-cart-fab { display:none !important; }
+.cx-cart-line.cxui-last { border-color:#059669 !important; }
+.cx-cart-line .cx-cl-name .p s { color:var(--text-muted); margin-right:4px; }
+.cxui-qty { width:58px; text-align:center; font-weight:900; font-size:.85rem; padding:4px 2px; border:1.5px solid var(--border-color); border-radius:7px; background:var(--input-bg,var(--bg-card)); color:var(--text-main); -moz-appearance:textfield; }
+.cxui-qty::-webkit-inner-spin-button, .cxui-qty::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.cxui-qty:focus { outline:none; border-color:#059669; }
+.cxui-ldisc { border:1.5px dashed var(--border-color); background:transparent; color:var(--text-muted); border-radius:7px; padding:3px 6px; font-weight:800; font-size:.7rem; cursor:pointer; white-space:nowrap; }
+.cxui-ldisc.on { border-style:solid; border-color:#db2777; color:#be185d; background:rgba(219,39,119,.08); }
+.cxui-sum { background:var(--bg-card); border:1.5px solid var(--border-color); border-radius:12px; padding:10px 12px; margin-top:8px; }
+.cxui-sum .r { display:flex; justify-content:space-between; align-items:center; font-size:.82rem; padding:3px 0; color:var(--text-muted); font-weight:700; }
+.cxui-sum .r.disc { color:#be185d; }
+.cxui-sum button { border:1.5px dashed var(--border-color); background:transparent; color:var(--text-main); border-radius:8px; padding:4px 9px; font-weight:800; font-size:.74rem; cursor:pointer; }
+.cx-cart-total-row { font-size:1.35rem !important; border-top:none !important; padding:8px 2px 2px !important; }
+#cx-cart-total { color:#047857; }
+body.dark-mode #cx-cart-total { color:#34d399; }
+.cxui-note { width:100%; box-sizing:border-box; margin-top:8px; padding:8px 10px; border:1.5px solid var(--border-color); border-radius:10px; background:var(--input-bg,var(--bg-card)); color:var(--text-main); font:inherit; font-size:.8rem; resize:vertical; min-height:36px; }
+.cxui-paylabel { display:none !important; }
+#cx-payment-method { display:none !important; }
+.cxui-tiles { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-bottom:10px; }
+.cxui-tile { border:1.5px solid var(--border-color); background:var(--bg-card-2); color:var(--text-main); border-radius:11px; padding:9px 4px; font-weight:800; font-size:.74rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:2px; transition:all .12s; }
+.cxui-tile .i { font-size:1.25rem; line-height:1.2; }
+.cxui-tile:hover { border-color:#059669; }
+.cxui-tile.on { background:linear-gradient(135deg,#059669,#047857); color:#fff; border-color:transparent; box-shadow:0 3px 10px rgba(5,150,105,.35); }
+.cxui-cash { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 8px; }
+.cxui-cash button { flex:1 1 auto; min-width:52px; border:1.5px solid rgba(217,119,6,.45); background:rgba(217,119,6,.08); color:#92400e; border-radius:9px; padding:8px 6px; font-weight:900; font-size:.82rem; cursor:pointer; }
+body.dark-mode .cxui-cash button { color:#fbbf24; }
+.cxui-cash button.ex { border-color:#059669; background:rgba(5,150,105,.1); color:#047857; }
+.cxui-cash button.rz { flex:0 0 auto; min-width:0; border-color:var(--border-color); background:transparent; color:var(--text-muted); }
+.cx-change-line { font-size:1.12rem !important; padding:12px !important; border-radius:11px !important; }
+.cx-change-line.ok { background:rgba(5,150,105,.1) !important; }
+.cx-change-line.bad { background:rgba(220,38,38,.08) !important; }
+.cx-btn-validate { font-size:1rem !important; }
+.cxui-hint { font-size:.66rem; color:var(--text-muted); text-align:center; margin-top:6px; }
+
+/* Popover remise */
+#cxui-pop { position:fixed; z-index:30000; background:var(--bg-card); color:var(--text-main); border:1.5px solid var(--border-color); border-radius:14px; box-shadow:0 14px 40px rgba(0,0,0,.28); padding:12px; width:250px; display:none; }
+#cxui-pop .h { font-weight:900; font-size:.85rem; margin-bottom:8px; }
+#cxui-pop .g { display:flex; flex-wrap:wrap; gap:5px; margin-bottom:8px; }
+#cxui-pop .g button { flex:1 1 40px; border:1.5px solid var(--border-color); background:var(--bg-card-2); color:var(--text-main); border-radius:8px; padding:7px 4px; font-weight:800; cursor:pointer; font-size:.78rem; }
+#cxui-pop .g button.on { background:#db2777; border-color:#db2777; color:#fff; }
+#cxui-pop input { width:100%; box-sizing:border-box; padding:8px; border:1.5px solid var(--border-color); border-radius:8px; background:var(--input-bg,var(--bg-card)); color:var(--text-main); font-weight:800; }
+#cxui-pop .a { display:flex; gap:6px; margin-top:8px; }
+#cxui-pop .a button { flex:1; border:none; border-radius:8px; padding:8px; font-weight:900; cursor:pointer; }
+#cxui-pop .a .ok { background:#059669; color:#fff; }
+#cxui-pop .a .rm { background:var(--bg-card-2); color:#dc2626; }
+
+/* Historique : tableau de bord */
+.cxui-periods { display:flex; gap:6px; overflow-x:auto; padding-bottom:8px; }
+.cxui-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:10px; }
+.cxui-kpi { background:var(--bg-card); border:1.5px solid var(--border-color); border-radius:12px; padding:10px 12px; }
+.cxui-kpi .l { font-size:.64rem; font-weight:800; color:var(--text-muted); text-transform:uppercase; letter-spacing:.4px; }
+.cxui-kpi .v { font-size:1.2rem; font-weight:900; margin-top:2px; color:var(--text-main); font-variant-numeric:tabular-nums; }
+.cxui-kpi.main .v { color:#047857; }
+body.dark-mode .cxui-kpi.main .v { color:#34d399; }
+.cxui-meth { background:var(--bg-card); border:1.5px solid var(--border-color); border-radius:12px; padding:10px 12px; margin-bottom:10px; }
+.cxui-meth .row { display:grid; grid-template-columns:110px 1fr 120px; gap:10px; align-items:center; font-size:.76rem; font-weight:700; padding:3px 0; cursor:pointer; border-radius:6px; }
+.cxui-meth .row:hover { background:rgba(5,150,105,.06); }
+.cxui-meth .row.on { background:rgba(5,150,105,.12); }
+.cxui-meth .bar { height:10px; background:var(--bg-card-2); border-radius:5px; overflow:hidden; }
+.cxui-meth .bar i { display:block; height:100%; border-radius:5px; background:#059669; }
+.cxui-meth .amt { text-align:right; font-variant-numeric:tabular-nums; color:var(--text-main); }
+.cxui-hbar { display:flex; gap:8px; align-items:center; justify-content:space-between; margin:-2px 0 10px; flex-wrap:wrap; }
+.cxui-hbar .b { border:1.5px solid var(--border-color); background:var(--bg-card); color:var(--text-main); border-radius:9px; padding:7px 12px; font-weight:800; font-size:.78rem; cursor:pointer; }
+.cxui-hcards { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:8px; }
+.cxui-tk { background:var(--bg-card); border:1.5px solid var(--border-color); border-radius:12px; padding:10px 12px; cursor:pointer; transition:border-color .12s, transform .12s; position:relative; }
+.cxui-tk:hover { border-color:#059669; transform:translateY(-1px); }
+.cxui-tk.cancel { opacity:.6; }
+.cxui-tk .t1 { display:flex; justify-content:space-between; align-items:baseline; gap:6px; }
+.cxui-tk .num { font-weight:900; font-size:.82rem; color:#047857; font-family:ui-monospace,Menlo,Consolas,monospace; }
+.cxui-tk .tot { font-weight:900; font-size:1.05rem; font-variant-numeric:tabular-nums; }
+.cxui-tk .t2 { font-size:.7rem; color:var(--text-muted); font-weight:700; margin:3px 0 7px; }
+.cxui-tk .t3 { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.cxui-tk .rp { margin-left:auto; border:1.5px solid var(--border-color); background:var(--bg-card-2); color:var(--text-main); border-radius:8px; padding:3px 8px; font-weight:800; font-size:.7rem; cursor:pointer; }
+.cxui-tk .rp:hover { border-color:#059669; }
+.cxui-day { grid-column:1/-1; font-size:.72rem; font-weight:900; color:var(--text-muted); text-transform:uppercase; letter-spacing:.4px; padding:6px 2px 0; display:flex; justify-content:space-between; }
+@media (max-width:640px) { .cxui-kpis { grid-template-columns:repeat(2,1fr); } .cxui-meth .row { grid-template-columns:80px 1fr 92px; } }
+#cxui-kbd { position:fixed; z-index:30000; right:16px; top:70px; background:var(--bg-card); color:var(--text-main); border:1.5px solid var(--border-color); border-radius:14px; box-shadow:0 14px 40px rgba(0,0,0,.28); padding:14px 16px; width:290px; display:none; font-size:.8rem; }
+#cxui-kbd .r { display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px dashed var(--border-color); gap:10px; }
+#cxui-kbd .r:last-child { border-bottom:none; }
+</style>
+<script>
+/* Caisse Pro — refonte des onglets Produits / Panier / Historique (vue côte à côte, rayons, tri,
+   favoris, saisie rapide, remises, pavé de règlement, tableau de bord, raccourcis clavier). */
+(function () {
+    'use strict';
+    var $ = function (id) { return document.getElementById(id); };
+    var LS_UI = 'covo_cx_ui', LS_FAV = 'covo_cx_favs';
+    function jget(k, d) { try { var v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (e) { return d; } }
+    function jset(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function r2(n) { return Math.round((+n || 0) * 100) / 100; }
+    function eur(n) { return (+n || 0).toFixed(2) + ' €'; }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function C() { try { return cart; } catch (e) { return []; } }
+    function P() { try { return products; } catch (e) { return []; } }
+    var ui = jget(LS_UI, {}); if (!ui.sort) ui.sort = 'name'; if (!ui.view) ui.view = 'grid';
+    var spec = '';           // filtre spécial : fav | top | low | ''
+    var gdisc = null;        // remise globale { type:'pct'|'eur', v }
+    var saleNote = '';
+    function saveUI() { jset(LS_UI, ui); }
+    function favs() { var f = jget(LS_FAV, []); return Array.isArray(f) ? f : []; }
+    function isFav(id) { return favs().indexOf(String(id)) !== -1; }
+    function toggleFav(id) {
+        var f = favs(), k = String(id), i = f.indexOf(k);
+        if (i === -1) f.push(k); else f.splice(i, 1);
+        jset(LS_FAV, f); toast(i === -1 ? '⭐ Ajouté aux favoris' : 'Retiré des favoris', 'info');
+        window.cxRenderProducts();
+    }
+
+    /* ---------- Ventes sur 30 jours (tri « plus vendus » / Top ventes) ---------- */
+    var salesCache = { sig: '', map: {} };
+    function salesMap() {
+        var raw = ''; try { raw = localStorage.getItem('covo_sales_history') || ''; } catch (e) {}
+        var sig = raw.length + ':' + raw.slice(-40);
+        if (sig === salesCache.sig) return salesCache.map;
+        var map = {}, lim = Date.now() - 30 * 864e5, h = [];
+        try { h = JSON.parse(raw) || []; } catch (e) {}
+        h.forEach(function (s) {
+            if (!s || s.cancelled || new Date(s.date).getTime() < lim) return;
+            (s.items || []).forEach(function (it) { var k = String(it.id); map[k] = (map[k] || 0) + (it.unitType === 'kg' ? 1 : (+it.quantity || 1)); });
+        });
+        salesCache = { sig: sig, map: map }; return map;
+    }
+    function inCartQty(id) { return C().reduce(function (s, l) { return String(l.id) === String(id) ? s + (+l.quantity || 0) : s; }, 0); }
+
+    /* ---------- Remises ---------- */
+    function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) u = jget('covo_current_user', null); return u || {}; }
+    function maxDisc() {
+        var u = user(), pm = u.permissions || {};
+        if (u.role === 'admin' || u.role === 'manager' || u.isMaster || u.id === 'USR-MASTER') return 100;
+        if (pm.canDiscount || pm.discount || pm.remise) return +pm.maxDiscount > 0 ? +pm.maxDiscount : 100;
+        return 0;
+    }
+    function lineGross(it) { return r2((+it.price || 0) * (+it.quantity || 0)); }
+    function lineNet(it) { var d = +it._cxDisc || 0; return d > 0 ? r2(lineGross(it) * (1 - d / 100)) : lineGross(it); }
+    function alloc() {
+        var c = C(), nets = c.map(lineNet), sub = nets.reduce(function (a, b) { return a + b; }, 0);
+        if (!gdisc || !(gdisc.v > 0) || sub <= 0) return nets;
+        var target = gdisc.type === 'eur' ? Math.max(0, r2(sub - Math.min(gdisc.v, sub))) : r2(sub * (1 - Math.min(100, gdisc.v) / 100));
+        var ratio = target / sub, out = nets.map(function (n) { return r2(n * ratio); });
+        var diff = r2(target - out.reduce(function (a, b) { return a + b; }, 0));
+        if (Math.abs(diff) >= 0.005 && out.length) { var bi = 0; out.forEach(function (v, i) { if (v > out[bi]) bi = i; }); out[bi] = r2(out[bi] + diff); }
+        return out;
+    }
+    var origLineTotal = window.cxLineTotal;
+    window.cxLineTotal = function (item) {
+        var c = C(), i = c.indexOf(item);
+        if (i === -1) return origLineTotal.apply(this, arguments);
+        if (!(+item._cxDisc > 0) && !(gdisc && gdisc.v > 0)) return origLineTotal.apply(this, arguments);
+        return alloc()[i];
+    };
+    try { cxLineTotal = window.cxLineTotal; } catch (e) {}
+    function cartTotals() {
+        var c = C(), gross = c.reduce(function (s, it) { return s + lineGross(it); }, 0), net1 = c.reduce(function (s, it) { return s + lineNet(it); }, 0);
+        var fin = alloc().reduce(function (a, b) { return a + b; }, 0);
+        return { gross: r2(gross), lineDisc: r2(gross - net1), globDisc: r2(net1 - fin), total: r2(fin) };
+    }
+    // Avant la finalisation (après les autres modules) : la remise est intégrée au prix unitaire,
+    // pour que Gestion / COVO Pro / statistiques retrouvent exactement le montant encaissé.
+    function bake() {
+        var c = C(); if (!c.length) return;
+        var a = alloc();
+        c.forEach(function (it, i) {
+            var g = lineGross(it), net = a[i], q = +it.quantity || 0;
+            if (q > 0 && Math.abs(g - net) >= 0.005) {
+                it.priceBefore = +it.price || 0;
+                it.discountPct = g > 0 ? r2((1 - net / g) * 100) : 0;
+                it.price = Math.round(net / q * 10000) / 10000;
+            }
+            delete it._cxDisc;
+        });
+    }
+    var pendingSaleInfo = null;
+    function preFinalize() {
+        var t = cartTotals();
+        pendingSaleInfo = { note: saleNote.trim(), t: t, g: gdisc ? { type: gdisc.type, v: gdisc.v } : null };
+        bake();
+    }
+    function decorateSale(sale) {
+        var inf = pendingSaleInfo; pendingSaleInfo = null;
+        if (!inf) return;
+        if (inf.note) sale.note = inf.note;
+        if (inf.t.lineDisc > 0 || inf.t.globDisc > 0) {
+            sale.discount = { lines: inf.t.lineDisc, global: inf.t.globDisc, globalRule: inf.g, total: r2(inf.t.lineDisc + inf.t.globDisc), by: (user().username || user().name || '') };
+            sale.subtotalBeforeDiscount = inf.t.gross;
+        }
+        gdisc = null; saleNote = ''; var n = $('cxui-note'); if (n) n.value = '';
+    }
+
+    var pop;
+    function openDisc(anchor, idx) {
+        var mx = maxDisc();
+        if (!mx) { toast('⛔ Remise réservée à un responsable (droit « remise » requis)', 'error'); return; }
+        if (!pop) { pop = document.createElement('div'); pop.id = 'cxui-pop'; document.body.appendChild(pop); }
+        var line = idx != null ? C()[idx] : null;
+        var mode = line ? 'pct' : ((gdisc && gdisc.type) || 'pct');
+        var cur = line ? (+line._cxDisc || 0) : (gdisc ? gdisc.v : 0);
+        function draw() {
+            var pcts = [5, 10, 15, 20, 30, 50].filter(function (p) { return p <= mx; });
+            pop.innerHTML = '<div class="h">🏷️ ' + (line ? 'Remise sur « ' + esc(line.name) + ' »' : 'Remise sur tout le panier') + '</div>'
+                + (line ? '' : '<div class="g"><button data-m="pct" class="' + (mode === 'pct' ? 'on' : '') + '">En %</button><button data-m="eur" class="' + (mode === 'eur' ? 'on' : '') + '">En €</button></div>')
+                + (mode === 'pct' ? '<div class="g">' + pcts.map(function (p) { return '<button data-p="' + p + '" class="' + (cur === p ? 'on' : '') + '">-' + p + '%</button>'; }).join('') + '</div>' : '')
+                + '<input id="cxui-pop-v" type="number" min="0" step="' + (mode === 'eur' ? '0.01' : '1') + '" placeholder="' + (mode === 'eur' ? 'Montant (€)' : 'Pourcentage (max ' + mx + ' %)') + '" value="' + (cur || '') + '">'
+                + '<div class="a"><button class="rm">Retirer</button><button class="ok">Appliquer</button></div>'
+                + (mx < 100 ? '<div style="font-size:.66rem;color:var(--text-muted);margin-top:6px;">Maximum autorisé : ' + mx + ' %</div>' : '');
+            var inp = pop.querySelector('#cxui-pop-v');
+            pop.querySelectorAll('[data-m]').forEach(function (b) { b.onclick = function () { mode = b.getAttribute('data-m'); cur = 0; draw(); }; });
+            pop.querySelectorAll('[data-p]').forEach(function (b) { b.onclick = function () { apply(+b.getAttribute('data-p')); }; });
+            pop.querySelector('.rm').onclick = function () { apply(0); };
+            pop.querySelector('.ok').onclick = function () { apply(parseFloat(inp.value) || 0); };
+            inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); apply(parseFloat(inp.value) || 0); } if (e.key === 'Escape') close(); };
+            setTimeout(function () { inp.focus(); inp.select(); }, 20);
+        }
+        function apply(v) {
+            v = Math.max(0, v);
+            var t = cartTotals();
+            if (mode === 'pct' && v > mx) { toast('⛔ Remise maximum autorisée : ' + mx + ' %', 'error'); return; }
+            if (mode === 'eur') {
+                var base = r2(t.gross - t.lineDisc);
+                if (v > base) v = base;
+                if (base > 0 && v / base * 100 > mx + 1e-6) { toast('⛔ Remise maximum autorisée : ' + mx + ' %', 'error'); return; }
+            }
+            if (line) { if (v > 0) line._cxDisc = v; else delete line._cxDisc; }
+            else gdisc = v > 0 ? { type: mode, v: v } : null;
+            close(); window.cxRenderCart();
+            if (v > 0) toast('🏷️ Remise appliquée', 'success');
+        }
+        function close() { pop.style.display = 'none'; document.removeEventListener('mousedown', outside, true); }
+        function outside(e) { if (!pop.contains(e.target) && e.target !== anchor) close(); }
+        draw();
+        pop.style.display = 'block';
+        var r = anchor.getBoundingClientRect(), w = 250, h = pop.offsetHeight;
+        var left = Math.min(window.innerWidth - w - 8, Math.max(8, r.right - w)), top = r.bottom + 6;
+        if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+        pop.style.left = left + 'px'; pop.style.top = top + 'px';
+        setTimeout(function () { document.addEventListener('mousedown', outside, true); }, 0);
+    }
+
+    /* ---------- PRODUITS ---------- */
+    function catOf(p) { return p.category || ''; }
+    function renderChips(base) {
+        var box = $('cxui-chips'); if (!box) return;
+        var sel = $('cx-cat-filter'), cat = sel ? sel.value : '';
+        var counts = {}; base.forEach(function (p) { var c = catOf(p) || '—'; counts[c] = (counts[c] || 0) + 1; });
+        var sm = salesMap(), f = favs();
+        var nFav = base.filter(function (p) { return f.indexOf(String(p.id)) !== -1; }).length;
+        var nLow = base.filter(function (p) { var s = +p.stock || 0; return s > 0 && s <= (p.unitType === 'kg' ? 0.5 : 5); }).length;
+        var nTop = Math.min(20, base.filter(function (p) { return sm[String(p.id)] > 0; }).length);
+        var h = '<button class="cxui-chip' + (!cat && !spec ? ' on' : '') + '" data-c="">Tout<span class="n">' + base.length + '</span></button>'
+            + '<button class="cxui-chip' + (spec === 'fav' ? ' on' : '') + '" data-s="fav">⭐ Favoris<span class="n">' + nFav + '</span></button>'
+            + '<button class="cxui-chip' + (spec === 'top' ? ' on' : '') + '" data-s="top">🔥 Top ventes<span class="n">' + nTop + '</span></button>'
+            + '<button class="cxui-chip' + (spec === 'low' ? ' on' : '') + '" data-s="low">⚠️ Stock bas<span class="n">' + nLow + '</span></button>';
+        Object.keys(counts).sort(function (a, b) { return a.localeCompare(b, 'fr'); }).forEach(function (c) {
+            var v = c === '—' ? '' : c;
+            if (!v) return;
+            h += '<button class="cxui-chip' + (cat === v ? ' on' : '') + '" data-c="' + esc(v) + '">' + esc(v) + '<span class="n">' + counts[c] + '</span></button>';
+        });
+        box.innerHTML = h;
+    }
+    function renderProducts() {
+        var grid = $('cx-products-grid'); if (!grid) return;
+        var q = (($('cx-search') || {}).value || '').trim().toLowerCase();
+        var sel = $('cx-cat-filter'), cat = sel ? sel.value : '';
+        var all = P().filter(function (p) { return p.active !== false; });
+        renderChips(all);
+        var sm = salesMap(), f = favs();
+        var list = all.filter(function (p) {
+            if (cat && p.category !== cat) return false;
+            if (spec === 'fav' && f.indexOf(String(p.id)) === -1) return false;
+            if (spec === 'low') { var s = +p.stock || 0; if (!(s > 0 && s <= (p.unitType === 'kg' ? 0.5 : 5))) return false; }
+            if (spec === 'top' && !(sm[String(p.id)] > 0)) return false;
+            if (q) {
+                if (typeof window._covoProdMatch === 'function') return window._covoProdMatch(p, q);
+                if (((p.name || '') + ' ' + (p.barcode || '')).toLowerCase().indexOf(q) === -1) return false;
+            }
+            return true;
+        });
+        var price = function (p) { return p.unitType === 'kg' ? (+p.pricePerKg || 0) : (+p.price || 0); };
+        var byName = function (a, b) { return (a.name || '').localeCompare(b.name || '', 'fr'); };
+        var sort = spec === 'top' ? 'sales' : ui.sort;
+        list.sort(function (a, b) {
+            if (sort === 'price_asc') return price(a) - price(b) || byName(a, b);
+            if (sort === 'price_desc') return price(b) - price(a) || byName(a, b);
+            if (sort === 'sales') return (sm[String(b.id)] || 0) - (sm[String(a.id)] || 0) || byName(a, b);
+            if (sort === 'stock') return (+a.stock || 0) - (+b.stock || 0) || byName(a, b);
+            return byName(a, b);
+        });
+        if (spec === 'top') list = list.slice(0, 20);
+        grid.classList.toggle('cxui-list', ui.view === 'list');
+        var cnt = $('cxui-count');
+        if (cnt) cnt.textContent = list.length + ' produit' + (list.length > 1 ? 's' : '') + (q ? ' pour « ' + q + ' »' : '');
+        if (!list.length) { grid.innerHTML = '<div class="cx-empty" style="grid-column:1/-1;">Aucun produit trouvé.</div>'; return; }
+        var Pall = P();
+        grid.innerHTML = list.map(function (p) {
+            var isKg = p.unitType === 'kg', stock = +p.stock || 0, isOut = stock <= 0, isLow = !isOut && stock <= (isKg ? 0.5 : 5);
+            var priceDisp = isKg ? ((+p.pricePerKg || 0).toFixed(2) + ' €/kg') : ((+p.price || 0).toFixed(2) + ' €');
+            var stockDisp = isKg ? (stock.toFixed(3) + ' kg') : (stock + ' u.');
+            var initial = esc((p.name || '').trim().charAt(0).toUpperCase()) || '🛒';
+            var hasImg = !!(p.img && !/placehold/i.test(p.img));
+            var imgHtml = '<span class="ci-ini">' + initial + '</span>' + (hasImg ? '<img src="' + esc(p.img) + '" alt="' + esc(p.name || '') + '" loading="lazy" decoding="async" onerror="this.parentNode.classList.remove(\'has-img\');this.remove()">' : '');
+            var num = Pall.indexOf(p) + 1, inq = inCartQty(p.id), fv = f.indexOf(String(p.id)) !== -1;
+            return '<div class="card' + (isOut ? ' out-of-stock' : '') + (inq > 0 ? ' cxui-in' : '') + '" data-pid="' + esc(p.id) + '" title="Cliquer pour ajouter au panier">'
+                + (isOut ? '<div class="out-badge">❌ ÉPUISÉ</div>' : '')
+                + (isLow ? '<div class="low-stock-badge">⚠️ Stock bas</div>' : '')
+                + (num > 0 ? '<div class="cx-card-num" title="N° de fiche (même numéro que dans COVO Pro)">n°' + num + '</div>' : '')
+                + '<div class="card-img' + (hasImg ? ' has-img' : '') + '">' + imgHtml
+                +   (ui.view === 'list' ? '' : '<button type="button" class="cxui-fav' + (fv ? ' on' : '') + '" data-fav="1" title="' + (fv ? 'Retirer des favoris' : 'Ajouter aux favoris') + '">★</button>' + (inq > 0 ? '<span class="cxui-incart">×' + (isKg ? inq.toFixed(3) : inq) + '</span>' : ''))
+                + '</div>'
+                + (ui.view === 'list' ? '<button type="button" class="cxui-fav' + (fv ? ' on' : '') + '" data-fav="1">★</button>' : '')
+                + '<div class="cx-card-cat">' + esc(p.category || '—') + '</div>'
+                + '<div class="cx-card-name">' + esc(p.name || '') + '</div>'
+                + (ui.view === 'list' && inq > 0 ? '<span class="cxui-incart">×' + (isKg ? inq.toFixed(3) : inq) + '</span>' : '')
+                + '<div class="cx-card-price">' + priceDisp + '</div>'
+                + '<div class="cx-card-stock' + (isOut ? ' low' : '') + '">Stock : ' + stockDisp + '</div>'
+                + '<button class="btn-buy" ' + (isOut ? 'disabled' : '') + ' onclick="event.stopPropagation();cxAddToCart(' + esc(JSON.stringify(p.id)) + ')">' + (isOut ? '❌ ÉPUISÉ' : '🛒 AJOUTER') + '</button>'
+                + '</div>';
+        }).join('');
+    }
+    function buildProductsUI() {
+        var panel = $('cx-panel-produits'); if (!panel || $('cxui-chips')) return;
+        var bars = panel.querySelectorAll('.cx-toolbar'), bar2 = bars[1] || bars[0];
+        var tools = document.createElement('div'); tools.className = 'cxui-tools';
+        tools.innerHTML = '<select id="cxui-sort" class="cx-input" title="Trier les produits">'
+            + '<option value="name">🔤 Nom A→Z</option><option value="price_asc">💶 Prix croissant</option><option value="price_desc">💶 Prix décroissant</option>'
+            + '<option value="sales">🔥 Plus vendus (30 j)</option><option value="stock">📦 Stock le plus bas</option></select>'
+            + '<div class="cxui-seg" title="Affichage"><button type="button" data-v="grid">▦</button><button type="button" data-v="list">☰</button></div>';
+        bar2.appendChild(tools);
+        var chips = document.createElement('div'); chips.className = 'cxui-chips'; chips.id = 'cxui-chips';
+        var cnt = document.createElement('div'); cnt.className = 'cxui-count'; cnt.id = 'cxui-count';
+        bar2.parentNode.insertBefore(chips, bar2.nextSibling);
+        chips.parentNode.insertBefore(cnt, chips.nextSibling);
+        var sortSel = $('cxui-sort'); sortSel.value = ui.sort;
+        sortSel.onchange = function () { ui.sort = sortSel.value; saveUI(); window.cxRenderProducts(); };
+        function segSync() { tools.querySelectorAll('[data-v]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-v') === ui.view); }); }
+        tools.querySelectorAll('[data-v]').forEach(function (b) { b.onclick = function () { ui.view = b.getAttribute('data-v'); saveUI(); segSync(); window.cxRenderProducts(); }; });
+        segSync();
+        chips.addEventListener('click', function (e) {
+            var b = e.target.closest('.cxui-chip'); if (!b) return;
+            var sel = $('cx-cat-filter');
+            if (b.hasAttribute('data-s')) { var s = b.getAttribute('data-s'); spec = spec === s ? '' : s; if (sel) sel.value = ''; }
+            else { spec = ''; if (sel) { var v = b.getAttribute('data-c'); if (v && !Array.prototype.some.call(sel.options, function (o) { return o.value === v; })) { var o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); } sel.value = v; } }
+            window.cxRenderProducts();
+        });
+        $('cx-products-grid').addEventListener('click', function (e) {
+            var fb = e.target.closest('[data-fav]');
+            var card = e.target.closest('.card[data-pid]'); if (!card) return;
+            var pid = card.getAttribute('data-pid'), p = P().find(function (x) { return String(x.id) === pid; }); if (!p) return;
+            if (fb) { e.stopPropagation(); toggleFav(p.id); return; }
+            if (e.target.closest('button')) return;
+            if (card.classList.contains('out-of-stock')) { toast('❌ Rupture de stock : ' + p.name, 'error'); return; }
+            window.cxAddToCart(p.id);
+        });
+    }
+
+    /* ---------- PANIER ---------- */
+    var lastIdx = -1;
+    function renderCart() {
+        var wrap = $('cx-cart-lines'), empty = $('cx-cart-empty'), c = C();
+        if (!wrap) return;
+        var a = c.length ? alloc() : [];
+        if (!c.length) { wrap.innerHTML = ''; if (empty) empty.style.display = ''; }
+        else {
+            if (empty) empty.style.display = 'none';
+            if (lastIdx >= c.length) lastIdx = c.length - 1;
+            wrap.innerHTML = c.map(function (it, idx) {
+                var kg = it.unitType === 'kg', d = +it._cxDisc || 0;
+                var unitP = (+it.price || 0).toFixed(2) + (kg ? ' €/kg' : ' €/u.');
+                var gross = lineGross(it), net = a[idx];
+                return '<div class="cx-cart-line' + (idx === (lastIdx < 0 ? c.length - 1 : lastIdx) ? ' cxui-last' : '') + '" data-idx="' + idx + '">'
+                    + '<div class="cx-cl-name"><div class="n">' + esc(it.name) + '</div><div class="p">' + unitP + (Math.abs(gross - net) >= 0.005 ? ' · <s>' + eur(gross) + '</s>' : '') + '</div>'
+                    + (it._resv ? '<div class="cx-resv-tag">📦 Réservé · ' + esc(it._resvClientName || 'client') + '</div>' : '') + '</div>'
+                    + '<button type="button" class="cxui-ldisc' + (d > 0 ? ' on' : '') + '" data-disc="' + idx + '" title="Remise sur cette ligne">' + (d > 0 ? '-' + d + '%' : '🏷️') + '</button>'
+                    + '<div class="cx-qty-ctrl">'
+                    +   '<button onclick="cxChangeQty(' + idx + ',-1)">−</button>'
+                    +   '<input class="cxui-qty" data-q="' + idx + '" type="number" inputmode="decimal" min="0" step="' + (kg ? '0.001' : '1') + '" value="' + (kg ? (+it.quantity || 0).toFixed(3) : (+it.quantity || 0)) + '" title="Saisir la quantité au clavier puis Entrée">'
+                    +   '<button onclick="cxChangeQty(' + idx + ',1)">+</button>'
+                    + '</div>'
+                    + '<div class="cx-cl-total">' + eur(net) + '</div>'
+                    + '<button class="cx-cl-remove" onclick="cxRemoveFromCart(' + idx + ')" title="Retirer (Suppr)">✕</button>'
+                    + '</div>';
+            }).join('');
+        }
+        var t = cartTotals();
+        $('cx-cart-total').textContent = eur(cxCartTotal());
+        var vb = $('cx-validate-btn'); if (vb) vb.disabled = c.length === 0;
+        var sum = $('cxui-sum');
+        if (sum) {
+            var md = maxDisc();
+            sum.style.display = c.length ? '' : 'none';
+            sum.innerHTML = '<div class="r"><span>Sous-total · ' + c.length + ' ligne' + (c.length > 1 ? 's' : '') + '</span><span>' + eur(t.gross) + '</span></div>'
+                + (t.lineDisc > 0 ? '<div class="r disc"><span>Remises lignes</span><span>−' + eur(t.lineDisc) + '</span></div>' : '')
+                + (t.globDisc > 0 ? '<div class="r disc"><span>Remise panier ' + (gdisc.type === 'pct' ? '(−' + gdisc.v + ' %)' : '') + '</span><span>−' + eur(t.globDisc) + '</span></div>' : '')
+                + (md ? '<div class="r"><span></span><button type="button" id="cxui-gdisc">🏷️ ' + (gdisc ? 'Modifier la remise panier' : 'Remise sur le panier') + '</button></div>' : '');
+            var gb = $('cxui-gdisc'); if (gb) gb.onclick = function () { openDisc(gb, null); };
+        }
+        var hc = $('cxui-cart-count'); if (hc) hc.textContent = c.length + ' article' + (c.length > 1 ? 's' : '');
+        cxUpdateCartBadge();
+        cxComputeChange();
+        syncTiles(); syncCash();
+    }
+    function setQty(idx, v) {
+        var it = C()[idx]; if (!it) return;
+        var kg = it.unitType === 'kg';
+        v = kg ? Math.round((parseFloat(v) || 0) * 1000) / 1000 : Math.round(parseFloat(v) || 0);
+        if (v <= 0) { window.cxRemoveFromCart(idx); return; }
+        var p = typeof cxFindProduct === 'function' ? cxFindProduct(it.id) : null, stock = p ? (+p.stock || 0) : Infinity;
+        var need = (typeof cxStockNeed === 'function' ? cxStockNeed(it.id) : 0) + (v - it.quantity);
+        if (v > it.quantity && need > stock + 1e-9) { toast('⚠️ Stock insuffisant (' + (kg ? stock.toFixed(3) + ' kg' : stock + ' u.') + ' dispo)', 'info'); window.cxRenderCart(); return; }
+        it.quantity = v; lastIdx = idx;
+        window.cxRenderCart(); window.cxRenderProducts(); cxUpdateCartBadge();
+    }
+    var TILES = [['cb', '💳', 'CB'], ['cash', '💶', 'Espèces'], ['mixed', '💳💶', 'Mixte'], ['ticket', '🎟️', 'Ticket resto'], ['credit', '📒', 'Crédit'], ['echel', '📅', '2× / 3×']];
+    function method() { try { return cxPayMethod; } catch (e) { return 'cb'; } }
+    function syncTiles() { var b = $('cxui-tiles'); if (!b) return; var m = method(); b.querySelectorAll('[data-m]').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-m') === m); }); }
+    function syncCash() { var ex = $('cxui-cash-ex'); if (ex) ex.textContent = 'Exact ' + eur(cxCartTotal()); }
+    function buildCartUI() {
+        var panel = $('cx-panel-panier'); if (!panel || $('cxui-tiles')) return;
+        var head = document.createElement('div'); head.className = 'cxui-cart-head';
+        head.innerHTML = '<span class="t">🛒 Panier</span><span class="c" id="cxui-cart-count">0 article</span>';
+        panel.insertBefore(head, panel.firstChild);
+        var totalRow = panel.querySelector('.cx-cart-total-row');
+        var sum = document.createElement('div'); sum.className = 'cxui-sum'; sum.id = 'cxui-sum';
+        totalRow.parentNode.insertBefore(sum, totalRow);
+        var note = document.createElement('textarea'); note.id = 'cxui-note'; note.className = 'cxui-note'; note.rows = 1;
+        note.placeholder = '📝 Note sur la vente (facultatif, imprimée sur le ticket)…'; note.maxLength = 240;
+        note.oninput = function () { saleNote = note.value; };
+        totalRow.parentNode.insertBefore(note, totalRow.nextSibling);
+        var sel = $('cx-payment-method'), lab = sel && sel.previousElementSibling;
+        if (lab && lab.tagName === 'LABEL') lab.classList.add('cxui-paylabel');
+        var tiles = document.createElement('div'); tiles.className = 'cxui-tiles'; tiles.id = 'cxui-tiles';
+        tiles.innerHTML = TILES.map(function (t) { return '<button type="button" class="cxui-tile" data-m="' + t[0] + '"><span class="i">' + t[1] + '</span>' + t[2] + '</button>'; }).join('');
+        sel.parentNode.insertBefore(tiles, sel);
+        tiles.addEventListener('click', function (e) { var b = e.target.closest('[data-m]'); if (!b) return; window.cxSelectPayMethod(b.getAttribute('data-m')); syncTiles(); if (b.getAttribute('data-m') === 'cash') setTimeout(function () { var a = $('cx-amount-received'); if (a) a.focus(); }, 30); });
+        var ci = $('cx-pay-cash-inputs');
+        if (ci) {
+            var cash = document.createElement('div'); cash.className = 'cxui-cash';
+            cash.innerHTML = '<button type="button" class="ex" id="cxui-cash-ex" data-x="exact">Exact</button>'
+                + [5, 10, 20, 50, 100].map(function (v) { return '<button type="button" data-x="' + v + '" title="Ajoute ' + v + ' € au montant reçu">' + v + ' €</button>'; }).join('')
+                + '<button type="button" class="rz" data-x="0" title="Remettre à zéro">↺</button>';
+            ci.appendChild(cash);
+            cash.addEventListener('click', function (e) {
+                var b = e.target.closest('[data-x]'); if (!b) return;
+                var a = $('cx-amount-received'), x = b.getAttribute('data-x');
+                if (x === 'exact') a.value = cxCartTotal().toFixed(2);
+                else if (x === '0') a.value = '';
+                else a.value = r2((parseFloat(a.value) || 0) + (+x)).toFixed(2);
+                cxComputeChange();
+            });
+        }
+        var row = panel.querySelector('.cx-btn-row');
+        if (row) { var h = document.createElement('div'); h.className = 'cxui-hint'; h.innerHTML = '<kbd class="cxk">F9</kbd> valider · <kbd class="cxk">+</kbd>/<kbd class="cxk">−</kbd> quantité · <kbd class="cxk">Suppr</kbd> dernière ligne'; row.parentNode.insertBefore(h, row.nextSibling); }
+        var lines = $('cx-cart-lines');
+        lines.addEventListener('click', function (e) {
+            var d = e.target.closest('[data-disc]'); if (d) { openDisc(d, +d.getAttribute('data-disc')); return; }
+            var l = e.target.closest('.cx-cart-line'); if (l && !e.target.closest('button,input')) { lastIdx = +l.getAttribute('data-idx'); lines.querySelectorAll('.cx-cart-line').forEach(function (x) { x.classList.toggle('cxui-last', x === l); }); }
+        });
+        lines.addEventListener('focusin', function (e) { var q = e.target.closest('[data-q]'); if (q) { lastIdx = +q.getAttribute('data-q'); setTimeout(function () { try { q.select(); } catch (x) {} }, 0); } });
+        lines.addEventListener('keydown', function (e) {
+            var q = e.target.closest('[data-q]'); if (!q) return;
+            if (e.key === 'Enter') { e.preventDefault(); setQty(+q.getAttribute('data-q'), q.value); setTimeout(function () { try { cxFocusBarcode(); } catch (x) {} }, 30); }
+            if (e.key === 'Escape') { e.preventDefault(); window.cxRenderCart(); }
+        });
+        lines.addEventListener('change', function (e) { var q = e.target.closest('[data-q]'); if (q) setQty(+q.getAttribute('data-q'), q.value); });
+    }
+    // Reçu : remise et note visibles
+    function hookReceipt() {
+        var f = window._cxReceiptPaymentHTML;
+        if (typeof f !== 'function' || f._cxui) return;
+        var w = function (s) {
+            var h = f.apply(this, arguments);
+            try {
+                if (s && s.discount && s.discount.total > 0) h = '<div class="cx-receipt-line" style="color:#be185d;"><span>🏷️ Remise accordée' + (s.subtotalBeforeDiscount ? ' (sur ' + eur(s.subtotalBeforeDiscount) + ')' : '') + '</span><span>−' + eur(s.discount.total) + '</span></div>' + h;
+                if (s && s.note) h += '<div style="margin-top:6px;padding:6px 8px;border-radius:8px;background:var(--bg-card-2);font-size:.78rem;">📝 ' + esc(s.note) + '</div>';
+            } catch (e) {}
+            return h;
+        };
+        w._cxui = true; window._cxReceiptPaymentHTML = w; try { _cxReceiptPaymentHTML = w; } catch (e) {}
+    }
+
+    /* ---------- HISTORIQUE ---------- */
+    var hview = (ui.hview || 'cards'), hperiod = ui.hperiod || 'today';
+    var MLAB = { cash: 'Espèces', cb: 'CB', mixed: 'Mixte', ticket: 'Ticket resto', credit: 'Crédit', echel: 'Échelonné', points: 'Points' };
+    var MICON = { cash: '💶', cb: '💳', mixed: '💳💶', ticket: '🎟️', credit: '📒', echel: '📅', points: '🎁' };
+    var MCOL = { cash: '#d97706', cb: '#2563eb', mixed: '#059669', ticket: '#7c3aed', credit: '#dc2626', echel: '#0891b2', points: '#7c3aed' };
+    function ymd(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+    function setPeriod(k) {
+        hperiod = k; ui.hperiod = k; saveUI();
+        var f = $('cx-hist-from'), t = $('cx-hist-to'), now = new Date(), a = null, b = null;
+        if (k === 'today') { a = b = now; }
+        else if (k === 'yday') { a = b = new Date(now.getTime() - 864e5); }
+        else if (k === '7d') { a = new Date(now.getTime() - 6 * 864e5); b = now; }
+        else if (k === '30d') { a = new Date(now.getTime() - 29 * 864e5); b = now; }
+        else if (k === 'month') { a = new Date(now.getFullYear(), now.getMonth(), 1); b = now; }
+        if (k !== 'custom') { f.value = a ? ymd(a) : ''; t.value = b ? ymd(b) : ''; }
+        window.cxRenderHistory();
+        if (k === 'custom') setTimeout(function () { try { f.showPicker ? f.showPicker() : f.focus(); } catch (e) { f.focus(); } }, 30);
+    }
+    function filtered() {
+        var hist = jget('covo_sales_history', []); if (!Array.isArray(hist)) hist = [];
+        var q = (($('cx-hist-search') || {}).value || '').trim().toLowerCase().replace(/^#/, '');
+        var from = $('cx-hist-from').value, to = $('cx-hist-to').value, mf = ($('cx-hist-method') || {}).value || '';
+        var fd = from ? new Date(from + 'T00:00:00') : null, td = to ? new Date(to + 'T23:59:59') : null;
+        var base = hist.filter(function (s) {
+            var d = new Date(s.date);
+            if (fd && d < fd) return false; if (td && d > td) return false;
+            if (q) {
+                var hay = ((s.cashier || '') + ' ' + cxDisplayTicketNum(s) + ' ' + (s.ticketNum || '') + ' ' + (s.method || '') + ' ' + (MLAB[s.method] || '') + ' ' + (s.creditCustomerName || '') + ' ' + (s.loyaltyCustomerName || '') + ' ' + (s.clientName || '') + ' ' + (s.note || '') + ' ' + (s.items || []).map(function (i) { return i.name; }).join(' ')).toLowerCase();
+                if (hay.indexOf(q) === -1) return false;
+            }
+            return true;
+        });
+        var list = mf ? base.filter(function (s) { return s.method === mf; }) : base;
+        list.sort(function (a, b) { return new Date(b.date) - new Date(a.date); });
+        return { base: base, list: list };
+    }
+    function itemsCount(s) { return Array.isArray(s.items) ? Math.round(s.items.reduce(function (n, it) { return n + (it.unitType === 'kg' ? 1 : (+it.quantity || 1)); }, 0) * 100) / 100 : 0; }
+    function renderHistory() {
+        var tbody = $('cx-hist-tbody'), emptyEl = $('cx-hist-empty'); if (!tbody) return;
+        var r = filtered(), list = r.list, valid = list.filter(function (s) { return !s.cancelled; });
+        // Périodes : marque la pastille active (« Dates » si plage manuelle)
+        var pb = $('cxui-periods');
+        if (pb) pb.querySelectorAll('[data-p]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-p') === hperiod); });
+        var ca = valid.reduce(function (s, x) { return s + (+x.total || 0); }, 0), nb = valid.length, art = Math.round(valid.reduce(function (s, x) { return s + itemsCount(x); }, 0) * 100) / 100;
+        var k = $('cxui-kpis');
+        if (k) k.innerHTML = '<div class="cxui-kpi main"><div class="l">Chiffre d\'affaires</div><div class="v">' + eur(ca) + '</div></div>'
+            + '<div class="cxui-kpi"><div class="l">Tickets</div><div class="v">' + nb + '</div></div>'
+            + '<div class="cxui-kpi"><div class="l">Panier moyen</div><div class="v">' + eur(nb ? ca / nb : 0) + '</div></div>'
+            + '<div class="cxui-kpi"><div class="l">Articles</div><div class="v">' + art + '</div></div>';
+        var mb = $('cxui-meth');
+        if (mb) {
+            var tot = {}, cnt = {}, bv = r.base.filter(function (s) { return !s.cancelled; }), mf = ($('cx-hist-method') || {}).value || '';
+            bv.forEach(function (s) { var m = s.method || 'cb'; tot[m] = (tot[m] || 0) + (+s.total || 0); cnt[m] = (cnt[m] || 0) + 1; });
+            var keys = Object.keys(tot).sort(function (a, b) { return tot[b] - tot[a]; }), mx = keys.length ? tot[keys[0]] : 0;
+            mb.style.display = keys.length ? '' : 'none';
+            mb.innerHTML = '<div style="font-size:.64rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">Par mode de règlement <span style="text-transform:none;font-weight:700;">· cliquer pour filtrer</span></div>'
+                + keys.map(function (m) {
+                    return '<div class="row' + (mf === m ? ' on' : '') + '" data-mf="' + esc(m) + '"><span>' + (MICON[m] || '•') + ' ' + esc(MLAB[m] || m) + '</span><span class="bar"><i style="width:' + (mx ? Math.max(3, tot[m] / mx * 100) : 0) + '%;background:' + (MCOL[m] || '#059669') + '"></i></span><span class="amt">' + eur(tot[m]) + ' · ' + cnt[m] + '</span></div>';
+                }).join('');
+        }
+        var summaryEl = $('cx-hist-summary');
+        if (summaryEl) summaryEl.textContent = list.length ? ('🧾 ' + list.length + ' ticket' + (list.length > 1 ? 's' : '') + (list.length !== nb ? ' (dont ' + (list.length - nb) + ' annulé' + (list.length - nb > 1 ? 's' : '') + ')' : '') + ' · 💰 ' + ca.toFixed(2) + ' € encaissé') : '';
+        var tw = document.querySelector('#cx-panel-historique .cx-table-wrap'), cards = $('cxui-hcards');
+        if (tw) tw.style.display = hview === 'table' ? '' : 'none';
+        if (cards) cards.style.display = hview === 'cards' ? '' : 'none';
+        var vb = $('cxui-hview'); if (vb) vb.querySelectorAll('[data-v]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-v') === hview); });
+        if (!list.length) { tbody.innerHTML = ''; if (cards) cards.innerHTML = ''; if (emptyEl) emptyEl.style.display = ''; return; }
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (hview === 'table') {
+            tbody.innerHTML = list.map(function (s) {
+                var mc = MLAB[s.method] ? s.method : 'cb';
+                var cb = (s.method === 'credit' && s.creditCustomerName) ? '<span class="cx-client-badge cx-client-credit">📒 ' + esc(s.creditCustomerName) + '</span>'
+                    : ((s.loyaltyCustomerName || s.clientName) ? '<span class="cx-client-badge cx-client-loyalty">🎁 ' + esc(s.loyaltyCustomerName || s.clientName) + '</span>' : '<span style="color:var(--text-muted);">—</span>');
+                return '<tr class="cx-hist-row" onclick="cxShowHistoryTicketDetail(' + esc(JSON.stringify(s.id)) + ')" title="Voir le détail du ticket"' + (s.cancelled ? ' style="opacity:.55;text-decoration:line-through;"' : '') + '>'
+                    + '<td>🧾 #' + esc(cxDisplayTicketNum(s)) + '</td><td>' + new Date(s.date).toLocaleString('fr-FR') + '</td><td>' + esc(s.cashier || '—') + '</td><td>' + cb + '</td>'
+                    + '<td>' + itemsCount(s) + '</td><td><strong>' + eur(s.total) + '</strong></td><td><span class="cx-method-pill ' + mc + '">' + esc(MLAB[s.method] || s.method || '—') + '</span></td><td class="cx-hist-chevron">›</td></tr>';
+            }).join('');
+        } else if (cards) {
+            tbody.innerHTML = '';
+            var lastDay = '', h = [], dayTot = {};
+            list.forEach(function (s) { var d = new Date(s.date).toDateString(); if (!s.cancelled) dayTot[d] = (dayTot[d] || 0) + (+s.total || 0); });
+            list.slice(0, 400).forEach(function (s) {
+                var dt = new Date(s.date), dk = dt.toDateString();
+                if (dk !== lastDay) { lastDay = dk; h.push('<div class="cxui-day"><span>' + dt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + '</span><span>' + eur(dayTot[dk] || 0) + '</span></div>'); }
+                var mc = MLAB[s.method] ? s.method : 'cb', cli = s.creditCustomerName || s.loyaltyCustomerName || s.clientName || '';
+                var names = (s.items || []).map(function (i) { return i.name; }).filter(Boolean);
+                h.push('<div class="cxui-tk' + (s.cancelled ? ' cancel' : '') + '" data-id="' + esc(JSON.stringify(s.id)) + '">'
+                    + '<div class="t1"><span class="num">#' + esc(cxDisplayTicketNum(s)) + '</span><span class="tot">' + (s.cancelled ? '<s>' + eur(s.total) + '</s>' : eur(s.total)) + '</span></div>'
+                    + '<div class="t2">🕐 ' + dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ' · ' + esc(s.cashier || '—') + ' · ' + itemsCount(s) + ' art.' + (names.length ? '<br>' + esc(names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '')) : '') + (s.note ? '<br>📝 ' + esc(s.note) : '') + '</div>'
+                    + '<div class="t3"><span class="cx-method-pill ' + mc + '">' + (MICON[s.method] || '') + ' ' + esc(MLAB[s.method] || s.method || '—') + '</span>'
+                    + (cli ? '<span class="cx-client-badge cx-client-loyalty">👤 ' + esc(cli) + '</span>' : '')
+                    + (s.discount && s.discount.total > 0 ? '<span class="cx-client-badge" style="background:rgba(219,39,119,.1);color:#be185d;">🏷️ −' + eur(s.discount.total) + '</span>' : '')
+                    + (s.cancelled ? '<span class="cx-client-badge" style="background:rgba(220,38,38,.1);color:#b91c1c;">🚫 Annulée</span>' : '')
+                    + '<button type="button" class="rp" data-rp="1" title="Réimprimer le ticket">🖨️ Réimprimer</button></div></div>');
+            });
+            if (list.length > 400) h.push('<div class="cxui-day"><span>… ' + (list.length - 400) + ' ticket(s) de plus : affinez la période ou utilisez la vue Tableau</span></div>');
+            cards.innerHTML = h.join('');
+        }
+    }
+    function exportCSV() {
+        var list = filtered().list; if (!list.length) { toast('Aucun ticket à exporter', 'info'); return; }
+        var sep = ';', q = function (v) { v = String(v == null ? '' : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+        var n = function (v) { return (+v || 0).toFixed(2).replace('.', ','); };
+        var rows = [['Ticket', 'Date', 'Heure', 'Caissier', 'Client', 'Articles', 'Total', 'Mode', 'Espèces', 'CB', 'Ticket resto', 'Rendu', 'Remise', 'Annulée', 'Note', 'Détail']];
+        list.forEach(function (s) {
+            var d = new Date(s.date);
+            rows.push([cxDisplayTicketNum(s), d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR'), s.cashier || '', s.creditCustomerName || s.loyaltyCustomerName || s.clientName || '', itemsCount(s), n(s.total), MLAB[s.method] || s.method || '', n(s.receivedCash), n(s.receivedCB), n(s.receivedTicket), n(s.change), n(s.discount && s.discount.total), s.cancelled ? 'oui' : '', s.note || '',
+                (s.items || []).map(function (i) { return i.name + ' x' + i.quantity; }).join(' | ')]);
+        });
+        var csv = '﻿' + rows.map(function (r) { return r.map(q).join(sep); }).join('\r\n');
+        var a = document.createElement('a'), f = $('cx-hist-from').value, t = $('cx-hist-to').value;
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        a.download = 'caisse-historique' + (f ? '_' + f : '') + (t && t !== f ? '_' + t : '') + '.csv';
+        document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+        toast('📥 Export CSV : ' + list.length + ' ticket(s)', 'success');
+    }
+    function reprint(id) {
+        var s = jget('covo_sales_history', []).find(function (x) { return String(x.id) === String(id); });
+        if (!s) { toast('⚠️ Ticket introuvable', 'error'); return; }
+        try { _cxLastReceiptSale = s; } catch (e) { window._cxLastReceiptSale = s; }
+        cxPrintReceipt();
+    }
+    function buildHistUI() {
+        var panel = $('cx-panel-historique'); if (!panel || $('cxui-kpis')) return;
+        var bar = panel.querySelector('.cx-toolbar');
+        var per = document.createElement('div'); per.className = 'cxui-periods'; per.id = 'cxui-periods';
+        per.innerHTML = [['today', 'Aujourd\'hui'], ['yday', 'Hier'], ['7d', '7 jours'], ['30d', '30 jours'], ['month', 'Ce mois'], ['all', 'Tout'], ['custom', '📅 Dates…']]
+            .map(function (p) { return '<button type="button" class="cxui-chip" data-p="' + p[0] + '">' + p[1] + '</button>'; }).join('');
+        panel.insertBefore(per, bar);
+        per.addEventListener('click', function (e) { var b = e.target.closest('[data-p]'); if (b) setPeriod(b.getAttribute('data-p')); });
+        ['cx-hist-from', 'cx-hist-to'].forEach(function (id) { var el = $(id); if (el) el.addEventListener('change', function () { hperiod = 'custom'; ui.hperiod = 'custom'; saveUI(); }, true); });
+        var rb = bar.querySelector('button'); if (rb) rb.addEventListener('click', function () { hperiod = 'all'; ui.hperiod = 'all'; saveUI(); setTimeout(window.cxRenderHistory, 0); });
+        var kp = document.createElement('div'); kp.className = 'cxui-kpis'; kp.id = 'cxui-kpis';
+        var mt = document.createElement('div'); mt.className = 'cxui-meth'; mt.id = 'cxui-meth';
+        var sumEl = $('cx-hist-summary');
+        panel.insertBefore(kp, sumEl); panel.insertBefore(mt, sumEl);
+        mt.addEventListener('click', function (e) { var r = e.target.closest('[data-mf]'); if (!r) return; var s = $('cx-hist-method'); s.value = s.value === r.getAttribute('data-mf') ? '' : r.getAttribute('data-mf'); window.cxRenderHistory(); });
+        var hb = document.createElement('div'); hb.className = 'cxui-hbar';
+        sumEl.parentNode.insertBefore(hb, sumEl); hb.appendChild(sumEl); sumEl.style.margin = '0';
+        var right = document.createElement('div'); right.style.cssText = 'display:flex;gap:6px;align-items:center;';
+        right.innerHTML = '<div class="cxui-seg" id="cxui-hview"><button type="button" data-v="cards">▦ Cartes</button><button type="button" data-v="table">☰ Tableau</button></div><button type="button" class="b" id="cxui-csv">📥 Export CSV</button>';
+        hb.appendChild(right);
+        right.querySelectorAll('[data-v]').forEach(function (b) { b.onclick = function () { hview = b.getAttribute('data-v'); ui.hview = hview; saveUI(); window.cxRenderHistory(); }; });
+        $('cxui-csv').onclick = exportCSV;
+        var cards = document.createElement('div'); cards.className = 'cxui-hcards'; cards.id = 'cxui-hcards';
+        var tw = panel.querySelector('.cx-table-wrap'); tw.parentNode.insertBefore(cards, tw);
+        cards.addEventListener('click', function (e) {
+            var tk = e.target.closest('.cxui-tk'); if (!tk) return;
+            var id = JSON.parse(tk.getAttribute('data-id'));
+            if (e.target.closest('[data-rp]')) { e.stopPropagation(); reprint(id); return; }
+            cxShowHistoryTicketDetail(id);
+        });
+        // période mémorisée
+        if (hperiod !== 'custom') { var f = $('cx-hist-from'); if (f && !f.value) { setPeriod(hperiod); } }
+    }
+
+    /* ---------- Disposition côte à côte ---------- */
+    var mq = window.matchMedia('(min-width: 1100px)');
+    function split() { return document.body.classList.contains('cxui-split'); }
+    function buildSplit() {
+        var pp = $('cx-panel-produits'), pc = $('cx-panel-panier'); if (!pp || !pc || $('cxui-split')) return;
+        var w = document.createElement('div'); w.id = 'cxui-split';
+        pp.parentNode.insertBefore(w, pp); w.appendChild(pp); w.appendChild(pc);
+    }
+    function applyLayout() {
+        var on = mq.matches;
+        document.body.classList.toggle('cxui-split', on);
+        var bp = $('cx-tabbtn-produits');
+        if (bp) { if (!bp._cxuiTxt) bp._cxuiTxt = bp.innerHTML; bp.innerHTML = on ? '🛒 Vente <span style="opacity:.75;font-weight:700;font-size:.72rem;">Produits + Panier</span>' : bp._cxuiTxt; }
+        var t = 'produits'; try { t = cxCurrentTab; } catch (e) {}
+        if (on && t === 'panier') t = 'produits';
+        window.cxSwitchTab(t);
+    }
+    var origSwitch = window.cxSwitchTab;
+    window.cxSwitchTab = function (tab) {
+        ['produits', 'panier', 'historique'].forEach(function (t) { document.body.classList.toggle('cxui-tab-' + t, t === tab); });
+        if (split() && tab === 'panier') {
+            origSwitch.call(this, 'produits');
+            var pc = $('cx-panel-panier'); if (pc) { pc.style.display = ''; }
+            window.cxRenderCart();
+            var vb = $('cxui-tiles') || $('cx-validate-btn'); if (vb) { vb.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+            return;
+        }
+        var r = origSwitch.apply(this, arguments);
+        if (split() && tab === 'produits') { var p = $('cx-panel-panier'); if (p) p.style.display = ''; window.cxRenderCart(); }
+        if (split() && tab === 'historique') { var p2 = $('cx-panel-panier'); if (p2) p2.style.display = 'none'; }
+        return r;
+    };
+    try { cxSwitchTab = window.cxSwitchTab; } catch (e) {}
+
+    /* ---------- Clavier ---------- */
+    var kbd;
+    function showKbd() {
+        if (!kbd) {
+            kbd = document.createElement('div'); kbd.id = 'cxui-kbd'; document.body.appendChild(kbd);
+            kbd.innerHTML = '<div style="font-weight:900;margin-bottom:8px;display:flex;justify-content:space-between;">⌨️ Raccourcis clavier <button type="button" style="border:none;background:none;cursor:pointer;color:var(--text-muted);font-size:1rem;" onclick="this.closest(\'#cxui-kbd\').style.display=\'none\'">✕</button></div>'
+                + [['F2', 'Rechercher un produit'], ['F3', 'Champ de scan code-barres'], ['F4', 'Aller au panier / règlement'], ['F8', 'Saisir le montant reçu (espèces)'], ['F9', 'Valider la vente'], ['+ / −', 'Quantité de la dernière ligne'], ['Suppr', 'Retirer la dernière ligne'], ['Échap', 'Effacer la recherche / fermer'], ['Entrée', 'Valider la quantité saisie']]
+                    .map(function (r) { return '<div class="r"><span>' + r[1] + '</span><kbd class="cxk">' + r[0] + '</kbd></div>'; }).join('')
+                + '<div style="font-size:.68rem;color:var(--text-muted);margin-top:8px;">Astuce : tapez directement au clavier, le curseur revient tout seul sur le champ de scan.</div>';
+        }
+        kbd.style.display = kbd.style.display === 'block' ? 'none' : 'block';
+    }
+    function modalOpen() {
+        return Array.prototype.some.call(document.querySelectorAll('.cx-modal,[role="dialog"]'), function (m) { return m.offsetParent !== null && getComputedStyle(m).display !== 'none' && m.id !== 'cxui-kbd'; });
+    }
+    function goSale() { var t = 'produits'; try { t = cxCurrentTab; } catch (e) {} if (t === 'historique') window.cxSwitchTab('produits'); }
+    function editable(el) { return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); }
+    document.addEventListener('keydown', function (e) {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        var a = document.activeElement, k = e.key;
+        if (k === 'F2') { e.preventDefault(); goSale(); var s = $('cx-search'); if (s) { s.focus(); s.select(); } return; }
+        if (k === 'F3') { e.preventDefault(); goSale(); try { cxFocusBarcode(); } catch (x) {} return; }
+        if (k === 'F4') { e.preventDefault(); window.cxSwitchTab('panier'); return; }
+        if (k === 'F8') { e.preventDefault(); if (!C().length) return; window.cxSwitchTab('panier'); if (method() !== 'cash') { window.cxSelectPayMethod('cash'); syncTiles(); } setTimeout(function () { var r = $('cx-amount-received'); if (r) { r.focus(); r.select(); } }, 60); return; }
+        if (k === 'F9') { e.preventDefault(); if (modalOpen()) return; if (!C().length) { toast('⚠️ Panier vide', 'info'); return; } window.cxSwitchTab('panier'); window.cxValidateSale(); return; }
+        if (modalOpen()) return;
+        var t = 'produits'; try { t = cxCurrentTab; } catch (x) {}
+        if (t === 'historique') return;
+        var bc = $('cx-barcode'), inBcEmpty = a === bc && !(bc.value || '');
+        if (k === 'Escape' && a && a.id === 'cx-search' && a.value) { e.preventDefault(); a.value = ''; window.cxRenderProducts(); try { cxFocusBarcode(); } catch (x) {} return; }
+        if (!editable(a) || inBcEmpty) {
+            var c = C(), idx = lastIdx >= 0 && lastIdx < c.length ? lastIdx : c.length - 1;
+            if ((k === '+' || k === '-' || k === 'Add' || k === 'Subtract') && c.length) { e.preventDefault(); cxChangeQty(idx, (k === '+' || k === 'Add') ? 1 : -1); return; }
+            if (k === 'Delete' && c.length) { e.preventDefault(); window.cxRemoveFromCart(idx); toast('🗑️ Ligne retirée', 'info'); return; }
+        }
+        // Frappe libre (douchette ou clavier) hors champ : renvoyée vers le champ de scan
+        if (!editable(a) && k.length === 1 && /[0-9A-Za-z]/.test(k) && t !== 'historique' && bc && bc.offsetParent) { bc.focus(); }
+    }, true);
+
+    function hookAdd() {
+        ['cxAddToCart', 'cxConfirmKgAdd'].forEach(function (fn) {
+            var f = window[fn]; if (typeof f !== 'function' || f._cxui) return;
+            var w = function () {
+                var before = C().map(function (i) { return i.quantity; }).join(',');
+                var r = f.apply(this, arguments);
+                var c = C(), after = c.map(function (i) { return i.quantity; }).join(',');
+                if (before !== after) {
+                    var id = fn === 'cxAddToCart' ? arguments[0] : window._cxKgProductId, j = -1;
+                    c.forEach(function (it, k) { if (String(it.id) === String(id) && !it._resv) j = k; });
+                    lastIdx = j >= 0 ? j : c.length - 1;
+                    if (split()) window.cxRenderCart();
+                }
+                return r;
+            };
+            w._cxui = true; window[fn] = w;
+        });
+        try { cxAddToCart = window.cxAddToCart; cxConfirmKgAdd = window.cxConfirmKgAdd; } catch (e) {}
+    }
+    /* ---------- Installation ---------- */
+    window._cxUI = { renderProducts: renderProducts, renderCart: renderCart, renderHistory: renderHistory, preFinalize: preFinalize, decorateSale: decorateSale, totals: cartTotals, setPeriod: setPeriod, exportCSV: exportCSV, toggleFav: toggleFav };
+    function boot() {
+        if (!document.body || !$('cx-panel-produits')) { setTimeout(boot, 100); return; }
+        buildSplit(); buildProductsUI(); buildCartUI(); buildHistUI(); hookReceipt(); hookAdd();
+        var tabs = document.querySelector('.cx-tabs');
+        if (tabs && !$('cxui-kbd-chip')) { var b = document.createElement('button'); b.type = 'button'; b.id = 'cxui-kbd-chip'; b.className = 'cxui-kbd-chip'; b.title = 'Raccourcis clavier'; b.textContent = '⌨️'; b.onclick = showKbd; tabs.appendChild(b); }
+        if (mq.addEventListener) mq.addEventListener('change', applyLayout); else if (mq.addListener) mq.addListener(applyLayout);
+        applyLayout();
+        // Filet de sécurité : tout ajout au panier par un autre module rafraîchit le panier visible
+        var sig = '';
+        setInterval(function () {
+            var c = C(), s = c.length + '|' + c.map(function (i) { return i.id + ':' + i.quantity + ':' + i.price; }).join(',');
+            if (s !== sig) { var first = !sig; sig = s; if (!first && (split() || (function () { try { return cxCurrentTab === 'panier'; } catch (e) { return false; } })())) { var ae = document.activeElement; if (!(ae && ae.classList && ae.classList.contains('cxui-qty'))) window.cxRenderCart(); } }
+            syncTiles();
+        }, 500);
+        setTimeout(hookReceipt, 1500);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();

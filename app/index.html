@@ -498,14 +498,40 @@ return tinf_uncompress;
     if (window._cpReadOnlyGuardInstalled) return;
     window._cpReadOnlyGuardInstalled = true;
     var _cpOrigSetItem = Storage.prototype.setItem;
+    // Avertissement « consultation seule » : une seule fenêtre, plus jamais réaffichée une fois acquittée
+    // (acquittement mémorisé par utilisateur ; écrit via le setItem d'origine, hors verrou lecture seule).
+    var _cpRoShown = false;
+    function _cpReadOnlyNotice(cu) {
+        var key = 'covo_ro_ack_' + String(cu.id || cu.username || cu.name || 'user');
+        if (_cpRoShown) return;
+        try { if (window.localStorage.getItem(key)) { _cpRoShown = true; return; } } catch(e) {}
+        if (!document.body) return;
+        _cpRoShown = true;
+        var ov = document.createElement('div');
+        ov.id = 'cp-ro-notice';
+        ov.setAttribute('role', 'alertdialog');
+        ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.55);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit;';
+        ov.innerHTML = '<div style="background:var(--bg-card,#fff);color:var(--text-main,#111);max-width:420px;width:100%;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.35);overflow:hidden;">'
+            + '<div style="background:linear-gradient(135deg,#1e3a5f,#2c6fad);color:#fff;padding:16px 20px;font-weight:900;font-size:1.02rem;">👁️ Mode consultation seule</div>'
+            + '<div style="padding:16px 20px;font-size:.88rem;line-height:1.5;">'
+            + 'Ce compte (<b>' + String(cu.username || cu.name || '').replace(/[<>&"]/g, '') + '</b>) est en <b>consultation seule</b> : la sauvegarde a été désactivée par l\'Admin-Développeur.<br><br>'
+            + 'Vous pouvez naviguer, tester le panier et les écrans, mais <b>aucune modification n\'est enregistrée</b> (ventes, stock, réglages…).'
+            + '<div style="font-size:.76rem;color:var(--text-muted,#666);margin-top:10px;">Ce message ne s\'affichera plus pour ce compte une fois acquitté.</div></div>'
+            + '<div style="padding:0 20px 18px;"><button type="button" id="cp-ro-ok" style="width:100%;padding:12px;border:none;border-radius:11px;background:#2c6fad;color:#fff;font-weight:900;font-size:.92rem;cursor:pointer;">✅ J\'ai compris</button></div></div>';
+        document.body.appendChild(ov);
+        var ok = ov.querySelector('#cp-ro-ok');
+        ok.onclick = function() {
+            try { _cpOrigSetItem.call(window.localStorage, key, new Date().toISOString()); } catch(e) {}
+            ov.remove();
+        };
+        setTimeout(function(){ try { ok.focus(); } catch(e) {} }, 30);
+    }
     Storage.prototype.setItem = function(key, value) {
         if (this === window.localStorage && key !== 'covo_current_user') {
             try {
                 var cu = JSON.parse(window.localStorage.getItem('covo_current_user') || 'null');
                 if (cu && cu.readOnly === true) {
-                    if (typeof window.showScanToast === 'function') {
-                        window.showScanToast('👁️ Mode consultation seule — sauvegarde désactivée par l\'Admin-Développeur', 'info');
-                    }
+                    try { _cpReadOnlyNotice(cu); } catch(e2) {}
                     return;
                 }
             } catch(e) {}
@@ -76857,23 +76883,5 @@ function covoQrPrint(o) {
     }
     window.covoSecurity = { report: report, refreshBlocks: refreshBlocks, isBlocked: function (id) { return !!BLOCKED[id]; } };
     if (document.readyState === 'complete') setTimeout(boot, 1500); else window.addEventListener('load', function () { setTimeout(boot, 1500); });
-
-    /* ── Anti-piratage : si la vérification de licence (licence_check.js) a été retirée, le signaler à l'éditeur ── */
-    setTimeout(function () {
-        if (window.__licState || /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:') return;
-        var k = 'covo_sec_nolic', last = +(localStorage.getItem(k) || 0); if (Date.now() - last < 6 * 3600e3) return;
-        try { localStorage.setItem(k, String(Date.now())); } catch (e) {}
-        var id = {}; try { var a = JSON.parse(localStorage.getItem('covo_settings') || 'null') || {}, r = a.rcpt || {};
-            id = { shop: r.shopName || a.shopName || '', soc: a.companyName || '', adr: r.address || '', tel: r.phone || '', mail: r.email || '', siret: r.siret || '', gmail: String(localStorage.getItem('gdrive_email') || '').replace(/^"|"$/g, '') };
-            Object.keys(id).forEach(function (x) { if (!id[x]) delete id[x]; else id[x] = String(id[x]).slice(0, 160); }); } catch (e) {}
-        var cu = cur(), s = ls('licOK_' + PRODUIT) || {};
-        Promise.all([devId(), netInfo().catch(function () { return {}; })]).then(function (x) {
-            var ni = x[1] || {};
-            var ev = { t: Date.now(), r: 'sans_licence', p: PRODUIT, m: PRODUIT, lic: '-', u: String((cu && cu.username) || id.shop || '').slice(0, 60), n: ('Utilisé sans licence' + (id.shop ? ' — ' + id.shop : '')).slice(0, 60),
-                       ip: String(ni.ip || '').slice(0, 45), loc: String(ni.loc || '').slice(0, 60), isp: String(ni.isp || '').slice(0, 60), dev: DEVD, dv: x[0], ua: navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120),
-                       host: location.hostname.slice(0, 60), url: location.href.split('#')[0].slice(0, 200), mail: String(s.mail || '').slice(0, 120), hint: 'Vérification de licence absente', how: 'licence', id: id };
-            fetch(FB_DEF + '/secu.json', { method: 'POST', keepalive: true, body: JSON.stringify(ev) }).catch(function () {});
-        });
-    }, 60000);
 })();
 </script>
