@@ -76658,3 +76658,204 @@ function covoQrPrint(o) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick); else tick();
 })();
 </script>
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   COVO PRO — CONTRÔLE D'ACCÈS ET ALERTES DE SÉCURITÉ (relié à Licence Pro)
+   • Chaque tentative de connexion (réussie, code faux, compte bloqué, verrouillage) est envoyée
+     à Licence Pro (Firebase « secu ») avec : utilisateur, appareil, adresse IP, ville, opérateur.
+   • L'administrateur de Licence Pro est alerté et peut BLOQUER l'utilisateur (clé « usr_… » du
+     nœud « ipblock ») ou son ADRESSE IP (coupure d'accès déjà gérée par licence_check.js).
+   • Un compte bloqué ne peut plus se connecter ; s'il est connecté, il est déconnecté.
+   • Anti-force brute : 5 codes faux de suite → connexion verrouillée 5 min (puis 15, 30, 60 min).
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._secInstalled) return; window._secInstalled = true;
+    var PRODUIT = 'COVO Pro', SRC = 'https://raw.githubusercontent.com/aliand0810/licences/main/licences.json', FB_DEF = 'https://covo-licences-default-rtdb.europe-west1.firebasedatabase.app';
+    function $(id) { return document.getElementById(id); }
+    function ls(k, v) { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return null; } }
+    function hex(b) { return Array.prototype.map.call(new Uint8Array(b), function (x) { return x.toString(16).padStart(2, '0'); }).join(''); }
+    function sha(s) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(hex); }
+
+    /* ── Licence, appareil, réseau (mêmes calculs que licence_check.js) ── */
+    var LIC = null;
+    function licCtx() {
+        if (LIC) return Promise.resolve(LIC);
+        try { var c = JSON.parse(sessionStorage.getItem('covoSecLic') || 'null'); if (c && c.id && Date.now() - c.at < 6 * 3600e3) { LIC = c; return Promise.resolve(c); } } catch (e) {}
+        var s = ls('licOK_' + PRODUIT) || {}; if (!s.mail || !s.key) return Promise.resolve(null);
+        var mail = String(s.mail).trim().toLowerCase(), key = String(s.key).trim().toUpperCase();
+        return Promise.all([fetch(SRC + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }), sha(mail + '|' + PRODUIT + '|' + key)]).then(function (a) {
+            var d = a[0] || {}, l = (d.licences || []).find(function (x) { return x.email === mail && x.produit === PRODUIT && x.hash === a[1]; });
+            if (!l) return null;
+            LIC = { id: l.id, fb: String(d.firebase || FB_DEF).replace(/\/+$/, ''), mail: mail, at: Date.now() };
+            try { sessionStorage.setItem('covoSecLic', JSON.stringify(LIC)); } catch (e) {}
+            return LIC;
+        }).catch(function () { return null; });
+    }
+    var DV = null;
+    function devId() {
+        if (DV) return Promise.resolve(DV);
+        var n = navigator, sc = screen, w = Math.min(sc.width, sc.height), h = Math.max(sc.width, sc.height), tz = '';
+        try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) {}
+        return sha([n.userAgent, n.platform, n.hardwareConcurrency, n.deviceMemory, w + 'x' + h, sc.colorDepth, tz].join('|')).then(function (x) { DV = x.slice(0, 24); return DV; });
+    }
+    var DEVD = (function () { try { var u = navigator.userAgent, os = /Windows/.test(u) ? 'Windows' : /iPhone/.test(u) ? 'iPhone' : /iPad/.test(u) ? 'iPad' : /Android/.test(u) ? 'Android' : /Mac OS X/.test(u) ? 'Mac' : /CrOS/.test(u) ? 'Chromebook' : /Linux/.test(u) ? 'Linux' : '';
+        var br = /Edg\//.test(u) ? 'Edge' : /OPR\//.test(u) ? 'Opera' : /SamsungBrowser/.test(u) ? 'Samsung Internet' : /Firefox\//.test(u) ? 'Firefox' : /Chrome\//.test(u) ? 'Chrome' : /Safari\//.test(u) ? 'Safari' : '';
+        var k = /iPad|Tablet/.test(u) || (/Android/.test(u) && !/Mobile/.test(u)) ? 'Tablette' : /Mobi|iPhone|Android/.test(u) ? 'Mobile' : 'Ordinateur';
+        return [k, os, br].filter(Boolean).join(' · ').slice(0, 60); } catch (e) { return ''; } })();
+    function netInfo() {
+        try { var c = JSON.parse(sessionStorage.getItem('licNet') || 'null'); if (c && c.ip && Date.now() - c.at < 6e5) return Promise.resolve(c); } catch (e) {}
+        var get = function (u) { return Promise.race([fetch(u, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw 0; return r.json(); }), new Promise(function (_, j) { setTimeout(function () { j(0); }, 4000); })]); };
+        var src = [['https://get.geojs.io/v1/ip/geo.json', function (j) { return { ip: j.ip, loc: [j.city, j.country_code].filter(Boolean).join(', '), isp: j.organization_name || '' }; }],
+                   ['https://ipwho.is/?fields=ip,city,country_code,connection', function (j) { return { ip: j.ip, loc: [j.city, j.country_code].filter(Boolean).join(', '), isp: (j.connection && (j.connection.isp || j.connection.org)) || '' }; }],
+                   ['https://api.ipify.org?format=json', function (j) { return { ip: j.ip, loc: '' }; }]];
+        var i = 0;
+        return (function next() {
+            if (i >= src.length) return Promise.resolve({ ip: '', loc: '' });
+            var s = src[i++];
+            return get(s[0]).then(function (j) { var r = s[1](j); if (!r.ip) throw 0; r.at = Date.now(); try { sessionStorage.setItem('licNet', JSON.stringify(r)); } catch (e) {} return r; }).catch(next);
+        })();
+    }
+
+    /* ── Envoi d'un événement de connexion à Licence Pro ── */
+    var QK = 'covo_sec_queue';
+    function send(ev) {
+        return licCtx().then(function (L) {
+            if (!L) return false;
+            ev.lic = L.id;
+            return fetch(L.fb + '/secu.json', { method: 'POST', keepalive: true, body: JSON.stringify(ev) }).then(function (r) { return r.ok; }).catch(function () { return false; });
+        });
+    }
+    function flush() {
+        var q = ls(QK) || []; if (!q.length || !navigator.onLine) return;
+        ls(QK, null);
+        q.reduce(function (p, ev) { return p.then(function () { return send(ev).then(function (ok) { if (!ok) { var r = ls(QK) || []; r.push(ev); ls(QK, r.slice(-50)); } }); }); }, Promise.resolve());
+    }
+    function report(r, user, extra) {
+        extra = extra || {};
+        var lab = { ok: '✅ Connexion réussie', fail: '❌ Code PIN incorrect', blocked: '⛔ Compte bloqué — refusé', locked: '🔒 Connexion verrouillée', kicked: '⛔ Déconnecté (compte bloqué)' }[r] || r;
+        var name = user ? String(user.username || user.name || user.id || '') : '';
+        Promise.all([devId(), netInfo().catch(function () { return {}; })]).then(function (a) {
+            var ni = a[1] || {};
+            var ev = { t: Date.now(), r: r, p: PRODUIT, m: PRODUIT, u: name.slice(0, 60), uid: user ? String(user.id || '').slice(0, 40) : '', role: user ? String(user.role || '').slice(0, 20) : '',
+                       n: (lab + (name ? ' — ' + name : '')).slice(0, 60), how: extra.how || 'pin', fails: extra.fails || 0, lockMin: extra.lockMin || 0,
+                       hint: String(extra.hint || '').slice(0, 60), dv: a[0], dev: DEVD, ua: navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120),
+                       ip: String(ni.ip || '').slice(0, 45), loc: String(ni.loc || '').slice(0, 60), isp: String(ni.isp || '').slice(0, 60), host: location.hostname.slice(0, 60) };
+            send(ev).then(function (ok) { if (!ok) { var q = ls(QK) || []; q.push(ev); ls(QK, q.slice(-50)); } });
+        });
+    }
+    window.addEventListener('online', flush); setTimeout(flush, 8000);
+
+    /* ── Comptes bloqués par l'administrateur (Licence Pro → « ipblock/usr_<licence>_<compte> ») ── */
+    var BK = 'covo_sec_blocked', BLOCKED = ls(BK) || {};
+    function ukey(L, uid) { return sha('uid|' + uid).then(function (h) { return 'usr_' + L.id + '_' + h.slice(0, 16); }); }
+    function listUsers() { var a = []; try { a = (users || []).slice(); } catch (e) {} return a.filter(function (u) { return u && u.id; }); }
+    function refreshBlocks() {
+        return licCtx().then(function (L) {
+            if (!L) return;
+            var us = listUsers();
+            return Promise.all(us.map(function (u) {
+                return ukey(L, u.id).then(function (k) { return fetch(L.fb + '/ipblock/' + k + '.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : undefined; }).then(function (b) { return [u.id, b]; }); }).catch(function () { return [u.id, undefined]; });
+            })).then(function (res) {
+                var nb = {}; res.forEach(function (x) { if (x[1] === undefined) { if (BLOCKED[x[0]]) nb[x[0]] = BLOCKED[x[0]]; } else if (x[1] && x[1].mode === 'block') nb[x[0]] = { t: x[1].t || Date.now(), msg: x[1].msg || '' }; });
+                BLOCKED = nb; ls(BK, nb); enforce();
+            });
+        });
+    }
+    function isBlocked(u) { return !!(u && !u.isMaster && u.id !== 'USR-MASTER' && BLOCKED[u.id]); }
+    function cur() { try { return currentUser || null; } catch (e) { return null; } }
+    function enforce() {
+        var u = cur(); if (!u || !isBlocked(u)) return;
+        report('kicked', u, { how: 'auto' });
+        try { if (typeof logout === 'function') logout(true); else { currentUser = null; location.reload(); } } catch (e) {}
+        setTimeout(function () { msg('⛔ Le compte « ' + (u.username || '') + ' » a été bloqué par l’administrateur de la licence. Contactez votre responsable.', 'ko'); }, 300);
+    }
+
+    /* ── Message sur l'écran de connexion ── */
+    function msg(t, kind) {
+        var pin = $('login-pin'); if (!pin) return;
+        var box = $('sec-login-msg');
+        if (!box) { box = document.createElement('div'); box.id = 'sec-login-msg'; box.style.cssText = 'margin:0 0 10px;padding:9px 12px;border-radius:9px;font-size:.84rem;font-weight:700;line-height:1.4'; var anchor = pin.parentNode; anchor.parentNode.insertBefore(box, anchor.nextSibling); }
+        box.style.display = t ? '' : 'none'; box.textContent = t || '';
+        box.style.background = kind === 'ko' ? 'rgba(231,76,60,.12)' : 'rgba(243,156,18,.14)'; box.style.color = kind === 'ko' ? '#c0392b' : '#b9770e'; box.style.border = '1.5px solid ' + (kind === 'ko' ? 'rgba(231,76,60,.45)' : 'rgba(243,156,18,.45)');
+    }
+    function notice() {
+        var pin = $('login-pin'); if (!pin || $('sec-login-note')) return;
+        var n = document.createElement('div'); n.id = 'sec-login-note';
+        n.style.cssText = 'font-size:.7rem;color:var(--text-muted,#7a8fa3);margin:8px 0 0;text-align:center;line-height:1.35';
+        n.textContent = '🛡️ Connexions sécurisées : chaque tentative est enregistrée (date, appareil, adresse IP) et signalée à l’administrateur.';
+        var btn = $('login-btn') || (pin.closest('form,div') || pin.parentNode).parentNode.querySelector('button[onclick*="attemptLogin"]');
+        var host = (btn && btn.parentNode) || pin.parentNode.parentNode; host.appendChild(n);
+    }
+
+    /* ── Anti-force brute ── */
+    var FK = 'covo_sec_fails';
+    function fails() { var f = ls(FK) || { n: 0, locks: [], until: 0 }; f.locks = (f.locks || []).filter(function (t) { return Date.now() - t < 864e5; }); return f; }
+    function lockLeft() { var f = fails(); return Math.max(0, (f.until || 0) - Date.now()); }
+    var lockT = null;
+    function showLock() {
+        clearInterval(lockT);
+        var tick = function () { var l = lockLeft(); if (!l) { clearInterval(lockT); msg(''); var p = $('login-pin'); if (p) p.disabled = false; return; } var m = Math.floor(l / 60000), s = Math.ceil((l % 60000) / 1000); msg('🔒 Trop de codes incorrects. Connexion verrouillée encore ' + (m ? m + ' min ' : '') + s + ' s.', 'warn'); var p = $('login-pin'); if (p) p.disabled = true; };
+        tick(); lockT = setInterval(tick, 1000);
+    }
+
+    /* ── Interception de la connexion par code PIN ── */
+    var lastReport = 0, bootUser = null;
+    function findByPin(pin) {
+        var u = null; try { u = (users || []).find(function (x) { return x.pin === pin; }) || null; } catch (e) {}
+        if (!u) { var mp = localStorage.getItem('covo_master_pwd') || 'Aliand081089'; if (pin === mp) u = { id: 'USR-MASTER', username: 'Admin-Développeur', role: 'admin', isMaster: true }; }
+        return u;
+    }
+    function loginHidden() { var m = $('login-modal'); return !m || getComputedStyle(m).display === 'none'; }
+    function wrap() {
+        var f = window.attemptLogin; if (typeof f !== 'function' || f._sec) return;
+        var w = function () {
+            var pinEl = $('login-pin'), pin = pinEl ? pinEl.value : '';
+            if (!pin) return f.apply(this, arguments);
+            if (lockLeft()) { if (pinEl) pinEl.value = ''; showLock(); report('locked', null, { fails: fails().n, hint: 'tentative pendant le verrouillage' }); lastReport = Date.now(); return; }
+            var cand = findByPin(pin);
+            if (cand && isBlocked(cand)) { if (pinEl) pinEl.value = ''; msg('⛔ Ce compte a été bloqué par l’administrateur de la licence. Contactez votre responsable.', 'ko'); report('blocked', cand); lastReport = Date.now(); return; }
+            var before = cur() && cur().id, res = f.apply(this, arguments);
+            setTimeout(function () {
+                var u = cur();
+                if (u && loginHidden() && (u.id !== before || !before || (cand && u.id === cand.id))) {
+                    ls(FK, { n: 0, locks: fails().locks, until: 0 }); msg('');
+                    report('ok', u, { how: 'pin' }); lastReport = Date.now(); seenUser = u.id;
+                } else {
+                    var fl = fails(); fl.n++;
+                    var hint = ''; try { hint = 'dernier compte : ' + (localStorage.getItem('covo_last_user_name') || '—'); } catch (e) {}
+                    if (fl.n >= 5) {
+                        var mins = [5, 15, 30, 60][Math.min(3, fl.locks.length)];
+                        fl.until = Date.now() + mins * 60000; fl.locks.push(Date.now()); ls(FK, fl);
+                        report('locked', null, { fails: fl.n, lockMin: mins, hint: hint }); fl.n = 0; ls(FK, fl); showLock();
+                    } else { ls(FK, fl); report('fail', null, { fails: fl.n, hint: hint }); if (fl.n >= 3) msg('⚠️ Code incorrect (' + fl.n + '/5). Au 5e essai, la connexion sera verrouillée.', 'warn'); }
+                    lastReport = Date.now();
+                }
+            }, 350);
+            return res;
+        };
+        w._sec = 1; window.attemptLogin = w;
+    }
+    // Connexion par un autre moyen (badge NFC, reconnexion rapide…) : détectée au changement d'utilisateur
+    var seenUser = null;
+    setInterval(function () {
+        var u = cur(), id = u && u.id;
+        if (id && id !== seenUser) {
+            if (seenUser !== null || bootUser !== id) { if (Date.now() - lastReport > 4000) report('ok', u, { how: 'autre' }); }
+            seenUser = id; enforce();
+        } else if (!id) seenUser = '';
+    }, 1500);
+
+    function boot() {
+        var u = cur(); bootUser = u && u.id; seenUser = bootUser || '';
+        wrap(); notice();
+        if (lockLeft()) showLock();
+        refreshBlocks(); setInterval(refreshBlocks, 45000);
+        setInterval(function () { wrap(); notice(); }, 2000);                              // d'autres modules peuvent redéfinir attemptLogin
+        var lm = $('login-modal');
+        if (lm) new MutationObserver(function () { if (!loginHidden()) { refreshBlocks(); if (lockLeft()) showLock(); } }).observe(lm, { attributes: true, attributeFilter: ['style', 'class'] });
+    }
+    window.covoSecurity = { report: report, refreshBlocks: refreshBlocks, isBlocked: function (id) { return !!BLOCKED[id]; } };
+    if (document.readyState === 'complete') setTimeout(boot, 1500); else window.addEventListener('load', function () { setTimeout(boot, 1500); });
+})();
+</script>
