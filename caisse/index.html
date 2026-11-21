@@ -6978,7 +6978,9 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
                     + (cli ? '<span class="cx-client-badge cx-client-loyalty">👤 ' + esc(cli) + '</span>' : '')
                     + (s.discount && s.discount.total > 0 ? '<span class="cx-client-badge" style="background:rgba(219,39,119,.1);color:#be185d;">🏷️ −' + eur(s.discount.total) + '</span>' : '')
                     + (s.cancelled ? '<span class="cx-client-badge" style="background:rgba(220,38,38,.1);color:#b91c1c;">🚫 Annulée</span>' : '')
-                    + '<button type="button" class="rp" data-rp="1" title="Réimprimer le ticket">🖨️ Réimprimer</button></div></div>');
+                    + (s.sumup ? '<span class="cx-client-badge" style="background:rgba(37,99,235,.1);color:#1d4ed8;" title="Payé sur le terminal SumUp">💳 SumUp' + (s.sumup.txCode ? ' · ' + esc(s.sumup.txCode) : (s.sumup.manual ? ' · manuel' : '')) + '</span>' : '')
+                    + '<span style="margin-left:auto;display:inline-flex;gap:5px;"><button type="button" class="rp" data-lb="1" title="Imprimer une étiquette pour ce ticket">🏷️ Étiquette</button>'
+                    + '<button type="button" class="rp" data-rp="1" title="Réimprimer le ticket" style="margin-left:0;">🖨️ Réimprimer</button></span></div></div>');
             });
             if (list.length > 400) h.push('<div class="cxui-day"><span>… ' + (list.length - 400) + ' ticket(s) de plus : affinez la période ou utilisez la vue Tableau</span></div>');
             cards.innerHTML = h.join('');
@@ -7007,6 +7009,73 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         try { _cxLastReceiptSale = s; } catch (e) { window._cxLastReceiptSale = s; }
         cxPrintReceipt();
     }
+    /* ---------- Étiquette de ticket (imprimante de la caisse : thermique 58/80 mm ou étiquettes) ---------- */
+    var LBL_FMT = { '58': ['Ticket 58 mm', '58mm auto', '54mm'], '80': ['Ticket 80 mm', '80mm auto', '74mm'], '62x29': ['Étiquette 62 × 29 mm', '62mm 29mm', '58mm'], '57x32': ['Étiquette 57 × 32 mm', '57mm 32mm', '53mm'], '100x50': ['Étiquette 100 × 50 mm', '100mm 50mm', '94mm'] };
+    function labelHTML(s, fmt) {
+        var cfgR = {}; try { cfgR = _cxReceiptCfg() || {}; } catch (e) {}
+        var d = new Date(s.date), small = fmt === '62x29' || fmt === '57x32';
+        var pay = (MLAB[s.method] || s.method || '') + (s.sumup ? ' · SumUp' + (s.sumup.card ? ' ' + s.sumup.card : '') + (s.sumup.txCode ? ' · ' + s.sumup.txCode : '') : '');
+        var cli = s.creditCustomerName || s.loyaltyCustomerName || s.clientName || '';
+        return '<div class="lb">'
+            + (small ? '' : '<div class="shop">' + esc(cfgR.shopName || 'COVO Pro') + '</div>')
+            + '<div class="row"><b>#' + esc(cxDisplayTicketNum(s)) + '</b><b class="tot">' + eur(s.total) + '</b></div>'
+            + '<div class="meta">' + d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ' · ' + itemsCount(s) + ' art.' + (small ? '' : ' · ' + esc(s.cashier || '')) + '</div>'
+            + '<div class="meta">' + esc(pay) + (cli ? ' · ' + esc(cli) : '') + '</div>'
+            + (s.note && !small ? '<div class="meta">📝 ' + esc(s.note) + '</div>' : '')
+            + (s.cancelled ? '<div class="meta"><b>VENTE ANNULÉE</b></div>' : '')
+            + '<svg id="lb-bc"></svg></div>';
+    }
+    function printLabel(id, fmt, copies) {
+        var s = jget('covo_sales_history', []).find(function (x) { return String(x.id) === String(id); });
+        if (!s) { toast('⚠️ Ticket introuvable', 'error'); return; }
+        var f = LBL_FMT[fmt] || LBL_FMT['58'], small = fmt === '62x29' || fmt === '57x32', n = Math.max(1, Math.min(20, copies || 1));
+        var w = window.open('', '_blank', 'width=420,height=520');
+        if (!w) { toast('⚠️ Autorisez les fenêtres pop-up pour imprimer', 'error'); return; }
+        // code-barres généré ici (JsBarcode est déjà chargé dans la caisse) : aucune dépendance externe dans la fenêtre d'impression
+        var bc = '';
+        try {
+            var sv = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            JsBarcode(sv, String(cxDisplayTicketNum(s)), { format: 'CODE128', width: 1.6, height: 50, displayValue: true, fontSize: 13, margin: 0, lineColor: '#000' });
+            sv.setAttribute('class', 'bc'); sv.setAttribute('preserveAspectRatio', 'none');
+            if (!sv.getAttribute('viewBox')) sv.setAttribute('viewBox', '0 0 ' + (parseFloat(sv.getAttribute('width')) || 200) + ' ' + (parseFloat(sv.getAttribute('height')) || 70));
+            sv.removeAttribute('width'); sv.removeAttribute('height'); sv.removeAttribute('style');
+            bc = sv.outerHTML;
+        } catch (e) { bc = '<div class="meta" style="text-align:center;font-family:monospace;font-size:11px;">' + esc(cxDisplayTicketNum(s)) + '</div>'; }
+        var one = labelHTML(s, fmt).replace('<svg id="lb-bc"></svg>', bc), body = '';
+        for (var i = 0; i < n; i++) body += one;
+        w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Étiquette ticket #' + esc(cxDisplayTicketNum(s)) + '</title><style>'
+            + '@page{size:' + f[1] + ';margin:0}html,body{margin:0}body{font-family:Arial,Helvetica,sans-serif;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+            + '.lb{width:' + f[2] + ';margin:0 auto;padding:' + (small ? '1.2mm 2mm' : '2mm 2mm 3mm') + ';box-sizing:border-box;page-break-after:always;overflow:hidden;' + (small ? 'height:' + f[1].split(' ')[1] + ';' : '') + '}'
+            + '.lb:last-child{page-break-after:auto}.shop{text-align:center;font-weight:900;font-size:' + (fmt === '80' || fmt === '100x50' ? '15px' : '12px') + ';margin-bottom:1mm}'
+            + '.row{display:flex;justify-content:space-between;align-items:baseline;font-size:' + (small ? '10px' : '13px') + '}.tot{font-size:' + (small ? '12px' : '16px') + '}'
+            + '.meta{font-size:' + (small ? '7.5px' : '10px') + ';line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+            + 'svg.bc{display:block;width:100%;height:' + (small ? '9mm' : '14mm') + ';margin-top:' + (small ? '0.6mm' : '1.5mm') + '}'
+            + '</style></head><body>' + body
+            + '<script>setTimeout(function(){window.print();},350);<\/script></body></html>');
+        w.document.close();
+    }
+    var lpop;
+    function openLabel(id, anchor) {
+        if (!lpop) { lpop = document.createElement('div'); lpop.id = 'cxui-lpop'; lpop.style.cssText = 'position:fixed;z-index:30000;background:var(--bg-card);color:var(--text-main);border:1.5px solid var(--border-color);border-radius:14px;box-shadow:0 14px 40px rgba(0,0,0,.28);padding:12px;width:260px;display:none;font-size:.8rem;'; document.body.appendChild(lpop); }
+        var fmt = ui.lblFmt || '58', cp = ui.lblCopies || 1;
+        lpop.innerHTML = '<div style="font-weight:900;margin-bottom:8px;">🏷️ Étiquette du ticket</div>'
+            + '<label style="font-size:.66rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Format</label>'
+            + '<select id="cxui-lfmt" class="cx-input" style="width:100%;margin:4px 0 8px;">' + Object.keys(LBL_FMT).map(function (k) { return '<option value="' + k + '"' + (k === fmt ? ' selected' : '') + '>' + LBL_FMT[k][0] + '</option>'; }).join('') + '</select>'
+            + '<label style="font-size:.66rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Exemplaires</label>'
+            + '<input id="cxui-lcp" type="number" min="1" max="20" value="' + cp + '" class="cx-input" style="width:100%;margin:4px 0 8px;box-sizing:border-box;">'
+            + '<div style="font-size:.68rem;color:var(--text-muted);line-height:1.35;margin-bottom:8px;">Imprimée sur l’imprimante de la caisse (ticket ou étiquettes). Le terminal SumUp n’accepte pas d’impression envoyée par un logiciel.</div>'
+            + '<div style="display:flex;gap:6px;"><button type="button" data-x="0" style="flex:1;border:none;border-radius:8px;padding:8px;background:var(--bg-card-2);color:var(--text-main);font-weight:800;cursor:pointer;">Annuler</button><button type="button" data-x="1" style="flex:1;border:none;border-radius:8px;padding:8px;background:#059669;color:#fff;font-weight:900;cursor:pointer;">🖨️ Imprimer</button></div>';
+        lpop.onclick = function (e) {
+            var b = e.target.closest('[data-x]'); if (!b) return;
+            if (b.getAttribute('data-x') === '1') { ui.lblFmt = $('cxui-lfmt').value; ui.lblCopies = Math.max(1, Math.min(20, parseInt($('cxui-lcp').value, 10) || 1)); saveUI(); printLabel(id, ui.lblFmt, ui.lblCopies); }
+            lpop.style.display = 'none';
+        };
+        lpop.style.display = 'block';
+        var r = anchor.getBoundingClientRect(), h = lpop.offsetHeight;
+        lpop.style.left = Math.min(window.innerWidth - 268, Math.max(8, r.right - 260)) + 'px';
+        lpop.style.top = (r.bottom + h + 8 > window.innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6) + 'px';
+    }
+    window._cxPrintLabel = printLabel;
     function buildHistUI() {
         var panel = $('cx-panel-historique'); if (!panel || $('cxui-kpis')) return;
         var bar = panel.querySelector('.cx-toolbar');
@@ -7035,6 +7104,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
             var tk = e.target.closest('.cxui-tk'); if (!tk) return;
             var id = JSON.parse(tk.getAttribute('data-id'));
             if (e.target.closest('[data-rp]')) { e.stopPropagation(); reprint(id); return; }
+            if (e.target.closest('[data-lb]')) { e.stopPropagation(); openLabel(id, e.target.closest('[data-lb]')); return; }
             cxShowHistoryTicketDetail(id);
         });
         // période mémorisée
