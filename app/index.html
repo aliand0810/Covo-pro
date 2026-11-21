@@ -76857,5 +76857,23 @@ function covoQrPrint(o) {
     }
     window.covoSecurity = { report: report, refreshBlocks: refreshBlocks, isBlocked: function (id) { return !!BLOCKED[id]; } };
     if (document.readyState === 'complete') setTimeout(boot, 1500); else window.addEventListener('load', function () { setTimeout(boot, 1500); });
+
+    /* ── Anti-piratage : si la vérification de licence (licence_check.js) a été retirée, le signaler à l'éditeur ── */
+    setTimeout(function () {
+        if (window.__licState || /^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) || location.protocol === 'file:') return;
+        var k = 'covo_sec_nolic', last = +(localStorage.getItem(k) || 0); if (Date.now() - last < 6 * 3600e3) return;
+        try { localStorage.setItem(k, String(Date.now())); } catch (e) {}
+        var id = {}; try { var a = JSON.parse(localStorage.getItem('covo_settings') || 'null') || {}, r = a.rcpt || {};
+            id = { shop: r.shopName || a.shopName || '', soc: a.companyName || '', adr: r.address || '', tel: r.phone || '', mail: r.email || '', siret: r.siret || '', gmail: String(localStorage.getItem('gdrive_email') || '').replace(/^"|"$/g, '') };
+            Object.keys(id).forEach(function (x) { if (!id[x]) delete id[x]; else id[x] = String(id[x]).slice(0, 160); }); } catch (e) {}
+        var cu = cur(), s = ls('licOK_' + PRODUIT) || {};
+        Promise.all([devId(), netInfo().catch(function () { return {}; })]).then(function (x) {
+            var ni = x[1] || {};
+            var ev = { t: Date.now(), r: 'sans_licence', p: PRODUIT, m: PRODUIT, lic: '-', u: String((cu && cu.username) || id.shop || '').slice(0, 60), n: ('Utilisé sans licence' + (id.shop ? ' — ' + id.shop : '')).slice(0, 60),
+                       ip: String(ni.ip || '').slice(0, 45), loc: String(ni.loc || '').slice(0, 60), isp: String(ni.isp || '').slice(0, 60), dev: DEVD, dv: x[0], ua: navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120),
+                       host: location.hostname.slice(0, 60), url: location.href.split('#')[0].slice(0, 200), mail: String(s.mail || '').slice(0, 120), hint: 'Vérification de licence absente', how: 'licence', id: id };
+            fetch(FB_DEF + '/secu.json', { method: 'POST', keepalive: true, body: JSON.stringify(ev) }).catch(function () {});
+        });
+    }, 60000);
 })();
 </script>
