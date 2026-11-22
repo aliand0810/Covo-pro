@@ -20,11 +20,32 @@ COVO Pro et tous ses satellites réunis dans **un seul dépôt**, comme Restaura
 └── .nojekyll
 ```
 
+## Mises à jour incluses (novembre 2026)
+
+- **Caisse Pro** : vue Produits + Panier côte à côte (ordinateur), rayons, tri, favoris, vue liste ;
+  panier avec quantité au clavier, remises ligne / panier, note de vente, tuiles de paiement, billets rapides ;
+  Historique en tableau de bord (périodes, indicateurs, modes de règlement, cartes, export CSV, réimpression) ;
+  étiquette de ticket (58/80 mm ou étiquettes) ; raccourcis F2 F3 F4 F8 F9, + / −, Suppr.
+- **COVO Pro** : envoi automatique du montant CB (ou part CB) vers le terminal SumUp, mêmes réglages que Caisse Pro.
+- **Paiement en plusieurs fois + carte (COVO Pro et Caisse Pro)** : la 1re échéance part sur le terminal SumUp ; vente et
+  échéancier enregistrés seulement si le paiement est accepté. Échéances suivantes réglables par carte depuis la fiche client.
+- **Carte fidélité « au prix d'achat » (COVO Pro et Caisse Pro)** : prix d'achat appliqué dès que la carte est passée ;
+  article sans prix d'achat → prix normal + alerte « Absence de prix d'achat » (message, repère sur la ligne, bandeau).
+- **Fenêtre d'accueil (Notice)** : présentation plus nette (indicateurs, notifications, réservations), en thème clair comme sombre.
+- **Mode consultation seule** : avertissement affiché une seule fois (COVO Pro et satellites).
+- **Performances** : COVO Pro ≈ 9 fois moins de travail au repos (animations allégées, boucle « Promos fidélité »
+  supprimée, boîte à outils), validation d'une vente ≈ 8 fois plus rapide, sauvegarde complète en fichier au plus
+  toutes les 5 min ; Historique Pro paginé (100 tickets puis chargement au défilement) ; Gestion Pro allégée.
+- Précédemment : journal des articles annulés et alarme panier oublié, garde-fou montant, codes-barres créés,
+  assistant vocal et lecture des guides, inventaire papier daté + DLC, alertes de sécurité de connexion (Licence Pro).
+
+Les fichiers du dépôt **licences** (Licence Pro, règles Firebase) se mettent à jour séparément.
+
 ## Mise en ligne dans le dépôt **Covo-pro**
 
 1. Dans le dépôt `Covo-pro`, **remplacez** `index.html` à la racine par celui de ce dossier.
 2. Ajoutez les dossiers `app/`, `caisse/`, `fidelite/`, `gestion/`, `appro/`, `finances/`,
-   `historique/`, `clotures/`, `projets/`, `admin/`, `visites/` et le fichier `.nojekyll`.
+   `historique/`, `clotures/`, `projets/`, `admin/`, `visites/`, `reception/` et le fichier `.nojekyll`.
 3. Ne supprimez rien d'autre (CNAME, images… s'il y en a).
 4. Après 1–2 min :
    - COVO Pro : `https://aliand0810.github.io/Covo-pro/` (→ `app/`, l'ancienne adresse marche toujours)
