@@ -1490,7 +1490,7 @@ function renderCashierHistory(salesData) {
         return;
     }
     
-    listEl.innerHTML = sorted.map((s, idx) => {
+    const _histCard = (s, idx) => {
         const isCancelled = s.cancelled === true;
         const dateStr = new Date(s.date).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
         const methodLabel = s.method==='cb' ? '💳 Carte'
@@ -1529,7 +1529,44 @@ function renderCashierHistory(salesData) {
             ${loyaltyBadge}
             ${isCancelled && s.cancelledAt ? `<div style="font-size:0.72rem;color:#e74c3c;margin-top:4px;">Annulé le ${new Date(s.cancelledAt).toLocaleString('fr-FR')}</div>` : ''}
         </div>`;
-    }).join('');
+    };
+    _histPaginate(listEl, sorted, _histCard);
+}
+
+// ── Affichage par pages : 100 tickets, puis 100 de plus automatiquement en approchant du bas de la liste
+// (ou via le bouton). Les numéros d'ordre (idx) restent ceux de la liste complète : showTicketFromHistory(idx) inchangé.
+var _HIST_PAGE = 100;
+function _histPaginate(listEl, list, card) {
+    if (listEl._histIO) { try { listEl._histIO.disconnect(); } catch (e) {} listEl._histIO = null; }
+    var shown = 0;
+    function more(n) {
+        var end = Math.min(list.length, shown + (n || _HIST_PAGE)), html = '';
+        for (var i = shown; i < end; i++) html += card(list[i], i);
+        var old = listEl.querySelector('.hist-more'); if (old) old.remove();
+        listEl.insertAdjacentHTML('beforeend', html);
+        shown = end;
+        if (shown < list.length) {
+            var rest = list.length - shown;
+            listEl.insertAdjacentHTML('beforeend', '<div class="hist-more" style="display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;padding:14px 8px;color:#7f8c8d;font-size:.8rem;font-weight:700;">'
+                + '<span>' + shown + ' / ' + list.length + ' tickets affichés</span>'
+                + '<button type="button" data-hm="1" style="border:none;border-radius:9px;padding:8px 14px;font-weight:800;cursor:pointer;background:#3498db;color:#fff;">⬇️ ' + Math.min(_HIST_PAGE, rest) + ' de plus</button>'
+                + (rest > _HIST_PAGE ? '<button type="button" data-hm="all" style="border:1px solid #bdc3c7;border-radius:9px;padding:7px 12px;font-weight:700;cursor:pointer;background:transparent;color:inherit;">Tout afficher (' + list.length + ')</button>' : '')
+                + '</div>');
+            var m = listEl.querySelector('.hist-more');
+            m.onclick = function (e) { var b = e.target.closest('[data-hm]'); if (!b) return; more(b.getAttribute('data-hm') === 'all' ? list.length : _HIST_PAGE); };
+            if (window.IntersectionObserver) {
+                if (!listEl._histIO) { var sc = /(auto|scroll)/.test(getComputedStyle(listEl).overflowY) ? listEl : null; listEl._histIO = new IntersectionObserver(function (es) { if (es.some(function (x) { return x.isIntersecting; })) more(_HIST_PAGE); }, { root: sc, rootMargin: '400px 0px' }); }
+                else listEl._histIO.disconnect();
+                listEl._histIO.observe(m);
+            }
+        } else if (listEl._histIO) { listEl._histIO.disconnect(); }
+        listEl._histAll = shown >= list.length;
+        if (!first && typeof window._hfEnhance === 'function') { try { window._hfEnhance(); } catch (e) {} }
+    }
+    var first = true;
+    listEl.innerHTML = '';
+    more(_HIST_PAGE);
+    first = false;
 }
 
 function filterCashierHistory(searchVal) {
@@ -4129,6 +4166,7 @@ window.cpMaybeShowInstallBanner = function(){
     function enhance() {
         if (!$('hf-css')) { var st = document.createElement('style'); st.id = 'hf-css'; st.textContent = CSS; document.head.appendChild(st); }
         var listEl = $('cashier-hist-list'); if (!listEl) return;
+        [].slice.call(listEl.querySelectorAll(':scope > .hf-card')).forEach(function (c) { c.remove(); });
         var f = filters(), all = payments(), vis = all.filter(function (x) { return visible(x, f); });
         if (f.status !== 'factures') vis = vis.filter(function (x) { return !x.p.autoTicket; }); /* règlement avec son propre ticket de caisse : déjà affiché */
         // 1) rappel sur les tickets auxquels un règlement a été ajouté
@@ -4154,9 +4192,10 @@ window.cpMaybeShowInstallBanner = function(){
         vis.forEach(function (x) {
             while (ci < cards.length && sorted[ci] && new Date(sorted[ci].date).getTime() > x.t) ci++;
             var tmp = document.createElement('div'); tmp.innerHTML = card(x); var el = tmp.firstChild;
-            if (ci < cards.length) listEl.insertBefore(el, cards[ci]); else listEl.appendChild(el);
+            if (ci < cards.length) listEl.insertBefore(el, cards[ci]); else if (listEl._histAll !== false || f.status === 'factures') { var hm = listEl.querySelector(':scope > .hist-more'); if (hm) listEl.insertBefore(el, hm); else listEl.appendChild(el); }
         });
     }
+    window._hfEnhance = enhance;
     function stats() {
         var statsEl = $('cashier-hist-stats'); if (!statsEl || statsEl.querySelector('.hf-stat')) return;
         var all = payments(); if (!all.length) return;

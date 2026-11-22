@@ -3560,6 +3560,7 @@ function renderCatalogueTab() {
         dupBanner.style.display = 'none';
     }
 
+    const _catEditTpl = window._catEditTpl = {};   // formulaire d'édition gardé en texte, inséré seulement à l'ouverture
     tbody.innerHTML = sortedFiltered.map((p, _catIdx) => {
         const isKg = p.unitType === 'kg';
         const basePrice = isKg ? p.pricePerKg : p.price;
@@ -3626,7 +3627,7 @@ function renderCatalogueTab() {
                 </div>
             </td>
         </tr>
-        <tr id="cat-edit-${p.id}" class="cat-edit-row" style="display:none;">
+        <tr id="cat-edit-${p.id}" class="cat-edit-row" style="display:none;">${(_catEditTpl[String(p.id)] = `
             <td colspan="13">
                 <div class="cat-inline-form">
                     <div class="cat-inline-grid">
@@ -3709,8 +3710,7 @@ function renderCatalogueTab() {
                         <button class="retours-btn retours-btn-success" onclick="catSaveInlineEdit(${window._gpIdArg(p.id)})">💾 Sauvegarder</button>
                     </div>
                 </div>
-            </td>
-        </tr>`;
+            </td>`, '')}</tr>`;
     }).join('');
     _catUpdateSortHeaders();
 }
@@ -3720,6 +3720,7 @@ function renderCatalogueTab() {
 function catToggleInlineEdit(id) {
     const row = document.getElementById(`cat-edit-${id}`);
     if (!row) return;
+    if (!row.firstElementChild && window._catEditTpl && window._catEditTpl[String(id)]) row.innerHTML = window._catEditTpl[String(id)];
     const isOpen = row.style.display !== 'none';
     // Fermer tous les autres
     document.querySelectorAll('[id^="cat-edit-"]').forEach(r => r.style.display = 'none');
@@ -14874,6 +14875,12 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     }
     function render() {
         if (!mount() || MODE !== 'ana') return;
+        // onglet caché : le tableau sera construit à son affichage (évite des dizaines de milliers d'éléments inutiles)
+        var pb = $('pa-body');
+        if (pb && !pb.offsetParent && window.IntersectionObserver) {
+            if (!render._io) { render._io = new IntersectionObserver(function (es) { if (es.some(function (x) { return x.isIntersecting; })) { render._io.disconnect(); render._io = null; render(); } }); render._io.observe(pb); }
+            return;
+        }
         var I = index(), base = HAVE_SRC ? LAST_SRC : P();
         var all = base.map(function (p) { return metrics(p, I); });
         $('pa-qf').innerHTML = QFS.map(function (q) { var n = q[0] === 'all' ? all.length : all.filter(function (x) { return qfTest(q[0], x); }).length; return '<button type="button" data-q="' + q[0] + '" class="' + (QF === q[0] ? 'on' : '') + '">' + q[1] + ' <i>' + n + '</i></button>'; }).join('');
