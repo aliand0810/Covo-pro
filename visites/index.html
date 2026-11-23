@@ -2,6 +2,12 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<style id="covo-frame-guard">html{visibility:hidden!important}</style>
+<script>/* anti-clickjacking : page affichée seulement si elle n'est pas intégrée par un AUTRE site (les fenêtres internes de la suite restent permises) */
+(function(){var ok=window.self===window.top;if(!ok){try{ok=window.top.location.origin===window.location.origin}catch(e){ok=false}}
+if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.removeChild(g)}else{try{window.top.location=window.location.href}catch(e){}}})();</script>
+<meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'">
+
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Visites Pro — COVO</title>
 <meta name="description" content="Suivi des visites du site catalogue COVO : qui visite, d'où, sur quel appareil, quelles pages.">
@@ -307,6 +313,90 @@ button{cursor:pointer;}
 </style>
 </head>
 <body>
+<script>
+/* Compte « staff » Firebase (site catalogue, portail fidélité, visites) — le MOT DE PASSE n'est plus écrit dans le logiciel.
+   Il est saisi une fois par un administrateur sur chaque appareil ; seule la clé de session Firebase (renouvelable,
+   révoquée dès que le mot de passe est changé) reste sur cet appareil (localStorage « covo_staff_rt »). */
+(function () {
+    'use strict';
+    if (window._covoStaff) return;
+    var API = 'AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY', EMAIL = 'staff@covopro-portal.local', RT = 'covo_staff_rt';
+    var tok = null, exp = 0, pend = null, askedThisPage = false, modalP = null;
+    function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u || {}; }
+    function isAdmin() { var u = user(); return !!(u.isMaster || u.role === 'admin' || u.role === 'manager' || u.id === 'USR-MASTER'); }
+    function getRt() { try { return localStorage.getItem(RT) || ''; } catch (e) { return ''; } }
+    function setRt(v) { try { if (v) localStorage.setItem(RT, v); else localStorage.removeItem(RT); } catch (e) {} }
+    function keep(idToken, refreshToken, expiresIn) { tok = idToken; exp = Date.now() + ((+expiresIn || 3600) - 300) * 1000; if (refreshToken) setRt(refreshToken); return tok; }
+    function refresh(rt) {
+        return fetch('https://securetoken.googleapis.com/v1/token?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(rt) })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (x) {
+                if (!x.ok || !x.j.id_token) { var m = (x.j.error && (x.j.error.message || x.j.error)) || 'refusée'; if (/TOKEN_EXPIRED|INVALID_REFRESH_TOKEN|USER_DISABLED|USER_NOT_FOUND/i.test(String(m))) setRt(''); throw new Error('session staff : ' + m); }
+                return keep(x.j.id_token, x.j.refresh_token, x.j.expires_in);
+            });
+    }
+    function signIn(pwd) {
+        return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: EMAIL, password: pwd, returnSecureToken: true }) })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (!j.idToken) { var m = (j.error && j.error.message) || 'refusée'; throw new Error(/INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND/.test(m) ? 'Mot de passe incorrect' : /TOO_MANY_ATTEMPTS/.test(m) ? 'Trop d’essais : réessayez dans quelques minutes' : 'Connexion refusée (' + m + ')'); }
+                return keep(j.idToken, j.refreshToken, j.expiresIn);
+            });
+    }
+    // Fenêtre de saisie (jamais pré-remplie, rien n'est enregistré à part la clé de session)
+    function ask(reason, tryFn) {
+        if (modalP) return modalP;
+        modalP = new Promise(function (resolve, reject) {
+            var ov = document.createElement('div'); ov.id = 'covo-staff-ov';
+            ov.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+            ov.innerHTML = '<form style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(400px,100%);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.4)">'
+                + '<div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;padding:14px 18px;font-weight:900">🔐 Connexion du compte staff</div>'
+                + '<div style="padding:16px 18px;font-size:.84rem;line-height:1.5">' + (reason ? '<div style="margin-bottom:8px;font-weight:700">' + reason + '</div>' : '')
+                + 'Pour votre sécurité, ce mot de passe n’est plus inscrit dans le logiciel. Saisissez-le <b>une fois sur cet appareil</b> : seule une clé de session est conservée (elle est annulée si le mot de passe est changé).'
+                + '<label style="display:block;margin-top:12px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">Compte</label><input value="' + EMAIL + '" readonly autocomplete="username" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--bg-card-2,#f1f5f9);color:inherit">'
+                + '<label style="display:block;margin-top:8px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">Mot de passe</label><input type="password" id="covo-staff-pw" autocomplete="current-password" required style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--input-bg,#fff);color:inherit">'
+                + '<div id="covo-staff-err" style="color:#dc2626;font-weight:700;font-size:.78rem;min-height:1.2em;margin-top:6px"></div>'
+                + '<div style="display:flex;gap:8px;margin-top:6px"><button type="button" data-x="later" style="flex:1;border:none;border-radius:10px;padding:10px;font-weight:800;cursor:pointer;background:var(--bg-card-2,#e2e8f0);color:inherit">Plus tard</button><button type="submit" style="flex:2;border:none;border-radius:10px;padding:10px;font-weight:900;cursor:pointer;background:#2563eb;color:#fff">Se connecter</button></div></div></form>';
+            document.body.appendChild(ov);
+            var f = ov.querySelector('form'), pw = ov.querySelector('#covo-staff-pw'), er = ov.querySelector('#covo-staff-err');
+            var close = function () { ov.remove(); modalP = null; };
+            ov.querySelector('[data-x="later"]').onclick = function () { close(); reject(new Error('Connexion staff reportée')); };
+            f.onsubmit = function (e) {
+                e.preventDefault(); er.textContent = '⏳ Vérification…';
+                (tryFn || signIn)(pw.value).then(function (t) { pw.value = ''; close(); resolve(t); }).catch(function (x) { er.textContent = '❌ ' + (x && x.message || 'Connexion impossible'); pw.select(); });
+            };
+            setTimeout(function () { pw.focus(); }, 30);
+        });
+        return modalP;
+    }
+    // opts.interactive : demander le mot de passe si besoin (sinon seulement à un administrateur, une fois par page)
+    function token(opts) {
+        opts = opts || {};
+        if (tok && Date.now() < exp) return Promise.resolve(tok);
+        if (pend) return pend;
+        var rt = getRt();
+        pend = (rt ? refresh(rt) : Promise.reject(new Error('aucune session staff sur cet appareil')))
+            .catch(function (err) {
+                if (opts.interactive || (isAdmin() && !askedThisPage && !opts.silent)) { askedThisPage = true; return ask(opts.reason || 'Le site catalogue / le portail fidélité a besoin du compte staff.'); }
+                throw new Error('staff-login-required');
+            })
+            .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
+        return pend;
+    }
+    window._covoStaff = {
+        email: EMAIL,
+        token: token,
+        login: function (reason) { return token({ interactive: true, reason: reason }); },
+        logout: function () { tok = null; exp = 0; setRt(''); },
+        hasSession: function () { return !!getRt(); },
+        reset: function () { tok = null; exp = 0; },
+        // pour la bibliothèque Firebase (Fidélité Pro) : demande le mot de passe et le fait vérifier par une fonction fournie
+        askPassword: function (reason, tryFn) { return ask(reason, tryFn); },
+        saveRefreshToken: function (rt) { if (rt) setRt(rt); }
+    };
+})();
+</script>
+
 <script src="https://aliand0810.github.io/licences/licence_check.js" data-produit="COVO Pro"></script>
 <div id="app">
   <header id="top">
@@ -405,8 +495,7 @@ button{cursor:pointer;}
 var SITE_CFG = {
         apiKey: "AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY",
         projectId: "covo-pro-fidelite",
-        email: "staff@covopro-portal.local",
-        password: "R@hi081089"
+        email: "staff@covopro-portal.local"
     };
 var ICON192 = "iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAIAAADdvvtQAAAIHUlEQVR4nO3dz28TRxQH8NnItx4SYlOHU4+1TUhKIJhgJG5FpRB+01PbA5WSFim0lyJV8imiEuXQXiiXCgl6bRJIAqhHJKqEhqRdFGznL6CB/CD/QQ+buht7d73rNzvzdvf7kQ94bc+Od17evPWsjfHOe0cEQLs6dHcAoi0lhKG7DxBhyEBAkhIGMhC0DxkISFADAQkyEJCgBgISZCAgQQ0EJCnED1CkDEQQEKAGAhLUQECCGghIkIGABAEEJJjCgAQZCEhwGg8kyEBAghoISLCUASSogYAEF5QBCTIQkOAsDEiQgYAENRCQIAMBCWogIMEUBiSYwoAESxlAggwEJKiBgAQZCEhwGg8kyEBAghoISJCBgAQ1EBdbL6fsdzv3ntXVk0BwUT0LW8tTq+P9O7a8NDt7IxBDyED6bS1PNkSPEGJ1vH9r2ezsPaelS/6hBtLMMXosq+P9W8uTivsTFNbCdHq7POEWPRYrD3X1nlfWpaBQA0UB4zFCDRQJfMcIARQJfMcIU1gUMB4jZCCduvouvX1hetTR2bLZ1XeJ8xjhNF6nlYsrq+P92bLp+Oh/0cOa0bmPexfjauVirf7vbLkxD2XLZlffJ8o7FZjRyT7GY2nlQq1hS0Me6uqPQPQIIYzOKIR5zKxcqDpuf/+3vOKe0KEGUi1O0SOESBm4oIyB3EQhouOADKRU7XyleWNuoqC+J7LgcyB1audfNm/MTexV3xOJkIEUcYyeGMBF9SrUzi07bs9N9kZ9AkAGCp1X9EQfaiA9cpP7dHdBDkxh4aqdfdG8MTfVF5s/25TuDqizufSr/e6ugU/D3qNr9MRIUqawzaV7DauVm0vmroHPwttj7azDGntuyusK6ChKRBHdHD1CiNXx/s2leyHt0TF6Yin+Sxkbi3c9vjezuWR2H/hc7h6rZ/523J6//4H9YG8s3vXZoPQeSmSEmsa184ieumxZZgx5RI/9rv/oqeMZRh1CGLG++RTuHvP399uf00b0iO2Y0348G2+JqIFaqp75K7x28vf3S2mcJ3wOtK0+9vkHA222cHqpeWP+wUCAPNgSv8GK8+dAjiPq/1WBIqm9fcVAbD8Hqp5eFEJY33nw/t6M26NWTOQfHHB8dOP5Hftdx0bcXkvAbrDi+cXC6vBi/d8eMeQdW9tNnd5uKj/9fzRsLNxp/hJFw5b89AH5x5bfYMXwLMwePRbH715ly2b34GX/R6o6vGjdmqOneRf56YOenWyb/sPbcItbDVQdfu64vXvw8saC2bBFbI+01wsbeCSteqqrt5kExq6DAf4KOasOL7g9lJ8elNKOnykvWza7B7/wfs7Gwi/++2PXsmX1YlIDVU+5R8/MYKD3mJ8Z9G6wtfAOKb/BisMvlFVO/en2UGHmUHtvrzBzqGXjbsI7pAwHK/Kn8ZVTz9weKswU6e3XG/HYUZMEpaBoT2GVk86DWpgtCiH5aBdmi+tlf09NUPxENgNVTs67PVSYPRzSTtPFkfVnLT6WTBdHEhVBkVxM1RI9lnRxxOPnfNLFkVD3zlD0MlDl5JzbQ4XZIQUdSBdHm/NQtmymi6PhH0x2gxWxGqjysXv0PBxS9l7Sh0fX582GLSr2zm+wWGeg9fnb9rtuxUfh4REl3dkhffjLnRvUHEZ2g8V3KWN9/nbLBUuhKXqgjukFZetzP7stWNq3Fx6V+P1NhonfYHHMQI7RY7HHUOFRqWU7/neaHvrK/5Ohjt1SxtrcrZb//0i2bGaGrnj3e23uVqD9WtGWGboS6FWKcRssEdHPgVoKGj30FyYW0xqotfC6zfmA8OtbPDMQKMP6cyBPCVpvsmHXN3ZTWKY0tvZHiwXLTGkMUxgTHKewTGnMY8EyUxpT3B/wwHQKy5SuNuehbNnMlK4mcMHShl3fOH6QaLFiqGGLrs6AG3Y1kF3m6Nc77qvpKuMDwrBvfDMQQ2tPf/L5zMbQjy92SxnauR2QN09/9N+IFWq7j34jpUt1DAeL41kYQ4Gih/iqaGFdA+kh94Bwbk0GZCAgYfo5kFZyDwjn1iSI2EX1KnAecX6DhQzUjPOYsxss1EBAggzUjHPOYDdYqIGacB5xfoPFKwO9efKD/yfvPvZtOL3gPOaMBsvCaCnj9ZMbgZ5vRdu7x67J7YbcA8K5NSk6dP/K5/YtaPTUvX5yw6FBCscecm5N643XFNYuztME59YkwGk8kCADJbk1CWJxGs95jDi3JgMyUJJbkwA1EJDE4oIyzhdtcW5NBmQgIEENlOTWJEAGApKUwW9aDUruW0hOa1IgAwEJaqAktyYBTuMT3JoMmMKABFNYkluTABkISFADJbg1GZCBgAQ1UJJbkwAZCEiwlJHc1qRABgIS1EBJbk0CXFSf4NZk6ND/3UZhCGH0HL/e3hvoOX497NbablBNa3pvqIGAxMh+2OYfaxj++f07/0/uOf69ytYCNai+NV2MbLvZHkDE5SwMtEEAAUksTuNBH22/UPbqseRfFoM9H7X5I10Uek7jET1h0HJUNXyQiOgJz6vH1xSPJmqg2FE7oBoy0J4TN5W+xSTZc+Km4tHUUwMhhsKg5agaPRhLIMBiKpDgk2ggQQYCklh8sRD0QQYCEkb/Ww9EEaYwIMEUBiQ4jQcSZCAgQQ0EJMhAQIIaCEiQgYAENRCQIAMBCZYygAQX1QMJzsKABDUQkCADAQlqICBBBgISBBCQYAoDEmQgIMFpPJBgKQNIUAMBCWogIEENBCS4oAxIkIGABDUQkCADAQlqICBBBgIS1EBA8i+vIclViCHz4QAAAABJRU5ErkJggg==", ICON512 = "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";
 var COVO_URL = (new URL('../app/', location.href).href);
@@ -497,19 +586,14 @@ function loginUi() {
 /* ───────────── Firestore (REST, compte du magasin) ───────────── */
 var _tok = null, _tokExp = 0;
 function token() {
-    if (_tok && Date.now() < _tokExp) return Promise.resolve(_tok);
-    return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + SITE_CFG.apiKey, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: SITE_CFG.email, password: SITE_CFG.password, returnSecureToken: true })
-    }).then(function (r) { return r.json(); }).then(function (j) {
-        if (!j.idToken) throw new Error('Connexion au serveur refusée (' + ((j.error && j.error.message) || '?') + ')');
-        _tok = j.idToken; _tokExp = Date.now() + ((+j.expiresIn || 3600) - 300) * 1000; return _tok;
-    });
-}
+        // compte staff : mot de passe saisi une fois par appareil (plus jamais écrit dans le code)
+        if (!window._covoStaff) return Promise.reject(new Error('Connexion staff indisponible'));
+        return window._covoStaff.token({ interactive: true, reason: 'Visites Pro lit les visites du site avec le compte staff.' });
+    }
 function fs(method, path) {
     return token().then(function (t) {
         return fetch('https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/' + path, { method: method, headers: { 'Authorization': 'Bearer ' + t } });
-    }).then(function (r) { if (r.status === 401) _tok = null; return r; });
+    }).then(function (r) { if (r.status === 401) { _tok = null; try { window._covoStaff.reset(); } catch (e) {} } return r; });
 }
 function dec(v) { if (!v) return null; if ('stringValue' in v) return v.stringValue; if ('integerValue' in v) return +v.integerValue; if ('doubleValue' in v) return +v.doubleValue; if ('timestampValue' in v) return v.timestampValue; if ('booleanValue' in v) return v.booleanValue; if ('arrayValue' in v) return (v.arrayValue.values || []).map(dec); return null; }
 function devKind(d) { d = String(d || ''); return /^Mobile/i.test(d) ? 'Mobile' : /^Tablette|^Tablet/i.test(d) ? 'Tablette' : /^Ordinateur|^PC|^Desktop|^Windows|^Mac|^Linux/i.test(d) ? 'Ordinateur' : (d ? d.split(' · ')[0] : 'Inconnu'); }

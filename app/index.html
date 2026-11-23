@@ -541,6 +541,12 @@ return tinf_uncompress;
 })();
 </script>
     <meta charset="UTF-8">
+<style id="covo-frame-guard">html{visibility:hidden!important}</style>
+<script>/* anti-clickjacking : page affichée seulement si elle n'est pas intégrée par un AUTRE site (les fenêtres internes de la suite restent permises) */
+(function(){var ok=window.self===window.top;if(!ok){try{ok=window.top.location.origin===window.location.origin}catch(e){ok=false}}
+if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.removeChild(g)}else{try{window.top.location=window.location.href}catch(e){}}})();</script>
+<meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'">
+
 <script id="covo-sync-core">
 /* ==========================================================================
    COVO SYNC - noyau partage par COVO Pro et TOUTES les apps satellites
@@ -4647,10 +4653,94 @@ button, .btn, .retours-btn {
 }
 </style>
 
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU" crossorigin="anonymous"></script>
 </head>
 <body>
+<script>
+/* Compte « staff » Firebase (site catalogue, portail fidélité, visites) — le MOT DE PASSE n'est plus écrit dans le logiciel.
+   Il est saisi une fois par un administrateur sur chaque appareil ; seule la clé de session Firebase (renouvelable,
+   révoquée dès que le mot de passe est changé) reste sur cet appareil (localStorage « covo_staff_rt »). */
+(function () {
+    'use strict';
+    if (window._covoStaff) return;
+    var API = 'AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY', EMAIL = 'staff@covopro-portal.local', RT = 'covo_staff_rt';
+    var tok = null, exp = 0, pend = null, askedThisPage = false, modalP = null;
+    function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u || {}; }
+    function isAdmin() { var u = user(); return !!(u.isMaster || u.role === 'admin' || u.role === 'manager' || u.id === 'USR-MASTER'); }
+    function getRt() { try { return localStorage.getItem(RT) || ''; } catch (e) { return ''; } }
+    function setRt(v) { try { if (v) localStorage.setItem(RT, v); else localStorage.removeItem(RT); } catch (e) {} }
+    function keep(idToken, refreshToken, expiresIn) { tok = idToken; exp = Date.now() + ((+expiresIn || 3600) - 300) * 1000; if (refreshToken) setRt(refreshToken); return tok; }
+    function refresh(rt) {
+        return fetch('https://securetoken.googleapis.com/v1/token?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(rt) })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (x) {
+                if (!x.ok || !x.j.id_token) { var m = (x.j.error && (x.j.error.message || x.j.error)) || 'refusée'; if (/TOKEN_EXPIRED|INVALID_REFRESH_TOKEN|USER_DISABLED|USER_NOT_FOUND/i.test(String(m))) setRt(''); throw new Error('session staff : ' + m); }
+                return keep(x.j.id_token, x.j.refresh_token, x.j.expires_in);
+            });
+    }
+    function signIn(pwd) {
+        return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: EMAIL, password: pwd, returnSecureToken: true }) })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (!j.idToken) { var m = (j.error && j.error.message) || 'refusée'; throw new Error(/INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND/.test(m) ? 'Mot de passe incorrect' : /TOO_MANY_ATTEMPTS/.test(m) ? 'Trop d’essais : réessayez dans quelques minutes' : 'Connexion refusée (' + m + ')'); }
+                return keep(j.idToken, j.refreshToken, j.expiresIn);
+            });
+    }
+    // Fenêtre de saisie (jamais pré-remplie, rien n'est enregistré à part la clé de session)
+    function ask(reason, tryFn) {
+        if (modalP) return modalP;
+        modalP = new Promise(function (resolve, reject) {
+            var ov = document.createElement('div'); ov.id = 'covo-staff-ov';
+            ov.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+            ov.innerHTML = '<form style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(400px,100%);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.4)">'
+                + '<div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;padding:14px 18px;font-weight:900">🔐 Connexion du compte staff</div>'
+                + '<div style="padding:16px 18px;font-size:.84rem;line-height:1.5">' + (reason ? '<div style="margin-bottom:8px;font-weight:700">' + reason + '</div>' : '')
+                + 'Pour votre sécurité, ce mot de passe n’est plus inscrit dans le logiciel. Saisissez-le <b>une fois sur cet appareil</b> : seule une clé de session est conservée (elle est annulée si le mot de passe est changé).'
+                + '<label style="display:block;margin-top:12px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">Compte</label><input value="' + EMAIL + '" readonly autocomplete="username" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--bg-card-2,#f1f5f9);color:inherit">'
+                + '<label style="display:block;margin-top:8px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">Mot de passe</label><input type="password" id="covo-staff-pw" autocomplete="current-password" required style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--input-bg,#fff);color:inherit">'
+                + '<div id="covo-staff-err" style="color:#dc2626;font-weight:700;font-size:.78rem;min-height:1.2em;margin-top:6px"></div>'
+                + '<div style="display:flex;gap:8px;margin-top:6px"><button type="button" data-x="later" style="flex:1;border:none;border-radius:10px;padding:10px;font-weight:800;cursor:pointer;background:var(--bg-card-2,#e2e8f0);color:inherit">Plus tard</button><button type="submit" style="flex:2;border:none;border-radius:10px;padding:10px;font-weight:900;cursor:pointer;background:#2563eb;color:#fff">Se connecter</button></div></div></form>';
+            document.body.appendChild(ov);
+            var f = ov.querySelector('form'), pw = ov.querySelector('#covo-staff-pw'), er = ov.querySelector('#covo-staff-err');
+            var close = function () { ov.remove(); modalP = null; };
+            ov.querySelector('[data-x="later"]').onclick = function () { close(); reject(new Error('Connexion staff reportée')); };
+            f.onsubmit = function (e) {
+                e.preventDefault(); er.textContent = '⏳ Vérification…';
+                (tryFn || signIn)(pw.value).then(function (t) { pw.value = ''; close(); resolve(t); }).catch(function (x) { er.textContent = '❌ ' + (x && x.message || 'Connexion impossible'); pw.select(); });
+            };
+            setTimeout(function () { pw.focus(); }, 30);
+        });
+        return modalP;
+    }
+    // opts.interactive : demander le mot de passe si besoin (sinon seulement à un administrateur, une fois par page)
+    function token(opts) {
+        opts = opts || {};
+        if (tok && Date.now() < exp) return Promise.resolve(tok);
+        if (pend) return pend;
+        var rt = getRt();
+        pend = (rt ? refresh(rt) : Promise.reject(new Error('aucune session staff sur cet appareil')))
+            .catch(function (err) {
+                if (opts.interactive || (isAdmin() && !askedThisPage && !opts.silent)) { askedThisPage = true; return ask(opts.reason || 'Le site catalogue / le portail fidélité a besoin du compte staff.'); }
+                throw new Error('staff-login-required');
+            })
+            .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
+        return pend;
+    }
+    window._covoStaff = {
+        email: EMAIL,
+        token: token,
+        login: function (reason) { return token({ interactive: true, reason: reason }); },
+        logout: function () { tok = null; exp = 0; setRt(''); },
+        hasSession: function () { return !!getRt(); },
+        reset: function () { tok = null; exp = 0; },
+        // pour la bibliothèque Firebase (Fidélité Pro) : demande le mot de passe et le fait vérifier par une fonction fournie
+        askPassword: function (reason, tryFn) { return ask(reason, tryFn); },
+        saveRefreshToken: function (rt) { if (rt) setRt(rt); }
+    };
+})();
+</script>
+
 <script src="https://aliand0810.github.io/licences/licence_check.js" data-produit="COVO Pro"></script>
     <!-- ===== BARRE STATUS UNIFIÉE ===== -->
     <div id="gdrive-status-bar" style="flex-wrap:wrap;">
@@ -21563,7 +21653,7 @@ logout = function(skipConfirmation = false) {
                 </style>
             </head>
             <body>${receiptContent}</body>
-            <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
+            <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"><\/script>
             <script>
                 document.querySelectorAll('svg[id="receipt-barcode-svg"]').forEach(function(svg) {
                     var num = svg.nextElementSibling ? svg.nextElementSibling.textContent.replace('N° ','').trim() : null;
@@ -22008,7 +22098,7 @@ logout = function(skipConfirmation = false) {
 
         win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Étiquette — ' + (p.name||'').replace(/</g,'&lt;') + '</title>'
-            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>'
+            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"><\/script>'
             + '<style>'
             + '@page { size: ' + wMM + 'mm ' + hMM + 'mm; margin: 0; }'
             + '* { box-sizing: border-box; margin: 0; padding: 0; }'
@@ -22175,7 +22265,7 @@ logout = function(skipConfirmation = false) {
         const W = land ? 297 : 210, H = land ? 210 : 297;
         win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Affiche A4 — ' + esc(p.name) + '</title>'
-            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>'
+            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"><\/script>'
             + '<style>'
             + '@page{size:A4 ' + (land ? 'landscape' : 'portrait') + ';margin:0;}'
             + '*{box-sizing:border-box;margin:0;padding:0;}'
@@ -22399,7 +22489,7 @@ logout = function(skipConfirmation = false) {
 
         win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Étiquettes (' + totalLabels + ')<\/title>'
-            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>'
+            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"><\/script>'
             + '<style>'
             + '* { box-sizing:border-box; margin:0; padding:0; }'
             + '@page { size: ' + wMM + 'mm ' + hMM + 'mm; margin:0; }'
@@ -22501,7 +22591,7 @@ logout = function(skipConfirmation = false) {
 
         win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8">'
             + '<title>Étiquettes A4 (' + totalLabels + ')<\/title>'
-            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>'
+            + '<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"><\/script>'
             + '<style>'
             + '* { box-sizing:border-box; margin:0; padding:0; }'
             + '@page { size:A4; margin:' + margin + 'mm; }'
@@ -62138,8 +62228,7 @@ function covoQrPrint(o) {
     var SITE_CFG = {
         apiKey: "AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY",
         projectId: "covo-pro-fidelite",
-        email: "staff@covopro-portal.local",
-        password: "R@hi081089"
+        email: "staff@covopro-portal.local"
     };
     var IMG_SIZE = 400, IMG_QUALITY = 0.82, CHUNK_MAX = 880000;
     var KEY_HASH = 'covo_site_sync_hash', KEY_AT = 'covo_site_sync_at', KEY_CHUNKS = 'covo_site_img_chunks';
@@ -62264,15 +62353,9 @@ function covoQrPrint(o) {
     }
 
     function token() {
-        if (_tok && Date.now() < _tokExp) return Promise.resolve(_tok);
-        return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + SITE_CFG.apiKey, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: SITE_CFG.email, password: SITE_CFG.password, returnSecureToken: true })
-        }).then(function (r) { return r.json(); }).then(function (j) {
-            if (!j.idToken) throw new Error('auth: ' + ((j.error && j.error.message) || 'refusée'));
-            _tok = j.idToken; _tokExp = Date.now() + ((+j.expiresIn || 3600) - 300) * 1000;
-            return _tok;
-        });
+        // compte staff : mot de passe saisi une fois par appareil (plus jamais écrit dans le code)
+        if (!window._covoStaff) return Promise.reject(new Error('Connexion staff indisponible'));
+        return window._covoStaff.token({ reason: 'La mise à jour du site catalogue a besoin du compte staff.' });
     }
     function putDoc(name, fields) {
         var url = 'https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/site/' + name;
@@ -62611,7 +62694,7 @@ function covoQrPrint(o) {
         return token().then(function (t) {
             return fetch('https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/' + path,
                 { method: method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + t }, body: body ? JSON.stringify(body) : undefined });
-        }).then(function (r) { if (r.status === 401) _tok = null; return r; });
+        }).then(function (r) { if (r.status === 401) { _tok = null; try { window._covoStaff.reset(); } catch (e) {} } return r; });
     };
     window._siteSyncNow = function (manual) {
         if (manual && typeof showScanToast === 'function' && !_busy) showScanToast('🔄 Envoi du catalogue vers le site web…', 'info');
@@ -76766,9 +76849,8 @@ function covoQrPrint(o) {
         try { var c = JSON.parse(sessionStorage.getItem('covoSecLic') || 'null'); if (c && c.id && Date.now() - c.at < 6 * 3600e3) { LIC = c; return Promise.resolve(c); } } catch (e) {}
         var s = ls('licOK_' + PRODUIT) || {}; if (!s.mail || !s.key) return Promise.resolve(null);
         var mail = String(s.mail).trim().toLowerCase(), key = String(s.key).trim().toUpperCase();
-        return Promise.all([fetch(SRC + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }), sha(mail + '|' + PRODUIT + '|' + key), sha(mail + '|' + PRODUIT)]).then(function (a) {
-            /* les e-mails peuvent être chiffrés dans licences.json : la licence se retrouve par son identifiant = SHA-256(e-mail|produit) */
-            var d = a[0] || {}, l = (d.licences || []).find(function (x) { return x.produit === PRODUIT && x.hash === a[1] && (x.id === a[2] || x.email === mail); });
+        return Promise.all([fetch(SRC + '?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }), sha(mail + '|' + PRODUIT + '|' + key)]).then(function (a) {
+            var d = a[0] || {}, l = (d.licences || []).find(function (x) { return x.email === mail && x.produit === PRODUIT && x.hash === a[1]; });
             if (!l) return null;
             LIC = { id: l.id, fb: String(d.firebase || FB_DEF).replace(/\/+$/, ''), mail: mail, at: Date.now() };
             try { sessionStorage.setItem('covoSecLic', JSON.stringify(LIC)); } catch (e) {}

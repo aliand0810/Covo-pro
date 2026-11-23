@@ -29,6 +29,9 @@ COVO Pro et tous ses satellites réunis dans **un seul dépôt**, comme Restaura
 - **COVO Pro** : envoi automatique du montant CB (ou part CB) vers le terminal SumUp, mêmes réglages que Caisse Pro.
 - **Paiement en plusieurs fois + carte (COVO Pro et Caisse Pro)** : la 1re échéance part sur le terminal SumUp ; vente et
   échéancier enregistrés seulement si le paiement est accepté. Échéances suivantes réglables par carte depuis la fiche client.
+- **Sécurité** : mot de passe du compte staff Firebase retiré du code (saisi une fois par appareil par un administrateur,
+  seule une clé de session est conservée) ; intégrité vérifiée des bibliothèques externes (SRI) ; la suite ne s'affiche
+  plus si un autre site l'intègre (anti-clickjacking).
 - **Carte fidélité « au prix d'achat » (COVO Pro et Caisse Pro)** : prix d'achat appliqué dès que la carte est passée ;
   article sans prix d'achat → prix normal + alerte « Absence de prix d'achat » (message, repère sur la ligne, bandeau).
 - **Fenêtre d'accueil (Notice)** : présentation plus nette (indicateurs, notifications, réservations), en thème clair comme sombre.

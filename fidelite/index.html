@@ -541,6 +541,12 @@ return tinf_uncompress;
 })();
 </script>
 <meta charset="UTF-8">
+<style id="covo-frame-guard">html{visibility:hidden!important}</style>
+<script>/* anti-clickjacking : page affichée seulement si elle n'est pas intégrée par un AUTRE site (les fenêtres internes de la suite restent permises) */
+(function(){var ok=window.self===window.top;if(!ok){try{ok=window.top.location.origin===window.location.origin}catch(e){ok=false}}
+if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.removeChild(g)}else{try{window.top.location=window.location.href}catch(e){}}})();</script>
+<meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'">
+
 <script id="covo-sync-core">
 /* ==========================================================================
    COVO SYNC - noyau partage par COVO Pro et TOUTES les apps satellites
@@ -905,13 +911,97 @@ return tinf_uncompress;
         #lty-list-inner{max-height:320px;}
     }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" integrity="sha384-tOUygabpHGzWXpKv3qJM5f9tSgU6p5f4ooCayrNDwzm3/3/CDMzgHMLQZiMMGghV" crossorigin="anonymous"></script>
 <!-- Portail client (voir GUIDE_PORTAIL_FIDELITE.md) : SDK Firebase, chargé même sans configuration — _fbInit() se contente de ne rien faire tant que FB_CONFIG n'est pas renseigné. -->
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" integrity="sha384-ZaR6mWzmJtrRibZ1Vm7SoHFr8OXjyAuGAXalGDKqbxFT18oi/z+oZLIRFkpeNor1" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" integrity="sha384-I1LYojsZ5RM1cOda44Z2h42Qa6YfsQ1XkXxREnhp4ueYBR/4d1pG1K+NZM537Vsj" crossorigin="anonymous"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" integrity="sha384-Ke0FJhH7LyRqDxZ0wt+/OXV38yfQVu7g9VPEEGjYmB4RVOY/ta04uecRhsMwT7V3" crossorigin="anonymous"></script>
 </head>
 <body>
+<script>
+/* Compte « staff » Firebase (site catalogue, portail fidélité, visites) — le MOT DE PASSE n'est plus écrit dans le logiciel.
+   Il est saisi une fois par un administrateur sur chaque appareil ; seule la clé de session Firebase (renouvelable,
+   révoquée dès que le mot de passe est changé) reste sur cet appareil (localStorage « covo_staff_rt »). */
+(function () {
+    'use strict';
+    if (window._covoStaff) return;
+    var API = 'AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY', EMAIL = 'staff@covopro-portal.local', RT = 'covo_staff_rt';
+    var tok = null, exp = 0, pend = null, askedThisPage = false, modalP = null;
+    function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u || {}; }
+    function isAdmin() { var u = user(); return !!(u.isMaster || u.role === 'admin' || u.role === 'manager' || u.id === 'USR-MASTER'); }
+    function getRt() { try { return localStorage.getItem(RT) || ''; } catch (e) { return ''; } }
+    function setRt(v) { try { if (v) localStorage.setItem(RT, v); else localStorage.removeItem(RT); } catch (e) {} }
+    function keep(idToken, refreshToken, expiresIn) { tok = idToken; exp = Date.now() + ((+expiresIn || 3600) - 300) * 1000; if (refreshToken) setRt(refreshToken); return tok; }
+    function refresh(rt) {
+        return fetch('https://securetoken.googleapis.com/v1/token?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(rt) })
+            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (x) {
+                if (!x.ok || !x.j.id_token) { var m = (x.j.error && (x.j.error.message || x.j.error)) || 'refusée'; if (/TOKEN_EXPIRED|INVALID_REFRESH_TOKEN|USER_DISABLED|USER_NOT_FOUND/i.test(String(m))) setRt(''); throw new Error('session staff : ' + m); }
+                return keep(x.j.id_token, x.j.refresh_token, x.j.expires_in);
+            });
+    }
+    function signIn(pwd) {
+        return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: EMAIL, password: pwd, returnSecureToken: true }) })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (!j.idToken) { var m = (j.error && j.error.message) || 'refusée'; throw new Error(/INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND/.test(m) ? 'Mot de passe incorrect' : /TOO_MANY_ATTEMPTS/.test(m) ? 'Trop d’essais : réessayez dans quelques minutes' : 'Connexion refusée (' + m + ')'); }
+                return keep(j.idToken, j.refreshToken, j.expiresIn);
+            });
+    }
+    // Fenêtre de saisie (jamais pré-remplie, rien n'est enregistré à part la clé de session)
+    function ask(reason, tryFn) {
+        if (modalP) return modalP;
+        modalP = new Promise(function (resolve, reject) {
+            var ov = document.createElement('div'); ov.id = 'covo-staff-ov';
+            ov.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+            ov.innerHTML = '<form style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(400px,100%);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.4)">'
+                + '<div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;padding:14px 18px;font-weight:900">🔐 Connexion du compte staff</div>'
+                + '<div style="padding:16px 18px;font-size:.84rem;line-height:1.5">' + (reason ? '<div style="margin-bottom:8px;font-weight:700">' + reason + '</div>' : '')
+                + 'Pour votre sécurité, ce mot de passe n’est plus inscrit dans le logiciel. Saisissez-le <b>une fois sur cet appareil</b> : seule une clé de session est conservée (elle est annulée si le mot de passe est changé).'
+                + '<label style="display:block;margin-top:12px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">Compte</label><input value="' + EMAIL + '" readonly autocomplete="username" style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--bg-card-2,#f1f5f9);color:inherit">'
+                + '<label style="display:block;margin-top:8px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">Mot de passe</label><input type="password" id="covo-staff-pw" autocomplete="current-password" required style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--input-bg,#fff);color:inherit">'
+                + '<div id="covo-staff-err" style="color:#dc2626;font-weight:700;font-size:.78rem;min-height:1.2em;margin-top:6px"></div>'
+                + '<div style="display:flex;gap:8px;margin-top:6px"><button type="button" data-x="later" style="flex:1;border:none;border-radius:10px;padding:10px;font-weight:800;cursor:pointer;background:var(--bg-card-2,#e2e8f0);color:inherit">Plus tard</button><button type="submit" style="flex:2;border:none;border-radius:10px;padding:10px;font-weight:900;cursor:pointer;background:#2563eb;color:#fff">Se connecter</button></div></div></form>';
+            document.body.appendChild(ov);
+            var f = ov.querySelector('form'), pw = ov.querySelector('#covo-staff-pw'), er = ov.querySelector('#covo-staff-err');
+            var close = function () { ov.remove(); modalP = null; };
+            ov.querySelector('[data-x="later"]').onclick = function () { close(); reject(new Error('Connexion staff reportée')); };
+            f.onsubmit = function (e) {
+                e.preventDefault(); er.textContent = '⏳ Vérification…';
+                (tryFn || signIn)(pw.value).then(function (t) { pw.value = ''; close(); resolve(t); }).catch(function (x) { er.textContent = '❌ ' + (x && x.message || 'Connexion impossible'); pw.select(); });
+            };
+            setTimeout(function () { pw.focus(); }, 30);
+        });
+        return modalP;
+    }
+    // opts.interactive : demander le mot de passe si besoin (sinon seulement à un administrateur, une fois par page)
+    function token(opts) {
+        opts = opts || {};
+        if (tok && Date.now() < exp) return Promise.resolve(tok);
+        if (pend) return pend;
+        var rt = getRt();
+        pend = (rt ? refresh(rt) : Promise.reject(new Error('aucune session staff sur cet appareil')))
+            .catch(function (err) {
+                if (opts.interactive || (isAdmin() && !askedThisPage && !opts.silent)) { askedThisPage = true; return ask(opts.reason || 'Le site catalogue / le portail fidélité a besoin du compte staff.'); }
+                throw new Error('staff-login-required');
+            })
+            .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
+        return pend;
+    }
+    window._covoStaff = {
+        email: EMAIL,
+        token: token,
+        login: function (reason) { return token({ interactive: true, reason: reason }); },
+        logout: function () { tok = null; exp = 0; setRt(''); },
+        hasSession: function () { return !!getRt(); },
+        reset: function () { tok = null; exp = 0; },
+        // pour la bibliothèque Firebase (Fidélité Pro) : demande le mot de passe et le fait vérifier par une fonction fournie
+        askPassword: function (reason, tryFn) { return ask(reason, tryFn); },
+        saveRefreshToken: function (rt) { if (rt) setRt(rt); }
+    };
+})();
+</script>
+
 <script src="https://aliand0810.github.io/licences/licence_check.js" data-produit="COVO Pro" data-module="Fidélité"></script>
 
 <div id="cp-access-gate" style="display:none;position:fixed;inset:0;z-index:100000;background:#0a0a0a;color:#fff;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;gap:16px;">
@@ -4179,7 +4269,7 @@ var FB_CONFIG = {
 // _fbSyncClientPortal ci-dessous). Son UID doit être recopié dans la règle
 // Firestore fournie dans le guide.
 var FB_STAFF_EMAIL = "staff@covopro-portal.local";
-var FB_STAFF_PASSWORD = "R@hi081089";
+// (mot de passe du compte staff : plus jamais écrit dans le code — saisi une fois par appareil, voir _covoStaff)
 var FB_PORTAL_EMAIL_DOMAIN = "covopro-portal.local"; // domaine fictif : les clients n'ont pas besoin d'une vraie adresse e-mail
 var FB_PORTAL_URL_DEFAULT = "http://fidelite.covo-trv.fr/";                 // lien par défaut du Portail fidélité (nom de domaine COVO)
 var FB_PORTAL_URL_GITHUB  = "https://aliand0810.github.io/Portail-fidelite/"; // ancienne adresse GitHub Pages (toujours valide)
@@ -4492,7 +4582,18 @@ function _fbInit() {
 function _fbStaffSignIn() {
     var app = _fbInit(); if (!app) return Promise.reject(new Error('Firebase non configuré'));
     if (_fbStaffReady) return _fbStaffReady;
-    _fbStaffReady = app.auth().signInWithEmailAndPassword(FB_STAFF_EMAIL, FB_STAFF_PASSWORD)
+    var auth = app.auth();
+    _fbStaffReady = new Promise(function (res) { var un = auth.onAuthStateChanged(function (u) { un(); res(u); }); })
+        .then(function (u) {
+            if (u && u.email === FB_STAFF_EMAIL) return { user: u };                // session staff déjà ouverte sur cet appareil
+            if (!window._covoStaff) throw new Error('Connexion staff indisponible');
+            return window._covoStaff.askPassword('Fidélité Pro a besoin du compte staff (portail client).', function (pwd) {
+                return auth.signInWithEmailAndPassword(FB_STAFF_EMAIL, pwd).then(function (cred) {
+                    try { window._covoStaff.saveRefreshToken(cred.user.refreshToken); } catch (e) {}
+                    return cred;
+                }, function (e) { var c = (e && e.code) || ''; throw new Error(/wrong-password|invalid-credential|invalid-login|user-not-found/.test(c) ? 'Mot de passe incorrect' : /too-many/.test(c) ? 'Trop d’essais : réessayez plus tard' : 'Connexion refusée (' + c + ')'); });
+            });
+        })
         .catch(function(err) { _fbStaffReady = null; throw err; });
     return _fbStaffReady;
 }
