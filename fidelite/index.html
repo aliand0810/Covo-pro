@@ -990,7 +990,51 @@ if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.remov
             .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
         return pend;
     }
+    // Changement du mot de passe staff (le compte garde le même UID : aucune règle Firebase à modifier)
+    function changePassword(oldPwd, newPwd) {
+        return fetch('https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: EMAIL, password: oldPwd, returnSecureToken: true }) })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (!j.idToken) { var m = (j.error && j.error.message) || ''; throw new Error(/INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND/.test(m) ? 'Mot de passe actuel incorrect' : /TOO_MANY_ATTEMPTS/.test(m) ? 'Trop d’essais : réessayez dans quelques minutes' : 'Connexion refusée (' + m + ')'); }
+                return fetch('https://identitytoolkit.googleapis.com/v1/accounts:update?key=' + API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: j.idToken, password: newPwd, returnSecureToken: true }) });
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (!j.idToken) { var m = (j.error && j.error.message) || ''; throw new Error(/WEAK_PASSWORD/.test(m) ? 'Nouveau mot de passe trop faible (6 caractères minimum pour Firebase)' : /CREDENTIAL_TOO_OLD|TOKEN_EXPIRED/.test(m) ? 'Session expirée : recommencez' : 'Changement refusé (' + m + ')'); }
+                return keep(j.idToken, j.refreshToken, j.expiresIn);   // cet appareil reste connecté avec le nouveau mot de passe
+            });
+    }
+    function openChange() {
+        return new Promise(function (resolve, reject) {
+            var ov = document.createElement('div'); ov.id = 'covo-staff-chg';
+            ov.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(15,23,42,.62);display:flex;align-items:center;justify-content:center;padding:16px;font-family:inherit';
+            var fld = function (id, lbl, ac) { return '<label style="display:block;margin-top:9px;font-size:.7rem;font-weight:800;text-transform:uppercase;color:var(--text-muted,#64748b)">' + lbl + '</label><input type="password" id="' + id + '" autocomplete="' + ac + '" required style="width:100%;box-sizing:border-box;padding:9px 10px;border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;background:var(--input-bg,#fff);color:inherit">'; };
+            ov.innerHTML = '<form style="background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(410px,100%);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.4)">'
+                + '<div style="background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff;padding:14px 18px;font-weight:900">🔑 Changer le mot de passe staff</div>'
+                + '<div style="padding:14px 18px;font-size:.82rem;line-height:1.5">Compte <b>' + EMAIL + '</b>. Le compte garde le même identifiant : rien à modifier dans les règles Firebase. Tous les autres appareils seront déconnectés et devront se reconnecter avec le nouveau mot de passe.'
+                + '<input value="' + EMAIL + '" autocomplete="username" readonly hidden>'
+                + fld('cs-old', 'Mot de passe actuel', 'current-password') + fld('cs-new', 'Nouveau mot de passe (12 caractères minimum)', 'new-password') + fld('cs-new2', 'Confirmer le nouveau mot de passe', 'new-password')
+                + '<div id="cs-err" style="color:#dc2626;font-weight:700;font-size:.78rem;min-height:1.2em;margin-top:8px"></div>'
+                + '<div style="display:flex;gap:8px;margin-top:6px"><button type="button" data-x="0" style="flex:1;border:none;border-radius:10px;padding:10px;font-weight:800;cursor:pointer;background:var(--bg-card-2,#e2e8f0);color:inherit">Annuler</button><button type="submit" style="flex:2;border:none;border-radius:10px;padding:10px;font-weight:900;cursor:pointer;background:#2563eb;color:#fff">Changer le mot de passe</button></div></div></form>';
+            document.body.appendChild(ov);
+            var g = function (id) { return ov.querySelector('#' + id); }, er = g('cs-err');
+            var close = function () { ['cs-old', 'cs-new', 'cs-new2'].forEach(function (i) { g(i).value = ''; }); ov.remove(); };
+            ov.querySelector('[data-x="0"]').onclick = function () { close(); reject(new Error('annulé')); };
+            ov.querySelector('form').onsubmit = function (e) {
+                e.preventDefault();
+                var o = g('cs-old').value, n = g('cs-new').value, n2 = g('cs-new2').value;
+                if (n.length < 12) { er.textContent = '❌ 12 caractères minimum'; return; }
+                if (n !== n2) { er.textContent = '❌ Les deux nouveaux mots de passe sont différents'; return; }
+                if (n === o) { er.textContent = '❌ Le nouveau mot de passe doit être différent de l’actuel'; return; }
+                er.textContent = '⏳ Changement en cours…';
+                changePassword(o, n).then(function (t) { close(); resolve(t); }, function (x) { er.textContent = '❌ ' + (x && x.message || 'Changement impossible'); });
+            };
+            setTimeout(function () { g('cs-old').focus(); }, 30);
+        });
+    }
     window._covoStaff = {
+        changePassword: changePassword,
+        openChange: openChange,
         email: EMAIL,
         NEED: NEED,
         token: token,
