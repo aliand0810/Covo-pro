@@ -926,7 +926,8 @@ if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.remov
     'use strict';
     if (window._covoStaff) return;
     var API = 'AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY', EMAIL = 'staff@covopro-portal.local', RT = 'covo_staff_rt';
-    var tok = null, exp = 0, pend = null, askedThisPage = false, modalP = null;
+    var tok = null, exp = 0, pend = null, modalP = null;
+    var NEED = 'Connexion staff requise : Réglages → 🔐 Compte staff → Se connecter';
     function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u || {}; }
     function isAdmin() { var u = user(); return !!(u.isMaster || u.role === 'admin' || u.role === 'manager' || u.id === 'USR-MASTER'); }
     function getRt() { try { return localStorage.getItem(RT) || ''; } catch (e) { return ''; } }
@@ -982,14 +983,16 @@ if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.remov
         var rt = getRt();
         pend = (rt ? refresh(rt) : Promise.reject(new Error('aucune session staff sur cet appareil')))
             .catch(function (err) {
-                if (opts.interactive || (isAdmin() && !askedThisPage && !opts.silent)) { askedThisPage = true; return ask(opts.reason || 'Le site catalogue / le portail fidélité a besoin du compte staff.'); }
-                throw new Error('staff-login-required');
+                // plus jamais de fenêtre automatique : connexion uniquement à la demande (bouton « 🔐 Compte staff » des réglages)
+                if (opts.interactive) return ask(opts.reason || 'Connexion du compte staff sur cet appareil.');
+                throw new Error(NEED);
             })
             .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
         return pend;
     }
     window._covoStaff = {
         email: EMAIL,
+        NEED: NEED,
         token: token,
         login: function (reason) { return token({ interactive: true, reason: reason }); },
         logout: function () { tok = null; exp = 0; setRt(''); },
@@ -1278,6 +1281,15 @@ if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.remov
         <button type="button" class="lty-btn small secondary" id="lset-portal-check" onclick="ltyPortalCheckAll()" title="Repère les clients supprimés depuis la console Firebase">🔎 Vérifier les accès en ligne</button>
       </div>
       <div id="lset-portal-info" style="margin-top:7px;font-size:.74rem;color:var(--text-muted);line-height:1.5;"></div>
+
+      <div style="height:18px;border-bottom:1px solid var(--border-color);margin-bottom:14px;"></div>
+      <label class="lty-lbl">🔐 Compte staff (portail client)</label>
+      <div id="lset-staff-state" style="font-size:.8rem;margin:4px 0 8px;"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="lty-btn small" onclick="ltyStaffLogin()">🔐 Se connecter</button>
+        <button type="button" class="lty-btn small secondary" onclick="ltyStaffLogout()">Se déconnecter de cet appareil</button>
+      </div>
+      <div style="margin-top:6px;font-size:.74rem;color:var(--text-muted);line-height:1.5;">Nécessaire une fois par appareil pour créer les accès au portail et y publier promotions et réservations. Le mot de passe n’est jamais enregistré.</div>
     </div>
     <div class="lty-box-foot">
       <button class="lty-btn" style="flex:2;" onclick="ltySaveSettings()">💾 Enregistrer</button>
@@ -4579,14 +4591,15 @@ function _fbInit() {
         return _fbApp;
     } catch(e) { console.error('[Portail] Firebase init échouée', e); return null; }
 }
-function _fbStaffSignIn() {
+function _fbStaffSignIn(interactive) {
     var app = _fbInit(); if (!app) return Promise.reject(new Error('Firebase non configuré'));
-    if (_fbStaffReady) return _fbStaffReady;
+    if (_fbStaffReady && !interactive) return _fbStaffReady;
     var auth = app.auth();
     _fbStaffReady = new Promise(function (res) { var un = auth.onAuthStateChanged(function (u) { un(); res(u); }); })
         .then(function (u) {
             if (u && u.email === FB_STAFF_EMAIL) return { user: u };                // session staff déjà ouverte sur cet appareil
             if (!window._covoStaff) throw new Error('Connexion staff indisponible');
+            if (!interactive) throw new Error(window._covoStaff.NEED);       // jamais de fenêtre automatique
             return window._covoStaff.askPassword('Fidélité Pro a besoin du compte staff (portail client).', function (pwd) {
                 return auth.signInWithEmailAndPassword(FB_STAFF_EMAIL, pwd).then(function (cred) {
                     try { window._covoStaff.saveRefreshToken(cred.user.refreshToken); } catch (e) {}
@@ -6358,5 +6371,27 @@ window._cpGateRetry = function(){
 })();
 </script>
 
+<script>
+/* Fidélité Pro : connexion du compte staff à la demande (réglages) */
+(function () {
+    function el() { return document.getElementById('lset-staff-state'); }
+    window.ltyStaffRender = function () {
+        var e = el(); if (!e) return; var u = null;
+        try { var app = typeof _fbInit === 'function' ? _fbInit() : null; u = app && app.auth().currentUser; } catch (x) {}
+        var on = !!(u && u.email === FB_STAFF_EMAIL);
+        e.innerHTML = on ? '<span style="color:#16a34a;font-weight:800">🟢 Connecté sur cet appareil</span>' : '<span style="color:#b45309;font-weight:800">⚪ Non connecté sur cet appareil</span>';
+    };
+    window.ltyStaffLogin = function () {
+        if (typeof _fbStaffSignIn !== 'function') return;
+        _fbStaffSignIn(true).then(function () { ltyStaffRender(); if (typeof showScanToast === 'function') showScanToast('✅ Compte staff connecté', 'success'); }, function (e) { ltyStaffRender(); if (e && !/reportée/.test(e.message || '') && typeof showScanToast === 'function') showScanToast('❌ ' + (e.message || 'Connexion impossible'), 'error'); });
+    };
+    window.ltyStaffLogout = function () {
+        if (!confirm('Déconnecter le compte staff de cet appareil ?')) return;
+        try { var app = _fbInit(); if (app) app.auth().signOut().then(ltyStaffRender); } catch (x) {}
+        try { _fbStaffReady = null; } catch (x) {}
+    };
+    setInterval(function () { var e = el(); if (e && e.offsetParent !== null) ltyStaffRender(); }, 2000);
+})();
+</script>
 </body>
 </html>

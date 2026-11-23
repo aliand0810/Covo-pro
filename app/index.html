@@ -4665,7 +4665,8 @@ button, .btn, .retours-btn {
     'use strict';
     if (window._covoStaff) return;
     var API = 'AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY', EMAIL = 'staff@covopro-portal.local', RT = 'covo_staff_rt';
-    var tok = null, exp = 0, pend = null, askedThisPage = false, modalP = null;
+    var tok = null, exp = 0, pend = null, modalP = null;
+    var NEED = 'Connexion staff requise : Réglages → 🔐 Compte staff → Se connecter';
     function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u || {}; }
     function isAdmin() { var u = user(); return !!(u.isMaster || u.role === 'admin' || u.role === 'manager' || u.id === 'USR-MASTER'); }
     function getRt() { try { return localStorage.getItem(RT) || ''; } catch (e) { return ''; } }
@@ -4721,14 +4722,16 @@ button, .btn, .retours-btn {
         var rt = getRt();
         pend = (rt ? refresh(rt) : Promise.reject(new Error('aucune session staff sur cet appareil')))
             .catch(function (err) {
-                if (opts.interactive || (isAdmin() && !askedThisPage && !opts.silent)) { askedThisPage = true; return ask(opts.reason || 'Le site catalogue / le portail fidélité a besoin du compte staff.'); }
-                throw new Error('staff-login-required');
+                // plus jamais de fenêtre automatique : connexion uniquement à la demande (bouton « 🔐 Compte staff » des réglages)
+                if (opts.interactive) return ask(opts.reason || 'Connexion du compte staff sur cet appareil.');
+                throw new Error(NEED);
             })
             .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
         return pend;
     }
     window._covoStaff = {
         email: EMAIL,
+        NEED: NEED,
         token: token,
         login: function (reason) { return token({ interactive: true, reason: reason }); },
         logout: function () { tok = null; exp = 0; setRt(''); },
@@ -62355,7 +62358,7 @@ function covoQrPrint(o) {
     function token() {
         // compte staff : mot de passe saisi une fois par appareil (plus jamais écrit dans le code)
         if (!window._covoStaff) return Promise.reject(new Error('Connexion staff indisponible'));
-        return window._covoStaff.token({ reason: 'La mise à jour du site catalogue a besoin du compte staff.' });
+        return window._covoStaff.token({});
     }
     function putDoc(name, fields) {
         var url = 'https://firestore.googleapis.com/v1/projects/' + SITE_CFG.projectId + '/databases/(default)/documents/site/' + name;
@@ -77488,3 +77491,36 @@ function covoQrPrint(o) {
 #admin-welcome-modal .aw-rv-note{font-size:.74rem!important;font-weight:600;color:var(--text-muted,#8c6a50)!important;opacity:1!important;margin-top:8px!important;line-height:1.4;}
 @media (max-width:520px){#admin-welcome-modal .admin-welcome-body{padding:14px 12px 16px!important;}#admin-welcome-modal .aw-fsec{padding:12px!important;}}
 </style>
+<script>
+/* Réglages (Administration) → « 🔐 Compte staff » : connexion / déconnexion du compte staff sur cet appareil */
+(function () {
+    function $(id) { return document.getElementById(id); }
+    function render() {
+        var st = $('stf-state'); if (!st || !window._covoStaff) return;
+        var on = window._covoStaff.hasSession();
+        st.innerHTML = on ? '<span style="color:#16a34a;font-weight:800">🟢 Connecté sur cet appareil</span>' : '<span style="color:#b45309;font-weight:800">⚪ Non connecté sur cet appareil</span>';
+        $('stf-in').textContent = on ? '🔄 Se reconnecter' : '🔐 Se connecter';
+        $('stf-out').style.display = on ? '' : 'none';
+    }
+    function mount() {
+        if ($('admin-sec-staff')) return true;
+        var first = document.querySelector('#admin-modal .admin-section'); if (!first) return false;
+        var sec = document.createElement('div'); sec.className = 'admin-section'; sec.id = 'admin-sec-staff';
+        sec.style.cssText = 'border:2px solid rgba(37,99,235,.35);';
+        sec.innerHTML = '<div style="padding:12px 14px">'
+            + '<div style="font-weight:900;font-size:.95rem;color:var(--text-main)">🔐 Compte staff <span style="font-weight:600;font-size:.74rem;color:var(--text-muted)">— site catalogue, portail fidélité, visites</span></div>'
+            + '<div style="font-size:.76rem;color:var(--text-muted);line-height:1.5;margin:6px 0 8px">Le mot de passe n’est plus écrit dans le logiciel : connectez le compte <b>une fois sur chaque appareil</b>. Seule une clé de session reste enregistrée (annulée si le mot de passe est changé dans Firebase).</div>'
+            + '<div id="stf-state" style="font-size:.82rem;margin-bottom:8px"></div>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" id="stf-in" style="border:none;border-radius:9px;padding:9px 14px;font-weight:800;cursor:pointer;background:#2563eb;color:#fff">🔐 Se connecter</button>'
+            + '<button type="button" id="stf-out" style="border:1.5px solid var(--border-color,#cbd5e1);border-radius:9px;padding:8px 12px;font-weight:700;cursor:pointer;background:transparent;color:var(--text-main)">Se déconnecter de cet appareil</button></div></div>';
+        first.parentNode.insertBefore(sec, first);
+        $('stf-in').onclick = function () {
+            window._covoStaff.reset();
+            window._covoStaff.login('Connexion du compte staff sur cet appareil.').then(function () { render(); if (typeof showScanToast === 'function') showScanToast('✅ Compte staff connecté sur cet appareil', 'success'); }, function () { render(); });
+        };
+        $('stf-out').onclick = function () { if (!confirm('Déconnecter le compte staff de cet appareil ?\nLe site catalogue ne sera plus mis à jour depuis cet appareil.')) return; window._covoStaff.logout(); render(); };
+        render(); return true;
+    }
+    (function boot(n) { if (!mount() && n < 60) return setTimeout(function () { boot(n + 1); }, 500); setInterval(function () { var m = $('admin-modal'); if (m && m.offsetParent !== null) render(); }, 2000); })(0);
+})();
+</script>

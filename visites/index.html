@@ -321,7 +321,8 @@ button{cursor:pointer;}
     'use strict';
     if (window._covoStaff) return;
     var API = 'AIzaSyDEe-tOWDvav7v5Rua7JYcSHZ2dfFxM0fY', EMAIL = 'staff@covopro-portal.local', RT = 'covo_staff_rt';
-    var tok = null, exp = 0, pend = null, askedThisPage = false, modalP = null;
+    var tok = null, exp = 0, pend = null, modalP = null;
+    var NEED = 'Connexion staff requise : Réglages → 🔐 Compte staff → Se connecter';
     function user() { var u = null; try { u = currentUser; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u || {}; }
     function isAdmin() { var u = user(); return !!(u.isMaster || u.role === 'admin' || u.role === 'manager' || u.id === 'USR-MASTER'); }
     function getRt() { try { return localStorage.getItem(RT) || ''; } catch (e) { return ''; } }
@@ -377,14 +378,16 @@ button{cursor:pointer;}
         var rt = getRt();
         pend = (rt ? refresh(rt) : Promise.reject(new Error('aucune session staff sur cet appareil')))
             .catch(function (err) {
-                if (opts.interactive || (isAdmin() && !askedThisPage && !opts.silent)) { askedThisPage = true; return ask(opts.reason || 'Le site catalogue / le portail fidélité a besoin du compte staff.'); }
-                throw new Error('staff-login-required');
+                // plus jamais de fenêtre automatique : connexion uniquement à la demande (bouton « 🔐 Compte staff » des réglages)
+                if (opts.interactive) return ask(opts.reason || 'Connexion du compte staff sur cet appareil.');
+                throw new Error(NEED);
             })
             .then(function (t) { pend = null; return t; }, function (e) { pend = null; throw e; });
         return pend;
     }
     window._covoStaff = {
         email: EMAIL,
+        NEED: NEED,
         token: token,
         login: function (reason) { return token({ interactive: true, reason: reason }); },
         logout: function () { tok = null; exp = 0; setRt(''); },
@@ -588,7 +591,7 @@ var _tok = null, _tokExp = 0;
 function token() {
         // compte staff : mot de passe saisi une fois par appareil (plus jamais écrit dans le code)
         if (!window._covoStaff) return Promise.reject(new Error('Connexion staff indisponible'));
-        return window._covoStaff.token({ interactive: true, reason: 'Visites Pro lit les visites du site avec le compte staff.' });
+        return window._covoStaff.token({});
     }
 function fs(method, path) {
     return token().then(function (t) {
@@ -718,6 +721,7 @@ function render() {
 }
 function errBox() {
     if (!S.err) return '';
+    if (/Connexion staff requise/.test(S.err)) return '<div class="banner err">🔐 Le compte staff n’est pas connecté sur cet appareil. <button type="button" id="b-staff" onclick="window._covoStaff.login(\'Visites Pro lit les visites du site avec le compte staff.\').then(function(){load(true)},function(){})" style="margin-left:6px;border:none;border-radius:8px;padding:6px 12px;font-weight:800;cursor:pointer;background:#2563eb;color:#fff">Se connecter</button></div>';
     return '<div class="banner err">⚠️ ' + esc(S.err) + (/règle/.test(S.err) ? '<span style="font-weight:700;font-size:.74rem">La règle à publier est affichée dans COVO Pro → Catalogue → Site web → 📊 Visites.</span>' : '') + '</div>';
 }
 function skeleton() { return '<div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>'; }
