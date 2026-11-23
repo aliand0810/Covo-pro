@@ -78661,9 +78661,41 @@ function covoQrPrint(o) {
       return '<label class="admin-setting-row" style="cursor:'+(lic?'not-allowed':'pointer')+';gap:10px"><span>'+x[1]+' '+x[2]+(lic?' <small style="opacity:.7">(masqué par la licence)</small>':'')+'</span>'
         +'<input type="checkbox" data-uih="'+x[0]+'" '+(on?'checked ':'')+(lic?'disabled ':'')+'style="width:20px;height:20px;accent-color:#16a34a;cursor:inherit"></label>'}).join('');
     el.querySelectorAll('[data-uih]').forEach(function(c){c.onchange=function(){var h2=get(),loc=h2.local.filter(function(k){return k!==c.dataset.uih});if(!c.checked)loc.push(c.dataset.uih);
-      if(window.covoUiHide)window.covoUiHide.set(loc);else try{localStorage.setItem('covo_ui_hide',JSON.stringify(loc))}catch(e){}
+      try{localStorage.setItem('covo_ui_hide',JSON.stringify(loc))}catch(e){}if(window.covoUiHide)try{window.covoUiHide.set(loc)}catch(e){}if(window.covoUiApply)window.covoUiApply();try{dispatchEvent(new Event('covo-ui-hide'))}catch(e){}draw();
       try{showScanToast((c.checked?'Bouton affiché : ':'Bouton masqué : ')+c.parentNode.textContent.trim(),'info')}catch(e){}}})}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){setTimeout(draw,600)});setTimeout(draw,1500);
   addEventListener('storage',function(e){if(e.key==='covo_ui_hide'||/^licData_/.test(e.key||''))draw()});
+})();
+</script>
+<script>
+/* ── COVO : boutons de caisse masquables — réaction immédiate (masquer / réafficher) sur cette page ──
+   Sources : Paramètres de l'appareil (« covo_ui_hide ») + licence (Licence Pro). Vérifié en continu. */
+(function () {
+    if (window.covoUiApply) return;
+    var CSS = { verif: '#cxd-help,#cxd-hint,#cxd-ring{display:none!important}',
+                vocal: '#cv-fab,#cv-tg-ask,#cv-tg-listen,#cv-panel,#cv-coach{display:none!important}',
+                sumup: '#app-sumup-chip,#cx-sumup-chip,#cx-echel-su{display:none!important}' };
+    var last = null;
+    function list() {
+        var a = []; try { a = JSON.parse(localStorage.getItem('covo_ui_hide') || '[]') || []; } catch (e) {}
+        try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (/^licData_/.test(k)) { var d = JSON.parse(localStorage.getItem(k) || 'null'); if (d && Array.isArray(d.masquer)) a = a.concat(d.masquer); } } } catch (e) {}
+        return Object.keys(CSS).filter(function (k) { return a.indexOf(k) >= 0; });
+    }
+    function apply() {
+        var a = list(), key = a.join(','); if (key === last) return;
+        var was = last === null ? [] : last ? last.split(',') : []; last = key;
+        var st = document.getElementById('covo-uihide');
+        if (!st) { st = document.createElement('style'); st.id = 'covo-uihide'; (document.head || document.documentElement).appendChild(st); }
+        st.textContent = a.map(function (k) { return CSS[k]; }).join('');
+        // SumUp réaffiché : on redessine aussitôt le bandeau (mode de paiement inchangé)
+        if (was.indexOf('sumup') >= 0 && a.indexOf('sumup') < 0) {
+            ['app-sumup-chip', 'cx-sumup-chip'].forEach(function (id) { var e = document.getElementById(id); if (e) e.style.removeProperty('display'); });
+            ['payment-method', 'cx-payment-method'].forEach(function (id) { var s = document.getElementById(id); if (s) try { s.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {} });
+        }
+    }
+    window.covoUiApply = apply; apply();
+    addEventListener('storage', function (e) { if (!e.key || e.key === 'covo_ui_hide' || /^licData_/.test(e.key)) apply(); });
+    addEventListener('covo-ui-hide', apply); document.addEventListener('visibilitychange', apply); addEventListener('focus', apply);
+    setInterval(apply, 1000);
 })();
 </script>
