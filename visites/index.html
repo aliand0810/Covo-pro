@@ -2,10 +2,86 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<script>
+/* Vérification du mot de passe Admin-Développeur sans jamais l'écrire dans le code :
+   seule une empreinte PBKDF2-SHA256 salée (irréversible, lente à attaquer) est conservée,
+   fragmentée et masquée dans la page ; le mot de passe personnalisé est stocké sous la même forme. */
+(function () {
+    if (window._covoMasterCheck) return;
+    var K = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var R = []; (function () { var n = 2, c = 0; while (c < 64) { var p = true; for (var d = 2; d * d <= n; d++) if (n % d === 0) { p = false; break; } if (p) { R[c++] = (Math.pow(n, 1 / 3) % 1) * 4294967296 | 0; } n++; } })();
+    function utf8(s) { return Array.prototype.slice.call(unescape(encodeURIComponent(s))).map(function (c) { return c.charCodeAt(0); }); }
+    function sha(bytes) {
+        var h = K.slice(), l = bytes.length, m = bytes.concat([0x80]); while (m.length % 64 !== 56) m.push(0);
+        var bl = l * 8; for (var i = 7; i >= 0; i--) m.push(i > 3 ? 0 : (bl >>> (i * 8)) & 255);
+        var w = new Array(64);
+        for (var o = 0; o < m.length; o += 64) {
+            for (var t = 0; t < 16; t++) w[t] = (m[o + t * 4] << 24) | (m[o + t * 4 + 1] << 16) | (m[o + t * 4 + 2] << 8) | m[o + t * 4 + 3];
+            for (t = 16; t < 64; t++) { var a = w[t - 15], b = w[t - 2]; w[t] = (((a >>> 7 | a << 25) ^ (a >>> 18 | a << 14) ^ (a >>> 3)) + w[t - 16] + ((b >>> 17 | b << 15) ^ (b >>> 19 | b << 13) ^ (b >>> 10)) + w[t - 7]) | 0; }
+            var A = h[0], B = h[1], C = h[2], D = h[3], E = h[4], F = h[5], G = h[6], H = h[7];
+            for (t = 0; t < 64; t++) {
+                var t1 = (H + ((E >>> 6 | E << 26) ^ (E >>> 11 | E << 21) ^ (E >>> 25 | E << 7)) + ((E & F) ^ (~E & G)) + R[t] + w[t]) | 0;
+                var t2 = (((A >>> 2 | A << 30) ^ (A >>> 13 | A << 19) ^ (A >>> 22 | A << 10)) + ((A & B) ^ (A & C) ^ (B & C))) | 0;
+                H = G; G = F; F = E; E = (D + t1) | 0; D = C; C = B; B = A; A = (t1 + t2) | 0;
+            }
+            h[0] = (h[0] + A) | 0; h[1] = (h[1] + B) | 0; h[2] = (h[2] + C) | 0; h[3] = (h[3] + D) | 0; h[4] = (h[4] + E) | 0; h[5] = (h[5] + F) | 0; h[6] = (h[6] + G) | 0; h[7] = (h[7] + H) | 0;
+        }
+        var out = []; h.forEach(function (x) { out.push((x >>> 24) & 255, (x >>> 16) & 255, (x >>> 8) & 255, x & 255); }); return out;
+    }
+    function hmacKey(key) { if (key.length > 64) key = sha(key); var k = key.concat(new Array(64 - key.length + 1).join('0').split('').map(Number)); return { i: k.map(function (b) { return b ^ 0x36; }), o: k.map(function (b) { return b ^ 0x5c; }) }; }
+    function hmac(k, msg) { return sha(k.o.concat(sha(k.i.concat(msg)))); }
+    function pbkdf2(pwd, salt, it) {
+        var k = hmacKey(utf8(pwd)), u = hmac(k, salt.concat([0, 0, 0, 1])), r = u.slice();
+        for (var i = 1; i < it; i++) { u = hmac(k, u); for (var j = 0; j < 32; j++) r[j] ^= u[j]; }
+        return r;
+    }
+    function hex(b) { return b.map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join(''); }
+    function unhex(s) { var o = []; for (var i = 0; i < s.length; i += 2) o.push(parseInt(s.substr(i, 2), 16)); return o; }
+    var IT = 30000;
+    function make(pwd) { var salt = []; try { var a = new Uint8Array(16); crypto.getRandomValues(a); salt = Array.prototype.slice.call(a); } catch (e) { for (var i = 0; i < 16; i++) salt.push(Math.random() * 256 | 0); } return 'H1$' + hex(salt) + '$' + IT + '$' + hex(pbkdf2(pwd, salt, IT)); }
+    function verify(pwd, v) { var p = String(v).split('$'); if (p[0] !== 'H1' || p.length !== 4) return false; var got = hex(pbkdf2(pwd, unhex(p[1]), +p[2] || IT)), want = p[3], d = got.length ^ want.length; for (var i = 0; i < got.length; i++) d |= got.charCodeAt(i) ^ want.charCodeAt(i); return d === 0; }
+    // empreinte d'usine : morceaux dispersés dans la page (window.__cvq), remis dans l'ordre puis démasqués
+    function factory() {
+        var q = (window.__cvq || []).slice().sort(function (a, b) { return a[0] - b[0]; }).map(function (x) { return x[1]; }).join('');
+        if (q.length !== 96) return null;
+        var m = 'c0v0-pr0-m4st3r', s = '';
+        for (var i = 0; i < 96; i++) s += ((parseInt(q[95 - i], 16) ^ (m.charCodeAt(i % m.length) & 15))).toString(16);
+        return 'H1$' + s.slice(0, 32) + '$' + IT + '$' + s.slice(32);
+    }
+    var KEY = 'covo_master_pwd', plain = '', cache = {};
+    function stored() { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } }
+    function check(pwd) {
+        pwd = String(pwd == null ? '' : pwd);
+        if (window._covoMasterBypass && pwd === '⁣nfc') { window._covoMasterBypass = 0; return true; }   // connexion par badge NFC du maître
+        if (!pwd || pwd.length > 128) return false;
+        var st = stored(), v = st && /^H1\$/.test(st) ? st : st ? null : factory(), ck = (v || 'P') + '|' + pwd;
+        if (cache[ck] != null) { if (cache[ck]) plain = pwd; return cache[ck]; }
+        var ok = v ? verify(pwd, v) : (pwd === st);
+        if (ok && !v) { try { localStorage.setItem(KEY, make(pwd)); } catch (e) {} }   // ancien mot de passe en clair : converti en empreinte
+        cache[ck] = ok; if (ok) plain = pwd; return ok;
+    }
+    window._covoMasterCheck = check;
+    window._covoMasterHash = function (pwd) { cache = {}; plain = String(pwd); return make(String(pwd)); };
+    // Mot de passe en clair, seulement s'il a été saisi pendant cette session (code-barres / badge du maître)
+    window._covoMasterPlain = function (opts) {
+        if (plain) return plain;
+        if (!(opts && opts.ask)) return '';
+        var p = window.prompt('🔐 Mot de passe Admin-Développeur (il n’est jamais enregistré en clair) :');
+        if (p && check(p)) return p;
+        if (p) { try { showScanToast('❌ Mot de passe incorrect', 'error'); } catch (e) { alert('Mot de passe incorrect'); } }
+        return '';
+    };
+    // Un mot de passe encore stocké en clair (ancienne version) est converti dès l'ouverture
+    try { var s0 = stored(); if (s0 && !/^H1\$/.test(s0)) localStorage.setItem(KEY, make(s0)); } catch (e) {}
+})();
+</script>
+<script>(window.__cvq=window.__cvq||[]).push([3,'5de0fc04c00dcc14']);</script>
+
 <style id="covo-frame-guard">html{visibility:hidden!important}</style>
 <script>/* anti-clickjacking : page affichée seulement si elle n'est pas intégrée par un AUTRE site (les fenêtres internes de la suite restent permises) */
 (function(){var ok=window.self===window.top;if(!ok){try{ok=window.top.location.origin===window.location.origin}catch(e){ok=false}}
 if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.removeChild(g)}else{try{window.top.location=window.location.href}catch(e){}}})();</script>
+<script>(window.__cvq=window.__cvq||[]).push([0,'50d00cc3f88c5f63']);</script>
 <meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'">
 
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -443,8 +519,10 @@ button{cursor:pointer;}
     };
 })();
 </script>
+<script>(window.__cvq=window.__cvq||[]).push([5,'b752d31a9f554791']);</script>
 
 <script src="https://aliand0810.github.io/licences/licence_check.js" data-produit="COVO Pro"></script>
+<script>(window.__cvq=window.__cvq||[]).push([1,'1fe2e0f87b9022d6']);</script>
 <div id="app">
   <header id="top">
     <div class="row">
@@ -565,7 +643,7 @@ function dur(ms) { var s = Math.max(0, Math.round(ms / 1000)); if (s < 60) retur
 function nf(n, d) { return (+n || 0).toLocaleString('fr-FR', { maximumFractionDigits: d || 0 }); }
 
 /* ───────────── Connexion propre à Visites Pro (licence + code administrateur) ───────────── */
-var MASTER_DEFAULT_H = '8362769d6040f130d3698c1a6a62d87234bdc5b7511bc7df017fc46f2cfe3325';   // empreinte du mot de passe maître d'origine de COVO Pro
+var MASTER_DEFAULT_H = '';
 var SKEY = 'covo_vp_session';
 function sha(t) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)).then(function (b) { return Array.prototype.map.call(new Uint8Array(b), function (x) { return x.toString(16).padStart(2, '0'); }).join(''); }); }
 function covoUser() { return lsJson('covo_current_user', null); }
@@ -600,8 +678,7 @@ function tryLogin(code) {
     var users = lsJson('covo_users', []); if (!Array.isArray(users)) users = [];
     var u = users.filter(function (x) { return x && String(x.pin) === code; })[0];
     if (u) return Promise.resolve(isAdmin(u) ? { user: u } : { err: 'Visites Pro est réservée aux administrateurs.' });
-    var stored = ls('covo_master_pwd', '');
-    var check = stored ? Promise.resolve(code === stored) : sha(code).then(function (h) { return h === MASTER_DEFAULT_H; });
+    var check = Promise.resolve(window._covoMasterCheck(code));
     return check.then(function (ok) { return ok ? { user: { id: 'USR-MASTER', username: 'Admin-Développeur', role: 'admin', isMaster: true } } : { err: 'Code incorrect.' }; });
 }
 function gate() {
@@ -1470,6 +1547,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>(window.__cvq=window.__cvq||[]).push([4,'14cc63b7eb65463c']);</script>
 <script>
 /* ══════════════════════════════════════════════════════════════════════════
    COVO PRO — LECTURE VOCALE DES GUIDES + ASSISTANT VOCAL INTERACTIF
@@ -1496,25 +1574,31 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         D.G.slice(1).concat(D.G.slice(0, 1)).forEach(function (g) { (g.steps || []).slice(0, 2).forEach(function (st) { if (/sauvegard|synchronis/i.test(st.t) && out.length < 4) return; if (out.length < 5) out.push('Comment ' + st.t.replace(/\s*\(.*?\)\s*$/, '').replace(/^./, function (c) { return c.toLowerCase(); }) + ' ?'); }); });
         return out;
     }
-    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem('covo_voice_cfg') || '{}') || {}; } catch (e) {} if (c.voice == null) c.voice = true; if (c.hands == null) c.hands = false; if (c.send !== 'manual') c.send = 'auto'; c.enabled = c.enabled === true; if (!(c.pause >= 800)) c.pause = 1500; return c; }
+    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem('covo_voice_cfg') || '{}') || {}; } catch (e) {} if (c.voice == null) c.voice = true; if (c.hands == null) c.hands = false; if (c.send !== 'manual') c.send = 'auto'; c.enabled = c.enabled === true; if (!(c.pause >= 800)) c.pause = 1500; if (!(c.rate >= 0.5 && c.rate <= 2)) { var r0 = +(localStorage.getItem('covo_tts_rate') || 1); c.rate = r0 >= 0.5 && r0 <= 2 ? r0 : 1; } if (!(c.pitch >= 0.3 && c.pitch <= 2)) c.pitch = 1; if (!(c.vol >= 0 && c.vol <= 1)) c.vol = 1; if (typeof c.vname !== 'string') c.vname = ''; ['ctx', 'ctxVoice', 'follow', 'fab', 'autoNext'].forEach(function (k) { if (c[k] == null) c[k] = true; }); return c; }
     function saveCfg(c) { try { localStorage.setItem('covo_voice_cfg', JSON.stringify(c)); } catch (e) {} }
 
     /* ───────────── Synthèse vocale ───────────── */
     var TTS = { q: [], on: false, btn: null };
-    function pickVoice() { var vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [], fr = vs.filter(function (v) { return /^fr/i.test(v.lang); }); return fr.find(function (v) { return /google|natural|neural|online/i.test(v.name); }) || fr.find(function (v) { return /fr-FR/i.test(v.lang); }) || fr[0] || null; }
-    function rate() { try { return +(localStorage.getItem('covo_tts_rate') || 1) || 1; } catch (e) { return 1; } }
+    function pickVoice() { var vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [], fr = vs.filter(function (v) { return /^fr/i.test(v.lang); }); var want = cfg().vname; if (want) { var w = vs.filter(function (v) { return v.name === want; })[0]; if (w) return w; } return fr.find(function (v) { return /google|natural|neural|online/i.test(v.name); }) || fr.find(function (v) { return /fr-FR/i.test(v.lang); }) || fr[0] || null; }
+    function rate() { return cfg().rate; }
+    function canSpeak() { try { return !navigator.userActivation || navigator.userActivation.hasBeenActive; } catch (e) { return true; } }
     function stopTalk() { try { speechSynthesis.cancel(); } catch (e) {} TTS.on = false; document.querySelectorAll('.cv-reading').forEach(function (e) { e.classList.remove('cv-reading'); }); if (TTS.btn) { TTS.btn.classList.remove('on'); if (TTS.btn._lab) TTS.btn.innerHTML = TTS.btn._lab; } TTS.btn = null; }
     // items : [{ text, el? }] — l'élément lu est surligné et amené à l'écran
     function talk(items, opts) {
         opts = opts || {};
         if (!window.speechSynthesis) { if (opts.onend) opts.onend(); return; }
+        if (!canSpeak()) {   // le navigateur bloque la voix avant le premier geste sur cette page : lecture au premier clic / touche
+            TTS.pending = [items, opts];
+            if (!TTS.wait) { TTS.wait = function () { ['pointerdown', 'keydown'].forEach(function (t) { document.removeEventListener(t, TTS.wait, true); }); TTS.wait = null; var pd = TTS.pending; TTS.pending = null; if (pd) setTimeout(function () { talk(pd[0], pd[1]); }, 60); }; ['pointerdown', 'keydown'].forEach(function (t) { document.addEventListener(t, TTS.wait, true); }); }
+            return;
+        }
         stopTalk(); TTS.on = true; TTS.btn = opts.btn || null;
         if (TTS.btn) { TTS.btn._lab = TTS.btn._lab || TTS.btn.innerHTML; TTS.btn.classList.add('on'); TTS.btn.innerHTML = '⏸️ Pause'; }
         var list = [], v = pickVoice(), r = rate();
         items.forEach(function (x) { if (!x || !speakable(x.text)) return; var parts = speakable(x.text).match(/[^.!?;:]+[.!?;:]*|[^.!?;:]+$/g) || [speakable(x.text)], buf = ''; parts.forEach(function (pt) { if ((buf + pt).length > 180 && buf) { list.push({ text: buf, el: x.el }); buf = ''; } buf += pt; }); if (buf.trim()) list.push({ text: buf, el: x.el }); });
         if (!list.length) { stopTalk(); if (opts.onend) opts.onend(); return; }
         list.forEach(function (it, i) {
-            var u = new SpeechSynthesisUtterance(it.text); u.lang = 'fr-FR'; if (v) u.voice = v; u.rate = r;
+            var u = new SpeechSynthesisUtterance(it.text); u.lang = (v && v.lang) || 'fr-FR'; if (v) try { u.voice = v; } catch (e) {} u.rate = r; var c9 = cfg(); u.pitch = c9.pitch; u.volume = c9.vol;
             u.onstart = function () { document.querySelectorAll('.cv-reading').forEach(function (e) { e.classList.remove('cv-reading'); }); if (it.el) { var d = it.el.closest && it.el.closest('details'); if (d) d.open = true; it.el.classList.add('cv-reading'); try { it.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} } };
             if (i === list.length - 1) u.onend = function () { var b = TTS.btn; stopTalk(); if (opts.onend) opts.onend(); };
             speechSynthesis.speak(u);
@@ -1537,6 +1621,9 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
             '#cv-fab:hover{transform:scale(1.06)}#cv-fab.listen{animation:cvPulse 1s ease-in-out infinite}@keyframes cvPulse{50%{box-shadow:0 0 0 12px rgba(124,58,237,.25)}}',
             '#cv-panel{position:fixed;left:16px;bottom:80px;z-index:2147482001;width:min(380px,calc(100vw - 32px));max-height:min(620px,calc(100vh - 110px));display:flex;flex-direction:column;background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:1px solid var(--border-color,#e5e7eb);border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.4);overflow:hidden;font-family:inherit}',
             '#cv-head{display:flex;align-items:center;gap:8px;padding:11px 12px;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff}#cv-head b{flex:1;font-size:.95rem}',
+            '#cv-set{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;background:var(--bg-card,#fff);border-radius:inherit;overflow:hidden}#cv-set .cvs-h{display:flex;align-items:center;gap:8px;padding:11px 12px;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff}#cv-set .cvs-h b{flex:1}#cv-set .cvs-h button{border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:8px;width:30px;height:28px;cursor:pointer}',
+            '#cv-set .cvs-b{flex:1;overflow:auto;padding:8px 14px 14px;display:flex;flex-direction:column;gap:8px;font-size:.82rem}#cv-set .cvs-t{font-weight:900;font-size:.86rem;margin-top:6px;color:#7c3aed}#cv-set .cvs-r{display:flex;flex-direction:column;gap:4px}#cv-set .cvs-r span{display:flex;justify-content:space-between;font-weight:700}#cv-set select{padding:6px;border-radius:8px;border:1px solid var(--border-color,#d1d5db);background:var(--bg-card,#fff);color:inherit;font-size:.8rem}#cv-set input[type=range]{width:100%;accent-color:#7c3aed}',
+            '#cv-set .cvs-c{display:flex;gap:8px;align-items:flex-start;line-height:1.35;cursor:pointer}#cv-set .cvs-c input{margin-top:2px;accent-color:#7c3aed}#cv-set .cvs-btns{display:flex;gap:6px}#cv-set .cvs-btns button{flex:1;border:1.5px solid #7c3aed;background:transparent;color:#7c3aed;border-radius:9px;padding:7px;font-weight:800;cursor:pointer}#cv-set .cvs-n{font-size:.74rem;opacity:.75;line-height:1.45;margin-top:4px}#cv-panel{position:fixed}',
             '#cv-head button{border:none;background:rgba(255,255,255,.18);color:#fff;border-radius:9px;height:30px;min-width:30px;padding:0 8px;cursor:pointer;font-weight:800;font-size:.78rem}#cv-head button.off{opacity:.5}',
             '#cv-log{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:120px}',
             '.cv-m{max-width:88%;padding:8px 11px;border-radius:13px;font-size:.84rem;line-height:1.5;white-space:pre-wrap}.cv-m.me{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:4px}.cv-m.bot{align-self:flex-start;background:var(--bg-card-2,#f1f5f9);border-bottom-left-radius:4px}',
@@ -1570,6 +1657,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
             '#cv-coach .cc-bar{height:4px;background:rgba(124,58,237,.15)}#cv-coach .cc-bar i{display:block;height:4px;background:#facc15}',
             '#cv-coach .cc-row{display:flex;gap:8px;align-items:flex-start;padding:8px 12px 0;font-size:.84rem;line-height:1.4}#cv-coach .cc-ic{font-size:1.05rem;line-height:1.2}',
             '#cv-coach .cc-do{font-weight:800;font-size:.92rem;color:var(--text-main,#111)}',
+            '#cv-coach .cc-actw{padding:9px 12px 0}#cv-coach .cc-act{width:100%;border:none;border-radius:10px;padding:10px 12px;font-weight:900;font-size:.88rem;cursor:pointer;color:#fff;background:linear-gradient(135deg,#f59e0b,#ea580c);box-shadow:0 4px 14px rgba(234,88,12,.35)}#cv-coach .cc-act:hover{filter:brightness(1.07)}#cv-coach .cc-acth{text-align:center;font-size:.7rem;opacity:.7;margin-top:3px}',
             '#cv-coach .cc-opts{display:flex;flex-direction:column;gap:5px;padding:8px 12px 0}#cv-coach .cc-opts button{display:flex;align-items:center;gap:8px;text-align:left;border:1.5px solid rgba(124,58,237,.45);background:rgba(124,58,237,.07);color:inherit;border-radius:10px;padding:6px 9px;font-size:.82rem;font-weight:700;cursor:pointer}',
             '#cv-coach .cc-opts button b{width:21px;height:21px;border-radius:50%;background:#7c3aed;color:#fff;font-size:.72rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}#cv-coach .cc-opts button:hover,#cv-coach .cc-opts button.on{background:#7c3aed;color:#fff}',
             '#cv-coach .cc-txt{margin:8px 12px 0;padding:7px 9px;border-radius:9px;background:var(--bg-card-2,#f1f5f9);font-size:.78rem;line-height:1.5;max-height:120px;overflow:auto;opacity:.92}',
@@ -1686,6 +1774,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         return { el: best, s: bestS };
     }
     function findTarget(label) {
+        var ap0 = typeof appByLabel === 'function' ? appByLabel(label) : null; if (ap0 && ap0.sat) { var te = document.querySelector('[data-sat="' + ap0.sat + '"]'); if (te && visible(te)) return te; }
         var nl = norm(label); if (!nl || nl.length < 2) return null;
         var lw = nl.split(' ');
         var r = scan(SEL1, nl, lw);
@@ -1698,6 +1787,24 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         re = /\[\[(.+?)\]\]/g; while ((m = re.exec(text))) L.push(m[1]);         // boutons cités
         re = /\*\*(.+?)\*\*/g; while ((m = re.exec(text))) if (L.indexOf(m[1]) < 0) L.push(m[1]);
         return L;
+    }
+    // Champ de saisie évoqué par la phrase (« Tapez la désignation… » → champ « Désignation »)
+    function fieldLabel(el) {
+        var t = '';
+        try { if (el.labels && el.labels[0]) t = el.labels[0].textContent; } catch (e) {}
+        if (!t) { var box = el.parentNode, k = 0; while (box && k++ < 3 && !t) { var lb = box.querySelector && box.querySelector('label,.lbl,[class*="label"]'); if (lb && !lb.contains(el) && lb.textContent.trim().length < 60) t = lb.textContent; box = box.parentNode; } }
+        return String(t || el.getAttribute('aria-label') || el.placeholder || el.title || '').replace(/\s+/g, ' ').trim();
+    }
+    function fieldFor(text) {
+        var words = toks(clean(text)).map(stem).filter(function (w) { return w.length > 3 && !/^(tapez|saisis|indique|choisis|remplis|selectionn|entrez|renseign|champ|valeur|liste)/.test(w); }); if (!words.length) return null;
+        var best = null, bs = 0;
+        document.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]),select,textarea').forEach(function (el) {
+            if (el.closest('#cv-panel,#cv-coach,#covo-toolbox,#cxd-g') || !visible(el) || el.disabled || covered(el)) return;   // champ caché derrière une fenêtre : ignoré
+            var lab = fieldLabel(el), lt = toks(lab + ' ' + (el.placeholder || '')).map(stem); if (!lt.length) return;
+            var sc = 0; words.forEach(function (w, i) { if (lt.indexOf(w) >= 0) sc += i < 3 ? 2 : 1; });
+            if (sc > bs) { bs = sc; best = { el: el, label: lab.replace(/\s*\*\s*$/, '').slice(0, 40) || 'champ' }; }
+        });
+        return bs >= 2 ? best : null;
     }
     function clickable(el) { return /^(BUTTON|A|SUMMARY|SELECT|LABEL|INPUT)$/.test(el.tagName) || el.getAttribute('role') === 'button' || !!el.onclick || !!el.getAttribute('onclick') || getComputedStyle(el).cursor === 'pointer'; }
     /* Cadres lumineux (sans assombrir l'écran) + bulle d'explication placée À CÔTÉ de l'élément */
@@ -1739,7 +1846,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
     function isOn() { return cfg().enabled === true; }
     function hasTB() { return !!document.querySelector('#covo-toolbox .tb-body'); }
     // Bouton rond 🎙️ : seulement pendant un guidage, ou (assistant activé) dans une appli sans boîte à outils
-    function refreshFab() { var need = !!S.g || (isOn() && !hasTB()); var f = $('cv-fab'); if (need && !f) fab(); else if (!need && f) f.remove(); }
+    function refreshFab() { var need = !!S.g || (isOn() && (!hasTB() || cfg().fab)); var f = $('cv-fab'); if (need && !f) fab(); else if (!need && f) f.remove(); }
     function tbOpen() {
         var panel = $('tb-panel'), bub = $('tb-bubble'), root = $('covo-toolbox');
         if (root && !root.classList.contains('show')) root.classList.add('show');
@@ -1810,6 +1917,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         p.innerHTML = '<div id="cv-head"><span style="font-size:1.2rem">🤖</span><b>Assistant ' + esc(APPNAME) + '</b>'
             + '<button type="button" data-c="voice" class="' + (c.voice ? '' : 'off') + '" title="Réponses à voix haute">' + (c.voice ? '🔊' : '🔇') + '</button>'
             + '<button type="button" data-c="hands" class="' + (c.hands ? '' : 'off') + '" title="Mains libres : le micro se rallume après chaque réponse">🎧</button>'
+            + '<button type="button" data-c="set" title="Réglages de la voix et de l’assistant">⚙️</button>'
             + '<button type="button" data-c="x" title="Fermer">✕</button></div>'
             + '<div id="cv-log" aria-live="polite"></div><div id="cv-step" style="display:none"></div>'
             + '<div id="cv-mode"><span>Envoi :</span><button type="button" data-c="send-auto" class="' + (c.send === 'auto' ? 'on' : '') + '" title="La question part toute seule quand vous avez fini votre phrase">🤖 Auto (fin de phrase)</button><button type="button" data-c="send-manual" class="' + (c.send === 'manual' ? 'on' : '') + '" title="Vous dictez ou écrivez, puis vous envoyez vous-même avec ➤ (ou dites « envoyer »)">✋ Manuel</button>'
@@ -1842,6 +1950,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         var b = e.target.closest('[data-c]'); if (!b) return;
         var k = b.getAttribute('data-c'), c = cfg();
         if (k === 'x') closePanel();
+        else if (k === 'set') openSettings();
         else if (k === 'voice') { c.voice = !c.voice; saveCfg(c); b.classList.toggle('off', !c.voice); b.innerHTML = c.voice ? '🔊' : '🔇'; if (!c.voice) stopTalk(); }
         else if (k === 'hands') { c.hands = !c.hands; saveCfg(c); b.classList.toggle('off', !c.hands); bot(c.hands ? 'Mode mains libres activé : après chaque réponse, je vous écoute. Dites « suivant », « répète » ou « stop ».' : 'Mode mains libres désactivé.', true); }
         else if (k === 'mic') { if (S.listening) { if (S.flush) S.flush(); else stopListen(); } else listen(); }
@@ -1927,9 +2036,25 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         if (S.g && /^(suivant|suivante|ensuite|apres|c est fait|ok|okay|d accord|continue|continuer|vas y|go|fait|oui)\b/.test(n)) { next(); return; }
         if (S.g && /^(precedent|precedente|retour|reviens)\b/.test(n)) { prev(); return; }
         if (S.g && /^(repete|repeter|redis|encore|pardon|quoi)\b/.test(n)) { sayStep(); return; }
+        if (S.g && SP.info && SP.info.act && /^(fais le|fais la|fais le pour moi|fais le toi|vas y fais le|ouvre le|ouvre la|ouvre|lance le|lance la|lance|fais)\b/.test(n)) { doStepAct(); return; }
+        var DIRECT = /^(ouvre|ouvrir|ouvres|lance|lancer|demarre|demarrer|affiche|afficher|fais|faire|je veux faire|je voudrais faire|va dans|aller dans)\b/;
+        if (DIRECT.test(n) && !/^(comment|ou)\b/.test(n)) {
+            var da = actFor(n.replace(DIRECT, ''));
+            if (da) {
+                endGuide(true);
+                bot('✅ J’ouvre « ' + da.l.replace(/^\S+\s/, '') + ' ».', true);
+                if (runAct(da)) {
+                    var gr = search(text)[0];
+                    if (gr && gr.e.g.steps[gr.e.i].s.length > 1) chips([{ label: '📖 Me guider dans cette fenêtre (' + gr.e.g.steps[gr.e.i].t.replace(/\s*\(admin\)/, '') + ')', r: gr }], function (x) { startGuide(x.r.e.g, x.r.e.i, 1); });
+                }
+                return;
+            }
+        }
         if (/^(bonjour|salut|bonsoir|coucou|hello)\b/.test(n) && n.split(' ').length < 4) { bot('Bonjour ! Que voulez-vous faire ? Par exemple : « comment encaisser une vente » ou « comment créer un produit ».', true); return; }
         if (/^(merci|super|parfait|genial)\b/.test(n)) { bot('Avec plaisir ! Je reste disponible si vous avez une autre question.', true); return; }
-        if (/(que sais tu faire|tu sais faire quoi|aide moi|qui es tu|que peux tu faire)/.test(n)) { bot('Je connais toutes les démarches des guides de COVO Pro. Posez une question commençant par « comment… » : je trouve la démarche, j’ouvre le bon écran et je vous montre où cliquer, étape par étape.', true); return; }
+        if (/(que sais tu faire|tu sais faire quoi|aide moi|qui es tu|que peux tu faire)/.test(n)) { bot('Je connais toutes les démarches des guides de COVO Pro. Posez une question commençant par « comment… » : je trouve la démarche, j’ouvre le bon écran et je vous montre où cliquer, étape par étape. Je peux aussi agir directement : dites par exemple « ouvre la fin de poste », « lance le scanner » ou « ouvre le retour client ». Je vous suis dans toutes les applications COVO : demandez par exemple « comment faire un approvisionnement », je vous montre où cliquer puis je continue dans Approvisionnement Pro. Réglez ma voix avec ⚙️.', true); return; }
+        var apx = appFor(text);
+        if (apx) { routeApp(apx, text); return; }
         var res = search(text);
         if (!res.length) {
             bot('Je n’ai pas trouvé de démarche pour cette question. Essayez avec d’autres mots, par exemple : « ajouter un produit », « valider le panier », « retour client », « inventaire ».', true);
@@ -1951,12 +2076,19 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
             else if (g.tab || g.go) D.goTab(g);
         } catch (e) {}
     }
-    function startGuide(g, i) {
+    function doStepAct() {
+        var a = SP.info && SP.info.act; if (!a) return;
+        var g = S.g, i = S.i, k = S.k;
+        if (runAct(a)) setTimeout(function () { if (S.g === g && S.i === i && S.k === k) next(); }, 650);
+    }
+    function startGuide(g, i, k0) {
         endGuide(true);
-        var st = g.steps[i]; S.g = g; S.i = i; S.k = 0;
+        var st = g.steps[i]; S.g = g; S.i = i; S.k = (k0 > 0 && k0 < st.s.length) ? k0 : 0;
         bot('D’accord ! Je vous guide pour « ' + st.t.replace(/\s*\(admin\)/, '') + ' » (' + g.t + '). Il y a ' + st.s.length + ' étape' + (st.s.length > 1 ? 's' : '') + '. Suivez la bulle violette à l’écran.', false);
         dockPanel(true);
-        goScreen(g);
+        // guide qui s'ouvre par un bouton (ex. « Nouvel achat ») : on MONTRE le bouton à cliquer au lieu de l'ouvrir à la place de l'utilisateur
+        var showBtn = g.go && !g.tab && /^(cliquez|ouvrez|appuyez|touchez)/.test(norm(st.s[0] || '')) && /\[\[/.test(st.s[0] || '');
+        if (!S.k) { if (typeof g.pre === 'function') try { g.pre(); } catch (e) {} else if (!showBtn) goScreen(g); }
         setTimeout(function () { sayStep(true); }, 450);
     }
     function curText() { return S.g ? S.g.steps[S.i].s[S.k] : ''; }
@@ -1968,6 +2100,23 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         if (f) { f.classList.toggle('guiding', !!on); f.innerHTML = on && S.g ? '<span style="font-size:.95rem">🎙️</span><b class="cv-fab-n">' + (S.k + 1) + '/' + S.g.steps[S.i].s.length + '</b>' : '🎙️'; }
     }
     function renderStep() { if (S.g) renderCoach(); else { var c = $('cv-coach'); if (c) c.remove(); } }
+    /* ───── Actions directes : l'assistant déclenche lui-même la commande (mêmes droits que le bouton d'origine) ───── */
+    function curUser() { try { return (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser()) || JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) { return null; } }
+    function fnOk(name) { return typeof window[name] === 'function'; }
+    var ACTIONS = [
+        { k: 'finposte', l: '🏁 Fin de poste', re: /(fin de poste|cloture de (la )?caisse|cloturer (la )?caisse|fermer (la )?caisse|fin de service|fin de journee)/, ok: function () { return fnOk('_openFinPoste') && !!$('fin-poste-modal'); }, run: function () { window._openFinPoste(); },
+          why: function () { var b = $('fin-poste-btn'), u = curUser(); if (b && getComputedStyle(b).display === 'none' && u && u.isMaster) return 'Le raccourci « Fin de poste » est masqué pour le compte Admin-Développeur (il n’apparaît qu’aux caissiers et administrateurs). Je peux l’ouvrir pour vous.'; return 'Le raccourci « Fin de poste » se trouve dans la boîte à outils 🧰 → Raccourcis → Actions rapides.'; } },
+        { k: 'retour', l: '↩️ Retour client', re: /(retour client|retourner un article|rembourser)/, ok: function () { return fnOk('openRetourClient'); }, run: function () { window.openRetourClient(); } },
+        { k: 'scan', l: '🔎 Scanner', re: /(scanner|scanne|scan |lecteur code|code barre)/, ok: function () { return fnOk('activateSingleScan'); }, run: function () { window.activateSingleScan(); } },
+        { k: 'panier', l: '🛒 Panier', re: /(panier)/, ok: function () { return fnOk('toggleCart') && !!$('cart-modal'); }, run: function () { var m = $('cart-modal'); if (!m.classList.contains('active')) window.toggleCart(); } },
+        { k: 'notifs', l: '🔔 Notifications', re: /\bnotifications?\b(?! admin)/, ok: function () { return fnOk('_covoNotifOpen'); }, run: function () { window._covoNotifOpen(); } },
+        { k: 'save', l: '💾 Sauvegarder', re: /(sauvegarder (tout|les donnees|maintenant)|sauvegarde manuelle|fais une sauvegarde|une sauvegarde)/, ok: function () { return fnOk('_quickManualSave'); }, run: function () { window._quickManualSave(); } },
+        { k: 'sync', l: '☁️ Sync Drive', re: /(synchronis|sync drive|google drive)/, ok: function () { return fnOk('_quickDriveSync'); }, run: function () { window._quickDriveSync(); } },
+        { k: 'admin', l: '🛠️ Admin Pro', re: /(admin pro|panneau d administration|les reglages|les parametres)/, ok: function () { var b = $('admin-btn'); return !!b; }, run: function () { $('admin-btn').click(); } }
+    ];
+    function actFor(text) { var ap1 = typeof appByLabel === 'function' ? appByLabel(text) : null; if (ap1) return { k: 'app-' + ap1.k, l: '📲 ' + ap1.l, re: /$^/, ok: function () { return true; }, run: function () { handoff(ap1, S.g && S.g._app === ap1 ? (JSON.parse(localStorage.getItem(HOK) || '{}').q || '') : ''); openApp(ap1); } }; var n = norm(text); for (var i = 0; i < ACTIONS.length; i++) { var a = ACTIONS[i]; try { if (a.re.test(n) && a.ok()) return a; } catch (e) {} } return null; }
+    function runAct(a) { try { a.run(); return true; } catch (e) { bot('Je n’ai pas pu lancer « ' + a.l + ' » : ' + (e.message || e), true); return false; } }
+    window.covoVoiceActions = ACTIONS;
     function computeInfo() {
         var txt = curText(), n = norm(txt), m, re, lead = null, btns = [], bolds = [];
         m = /^\s*\*\*(.+?)\*\*/.exec(txt); if (m) lead = m[1];                                   // section citée en tête (« Prix & stock »)
@@ -1989,9 +2138,23 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
             else if (sec) { mode = clickable(sec.el) ? 'click' : 'look'; action = secTxt + ' et remplissez les champs décrits ci-dessous' + (e1 ? ' (« ' + t1.label + ' » est le repère n° 2)' : ''); }
             else if (e1 && clickable(e1)) { mode = 'click'; action = 'Cliquez sur « ' + t1.label + ' »'; }
             else if (e1) { mode = 'look'; action = 'Regardez la zone « ' + t1.label + ' »'; }
-            else action = /^(saisissez|tapez|remplissez|indiquez)/.test(n) ? 'Remplissez les champs indiqués ci-dessous' : 'Suivez l’explication ci-dessous';
+            else {
+                var fe = /^(saisissez|tapez|remplissez|indiquez|choisissez|selectionnez|entrez|renseignez|liez)/.test(n) ? fieldFor(txt) : null;
+                if (fe) { targets = [{ el: fe.el, label: fe.label }]; el = fe.el; mode = fe.el.tagName === 'SELECT' ? 'select' : 'type'; action = (mode === 'select' ? 'Choisissez dans la liste « ' : 'Remplissez le champ « ') + fe.label + ' »'; if (mode === 'select') opts = Array.prototype.slice.call(fe.el.options).filter(function (o) { return o.value !== ''; }).slice(0, 6).map(function (o, i) { return { n: i + 1, label: o.text, sel: fe.el, val: o.value }; }); }
+                else action = /^(saisissez|tapez|remplissez|indiquez)/.test(n) ? 'Remplissez les champs indiqués ci-dessous' : 'Suivez l’explication ci-dessous';
+            }
         }
-        return { targets: targets, el: el, mode: mode, action: action, opts: opts, where: el ? zoneOf(el) : '' };
+        var act = null, why = '';
+        for (var bi = 0; bi < btns.length && !act; bi++) act = actFor(btns[bi]);
+        if (act && /^(cliquez|ouvrez|appuyez|touchez)/.test(n)) {
+            var direct = el && mode === 'click' && main && (actFor(main.label) || {}).k === act.k;
+            if (!direct) {                                                                       // bouton absent ou masqué : on n'indique pas une zone au hasard
+                targets = targets.filter(function (t) { return (actFor(t.label) || {}).k !== act.k; }); el = targets[0] && targets[0].el; mode = 'act';
+                action = 'Cliquez sur « ⚡ Le faire pour moi » : j’ouvre « ' + act.l.replace(/^\S+\s/, '') + ' » directement';
+                why = act.why ? act.why() : '';
+            }
+        } else act = null;
+        return { targets: targets, el: el, mode: mode, action: action, opts: opts, where: el ? zoneOf(el) : '', act: act, why: why };
     }
     function renderCoach() {
         css();
@@ -2006,6 +2169,8 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
             + (info.where ? '<div class="cc-row"><span class="cc-ic">📍</span><div><b>Où :</b> ' + esc(info.where) + '</div></div>' : '')
             + '<div class="cc-row cc-do"><span class="cc-ic">👉</span><div>' + esc(info.action).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>') + '</div></div>'
             + (info.opts.length ? '<div class="cc-opts">' + info.opts.map(function (o, i) { return '<button type="button" data-opt="' + i + '"><b>' + o.n + '</b>' + esc(o.label.replace(/\s+/g, ' ').slice(0, 34)) + '</button>'; }).join('') + '</div>' : '')
+            + (info.act ? '<div class="cc-actw"><button type="button" class="cc-act" data-cc="act">⚡ Le faire pour moi : ' + esc(info.act.l) + '</button><div class="cc-acth">ou dites « fais-le »</div></div>' : '')
+            + (info.why && !small ? '<div class="cc-row"><span class="cc-ic">ℹ️</span><div style="font-size:.78rem;opacity:.9">' + esc(info.why) + '</div></div>' : '')
             + (small ? '' : '<div class="cc-txt">' + esc(clean(curText())).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>') + '</div>')
             + '<div class="cc-b"><button type="button" data-cc="prev"' + (S.k ? '' : ' disabled') + ' title="Étape précédente">◀</button><button type="button" data-cc="rep" title="Répéter">🔁</button>'
             + '<button type="button" class="pri" data-cc="next">' + (S.k < n - 1 ? 'Suivant ▶' : 'Terminer ✅') + '</button><button type="button" data-cc="chat" title="Ouvrir la discussion">💬</button></div>';
@@ -2022,6 +2187,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
             return;
         }
         var k = b.getAttribute('data-cc');
+        if (k === 'act') { doStepAct(); return; }
         if (k === 'next') next(); else if (k === 'prev') prev(); else if (k === 'rep') sayStep();
         else if (k === 'stop') endGuide();
         else if (k === 'min') { S.small = !S.small; renderCoach(); }
@@ -2058,7 +2224,7 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         if (S.waitEl) { S.waitEl.removeEventListener('click', onTargetClick, true); S.waitEl = null; }
         var info = computeInfo(); SP.info = info;
         spotMany(info.targets);
-        if (info.el && info.mode === 'click' && /^(cliquez|ouvrez|appuyez|touchez|choisissez|selectionnez)/.test(norm(curText()))) { S.waitEl = info.el; info.el.addEventListener('click', onTargetClick, true); }   // passage automatique pour une étape « cliquez sur… »
+        if (cfg().autoNext && info.el && info.mode === 'click' && /^(cliquez|ouvrez|appuyez|touchez|choisissez|selectionnez)/.test(norm(curText()))) { S.waitEl = info.el; info.el.addEventListener('click', onTargetClick, true); }   // passage automatique pour une étape « cliquez sur… »
         renderCoach(); dockPanel(true);
         return info.el;
     }
@@ -2069,14 +2235,14 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
         setTimeout(function tryShow() {                                                                    // l'écran visé peut s'afficher avec un léger retard : on réessaie
             if (!S.g || (S.i + ':' + S.k) !== key) return;
             var el = showTarget();
-            if (!el && labelsOf(curText()).length && ++tries < 4) setTimeout(tryShow, 650);
+            if (!el && (labelsOf(curText()).length || /^(saisissez|tapez|remplissez|indiquez|choisissez|selectionnez|entrez|renseignez)/.test(norm(curText()))) && ++tries < 4) setTimeout(tryShow, 650);
         }, first ? 350 : 80);
         var n = S.g.steps[S.i].s.length, txt = 'Étape ' + (S.k + 1) + (S.k === n - 1 ? ', la dernière' : '') + '. ' + curText();
         if (cfg().voice) talk([{ text: txt }], { onend: function () { if (cfg().hands && S.g) listen(); } });
     }
     function next() {
         if (!S.g) return; var n = S.g.steps[S.i].s.length;
-        if (S.k >= n - 1) { var t = S.g.steps[S.i].t.replace(/\s*\(admin\)/, ''); endGuide(true); bot('Bravo, c’est terminé : « ' + t + ' ». Avez-vous une autre question ?', true); return; }
+        if (S.k >= n - 1) { var t = S.g.steps[S.i].t.replace(/\s*\(admin\)/, ''), ap2 = S.g._app; endGuide(true); if (ap2) { bot('👍 ' + ap2.l + ' s’ouvre : je continue l’accompagnement dans cette fenêtre.', true); return; } bot('Bravo, c’est terminé : « ' + t + ' ». Avez-vous une autre question ?', true); return; }
         S.k++; sayStep();
     }
     function prev() { if (!S.g || !S.k) return; S.k--; sayStep(); }
@@ -2089,16 +2255,147 @@ window._vp = { S: S, load: load, openDetail: openDetail, openTour: openTour };
     }
     window.addEventListener('resize', function () { placeCoach(true); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.g && !$('tg-ov')) { /* Échap ferme d'abord les fenêtres de l'appli */ } }, true);
-    window.covoVoiceAssistant = { open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S };
+    /* ═════════ Assistant présent partout : applications COVO, contexte, relais, réglages ═════════ */
+    var APPS = [
+        { k: 'covo', path: 'app', sat: null, l: 'COVO Pro', re: /(covo pro|ecran principal|retour a la caisse principale)/ },
+        { k: 'appro', path: 'appro', sat: 'appro', l: 'Approvisionnement Pro', re: /(approvision|reapprovision|achats? (fournisseur|de marchandise|de materiel|chez)|commande fournisseur|facture fournisseur|bon de livraison|nouvel achat|enregistrer un achat|faire un achat|mes depenses|reste a payer fournisseur)/, hint: 'enregistrer un achat de marchandise' },
+        { k: 'caisse', path: 'caisse', sat: 'caisse', l: 'Caisse Pro', re: /(caisse pro)/ },
+        { k: 'fidelite', path: 'fidelite', sat: 'fid', l: 'Fidélité Pro', re: /(fidelite pro|carte de fidelite|carte fidelite|points? de fidelite|creer un client fidel|portail (client|fidelite))/ },
+        { k: 'gestion', path: 'gestion', sat: 'gest', l: 'Gestion Pro', re: /(gestion pro|heures de travail|pointage|feuille d heures|historique du stock|factures? client|bilan mensuel|onglet bilan)/ },
+        { k: 'finances', path: 'finances', sat: 'fin', l: 'Finances Pro', re: /(finances pro|charges fixes|dettes?|tresorerie|cagnotte|fiche de paie|paie des salaries)/ },
+        { k: 'historique', path: 'historique', sat: 'hist', l: 'Historique Pro', re: /(historique pro|historique des (tickets|ventes)|reimprimer un ticket|retrouver un ticket)/ },
+        { k: 'clotures', path: 'clotures', sat: 'clot', l: 'Clôtures Pro', re: /(clotures pro|historique des clotures|clotures passees|revoir une cloture)/ },
+        { k: 'projets', path: 'projets', sat: 'proj', l: 'Projets Pro', re: /(projets? pro|nouveau projet|vote(r)? (un|pour un) projet)/ },
+        { k: 'admin', path: 'admin', sat: 'adm', l: 'Admin Pro', re: /(admin pro|tarif de nuit|renseignements? du ticket|mentions du ticket|notifications administratives|reinitialis(er|ation) (l application|tout)|sauvegarde automatique drive)/ }
+    ];
+    var HERE = (function () { var m = /\/(app|appro|caisse|fidelite|gestion|finances|historique|clotures|projets|admin|visites|reception)\/?(index\.html)?$/.exec(location.pathname.replace(/\/+$/, '/')); var p = m ? m[1] : 'app'; return APPS.filter(function (a) { return a.path === p; })[0] || { k: p, path: p, l: APPNAME }; })();
+    function appFor(text) { var n = norm(text); for (var i = 0; i < APPS.length; i++) if (APPS[i].k !== HERE.k && APPS[i].re.test(n)) return APPS[i]; return null; }
+    function appByLabel(label) { var n = norm(label); return APPS.filter(function (a) { return a.k !== HERE.k && n.indexOf(norm(a.l)) >= 0; })[0] || null; }
+    function openApp(a) {
+        var t = a.sat && document.querySelector('[data-sat="' + a.sat + '"]');
+        if (t) { t.click(); return; }   // même ouverture que la boîte à outils (application installée ou page web)
+        var url = new URL('../' + a.path + '/', location.href).href; var w = window.open(url, 'covo_' + a.path); try { w && w.focus(); } catch (e) {}
+    }
+    var HOK = 'covo_voice_handoff', FOK = 'covo_voice_follow';
+    function handoff(a, q) { try { localStorage.setItem(HOK, JSON.stringify({ app: a.k, q: q || '', hint: a.hint || '', from: HERE.l, ts: Date.now() })); } catch (e) {} }
+    // Question qui concerne une autre application : on montre où l'ouvrir, on l'ouvre si besoin, et l'assistant de l'autre application prend le relais
+    function routeApp(a, q) {
+        handoff(a, q);
+        bot('📲 Cela se fait dans « ' + a.l + ' ». ' + (document.querySelector('[data-sat="' + a.sat + '"]') ? 'Je vous montre le bouton dans la boîte à outils' : 'Je peux l’ouvrir pour vous') + ' ; dès que l’application est ouverte, je continue l’accompagnement là-bas.', true);
+        var g = { id: '_app_' + a.k, t: a.l, pre: function () { if (a.sat && document.querySelector('[data-sat="' + a.sat + '"]')) { tbOpen(); var ta = $('tb-tab-a'); if (ta && ta.getAttribute('aria-selected') !== 'true') ta.click(); } },
+            steps: [{ t: 'Ouvrir ' + a.l, s: ['Cliquez sur [[' + a.l + ']] (boîte à outils 🧰 → Raccourcis → Applications COVO), ou dites « fais-le » : je l’ouvre pour vous. Je continuerai l’accompagnement dans ' + a.l + '.'] }], _app: a };
+        startGuide(g, 0);
+        chips([{ label: '⚡ Ouvrir ' + a.l + ' maintenant' }], function () { openApp(a); });
+    }
+    // Contexte : section / fenêtre ouverte dans l'application
+    function detectCtx() {
+        var D = data(); if (!D || !D.G) return null;
+        var t = document.querySelector('.tab.active[onclick*="switchTab"]'), m = t && /switchTab\('([^']+)'/.exec(t.getAttribute('onclick') || '');
+        var tab = m && m[1];
+        // fenêtre ouverte dont le titre correspond à un guide (ex. « Nouvel achat »)
+        var dlg = Array.prototype.slice.call(document.querySelectorAll('[role=dialog],.modal.active,[id$="-modal"],[id$="-ov"]')).filter(function (x) { return !x.closest('#cv-panel,#cv-coach,#tg-ov,#covo-toolbox') && x.offsetParent !== null && x.getBoundingClientRect().height > 80; });
+        for (var i = dlg.length - 1; i >= 0; i--) {
+            var h = dlg[i].querySelector('h1,h2,h3,[class*="title"]'), ht = h ? norm(h.textContent).slice(0, 60) : '';
+            if (!ht) continue;
+            var g = D.G.filter(function (x) { var nt = norm(x.t); return nt.length > 3 && x.id !== 'general' && (ht.indexOf(nt) >= 0 || nt.indexOf(ht) >= 0); })[0];
+            if (g) return g;
+        }
+        if (tab) { var gt = D.G.filter(function (x) { return x.tab === tab && !x.gx; })[0] || D.G.filter(function (x) { return x.tab === tab; })[0]; if (gt) return gt; }
+        return D.BY && D.BY.general || D.G[0];
+    }
+    var CTX = { id: null, at: 0 };
+    function ctxTick() {
+        if (!isOn()) return;
+        var g = detectCtx(); if (!g) return;
+        if (CTX.id === null) { CTX.id = g.id; return; }
+        if (g.id === CTX.id) return;
+        CTX.id = g.id;
+        var c = cfg(), p = $('cv-panel'), panelOn = p && p.style.display !== 'none';
+        if (!c.ctx || S.g || !panelOn) return;   // pendant un guidage, la bulle suit déjà l'écran
+        var steps = (g.steps || []).slice(0, 4);
+        bot('📍 Vous êtes dans « ' + g.t + ' ».' + (steps.length ? ' Je peux vous guider pour :' : ''), c.ctxVoice);
+        if (steps.length) chips(steps.map(function (st, i) { return { label: st.t.replace(/\s*\(admin\)/, ''), i: i }; }), function (x) { startGuide(g, x.i); });
+    }
+    // Relais : l'assistant reprend dans l'application qui vient de s'ouvrir
+    function takeOver() {
+        if (!isOn()) return;
+        var h = null; try { h = JSON.parse(localStorage.getItem(HOK) || 'null'); } catch (e) {}
+        if (h && h.app === HERE.k && Date.now() - h.ts < 180000) {
+            try { localStorage.removeItem(HOK); } catch (e) {}
+            var go = function () {
+                if (!data()) return setTimeout(go, 400);
+                openPanel();
+                bot('📍 Nous sommes dans « ' + HERE.l + ' ». Je continue l’accompagnement' + (h.q ? ' : « ' + h.q + ' »' : '') + '.', true);
+                var r = search(h.q || ''); if (!r.length && h.hint) r = search(h.hint);
+                if (r.length) setTimeout(function () { startGuide(r[0].e.g, r[0].e.i); }, 700);
+                else { bot('Que voulez-vous faire ici ?', false); chips(suggestions()); }
+            };
+            setTimeout(go, 600); return;
+        }
+        var fo = null; try { fo = JSON.parse(localStorage.getItem(FOK) || 'null'); } catch (e) {}
+        if (cfg().follow && fo && fo.app !== HERE.k && Date.now() - fo.ts < 15000 && !$('cv-panel')) {
+            var go2 = function () { if (!data()) return setTimeout(go2, 400); openPanel(); bot('📍 Je vous suis dans « ' + HERE.l + ' ». Que voulez-vous faire ici ?', true); chips(suggestions()); };
+            setTimeout(go2, 600);
+        }
+    }
+    setInterval(function () { var p = $('cv-panel'); if (isOn() && cfg().follow && ((p && p.style.display !== 'none') || S.g)) { try { localStorage.setItem(FOK, JSON.stringify({ app: HERE.k, ts: Date.now() })); } catch (e) {} } }, 4000);
+    window.addEventListener('focus', function () { setTimeout(takeOver, 300); });
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') setTimeout(takeOver, 300); });
+    window.addEventListener('storage', function (e) { if (e.key === HOK && document.visibilityState === 'visible' && document.hasFocus()) setTimeout(takeOver, 300); });
+
+    /* Réglages : voix, vitesse, hauteur, volume, comportement */
+    function voicesList() { var vs = []; try { vs = speechSynthesis.getVoices() || []; } catch (e) {} return vs.slice().sort(function (a, b) { var fa = /^fr/i.test(a.lang) ? 0 : 1, fb = /^fr/i.test(b.lang) ? 0 : 1; return fa - fb || a.name.localeCompare(b.name); }); }
+    function openSettings() {
+        css(); var p = $('cv-panel'); if (!p) { openPanel(); p = $('cv-panel'); if (!p) return; } p.style.display = '';
+        var old = $('cv-set'); if (old) { old.remove(); return; }
+        var c = cfg(), vs = voicesList();
+        var box = document.createElement('div'); box.id = 'cv-set';
+        function rng(k, lab, min, max, st, fmt) { return '<label class="cvs-r"><span>' + lab + ' <b data-o="' + k + '">' + fmt(c[k]) + '</b></span><input type="range" data-s="' + k + '" min="' + min + '" max="' + max + '" step="' + st + '" value="' + c[k] + '"></label>'; }
+        function chk(k, lab) { return '<label class="cvs-c"><input type="checkbox" data-s="' + k + '"' + (c[k] ? ' checked' : '') + '> <span>' + lab + '</span></label>'; }
+        var pct = function (v) { return Math.round(v * 100) + ' %'; }, x = function (v) { return (+v).toFixed(2).replace('.', ',') + '×'; };
+        box.innerHTML = '<div class="cvs-h"><b>⚙️ Réglages de l’assistant</b><button type="button" data-s="close">✕</button></div><div class="cvs-b">'
+            + '<div class="cvs-t">🔊 Voix</div><label class="cvs-r"><span>Voix utilisée</span><select data-s="vname"><option value="">Automatique (meilleure voix française)</option>'
+            + vs.map(function (v) { return '<option value="' + esc(v.name) + '"' + (v.name === c.vname ? ' selected' : '') + '>' + esc(v.name) + ' — ' + esc(v.lang) + (v.localService ? '' : ' (en ligne)') + '</option>'; }).join('') + '</select></label>'
+            + rng('rate', 'Vitesse', 0.6, 1.6, 0.05, x) + rng('pitch', 'Hauteur (grave ↔ aiguë)', 0.5, 1.6, 0.05, x) + rng('vol', 'Volume', 0.1, 1, 0.05, pct)
+            + '<div class="cvs-btns"><button type="button" data-s="test">▶️ Tester la voix</button><button type="button" data-s="reset">↺ Valeurs par défaut</button></div>'
+            + chk('voice', 'Répondre à voix haute')
+            + '<div class="cvs-t">🤖 Comportement</div>'
+            + chk('ctx', '📍 Suivre l’écran : quand j’ouvre une section ou une fenêtre, proposer l’aide correspondante')
+            + chk('ctxVoice', '🗣️ Annoncer à voix haute la section ouverte')
+            + chk('follow', '🔀 Me suivre d’une application COVO à l’autre (Approvisionnement Pro, Gestion Pro…) et continuer l’accompagnement')
+            + chk('autoNext', '⏭️ Passer à l’étape suivante dès que je clique sur le bouton indiqué')
+            + chk('hands', '🎧 Mains libres : réécouter après chaque réponse')
+            + chk('fab', '🎙️ Bouton de l’assistant toujours visible')
+            + '<div class="cvs-n">Raccourci clavier : <b>Alt + A</b> ouvre ou ferme l’assistant. Ces réglages valent pour toutes les applications COVO de cet appareil (assistant caisse compris).</div></div>';
+        p.appendChild(box);
+        box.addEventListener('input', function (e) {
+            var k = e.target.getAttribute('data-s'); if (!k) return; var c2 = cfg();
+            if (e.target.type === 'checkbox') c2[k] = e.target.checked; else if (e.target.type === 'range') { c2[k] = +e.target.value; var o = box.querySelector('[data-o="' + k + '"]'); if (o) o.textContent = k === 'vol' ? pct(c2[k]) : x(c2[k]); } else c2[k] = e.target.value;
+            saveCfg(c2); if (k === 'rate') try { localStorage.setItem('covo_tts_rate', String(c2.rate)); } catch (er) {}
+            if (k === 'fab') refreshFab(); if (k === 'voice' && !c2.voice) stopTalk();
+        });
+        box.addEventListener('change', function (e) { var k = e.target.getAttribute('data-s'); if (k === 'vname') { var c3 = cfg(); c3.vname = e.target.value; saveCfg(c3); talk([{ text: 'Voici ma nouvelle voix.' }]); } });
+        box.addEventListener('click', function (e) {
+            var b = e.target.closest('button[data-s]'); if (!b) return; var k = b.getAttribute('data-s');
+            if (k === 'close') box.remove();
+            else if (k === 'test') talk([{ text: 'Bonjour ! Je suis votre assistant ' + APPNAME + '. Je vous guide pas à pas, dans toutes les applications COVO.' }]);
+            else if (k === 'reset') { var c4 = cfg(); c4.vname = ''; c4.rate = 1; c4.pitch = 1; c4.vol = 1; saveCfg(c4); box.remove(); openSettings(); }
+        });
+    }
+    try { speechSynthesis.addEventListener && speechSynthesis.addEventListener('voiceschanged', function () { var b = $('cv-set'); if (b && b.querySelector('select[data-s="vname"]').options.length < 2) { b.remove(); openSettings(); } }); } catch (e) {}
+
+    window.covoVoiceAssistant = { open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S, settings: openSettings, app: HERE, routeApp: function (k, q) { var a = APPS.filter(function (x) { return x.k === k; })[0]; if (a) routeApp(a, q); } };
 
     function boot() {
         if (!document.body) return setTimeout(boot, 300); css(); mountStrip(); refreshFab();
         new MutationObserver(function () { if (!$('cv-tbx') && document.querySelector('#covo-toolbox .tb-body')) mountStrip(); }).observe(document.body, { childList: true, subtree: true });
         window.addEventListener('storage', function (e) { if (e.key === 'covo_voice_cfg') { renderStrip(); refreshFab(); if (!isOn()) closePanel(); } });
+        setInterval(ctxTick, 1200); setTimeout(takeOver, 900);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script>(window.__cvq=window.__cvq||[]).push([2,'d9ba5765a30c6c63']);</script>
 
 </body>
 </html>

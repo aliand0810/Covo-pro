@@ -39,6 +39,18 @@ COVO Pro et tous ses satellites réunis dans **un seul dépôt**, comme Restaura
 - **Performances** : COVO Pro ≈ 9 fois moins de travail au repos (animations allégées, boucle « Promos fidélité »
   supprimée, boîte à outils), validation d'une vente ≈ 8 fois plus rapide, sauvegarde complète en fichier au plus
   toutes les 5 min ; Historique Pro paginé (100 tickets puis chargement au défilement) ; Gestion Pro allégée.
+- **Assistant vocal présent partout** : bouton 🎙️ sur toutes les applications ; il suit l'écran (section ou fenêtre ouverte)
+  et vous suit d'une application à l'autre (ex. « comment faire un approvisionnement » → il montre la tuile Approvisionnement Pro,
+  puis continue le guidage dans Approvisionnement Pro) ; encadre les boutons et les champs à remplir ; commandes directes
+  (« ouvre la fin de poste », « lance le scanner ») ; réglages ⚙️ : choix de la voix, vitesse, hauteur, volume, comportement.
+- **Assistant caisse 🩺 (COVO Pro et Caisse Pro)** : « Vérifier le panier » lit le récapitulatif (articles, total, remise,
+  client, mode de règlement) et permet de changer de mode à la voix (« passe en espèces ») ; en cas de blocage, il explique
+  la cause (montant illisible, virgule décalée, montant insuffisant, client manquant, plafond…) et accompagne la correction
+  à la voix ; activable pour certains caissiers seulement (Admin Pro → 🩺 Assistant caisse vocal).
+- **Journal « Articles annulés & paniers non validés »** sauvegardé automatiquement sur Google Drive et fusionné entre appareils.
+- **Compte staff** : bloc « 🔐 Compte staff » (connexion, changement du mot de passe) en tête d'Admin Pro.
+- **Mot de passe Admin-Développeur** : plus jamais en clair (ni dans le code, ni dans le navigateur, ni sur Drive) ;
+  empreinte PBKDF2-SHA256 salée, fragmentée et dispersée dans le code. **Changez le mot de passe après la mise en ligne.**
 - Précédemment : journal des articles annulés et alarme panier oublié, garde-fou montant, codes-barres créés,
   assistant vocal et lecture des guides, inventaire papier daté + DLC, alertes de sécurité de connexion (Licence Pro).
 

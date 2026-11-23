@@ -541,6 +541,36 @@ return tinf_uncompress;
 })();
 </script>
 <meta charset="UTF-8">
+<script>
+/* Journal « Articles annulés & paniers non validés » (covo_cart_audit) ↔ sauvegarde Google Drive :
+   le journal fait partie des données COVO, part avec chaque sauvegarde automatique et revient à la restauration
+   (fusion entrée par entrée : rien n'est perdu ni dupliqué, quel que soit l'appareil) */
+(function () {
+    if (window._covoCartAuditRestore) return;
+    var KEY = 'covo_cart_audit', MAX = 20000, SEND_MAX = 8000, DAYS = 180;
+    function load() { try { var v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+    function merge(a, b) {
+        var seen = {}, out = [];
+        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object') return; var id = r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); if (seen[id]) return; seen[id] = 1; out.push(r); });
+        out.sort(function (x, y) { return String(x.at || '') < String(y.at || '') ? -1 : String(x.at || '') > String(y.at || '') ? 1 : 0; });
+        return out.length > MAX ? out.slice(out.length - MAX) : out;
+    }
+    // Contenu envoyé sur Drive : les 180 derniers jours (8 000 entrées au plus) pour garder une sauvegarde légère
+    window._covoCartAuditPayload = function () {
+        var lim = new Date(Date.now() - DAYS * 864e5).toISOString(), L = load().filter(function (r) { return r && String(r.at || '') >= lim; });
+        return L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+    };
+    window._covoCartAuditRestore = function (remote) {
+        try {
+            if (!Array.isArray(remote) || !remote.length) return;
+            var local = load(), m = merge(local, remote);
+            if (m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
+        } catch (e) {}
+    };
+    window._covoCartAuditMerge = merge;
+})();
+</script>
+
 <style id="covo-frame-guard">html{visibility:hidden!important}</style>
 <script>/* anti-clickjacking : page affichée seulement si elle n'est pas intégrée par un AUTRE site (les fenêtres internes de la suite restent permises) */
 (function(){var ok=window.self===window.top;if(!ok){try{ok=window.top.location.origin===window.location.origin}catch(e){ok=false}}
@@ -577,7 +607,7 @@ if(ok){var g=document.getElementById('covo-frame-guard');if(g)g.parentNode.remov
         'covo_approvisionnements','covo_inv_categories','covo_ech_categories','covo_messages','covo_quick_links',
         'covo_caisse_historique','covo_bons_commande','covo_charges_fixes','covo_paiements','covo_dettes','covo_loyalty','covo_paie',
         'covo_cagnotte','covo_devis','covo_real_balance','covo_inventaires','covo_aw_panels','covo_modules_config',
-        'covo_inv_questions','covo_perm_admin_costprice','covo_admin_notifications'];
+        'covo_inv_questions','covo_perm_admin_costprice','covo_admin_notifications','covo_cart_audit'];
     var KEYSET = {};
     DATA_KEYS.forEach(function(k){ KEYSET[k] = 1; });
 
@@ -2774,6 +2804,7 @@ function _cpBuildFullBackupPayload() {
         covo_bons_commande: J('covo_bons_commande', []),
         covo_real_balance: J('covo_real_balance', {especes:0,cb:0,log:[]}),
         _version: 20,
+        covo_cart_audit: (typeof window._covoCartAuditPayload === 'function' ? window._covoCartAuditPayload() : []),
         _savedAt: new Date().toISOString(),
         covo_sales_history: sh,
         covo_inventaires: J('covo_inventaires', [])
@@ -2981,6 +3012,7 @@ function _cpApplyRestoreCore(data) {
     if (data.promoTypes)           localStorage.setItem('covo_promos', JSON.stringify(data.promoTypes));
     if (data.users)                localStorage.setItem('covo_users', JSON.stringify(data.users));
     if (data.salesHistory)         localStorage.setItem('covo_sales_history', JSON.stringify(data.salesHistory));
+    if (data.covo_cart_audit && typeof window._covoCartAuditRestore === 'function') window._covoCartAuditRestore(data.covo_cart_audit);
     if (data.appSettings)          localStorage.setItem('covo_settings', JSON.stringify(data.appSettings));
     if (data.nightTariffSettings)  localStorage.setItem('covo_night_tariff', JSON.stringify(data.nightTariffSettings));
     if (data.cashierPermissions)   localStorage.setItem('covo_cashier_permissions', JSON.stringify(data.cashierPermissions));
@@ -5743,7 +5775,7 @@ function cxResvRefreshUi() {
         o = document.createElement('div'); o.id = 'ca-hist';
         o.style.cssText = 'position:fixed;inset:0;z-index:100040;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow:auto';
         o.innerHTML = '<div style="background:var(--bg-main,var(--bg-card,#fff));color:var(--text-main,#222);width:100%;max-width:1100px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden">'
-            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"><div><div style="font-weight:900;font-size:1.1rem">🕘 Articles annulés & paniers non validés</div><div style="font-size:.76rem;opacity:.85">Tout article scanné puis retiré, panier vidé, ou panier abandonné (Caisse Pro + COVO Pro, sur cet appareil)</div></div><button type="button" data-a="x" style="border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:10px;width:36px;height:36px;font-size:1.1rem;cursor:pointer">✕</button></div>'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff"><div><div style="font-weight:900;font-size:1.1rem">🕘 Articles annulés & paniers non validés</div><div style="font-size:.76rem;opacity:.85">Tout article scanné puis retiré, panier vidé, ou panier abandonné (Caisse Pro + COVO Pro · sauvegardé automatiquement sur Google Drive)</div></div><button type="button" data-a="x" style="border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:10px;width:36px;height:36px;font-size:1.1rem;cursor:pointer">✕</button></div>'
             + '<div class="ca-body" style="padding:14px 18px"></div></div>';
         document.body.appendChild(o);
         o.addEventListener('click', function (e) { if (e.target === o) o.remove(); var a = e.target.closest('[data-a]'); if (!a) return; if (a.getAttribute('data-a') === 'x') o.remove(); if (a.getAttribute('data-a') === 'csv') csv(filtered());
@@ -5794,25 +5826,31 @@ function cxResvRefreshUi() {
         D.G.slice(1).concat(D.G.slice(0, 1)).forEach(function (g) { (g.steps || []).slice(0, 2).forEach(function (st) { if (/sauvegard|synchronis/i.test(st.t) && out.length < 4) return; if (out.length < 5) out.push('Comment ' + st.t.replace(/\s*\(.*?\)\s*$/, '').replace(/^./, function (c) { return c.toLowerCase(); }) + ' ?'); }); });
         return out;
     }
-    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem('covo_voice_cfg') || '{}') || {}; } catch (e) {} if (c.voice == null) c.voice = true; if (c.hands == null) c.hands = false; if (c.send !== 'manual') c.send = 'auto'; c.enabled = c.enabled === true; if (!(c.pause >= 800)) c.pause = 1500; return c; }
+    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem('covo_voice_cfg') || '{}') || {}; } catch (e) {} if (c.voice == null) c.voice = true; if (c.hands == null) c.hands = false; if (c.send !== 'manual') c.send = 'auto'; c.enabled = c.enabled === true; if (!(c.pause >= 800)) c.pause = 1500; if (!(c.rate >= 0.5 && c.rate <= 2)) { var r0 = +(localStorage.getItem('covo_tts_rate') || 1); c.rate = r0 >= 0.5 && r0 <= 2 ? r0 : 1; } if (!(c.pitch >= 0.3 && c.pitch <= 2)) c.pitch = 1; if (!(c.vol >= 0 && c.vol <= 1)) c.vol = 1; if (typeof c.vname !== 'string') c.vname = ''; ['ctx', 'ctxVoice', 'follow', 'fab', 'autoNext'].forEach(function (k) { if (c[k] == null) c[k] = true; }); return c; }
     function saveCfg(c) { try { localStorage.setItem('covo_voice_cfg', JSON.stringify(c)); } catch (e) {} }
 
     /* ───────────── Synthèse vocale ───────────── */
     var TTS = { q: [], on: false, btn: null };
-    function pickVoice() { var vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [], fr = vs.filter(function (v) { return /^fr/i.test(v.lang); }); return fr.find(function (v) { return /google|natural|neural|online/i.test(v.name); }) || fr.find(function (v) { return /fr-FR/i.test(v.lang); }) || fr[0] || null; }
-    function rate() { try { return +(localStorage.getItem('covo_tts_rate') || 1) || 1; } catch (e) { return 1; } }
+    function pickVoice() { var vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [], fr = vs.filter(function (v) { return /^fr/i.test(v.lang); }); var want = cfg().vname; if (want) { var w = vs.filter(function (v) { return v.name === want; })[0]; if (w) return w; } return fr.find(function (v) { return /google|natural|neural|online/i.test(v.name); }) || fr.find(function (v) { return /fr-FR/i.test(v.lang); }) || fr[0] || null; }
+    function rate() { return cfg().rate; }
+    function canSpeak() { try { return !navigator.userActivation || navigator.userActivation.hasBeenActive; } catch (e) { return true; } }
     function stopTalk() { try { speechSynthesis.cancel(); } catch (e) {} TTS.on = false; document.querySelectorAll('.cv-reading').forEach(function (e) { e.classList.remove('cv-reading'); }); if (TTS.btn) { TTS.btn.classList.remove('on'); if (TTS.btn._lab) TTS.btn.innerHTML = TTS.btn._lab; } TTS.btn = null; }
     // items : [{ text, el? }] — l'élément lu est surligné et amené à l'écran
     function talk(items, opts) {
         opts = opts || {};
         if (!window.speechSynthesis) { if (opts.onend) opts.onend(); return; }
+        if (!canSpeak()) {   // le navigateur bloque la voix avant le premier geste sur cette page : lecture au premier clic / touche
+            TTS.pending = [items, opts];
+            if (!TTS.wait) { TTS.wait = function () { ['pointerdown', 'keydown'].forEach(function (t) { document.removeEventListener(t, TTS.wait, true); }); TTS.wait = null; var pd = TTS.pending; TTS.pending = null; if (pd) setTimeout(function () { talk(pd[0], pd[1]); }, 60); }; ['pointerdown', 'keydown'].forEach(function (t) { document.addEventListener(t, TTS.wait, true); }); }
+            return;
+        }
         stopTalk(); TTS.on = true; TTS.btn = opts.btn || null;
         if (TTS.btn) { TTS.btn._lab = TTS.btn._lab || TTS.btn.innerHTML; TTS.btn.classList.add('on'); TTS.btn.innerHTML = '⏸️ Pause'; }
         var list = [], v = pickVoice(), r = rate();
         items.forEach(function (x) { if (!x || !speakable(x.text)) return; var parts = speakable(x.text).match(/[^.!?;:]+[.!?;:]*|[^.!?;:]+$/g) || [speakable(x.text)], buf = ''; parts.forEach(function (pt) { if ((buf + pt).length > 180 && buf) { list.push({ text: buf, el: x.el }); buf = ''; } buf += pt; }); if (buf.trim()) list.push({ text: buf, el: x.el }); });
         if (!list.length) { stopTalk(); if (opts.onend) opts.onend(); return; }
         list.forEach(function (it, i) {
-            var u = new SpeechSynthesisUtterance(it.text); u.lang = 'fr-FR'; if (v) u.voice = v; u.rate = r;
+            var u = new SpeechSynthesisUtterance(it.text); u.lang = (v && v.lang) || 'fr-FR'; if (v) try { u.voice = v; } catch (e) {} u.rate = r; var c9 = cfg(); u.pitch = c9.pitch; u.volume = c9.vol;
             u.onstart = function () { document.querySelectorAll('.cv-reading').forEach(function (e) { e.classList.remove('cv-reading'); }); if (it.el) { var d = it.el.closest && it.el.closest('details'); if (d) d.open = true; it.el.classList.add('cv-reading'); try { it.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} } };
             if (i === list.length - 1) u.onend = function () { var b = TTS.btn; stopTalk(); if (opts.onend) opts.onend(); };
             speechSynthesis.speak(u);
@@ -5835,6 +5873,9 @@ function cxResvRefreshUi() {
             '#cv-fab:hover{transform:scale(1.06)}#cv-fab.listen{animation:cvPulse 1s ease-in-out infinite}@keyframes cvPulse{50%{box-shadow:0 0 0 12px rgba(124,58,237,.25)}}',
             '#cv-panel{position:fixed;left:16px;bottom:80px;z-index:2147482001;width:min(380px,calc(100vw - 32px));max-height:min(620px,calc(100vh - 110px));display:flex;flex-direction:column;background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:1px solid var(--border-color,#e5e7eb);border-radius:18px;box-shadow:0 24px 70px rgba(0,0,0,.4);overflow:hidden;font-family:inherit}',
             '#cv-head{display:flex;align-items:center;gap:8px;padding:11px 12px;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff}#cv-head b{flex:1;font-size:.95rem}',
+            '#cv-set{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;background:var(--bg-card,#fff);border-radius:inherit;overflow:hidden}#cv-set .cvs-h{display:flex;align-items:center;gap:8px;padding:11px 12px;background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff}#cv-set .cvs-h b{flex:1}#cv-set .cvs-h button{border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:8px;width:30px;height:28px;cursor:pointer}',
+            '#cv-set .cvs-b{flex:1;overflow:auto;padding:8px 14px 14px;display:flex;flex-direction:column;gap:8px;font-size:.82rem}#cv-set .cvs-t{font-weight:900;font-size:.86rem;margin-top:6px;color:#7c3aed}#cv-set .cvs-r{display:flex;flex-direction:column;gap:4px}#cv-set .cvs-r span{display:flex;justify-content:space-between;font-weight:700}#cv-set select{padding:6px;border-radius:8px;border:1px solid var(--border-color,#d1d5db);background:var(--bg-card,#fff);color:inherit;font-size:.8rem}#cv-set input[type=range]{width:100%;accent-color:#7c3aed}',
+            '#cv-set .cvs-c{display:flex;gap:8px;align-items:flex-start;line-height:1.35;cursor:pointer}#cv-set .cvs-c input{margin-top:2px;accent-color:#7c3aed}#cv-set .cvs-btns{display:flex;gap:6px}#cv-set .cvs-btns button{flex:1;border:1.5px solid #7c3aed;background:transparent;color:#7c3aed;border-radius:9px;padding:7px;font-weight:800;cursor:pointer}#cv-set .cvs-n{font-size:.74rem;opacity:.75;line-height:1.45;margin-top:4px}#cv-panel{position:fixed}',
             '#cv-head button{border:none;background:rgba(255,255,255,.18);color:#fff;border-radius:9px;height:30px;min-width:30px;padding:0 8px;cursor:pointer;font-weight:800;font-size:.78rem}#cv-head button.off{opacity:.5}',
             '#cv-log{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-height:120px}',
             '.cv-m{max-width:88%;padding:8px 11px;border-radius:13px;font-size:.84rem;line-height:1.5;white-space:pre-wrap}.cv-m.me{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:4px}.cv-m.bot{align-self:flex-start;background:var(--bg-card-2,#f1f5f9);border-bottom-left-radius:4px}',
@@ -5868,6 +5909,7 @@ function cxResvRefreshUi() {
             '#cv-coach .cc-bar{height:4px;background:rgba(124,58,237,.15)}#cv-coach .cc-bar i{display:block;height:4px;background:#facc15}',
             '#cv-coach .cc-row{display:flex;gap:8px;align-items:flex-start;padding:8px 12px 0;font-size:.84rem;line-height:1.4}#cv-coach .cc-ic{font-size:1.05rem;line-height:1.2}',
             '#cv-coach .cc-do{font-weight:800;font-size:.92rem;color:var(--text-main,#111)}',
+            '#cv-coach .cc-actw{padding:9px 12px 0}#cv-coach .cc-act{width:100%;border:none;border-radius:10px;padding:10px 12px;font-weight:900;font-size:.88rem;cursor:pointer;color:#fff;background:linear-gradient(135deg,#f59e0b,#ea580c);box-shadow:0 4px 14px rgba(234,88,12,.35)}#cv-coach .cc-act:hover{filter:brightness(1.07)}#cv-coach .cc-acth{text-align:center;font-size:.7rem;opacity:.7;margin-top:3px}',
             '#cv-coach .cc-opts{display:flex;flex-direction:column;gap:5px;padding:8px 12px 0}#cv-coach .cc-opts button{display:flex;align-items:center;gap:8px;text-align:left;border:1.5px solid rgba(124,58,237,.45);background:rgba(124,58,237,.07);color:inherit;border-radius:10px;padding:6px 9px;font-size:.82rem;font-weight:700;cursor:pointer}',
             '#cv-coach .cc-opts button b{width:21px;height:21px;border-radius:50%;background:#7c3aed;color:#fff;font-size:.72rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}#cv-coach .cc-opts button:hover,#cv-coach .cc-opts button.on{background:#7c3aed;color:#fff}',
             '#cv-coach .cc-txt{margin:8px 12px 0;padding:7px 9px;border-radius:9px;background:var(--bg-card-2,#f1f5f9);font-size:.78rem;line-height:1.5;max-height:120px;overflow:auto;opacity:.92}',
@@ -5984,6 +6026,7 @@ function cxResvRefreshUi() {
         return { el: best, s: bestS };
     }
     function findTarget(label) {
+        var ap0 = typeof appByLabel === 'function' ? appByLabel(label) : null; if (ap0 && ap0.sat) { var te = document.querySelector('[data-sat="' + ap0.sat + '"]'); if (te && visible(te)) return te; }
         var nl = norm(label); if (!nl || nl.length < 2) return null;
         var lw = nl.split(' ');
         var r = scan(SEL1, nl, lw);
@@ -5996,6 +6039,24 @@ function cxResvRefreshUi() {
         re = /\[\[(.+?)\]\]/g; while ((m = re.exec(text))) L.push(m[1]);         // boutons cités
         re = /\*\*(.+?)\*\*/g; while ((m = re.exec(text))) if (L.indexOf(m[1]) < 0) L.push(m[1]);
         return L;
+    }
+    // Champ de saisie évoqué par la phrase (« Tapez la désignation… » → champ « Désignation »)
+    function fieldLabel(el) {
+        var t = '';
+        try { if (el.labels && el.labels[0]) t = el.labels[0].textContent; } catch (e) {}
+        if (!t) { var box = el.parentNode, k = 0; while (box && k++ < 3 && !t) { var lb = box.querySelector && box.querySelector('label,.lbl,[class*="label"]'); if (lb && !lb.contains(el) && lb.textContent.trim().length < 60) t = lb.textContent; box = box.parentNode; } }
+        return String(t || el.getAttribute('aria-label') || el.placeholder || el.title || '').replace(/\s+/g, ' ').trim();
+    }
+    function fieldFor(text) {
+        var words = toks(clean(text)).map(stem).filter(function (w) { return w.length > 3 && !/^(tapez|saisis|indique|choisis|remplis|selectionn|entrez|renseign|champ|valeur|liste)/.test(w); }); if (!words.length) return null;
+        var best = null, bs = 0;
+        document.querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]),select,textarea').forEach(function (el) {
+            if (el.closest('#cv-panel,#cv-coach,#covo-toolbox,#cxd-g') || !visible(el) || el.disabled || covered(el)) return;   // champ caché derrière une fenêtre : ignoré
+            var lab = fieldLabel(el), lt = toks(lab + ' ' + (el.placeholder || '')).map(stem); if (!lt.length) return;
+            var sc = 0; words.forEach(function (w, i) { if (lt.indexOf(w) >= 0) sc += i < 3 ? 2 : 1; });
+            if (sc > bs) { bs = sc; best = { el: el, label: lab.replace(/\s*\*\s*$/, '').slice(0, 40) || 'champ' }; }
+        });
+        return bs >= 2 ? best : null;
     }
     function clickable(el) { return /^(BUTTON|A|SUMMARY|SELECT|LABEL|INPUT)$/.test(el.tagName) || el.getAttribute('role') === 'button' || !!el.onclick || !!el.getAttribute('onclick') || getComputedStyle(el).cursor === 'pointer'; }
     /* Cadres lumineux (sans assombrir l'écran) + bulle d'explication placée À CÔTÉ de l'élément */
@@ -6037,7 +6098,7 @@ function cxResvRefreshUi() {
     function isOn() { return cfg().enabled === true; }
     function hasTB() { return !!document.querySelector('#covo-toolbox .tb-body'); }
     // Bouton rond 🎙️ : seulement pendant un guidage, ou (assistant activé) dans une appli sans boîte à outils
-    function refreshFab() { var need = !!S.g || (isOn() && !hasTB()); var f = $('cv-fab'); if (need && !f) fab(); else if (!need && f) f.remove(); }
+    function refreshFab() { var need = !!S.g || (isOn() && (!hasTB() || cfg().fab)); var f = $('cv-fab'); if (need && !f) fab(); else if (!need && f) f.remove(); }
     function tbOpen() {
         var panel = $('tb-panel'), bub = $('tb-bubble'), root = $('covo-toolbox');
         if (root && !root.classList.contains('show')) root.classList.add('show');
@@ -6108,6 +6169,7 @@ function cxResvRefreshUi() {
         p.innerHTML = '<div id="cv-head"><span style="font-size:1.2rem">🤖</span><b>Assistant ' + esc(APPNAME) + '</b>'
             + '<button type="button" data-c="voice" class="' + (c.voice ? '' : 'off') + '" title="Réponses à voix haute">' + (c.voice ? '🔊' : '🔇') + '</button>'
             + '<button type="button" data-c="hands" class="' + (c.hands ? '' : 'off') + '" title="Mains libres : le micro se rallume après chaque réponse">🎧</button>'
+            + '<button type="button" data-c="set" title="Réglages de la voix et de l’assistant">⚙️</button>'
             + '<button type="button" data-c="x" title="Fermer">✕</button></div>'
             + '<div id="cv-log" aria-live="polite"></div><div id="cv-step" style="display:none"></div>'
             + '<div id="cv-mode"><span>Envoi :</span><button type="button" data-c="send-auto" class="' + (c.send === 'auto' ? 'on' : '') + '" title="La question part toute seule quand vous avez fini votre phrase">🤖 Auto (fin de phrase)</button><button type="button" data-c="send-manual" class="' + (c.send === 'manual' ? 'on' : '') + '" title="Vous dictez ou écrivez, puis vous envoyez vous-même avec ➤ (ou dites « envoyer »)">✋ Manuel</button>'
@@ -6140,6 +6202,7 @@ function cxResvRefreshUi() {
         var b = e.target.closest('[data-c]'); if (!b) return;
         var k = b.getAttribute('data-c'), c = cfg();
         if (k === 'x') closePanel();
+        else if (k === 'set') openSettings();
         else if (k === 'voice') { c.voice = !c.voice; saveCfg(c); b.classList.toggle('off', !c.voice); b.innerHTML = c.voice ? '🔊' : '🔇'; if (!c.voice) stopTalk(); }
         else if (k === 'hands') { c.hands = !c.hands; saveCfg(c); b.classList.toggle('off', !c.hands); bot(c.hands ? 'Mode mains libres activé : après chaque réponse, je vous écoute. Dites « suivant », « répète » ou « stop ».' : 'Mode mains libres désactivé.', true); }
         else if (k === 'mic') { if (S.listening) { if (S.flush) S.flush(); else stopListen(); } else listen(); }
@@ -6225,9 +6288,25 @@ function cxResvRefreshUi() {
         if (S.g && /^(suivant|suivante|ensuite|apres|c est fait|ok|okay|d accord|continue|continuer|vas y|go|fait|oui)\b/.test(n)) { next(); return; }
         if (S.g && /^(precedent|precedente|retour|reviens)\b/.test(n)) { prev(); return; }
         if (S.g && /^(repete|repeter|redis|encore|pardon|quoi)\b/.test(n)) { sayStep(); return; }
+        if (S.g && SP.info && SP.info.act && /^(fais le|fais la|fais le pour moi|fais le toi|vas y fais le|ouvre le|ouvre la|ouvre|lance le|lance la|lance|fais)\b/.test(n)) { doStepAct(); return; }
+        var DIRECT = /^(ouvre|ouvrir|ouvres|lance|lancer|demarre|demarrer|affiche|afficher|fais|faire|je veux faire|je voudrais faire|va dans|aller dans)\b/;
+        if (DIRECT.test(n) && !/^(comment|ou)\b/.test(n)) {
+            var da = actFor(n.replace(DIRECT, ''));
+            if (da) {
+                endGuide(true);
+                bot('✅ J’ouvre « ' + da.l.replace(/^\S+\s/, '') + ' ».', true);
+                if (runAct(da)) {
+                    var gr = search(text)[0];
+                    if (gr && gr.e.g.steps[gr.e.i].s.length > 1) chips([{ label: '📖 Me guider dans cette fenêtre (' + gr.e.g.steps[gr.e.i].t.replace(/\s*\(admin\)/, '') + ')', r: gr }], function (x) { startGuide(x.r.e.g, x.r.e.i, 1); });
+                }
+                return;
+            }
+        }
         if (/^(bonjour|salut|bonsoir|coucou|hello)\b/.test(n) && n.split(' ').length < 4) { bot('Bonjour ! Que voulez-vous faire ? Par exemple : « comment encaisser une vente » ou « comment créer un produit ».', true); return; }
         if (/^(merci|super|parfait|genial)\b/.test(n)) { bot('Avec plaisir ! Je reste disponible si vous avez une autre question.', true); return; }
-        if (/(que sais tu faire|tu sais faire quoi|aide moi|qui es tu|que peux tu faire)/.test(n)) { bot('Je connais toutes les démarches des guides de COVO Pro. Posez une question commençant par « comment… » : je trouve la démarche, j’ouvre le bon écran et je vous montre où cliquer, étape par étape.', true); return; }
+        if (/(que sais tu faire|tu sais faire quoi|aide moi|qui es tu|que peux tu faire)/.test(n)) { bot('Je connais toutes les démarches des guides de COVO Pro. Posez une question commençant par « comment… » : je trouve la démarche, j’ouvre le bon écran et je vous montre où cliquer, étape par étape. Je peux aussi agir directement : dites par exemple « ouvre la fin de poste », « lance le scanner » ou « ouvre le retour client ». Je vous suis dans toutes les applications COVO : demandez par exemple « comment faire un approvisionnement », je vous montre où cliquer puis je continue dans Approvisionnement Pro. Réglez ma voix avec ⚙️.', true); return; }
+        var apx = appFor(text);
+        if (apx) { routeApp(apx, text); return; }
         var res = search(text);
         if (!res.length) {
             bot('Je n’ai pas trouvé de démarche pour cette question. Essayez avec d’autres mots, par exemple : « ajouter un produit », « valider le panier », « retour client », « inventaire ».', true);
@@ -6249,12 +6328,19 @@ function cxResvRefreshUi() {
             else if (g.tab || g.go) D.goTab(g);
         } catch (e) {}
     }
-    function startGuide(g, i) {
+    function doStepAct() {
+        var a = SP.info && SP.info.act; if (!a) return;
+        var g = S.g, i = S.i, k = S.k;
+        if (runAct(a)) setTimeout(function () { if (S.g === g && S.i === i && S.k === k) next(); }, 650);
+    }
+    function startGuide(g, i, k0) {
         endGuide(true);
-        var st = g.steps[i]; S.g = g; S.i = i; S.k = 0;
+        var st = g.steps[i]; S.g = g; S.i = i; S.k = (k0 > 0 && k0 < st.s.length) ? k0 : 0;
         bot('D’accord ! Je vous guide pour « ' + st.t.replace(/\s*\(admin\)/, '') + ' » (' + g.t + '). Il y a ' + st.s.length + ' étape' + (st.s.length > 1 ? 's' : '') + '. Suivez la bulle violette à l’écran.', false);
         dockPanel(true);
-        goScreen(g);
+        // guide qui s'ouvre par un bouton (ex. « Nouvel achat ») : on MONTRE le bouton à cliquer au lieu de l'ouvrir à la place de l'utilisateur
+        var showBtn = g.go && !g.tab && /^(cliquez|ouvrez|appuyez|touchez)/.test(norm(st.s[0] || '')) && /\[\[/.test(st.s[0] || '');
+        if (!S.k) { if (typeof g.pre === 'function') try { g.pre(); } catch (e) {} else if (!showBtn) goScreen(g); }
         setTimeout(function () { sayStep(true); }, 450);
     }
     function curText() { return S.g ? S.g.steps[S.i].s[S.k] : ''; }
@@ -6266,6 +6352,23 @@ function cxResvRefreshUi() {
         if (f) { f.classList.toggle('guiding', !!on); f.innerHTML = on && S.g ? '<span style="font-size:.95rem">🎙️</span><b class="cv-fab-n">' + (S.k + 1) + '/' + S.g.steps[S.i].s.length + '</b>' : '🎙️'; }
     }
     function renderStep() { if (S.g) renderCoach(); else { var c = $('cv-coach'); if (c) c.remove(); } }
+    /* ───── Actions directes : l'assistant déclenche lui-même la commande (mêmes droits que le bouton d'origine) ───── */
+    function curUser() { try { return (typeof window._covoCurrentUser === 'function' && window._covoCurrentUser()) || JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) { return null; } }
+    function fnOk(name) { return typeof window[name] === 'function'; }
+    var ACTIONS = [
+        { k: 'finposte', l: '🏁 Fin de poste', re: /(fin de poste|cloture de (la )?caisse|cloturer (la )?caisse|fermer (la )?caisse|fin de service|fin de journee)/, ok: function () { return fnOk('_openFinPoste') && !!$('fin-poste-modal'); }, run: function () { window._openFinPoste(); },
+          why: function () { var b = $('fin-poste-btn'), u = curUser(); if (b && getComputedStyle(b).display === 'none' && u && u.isMaster) return 'Le raccourci « Fin de poste » est masqué pour le compte Admin-Développeur (il n’apparaît qu’aux caissiers et administrateurs). Je peux l’ouvrir pour vous.'; return 'Le raccourci « Fin de poste » se trouve dans la boîte à outils 🧰 → Raccourcis → Actions rapides.'; } },
+        { k: 'retour', l: '↩️ Retour client', re: /(retour client|retourner un article|rembourser)/, ok: function () { return fnOk('openRetourClient'); }, run: function () { window.openRetourClient(); } },
+        { k: 'scan', l: '🔎 Scanner', re: /(scanner|scanne|scan |lecteur code|code barre)/, ok: function () { return fnOk('activateSingleScan'); }, run: function () { window.activateSingleScan(); } },
+        { k: 'panier', l: '🛒 Panier', re: /(panier)/, ok: function () { return fnOk('toggleCart') && !!$('cart-modal'); }, run: function () { var m = $('cart-modal'); if (!m.classList.contains('active')) window.toggleCart(); } },
+        { k: 'notifs', l: '🔔 Notifications', re: /\bnotifications?\b(?! admin)/, ok: function () { return fnOk('_covoNotifOpen'); }, run: function () { window._covoNotifOpen(); } },
+        { k: 'save', l: '💾 Sauvegarder', re: /(sauvegarder (tout|les donnees|maintenant)|sauvegarde manuelle|fais une sauvegarde|une sauvegarde)/, ok: function () { return fnOk('_quickManualSave'); }, run: function () { window._quickManualSave(); } },
+        { k: 'sync', l: '☁️ Sync Drive', re: /(synchronis|sync drive|google drive)/, ok: function () { return fnOk('_quickDriveSync'); }, run: function () { window._quickDriveSync(); } },
+        { k: 'admin', l: '🛠️ Admin Pro', re: /(admin pro|panneau d administration|les reglages|les parametres)/, ok: function () { var b = $('admin-btn'); return !!b; }, run: function () { $('admin-btn').click(); } }
+    ];
+    function actFor(text) { var ap1 = typeof appByLabel === 'function' ? appByLabel(text) : null; if (ap1) return { k: 'app-' + ap1.k, l: '📲 ' + ap1.l, re: /$^/, ok: function () { return true; }, run: function () { handoff(ap1, S.g && S.g._app === ap1 ? (JSON.parse(localStorage.getItem(HOK) || '{}').q || '') : ''); openApp(ap1); } }; var n = norm(text); for (var i = 0; i < ACTIONS.length; i++) { var a = ACTIONS[i]; try { if (a.re.test(n) && a.ok()) return a; } catch (e) {} } return null; }
+    function runAct(a) { try { a.run(); return true; } catch (e) { bot('Je n’ai pas pu lancer « ' + a.l + ' » : ' + (e.message || e), true); return false; } }
+    window.covoVoiceActions = ACTIONS;
     function computeInfo() {
         var txt = curText(), n = norm(txt), m, re, lead = null, btns = [], bolds = [];
         m = /^\s*\*\*(.+?)\*\*/.exec(txt); if (m) lead = m[1];                                   // section citée en tête (« Prix & stock »)
@@ -6287,9 +6390,23 @@ function cxResvRefreshUi() {
             else if (sec) { mode = clickable(sec.el) ? 'click' : 'look'; action = secTxt + ' et remplissez les champs décrits ci-dessous' + (e1 ? ' (« ' + t1.label + ' » est le repère n° 2)' : ''); }
             else if (e1 && clickable(e1)) { mode = 'click'; action = 'Cliquez sur « ' + t1.label + ' »'; }
             else if (e1) { mode = 'look'; action = 'Regardez la zone « ' + t1.label + ' »'; }
-            else action = /^(saisissez|tapez|remplissez|indiquez)/.test(n) ? 'Remplissez les champs indiqués ci-dessous' : 'Suivez l’explication ci-dessous';
+            else {
+                var fe = /^(saisissez|tapez|remplissez|indiquez|choisissez|selectionnez|entrez|renseignez|liez)/.test(n) ? fieldFor(txt) : null;
+                if (fe) { targets = [{ el: fe.el, label: fe.label }]; el = fe.el; mode = fe.el.tagName === 'SELECT' ? 'select' : 'type'; action = (mode === 'select' ? 'Choisissez dans la liste « ' : 'Remplissez le champ « ') + fe.label + ' »'; if (mode === 'select') opts = Array.prototype.slice.call(fe.el.options).filter(function (o) { return o.value !== ''; }).slice(0, 6).map(function (o, i) { return { n: i + 1, label: o.text, sel: fe.el, val: o.value }; }); }
+                else action = /^(saisissez|tapez|remplissez|indiquez)/.test(n) ? 'Remplissez les champs indiqués ci-dessous' : 'Suivez l’explication ci-dessous';
+            }
         }
-        return { targets: targets, el: el, mode: mode, action: action, opts: opts, where: el ? zoneOf(el) : '' };
+        var act = null, why = '';
+        for (var bi = 0; bi < btns.length && !act; bi++) act = actFor(btns[bi]);
+        if (act && /^(cliquez|ouvrez|appuyez|touchez)/.test(n)) {
+            var direct = el && mode === 'click' && main && (actFor(main.label) || {}).k === act.k;
+            if (!direct) {                                                                       // bouton absent ou masqué : on n'indique pas une zone au hasard
+                targets = targets.filter(function (t) { return (actFor(t.label) || {}).k !== act.k; }); el = targets[0] && targets[0].el; mode = 'act';
+                action = 'Cliquez sur « ⚡ Le faire pour moi » : j’ouvre « ' + act.l.replace(/^\S+\s/, '') + ' » directement';
+                why = act.why ? act.why() : '';
+            }
+        } else act = null;
+        return { targets: targets, el: el, mode: mode, action: action, opts: opts, where: el ? zoneOf(el) : '', act: act, why: why };
     }
     function renderCoach() {
         css();
@@ -6304,6 +6421,8 @@ function cxResvRefreshUi() {
             + (info.where ? '<div class="cc-row"><span class="cc-ic">📍</span><div><b>Où :</b> ' + esc(info.where) + '</div></div>' : '')
             + '<div class="cc-row cc-do"><span class="cc-ic">👉</span><div>' + esc(info.action).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>') + '</div></div>'
             + (info.opts.length ? '<div class="cc-opts">' + info.opts.map(function (o, i) { return '<button type="button" data-opt="' + i + '"><b>' + o.n + '</b>' + esc(o.label.replace(/\s+/g, ' ').slice(0, 34)) + '</button>'; }).join('') + '</div>' : '')
+            + (info.act ? '<div class="cc-actw"><button type="button" class="cc-act" data-cc="act">⚡ Le faire pour moi : ' + esc(info.act.l) + '</button><div class="cc-acth">ou dites « fais-le »</div></div>' : '')
+            + (info.why && !small ? '<div class="cc-row"><span class="cc-ic">ℹ️</span><div style="font-size:.78rem;opacity:.9">' + esc(info.why) + '</div></div>' : '')
             + (small ? '' : '<div class="cc-txt">' + esc(clean(curText())).replace(/« (.+?) »/g, '<span class="cv-k">$1</span>') + '</div>')
             + '<div class="cc-b"><button type="button" data-cc="prev"' + (S.k ? '' : ' disabled') + ' title="Étape précédente">◀</button><button type="button" data-cc="rep" title="Répéter">🔁</button>'
             + '<button type="button" class="pri" data-cc="next">' + (S.k < n - 1 ? 'Suivant ▶' : 'Terminer ✅') + '</button><button type="button" data-cc="chat" title="Ouvrir la discussion">💬</button></div>';
@@ -6320,6 +6439,7 @@ function cxResvRefreshUi() {
             return;
         }
         var k = b.getAttribute('data-cc');
+        if (k === 'act') { doStepAct(); return; }
         if (k === 'next') next(); else if (k === 'prev') prev(); else if (k === 'rep') sayStep();
         else if (k === 'stop') endGuide();
         else if (k === 'min') { S.small = !S.small; renderCoach(); }
@@ -6356,7 +6476,7 @@ function cxResvRefreshUi() {
         if (S.waitEl) { S.waitEl.removeEventListener('click', onTargetClick, true); S.waitEl = null; }
         var info = computeInfo(); SP.info = info;
         spotMany(info.targets);
-        if (info.el && info.mode === 'click' && /^(cliquez|ouvrez|appuyez|touchez|choisissez|selectionnez)/.test(norm(curText()))) { S.waitEl = info.el; info.el.addEventListener('click', onTargetClick, true); }   // passage automatique pour une étape « cliquez sur… »
+        if (cfg().autoNext && info.el && info.mode === 'click' && /^(cliquez|ouvrez|appuyez|touchez|choisissez|selectionnez)/.test(norm(curText()))) { S.waitEl = info.el; info.el.addEventListener('click', onTargetClick, true); }   // passage automatique pour une étape « cliquez sur… »
         renderCoach(); dockPanel(true);
         return info.el;
     }
@@ -6367,14 +6487,14 @@ function cxResvRefreshUi() {
         setTimeout(function tryShow() {                                                                    // l'écran visé peut s'afficher avec un léger retard : on réessaie
             if (!S.g || (S.i + ':' + S.k) !== key) return;
             var el = showTarget();
-            if (!el && labelsOf(curText()).length && ++tries < 4) setTimeout(tryShow, 650);
+            if (!el && (labelsOf(curText()).length || /^(saisissez|tapez|remplissez|indiquez|choisissez|selectionnez|entrez|renseignez)/.test(norm(curText()))) && ++tries < 4) setTimeout(tryShow, 650);
         }, first ? 350 : 80);
         var n = S.g.steps[S.i].s.length, txt = 'Étape ' + (S.k + 1) + (S.k === n - 1 ? ', la dernière' : '') + '. ' + curText();
         if (cfg().voice) talk([{ text: txt }], { onend: function () { if (cfg().hands && S.g) listen(); } });
     }
     function next() {
         if (!S.g) return; var n = S.g.steps[S.i].s.length;
-        if (S.k >= n - 1) { var t = S.g.steps[S.i].t.replace(/\s*\(admin\)/, ''); endGuide(true); bot('Bravo, c’est terminé : « ' + t + ' ». Avez-vous une autre question ?', true); return; }
+        if (S.k >= n - 1) { var t = S.g.steps[S.i].t.replace(/\s*\(admin\)/, ''), ap2 = S.g._app; endGuide(true); if (ap2) { bot('👍 ' + ap2.l + ' s’ouvre : je continue l’accompagnement dans cette fenêtre.', true); return; } bot('Bravo, c’est terminé : « ' + t + ' ». Avez-vous une autre question ?', true); return; }
         S.k++; sayStep();
     }
     function prev() { if (!S.g || !S.k) return; S.k--; sayStep(); }
@@ -6387,12 +6507,142 @@ function cxResvRefreshUi() {
     }
     window.addEventListener('resize', function () { placeCoach(true); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && S.g && !$('tg-ov')) { /* Échap ferme d'abord les fenêtres de l'appli */ } }, true);
-    window.covoVoiceAssistant = { open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S };
+    /* ═════════ Assistant présent partout : applications COVO, contexte, relais, réglages ═════════ */
+    var APPS = [
+        { k: 'covo', path: 'app', sat: null, l: 'COVO Pro', re: /(covo pro|ecran principal|retour a la caisse principale)/ },
+        { k: 'appro', path: 'appro', sat: 'appro', l: 'Approvisionnement Pro', re: /(approvision|reapprovision|achats? (fournisseur|de marchandise|de materiel|chez)|commande fournisseur|facture fournisseur|bon de livraison|nouvel achat|enregistrer un achat|faire un achat|mes depenses|reste a payer fournisseur)/, hint: 'enregistrer un achat de marchandise' },
+        { k: 'caisse', path: 'caisse', sat: 'caisse', l: 'Caisse Pro', re: /(caisse pro)/ },
+        { k: 'fidelite', path: 'fidelite', sat: 'fid', l: 'Fidélité Pro', re: /(fidelite pro|carte de fidelite|carte fidelite|points? de fidelite|creer un client fidel|portail (client|fidelite))/ },
+        { k: 'gestion', path: 'gestion', sat: 'gest', l: 'Gestion Pro', re: /(gestion pro|heures de travail|pointage|feuille d heures|historique du stock|factures? client|bilan mensuel|onglet bilan)/ },
+        { k: 'finances', path: 'finances', sat: 'fin', l: 'Finances Pro', re: /(finances pro|charges fixes|dettes?|tresorerie|cagnotte|fiche de paie|paie des salaries)/ },
+        { k: 'historique', path: 'historique', sat: 'hist', l: 'Historique Pro', re: /(historique pro|historique des (tickets|ventes)|reimprimer un ticket|retrouver un ticket)/ },
+        { k: 'clotures', path: 'clotures', sat: 'clot', l: 'Clôtures Pro', re: /(clotures pro|historique des clotures|clotures passees|revoir une cloture)/ },
+        { k: 'projets', path: 'projets', sat: 'proj', l: 'Projets Pro', re: /(projets? pro|nouveau projet|vote(r)? (un|pour un) projet)/ },
+        { k: 'admin', path: 'admin', sat: 'adm', l: 'Admin Pro', re: /(admin pro|tarif de nuit|renseignements? du ticket|mentions du ticket|notifications administratives|reinitialis(er|ation) (l application|tout)|sauvegarde automatique drive)/ }
+    ];
+    var HERE = (function () { var m = /\/(app|appro|caisse|fidelite|gestion|finances|historique|clotures|projets|admin|visites|reception)\/?(index\.html)?$/.exec(location.pathname.replace(/\/+$/, '/')); var p = m ? m[1] : 'app'; return APPS.filter(function (a) { return a.path === p; })[0] || { k: p, path: p, l: APPNAME }; })();
+    function appFor(text) { var n = norm(text); for (var i = 0; i < APPS.length; i++) if (APPS[i].k !== HERE.k && APPS[i].re.test(n)) return APPS[i]; return null; }
+    function appByLabel(label) { var n = norm(label); return APPS.filter(function (a) { return a.k !== HERE.k && n.indexOf(norm(a.l)) >= 0; })[0] || null; }
+    function openApp(a) {
+        var t = a.sat && document.querySelector('[data-sat="' + a.sat + '"]');
+        if (t) { t.click(); return; }   // même ouverture que la boîte à outils (application installée ou page web)
+        var url = new URL('../' + a.path + '/', location.href).href; var w = window.open(url, 'covo_' + a.path); try { w && w.focus(); } catch (e) {}
+    }
+    var HOK = 'covo_voice_handoff', FOK = 'covo_voice_follow';
+    function handoff(a, q) { try { localStorage.setItem(HOK, JSON.stringify({ app: a.k, q: q || '', hint: a.hint || '', from: HERE.l, ts: Date.now() })); } catch (e) {} }
+    // Question qui concerne une autre application : on montre où l'ouvrir, on l'ouvre si besoin, et l'assistant de l'autre application prend le relais
+    function routeApp(a, q) {
+        handoff(a, q);
+        bot('📲 Cela se fait dans « ' + a.l + ' ». ' + (document.querySelector('[data-sat="' + a.sat + '"]') ? 'Je vous montre le bouton dans la boîte à outils' : 'Je peux l’ouvrir pour vous') + ' ; dès que l’application est ouverte, je continue l’accompagnement là-bas.', true);
+        var g = { id: '_app_' + a.k, t: a.l, pre: function () { if (a.sat && document.querySelector('[data-sat="' + a.sat + '"]')) { tbOpen(); var ta = $('tb-tab-a'); if (ta && ta.getAttribute('aria-selected') !== 'true') ta.click(); } },
+            steps: [{ t: 'Ouvrir ' + a.l, s: ['Cliquez sur [[' + a.l + ']] (boîte à outils 🧰 → Raccourcis → Applications COVO), ou dites « fais-le » : je l’ouvre pour vous. Je continuerai l’accompagnement dans ' + a.l + '.'] }], _app: a };
+        startGuide(g, 0);
+        chips([{ label: '⚡ Ouvrir ' + a.l + ' maintenant' }], function () { openApp(a); });
+    }
+    // Contexte : section / fenêtre ouverte dans l'application
+    function detectCtx() {
+        var D = data(); if (!D || !D.G) return null;
+        var t = document.querySelector('.tab.active[onclick*="switchTab"]'), m = t && /switchTab\('([^']+)'/.exec(t.getAttribute('onclick') || '');
+        var tab = m && m[1];
+        // fenêtre ouverte dont le titre correspond à un guide (ex. « Nouvel achat »)
+        var dlg = Array.prototype.slice.call(document.querySelectorAll('[role=dialog],.modal.active,[id$="-modal"],[id$="-ov"]')).filter(function (x) { return !x.closest('#cv-panel,#cv-coach,#tg-ov,#covo-toolbox') && x.offsetParent !== null && x.getBoundingClientRect().height > 80; });
+        for (var i = dlg.length - 1; i >= 0; i--) {
+            var h = dlg[i].querySelector('h1,h2,h3,[class*="title"]'), ht = h ? norm(h.textContent).slice(0, 60) : '';
+            if (!ht) continue;
+            var g = D.G.filter(function (x) { var nt = norm(x.t); return nt.length > 3 && x.id !== 'general' && (ht.indexOf(nt) >= 0 || nt.indexOf(ht) >= 0); })[0];
+            if (g) return g;
+        }
+        if (tab) { var gt = D.G.filter(function (x) { return x.tab === tab && !x.gx; })[0] || D.G.filter(function (x) { return x.tab === tab; })[0]; if (gt) return gt; }
+        return D.BY && D.BY.general || D.G[0];
+    }
+    var CTX = { id: null, at: 0 };
+    function ctxTick() {
+        if (!isOn()) return;
+        var g = detectCtx(); if (!g) return;
+        if (CTX.id === null) { CTX.id = g.id; return; }
+        if (g.id === CTX.id) return;
+        CTX.id = g.id;
+        var c = cfg(), p = $('cv-panel'), panelOn = p && p.style.display !== 'none';
+        if (!c.ctx || S.g || !panelOn) return;   // pendant un guidage, la bulle suit déjà l'écran
+        var steps = (g.steps || []).slice(0, 4);
+        bot('📍 Vous êtes dans « ' + g.t + ' ».' + (steps.length ? ' Je peux vous guider pour :' : ''), c.ctxVoice);
+        if (steps.length) chips(steps.map(function (st, i) { return { label: st.t.replace(/\s*\(admin\)/, ''), i: i }; }), function (x) { startGuide(g, x.i); });
+    }
+    // Relais : l'assistant reprend dans l'application qui vient de s'ouvrir
+    function takeOver() {
+        if (!isOn()) return;
+        var h = null; try { h = JSON.parse(localStorage.getItem(HOK) || 'null'); } catch (e) {}
+        if (h && h.app === HERE.k && Date.now() - h.ts < 180000) {
+            try { localStorage.removeItem(HOK); } catch (e) {}
+            var go = function () {
+                if (!data()) return setTimeout(go, 400);
+                openPanel();
+                bot('📍 Nous sommes dans « ' + HERE.l + ' ». Je continue l’accompagnement' + (h.q ? ' : « ' + h.q + ' »' : '') + '.', true);
+                var r = search(h.q || ''); if (!r.length && h.hint) r = search(h.hint);
+                if (r.length) setTimeout(function () { startGuide(r[0].e.g, r[0].e.i); }, 700);
+                else { bot('Que voulez-vous faire ici ?', false); chips(suggestions()); }
+            };
+            setTimeout(go, 600); return;
+        }
+        var fo = null; try { fo = JSON.parse(localStorage.getItem(FOK) || 'null'); } catch (e) {}
+        if (cfg().follow && fo && fo.app !== HERE.k && Date.now() - fo.ts < 15000 && !$('cv-panel')) {
+            var go2 = function () { if (!data()) return setTimeout(go2, 400); openPanel(); bot('📍 Je vous suis dans « ' + HERE.l + ' ». Que voulez-vous faire ici ?', true); chips(suggestions()); };
+            setTimeout(go2, 600);
+        }
+    }
+    setInterval(function () { var p = $('cv-panel'); if (isOn() && cfg().follow && ((p && p.style.display !== 'none') || S.g)) { try { localStorage.setItem(FOK, JSON.stringify({ app: HERE.k, ts: Date.now() })); } catch (e) {} } }, 4000);
+    window.addEventListener('focus', function () { setTimeout(takeOver, 300); });
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') setTimeout(takeOver, 300); });
+    window.addEventListener('storage', function (e) { if (e.key === HOK && document.visibilityState === 'visible' && document.hasFocus()) setTimeout(takeOver, 300); });
+
+    /* Réglages : voix, vitesse, hauteur, volume, comportement */
+    function voicesList() { var vs = []; try { vs = speechSynthesis.getVoices() || []; } catch (e) {} return vs.slice().sort(function (a, b) { var fa = /^fr/i.test(a.lang) ? 0 : 1, fb = /^fr/i.test(b.lang) ? 0 : 1; return fa - fb || a.name.localeCompare(b.name); }); }
+    function openSettings() {
+        css(); var p = $('cv-panel'); if (!p) { openPanel(); p = $('cv-panel'); if (!p) return; } p.style.display = '';
+        var old = $('cv-set'); if (old) { old.remove(); return; }
+        var c = cfg(), vs = voicesList();
+        var box = document.createElement('div'); box.id = 'cv-set';
+        function rng(k, lab, min, max, st, fmt) { return '<label class="cvs-r"><span>' + lab + ' <b data-o="' + k + '">' + fmt(c[k]) + '</b></span><input type="range" data-s="' + k + '" min="' + min + '" max="' + max + '" step="' + st + '" value="' + c[k] + '"></label>'; }
+        function chk(k, lab) { return '<label class="cvs-c"><input type="checkbox" data-s="' + k + '"' + (c[k] ? ' checked' : '') + '> <span>' + lab + '</span></label>'; }
+        var pct = function (v) { return Math.round(v * 100) + ' %'; }, x = function (v) { return (+v).toFixed(2).replace('.', ',') + '×'; };
+        box.innerHTML = '<div class="cvs-h"><b>⚙️ Réglages de l’assistant</b><button type="button" data-s="close">✕</button></div><div class="cvs-b">'
+            + '<div class="cvs-t">🔊 Voix</div><label class="cvs-r"><span>Voix utilisée</span><select data-s="vname"><option value="">Automatique (meilleure voix française)</option>'
+            + vs.map(function (v) { return '<option value="' + esc(v.name) + '"' + (v.name === c.vname ? ' selected' : '') + '>' + esc(v.name) + ' — ' + esc(v.lang) + (v.localService ? '' : ' (en ligne)') + '</option>'; }).join('') + '</select></label>'
+            + rng('rate', 'Vitesse', 0.6, 1.6, 0.05, x) + rng('pitch', 'Hauteur (grave ↔ aiguë)', 0.5, 1.6, 0.05, x) + rng('vol', 'Volume', 0.1, 1, 0.05, pct)
+            + '<div class="cvs-btns"><button type="button" data-s="test">▶️ Tester la voix</button><button type="button" data-s="reset">↺ Valeurs par défaut</button></div>'
+            + chk('voice', 'Répondre à voix haute')
+            + '<div class="cvs-t">🤖 Comportement</div>'
+            + chk('ctx', '📍 Suivre l’écran : quand j’ouvre une section ou une fenêtre, proposer l’aide correspondante')
+            + chk('ctxVoice', '🗣️ Annoncer à voix haute la section ouverte')
+            + chk('follow', '🔀 Me suivre d’une application COVO à l’autre (Approvisionnement Pro, Gestion Pro…) et continuer l’accompagnement')
+            + chk('autoNext', '⏭️ Passer à l’étape suivante dès que je clique sur le bouton indiqué')
+            + chk('hands', '🎧 Mains libres : réécouter après chaque réponse')
+            + chk('fab', '🎙️ Bouton de l’assistant toujours visible')
+            + '<div class="cvs-n">Raccourci clavier : <b>Alt + A</b> ouvre ou ferme l’assistant. Ces réglages valent pour toutes les applications COVO de cet appareil (assistant caisse compris).</div></div>';
+        p.appendChild(box);
+        box.addEventListener('input', function (e) {
+            var k = e.target.getAttribute('data-s'); if (!k) return; var c2 = cfg();
+            if (e.target.type === 'checkbox') c2[k] = e.target.checked; else if (e.target.type === 'range') { c2[k] = +e.target.value; var o = box.querySelector('[data-o="' + k + '"]'); if (o) o.textContent = k === 'vol' ? pct(c2[k]) : x(c2[k]); } else c2[k] = e.target.value;
+            saveCfg(c2); if (k === 'rate') try { localStorage.setItem('covo_tts_rate', String(c2.rate)); } catch (er) {}
+            if (k === 'fab') refreshFab(); if (k === 'voice' && !c2.voice) stopTalk();
+        });
+        box.addEventListener('change', function (e) { var k = e.target.getAttribute('data-s'); if (k === 'vname') { var c3 = cfg(); c3.vname = e.target.value; saveCfg(c3); talk([{ text: 'Voici ma nouvelle voix.' }]); } });
+        box.addEventListener('click', function (e) {
+            var b = e.target.closest('button[data-s]'); if (!b) return; var k = b.getAttribute('data-s');
+            if (k === 'close') box.remove();
+            else if (k === 'test') talk([{ text: 'Bonjour ! Je suis votre assistant ' + APPNAME + '. Je vous guide pas à pas, dans toutes les applications COVO.' }]);
+            else if (k === 'reset') { var c4 = cfg(); c4.vname = ''; c4.rate = 1; c4.pitch = 1; c4.vol = 1; saveCfg(c4); box.remove(); openSettings(); }
+        });
+    }
+    try { speechSynthesis.addEventListener && speechSynthesis.addEventListener('voiceschanged', function () { var b = $('cv-set'); if (b && b.querySelector('select[data-s="vname"]').options.length < 2) { b.remove(); openSettings(); } }); } catch (e) {}
+
+    window.covoVoiceAssistant = { open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S, settings: openSettings, app: HERE, routeApp: function (k, q) { var a = APPS.filter(function (x) { return x.k === k; })[0]; if (a) routeApp(a, q); } };
 
     function boot() {
         if (!document.body) return setTimeout(boot, 300); css(); mountStrip(); refreshFab();
         new MutationObserver(function () { if (!$('cv-tbx') && document.querySelector('#covo-toolbox .tb-body')) mountStrip(); }).observe(document.body, { childList: true, subtree: true });
         window.addEventListener('storage', function (e) { if (e.key === 'covo_voice_cfg') { renderStrip(); refreshFab(); if (!isOn()) closePanel(); } });
+        setInterval(ctxTick, 1200); setTimeout(takeOver, 900);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
@@ -7357,6 +7607,468 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         setInterval(function () { var r = rec(), id = r ? String(r.id) : null; if (id !== lastId && C().length) { try { window.cxRenderCart(); } catch (e) {} } else if (!C().length) lastId = id; }, 700);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   ASSISTANT CAISSE — diagnostic automatique des blocages de validation
+   (Caisse Pro et panier de COVO Pro)
+   • Quand « Valider » ne passe pas, l'assistant analyse le panier, le mode de
+     règlement et les montants saisis, puis explique la cause exacte et propose
+     des corrections en un clic (montant exact, virgule décalée, passer en CB…)
+   • Bouton « 🩺 Pourquoi ça bloque ? » à côté de Valider + ligne d'aide en direct
+   • Ne modifie aucune règle d'encaissement : il observe et explique
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._cxDiag) return;
+    var IS_CX = typeof window.cxValidateSale === 'function' || !!document.getElementById('cx-validate-btn');
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+    function eur(n) { return (Math.round((+n || 0) * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function C() { try { return cart || []; } catch (e) { return []; } }
+    function fire(el) { try { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {} }
+    var METHOD_L = { cash: 'Espèces', cb: 'Carte bancaire', mixed: 'Paiement mixte', ticket: 'Ticket restaurant', credit: 'Crédit client', echel: 'Paiement en plusieurs fois' };
+
+    /* ───── Lecture de l'état de la caisse (adaptateur Caisse Pro / COVO Pro) ───── */
+    var A = IS_CX ? {
+        btn: function () { return $('cx-validate-btn'); },
+        method: function () { try { return cxPayMethod; } catch (e) { return ''; } },
+        total: function () { try { return +window.cxCartTotal(); } catch (e) { return NaN; } },
+        cash: 'cx-amount-received', mixed: [['cx-mixed-cb', 'Part CB'], ['cx-mixed-cash', 'Part espèces']], mixedCash: 'cx-mixed-cash',
+        client: function () { try { return window.cxGetPickedClient ? window.cxGetPickedClient() : null; } catch (e) { return null; } },
+        setMethod: function (m) { if (typeof window.cxSelectPayMethod === 'function') window.cxSelectPayMethod(m); },
+        validate: function () { window.cxValidateSale(); },
+        lineTotal: function (it) { return (+it.price) * (+it.quantity || +it.qty || 0); }
+    } : {
+        btn: function () { return document.querySelector('button[onclick="validateSale()"]'); },
+        method: function () { var s = $('payment-method'); return s ? s.value : ''; },
+        total: function () {
+            var t = C().reduce(function (s, it) { return s + (typeof window._cartLineTotal === 'function' ? window._cartLineTotal(it) : (+it.price) * (+it.quantity || 0)); }, 0);
+            var d = (window._ltyRed && window._ltyRed.euros > 0) ? Math.min(window._ltyRed.euros, t) : 0;
+            return Math.max(0, t - d);
+        },
+        cash: 'amount-received', mixed: [['mixed-cb', 'Part CB'], ['mixed-cash', 'Part espèces'], ['mixed-ticket', 'Part ticket resto']], mixedCash: 'mixed-cash',
+        client: function () { return null; },
+        setMethod: function (m) { var s = $('payment-method'); if (!s) return; s.value = m; if (typeof window.togglePaymentInputs === 'function') window.togglePaymentInputs(); fire(s); },
+        validate: function () { window.validateSale(); },
+        lineTotal: function (it) { return typeof window._cartLineTotal === 'function' ? window._cartLineTotal(it) : (+it.price) * (+it.quantity || 0); }
+    };
+
+    /* Lecture d'un champ montant : distingue vide, saisie illisible (deux virgules, lettre…) et nombre */
+    function readAmt(id) {
+        var el = $(id); if (!el) return { el: null, state: 'absent', v: 0 };
+        if (el.validity && el.validity.badInput) return { el: el, state: 'bad', v: NaN };
+        var raw = String(el.value || '').trim();
+        if (raw === '') return { el: el, state: 'empty', v: 0 };
+        var v = parseFloat(raw.replace(',', '.'));
+        if (!isFinite(v)) return { el: el, state: 'bad', v: NaN };
+        return { el: el, state: v < 0 ? 'neg' : 'ok', v: v };
+    }
+    function setAmt(id, v) { var el = $(id); if (!el) return; el.value = (Math.round(v * 100) / 100).toFixed(2); fire(el); try { el.focus(); } catch (e) {} }
+    function nextBills(total) { var out = []; [5, 10, 20, 50, 100].forEach(function (b) { var r = Math.ceil((total + 0.0001) / b) * b; if (r > total + 0.001 && out.indexOf(r) < 0 && out.length < 3) out.push(r); }); return out; }
+    function near(a, b) { return Math.abs(a - b) < 0.005; }
+
+    /* ───── Diagnostic : liste des problèmes qui empêchent la validation ───── */
+    function diagnose(captured) {
+        var P = [], items = C(), method = A.method(), total = A.total(), fixes;
+        function add(sev, title, why, how, fx, tgt) { P.push({ sev: sev, title: title, why: why, how: how, fixes: fx || [], tgt: tgt || null }); }
+        if (!items.length) { add('block', 'Le panier est vide', 'Aucun article n’est dans le panier : il n’y a rien à encaisser.', 'Ajoutez un article (clic sur un produit ou scan du code-barres), puis validez.'); return P; }
+        items.forEach(function (it) {
+            var q = +(it.quantity != null ? it.quantity : it.qty), pr = +it.price, nm = String(it.name || 'Article').replace(' 🏷️', '');
+            if (!isFinite(pr)) add('block', 'Prix illisible : « ' + nm + ' »', 'Le prix de cet article n’est pas un nombre : le total du panier ne peut pas être calculé.', 'Retirez l’article du panier puis corrigez son prix dans la fiche produit.');
+            else if (pr < 0) add('warn', 'Prix négatif : « ' + nm + ' » (' + eur(pr) + ')', 'Un prix négatif fait baisser le total, ce qui ressemble à une erreur de saisie.', 'Vérifiez le prix dans la fiche produit.');
+            if (!isFinite(q) || q <= 0) add('block', 'Quantité invalide : « ' + nm + ' »', 'La quantité (' + esc(it.quantity) + ') doit être supérieure à zéro.', 'Corrigez la quantité dans le panier ou retirez l’article.');
+        });
+        if (!isFinite(total)) { add('block', 'Total du panier impossible à calculer', 'Un des articles a un prix ou une quantité illisible.', 'Corrigez l’article signalé ci-dessus.'); return P; }
+        if (!method) add('block', 'Aucun mode de règlement choisi', 'La caisse ne sait pas comment le client paie.', 'Choisissez Espèces, Carte, Mixte…');
+
+        if (method === 'cash') {
+            var r = readAmt(A.cash), miss = total - r.v;
+            var billFx = nextBills(total).map(function (b) { return { label: 'Le client donne ' + eur(b), run: function () { setAmt(A.cash, b); } }; });
+            var exact = { label: 'Montant exact : ' + eur(total), run: function () { setAmt(A.cash, total); } };
+            var toCb = { label: '💳 Passer en carte bancaire', run: function () { A.setMethod('cb'); } };
+            if (r.state === 'bad') add('block', 'Montant en espèces illisible', 'Le champ « Montant reçu » contient une saisie qui n’est pas un nombre (par exemple deux virgules « 12,5,0 », un point et une virgule, une lettre ou un espace). La caisse le lit comme <b>vide</b>, d’où le refus « Montant reçu insuffisant ».', 'Effacez le champ et retapez le montant avec une seule virgule, par exemple <b>' + eur(total).replace(' €', '') + '</b>.', [{ label: '🧹 Effacer le champ', run: function () { var el = $(A.cash); el.value = ''; fire(el); el.focus(); } }, exact].concat(billFx), A.cash);
+            else if (r.state === 'empty') add('block', 'Montant reçu non saisi', 'En paiement espèces, il faut indiquer la somme remise par le client pour calculer la monnaie. Le champ « Montant reçu » est vide.', 'Saisissez la somme reçue (au moins ' + eur(total) + ') ou utilisez un bouton ci-dessous.', [exact].concat(billFx, [toCb]), A.cash);
+            else if (r.state === 'neg') add('block', 'Montant reçu négatif (' + eur(r.v) + ')', 'Une somme reçue ne peut pas être négative : un signe « - » a été tapé.', 'Retirez le signe moins.', [{ label: 'Corriger : ' + eur(Math.abs(r.v)), run: function () { setAmt(A.cash, Math.abs(r.v)); } }, exact], A.cash);
+            else if (r.v > 100000 || r.v - total >= 1000) add('block', 'Montant reçu anormal : ' + eur(r.v), 'Ce montant est beaucoup trop élevé pour le panier (' + eur(total) + ') : un code-barres a probablement été scanné dans le champ montant, ou des zéros ont été ajoutés.' + (near(r.v / 100, total) ? ' Il correspond exactement au total × 100 : la virgule a été oubliée.' : ''), 'Ressaisissez la somme réellement remise par le client.', (near(r.v / 100, total) || near(r.v / 10, total) ? [{ label: 'Corriger la virgule : ' + eur(total), run: function () { setAmt(A.cash, total); } }] : []).concat([exact], billFx), A.cash);
+            else if (r.v === 0) add('block', 'Montant reçu égal à 0', 'Le champ indique 0 € : la caisse considère qu’aucune somme n’a été remise.', 'Saisissez la somme donnée par le client.', [exact].concat(billFx), A.cash);
+            else if (miss > 0.004) {
+                var shift = [10, 100].filter(function (k) { return near(r.v * k, total); })[0];
+                add('block', 'Il manque ' + eur(miss) + ' en espèces', 'Montant reçu <b>' + eur(r.v) + '</b> pour un total à payer de <b>' + eur(total) + '</b> : la somme saisie ne couvre pas le panier.' + (shift ? ' <br>👉 La saisie vaut exactement le total ÷ ' + shift + ' : la <b>virgule est mal placée</b> (ex. « ' + r.v.toLocaleString('fr-FR') + ' » au lieu de « ' + total.toLocaleString('fr-FR') + ' »).' : ''), shift ? 'La virgule est mal placée : tapez <b>' + total.toLocaleString('fr-FR', { minimumFractionDigits: 2 }) + '</b> au lieu de ' + r.v.toLocaleString('fr-FR') + ', ou touchez « Corriger la virgule ».' : 'Demandez le complément au client, corrigez la saisie, ou encaissez le reste par carte (paiement mixte).', (shift ? [{ label: 'Corriger la virgule : ' + eur(total), run: function () { setAmt(A.cash, total); } }] : []).concat([exact], billFx, [{ label: '🔀 Passer en paiement mixte', run: function () { A.setMethod('mixed'); setTimeout(function () { setAmt(A.mixedCash, r.v); }, 150); } }]), A.cash);
+            } else if (miss > 0 && miss <= 0.004) add('warn', 'Écart d’arrondi (' + (miss * 100).toFixed(3) + ' centime)', 'Le montant reçu est égal au total au centime près, mais le calcul interne garde des décimales cachées.', 'Saisissez le montant exact avec le bouton ci-dessous.', [exact], A.cash);
+        } else if (method === 'mixed') {
+            var sum = 0, bad = [];
+            A.mixed.forEach(function (f) { var x = readAmt(f[0]); if (x.state === 'bad') bad.push(f[1]); else if (x.state === 'neg') bad.push(f[1] + ' (négatif)'); else sum += x.v; });
+            if (bad.length) add('block', 'Saisie illisible : ' + bad.join(', '), 'Ce champ contient une saisie qui n’est pas un nombre valide (deux virgules, lettre, signe moins…). La caisse le compte comme 0 €.', 'Effacez et retapez le montant avec une seule virgule.', A.mixed.filter(function (f) { return bad.join(',').indexOf(f[1]) >= 0; }).map(function (f) { return { label: '🧹 Effacer « ' + f[1] + ' »', run: function () { var el = $(f[0]); el.value = ''; fire(el); el.focus(); } }; }), (A.mixed.filter(function (f) { return bad.join(',').indexOf(f[1]) >= 0; })[0] || [A.mixedCash])[0]);
+            var m2 = total - sum;
+            if (m2 > 0.004) {
+                var rest = readAmt(A.mixedCash).v || 0;
+                add('block', 'Il manque ' + eur(m2) + ' dans le paiement mixte', 'Les parts saisies totalisent <b>' + eur(sum) + '</b> (' + A.mixed.map(function (f) { var x = readAmt(f[0]); return f[1] + ' ' + (x.state === 'ok' ? eur(x.v) : '—'); }).join(' · ') + ') pour un total de <b>' + eur(total) + '</b>.', 'Complétez une des parts pour atteindre le total.', [{ label: 'Compléter en espèces (+' + eur(m2) + ')', run: function () { setAmt(A.mixedCash, rest + m2); } }], A.mixedCash);
+            }
+        } else if (method === 'credit' || method === 'echel') {
+            var cl = A.client();
+            if (IS_CX && !cl) add('block', 'Aucun client sélectionné', 'Une vente ' + (method === 'credit' ? 'à crédit' : 'en plusieurs fois') + ' doit être rattachée à un client fidélité, pour savoir qui doit la somme.', 'Recherchez le client (nom, téléphone ou carte) dans le bloc client du panier, ou scannez sa carte.', [], 'cx-client-search');
+            if (cl && method === 'credit') {
+                var lim = +(cl.creditLimit || 0), due = +(cl.credit || 0);
+                if (lim > 0 && due + total > lim + 0.001) add('block', 'Plafond de crédit dépassé', 'Le client doit déjà <b>' + eur(due) + '</b> ; avec ce panier (' + eur(total) + ') il devrait <b>' + eur(due + total) + '</b>, au-delà de son plafond de <b>' + eur(lim) + '</b>.', 'Encaissez une partie maintenant (paiement mixte / espèces), ou augmentez son plafond dans Fidélité Pro.', [{ label: '💶 Passer en espèces', run: function () { A.setMethod('cash'); } }]);
+            }
+        }
+        /* Message de refus émis par la caisse et non couvert ci-dessus */
+        if (captured && captured.length && !P.some(function (p) { return p.sev === 'block'; })) {
+            var m = captured[captured.length - 1], t = 'La caisse a refusé la validation', why = 'Message affiché : « ' + esc(m) + ' ».', how = 'Corrigez le point indiqué puis validez à nouveau.';
+            if (/sumup|terminal/i.test(m)) { t = 'Paiement carte non abouti (terminal SumUp)'; how = 'Vérifiez que le terminal est allumé et connecté, réessayez, ou choisissez un autre mode de règlement.'; }
+            else if (/consultation seule|lecture seule/i.test(m)) { t = 'Compte en consultation seule'; how = 'Ce compte n’a pas le droit d’enregistrer des ventes : connectez-vous avec un compte caissier.'; }
+            else if (/titulaire|identit/i.test(m)) { t = 'Vérification du titulaire de la carte non validée'; how = 'Faites confirmer l’identité du titulaire de la carte fidélité, ou retirez le client de la vente.'; }
+            else if (/client/i.test(m)) { t = 'Client manquant'; how = 'Sélectionnez un client fidélité dans le panier.'; }
+            else if (/anormal|code-barres/i.test(m)) { t = 'Montant reçu anormal'; how = 'Un code-barres a sûrement été scanné dans le champ montant : ressaisissez la somme reçue.'; }
+            add('block', t, why, how);
+        }
+        return P;
+    }
+    window._cxDiag = { diagnose: function () { return diagnose([]); } };
+
+    /* ───── Fenêtre de l'assistant ───── */
+    function css() {
+        if ($('cxd-css')) return;
+        var s = document.createElement('style'); s.id = 'cxd-css';
+        s.textContent = '#cxd-ov{position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:16px;animation:cxdF .15s}@keyframes cxdF{from{opacity:0}}'
+            + '#cxd-box{width:min(460px,100%);max-height:88vh;overflow:auto;background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.35);font-family:inherit}'
+            + '#cxd-box .h{display:flex;align-items:center;gap:10px;padding:14px 16px;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff;border-radius:16px 16px 0 0}#cxd-box .h b{font-size:1rem}#cxd-box .h small{display:block;font-size:.74rem;opacity:.9}#cxd-box .h button{margin-left:auto;border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:1rem}'
+            + '#cxd-box .ctx{display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px 0;font-size:.76rem}#cxd-box .ctx span{background:var(--bg-card-2,#f1f5f9);border-radius:20px;padding:3px 10px;font-weight:700}'
+            + '#cxd-box .p{margin:10px 16px 0;border-radius:12px;border:1.5px solid #fecaca;background:rgba(239,68,68,.06);padding:11px 12px}#cxd-box .p.warn{border-color:#fde68a;background:rgba(245,158,11,.08)}#cxd-box .p.ok{border-color:#bbf7d0;background:rgba(34,197,94,.08)}'
+            + '#cxd-box .p .t{font-weight:900;font-size:.92rem;margin-bottom:5px}#cxd-box .p .w{font-size:.8rem;line-height:1.5}#cxd-box .p .w b{font-weight:800}#cxd-box .p .hw{font-size:.8rem;line-height:1.5;margin-top:6px}'
+            + '#cxd-box .fx{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}#cxd-box .fx button{border:1.5px solid #2563eb;background:transparent;color:#2563eb;border-radius:9px;padding:6px 10px;font-weight:800;font-size:.78rem;cursor:pointer}#cxd-box .fx button:hover{background:#2563eb;color:#fff}'
+            + '#cxd-box .f{display:flex;gap:8px;padding:14px 16px}#cxd-box .f button{flex:1;border:none;border-radius:10px;padding:11px;font-weight:900;cursor:pointer;font-size:.88rem}#cxd-box .f .go{background:#16a34a;color:#fff}#cxd-box .f .cl{background:var(--bg-card-2,#e5e7eb);color:inherit}'
+            + '#cxd-ring{position:fixed;z-index:2147482999;pointer-events:none;border:3px solid #ef4444;border-radius:12px;box-shadow:0 0 0 4px rgba(239,68,68,.25),0 0 24px rgba(239,68,68,.55);animation:cxdP 1.2s infinite}#cxd-ring.ok{border-color:#16a34a;box-shadow:0 0 0 4px rgba(22,163,74,.25),0 0 24px rgba(22,163,74,.5)}@keyframes cxdP{50%{transform:scale(1.03)}}'
+            + '#cxd-g{position:fixed;z-index:2147483001;width:min(340px,calc(100vw - 16px));background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border:2px solid #0ea5e9;border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.3);font-size:.82rem;overflow:hidden}#cxd-g.ok{border-color:#16a34a}'
+            + '#cxd-g .gh{display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(135deg,#0ea5e9,#2563eb);color:#fff}#cxd-g.ok .gh{background:linear-gradient(135deg,#22c55e,#15803d)}#cxd-g .gh b{flex:1;font-size:.88rem}#cxd-g .gh button{border:none;background:rgba(255,255,255,.2);color:#fff;border-radius:7px;width:28px;height:26px;cursor:pointer}'
+            + '#cxd-g .gt{font-weight:900;font-size:.9rem;padding:9px 11px 3px}#cxd-g .grc{padding:2px 11px;line-height:1.45;display:flex;flex-direction:column;gap:3px}#cxd-g .grc b{font-weight:900}#cxd-g .gw{padding:2px 11px;line-height:1.45;opacity:.92}#cxd-g .gd{padding:6px 11px 0;font-weight:700;line-height:1.45}#cxd-g .fx{display:flex;flex-wrap:wrap;gap:5px;padding:8px 11px 0}#cxd-g .fx button{border:1.5px solid #2563eb;background:transparent;color:#2563eb;border-radius:8px;padding:5px 8px;font-weight:800;font-size:.74rem;cursor:pointer}#cxd-g .fx button:hover{background:#2563eb;color:#fff}'
+            + '#cxd-g .gb{display:flex;gap:5px;padding:9px 11px 10px}#cxd-g .gb button{flex:1;border:1px solid var(--border-color,#d1d5db);background:var(--bg-card-2,#f1f5f9);color:inherit;border-radius:8px;padding:7px 4px;font-weight:800;font-size:.74rem;cursor:pointer}#cxd-g .gb button.on{background:#fee2e2;border-color:#ef4444;color:#b91c1c}#cxd-g .gb .go{background:#16a34a;color:#fff;border:none;flex:2}'
+            + '#cxd-box .f .gd2{background:#0ea5e9;color:#fff}.cxd-set{padding:6px 16px}.cxd-set .sr{margin-top:10px;display:flex;flex-direction:column;gap:6px;font-size:.84rem}.cxd-set .sr label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;line-height:1.35}.cxd-set .sr small{opacity:.6}.cxd-set .us{padding:8px 10px;border-radius:10px;background:var(--bg-card-2,#f1f5f9);max-height:180px;overflow:auto}.cxd-set .us.dim{opacity:.45}.cxd-set button{border:1.5px solid #0ea5e9;background:transparent;color:#0284c7;border-radius:9px;padding:7px 12px;font-weight:800;cursor:pointer;align-self:flex-start}'
+            + '.cxd-help{border:1.5px solid #0ea5e9!important;background:transparent!important;color:#0284c7!important;border-radius:10px;padding:8px 12px;font-weight:800;cursor:pointer;font-size:.82rem;margin-top:6px;width:100%}'
+            + '.cxd-hint{font-size:.78rem;font-weight:700;margin-top:6px;padding:6px 10px;border-radius:9px;line-height:1.35;display:none}.cxd-hint.b{display:block;background:rgba(239,68,68,.1);color:#b91c1c}.cxd-hint.w{display:block;background:rgba(245,158,11,.12);color:#b45309}';
+        document.head.appendChild(s);
+    }
+    function close() { var o = $('cxd-ov'); if (o) o.remove(); }
+    /* ───── Réglages : activation par caissier, voix, accompagnement, micro ───── */
+    var CFGK = 'covo_cxdiag_cfg';
+    function cfg() { var c = {}; try { c = JSON.parse(localStorage.getItem(CFGK) || '{}') || {}; } catch (e) {} if (['all', 'some', 'off'].indexOf(c.mode) < 0) c.mode = 'all'; if (!Array.isArray(c.users)) c.users = []; if (c.voice == null) c.voice = true; if (c.guide == null) c.guide = true; if (c.listen == null) c.listen = false; if (!(c.rate > 0.5 && c.rate < 2)) c.rate = 1; return c; }
+    function saveCfg(c) { try { localStorage.setItem(CFGK, JSON.stringify(c)); } catch (e) {} }
+    function me() { var u = null; try { u = typeof window._covoCurrentUser === 'function' ? window._covoCurrentUser() : null; } catch (e) {} if (!u) { try { u = currentUser; } catch (e) {} } if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u; }
+    function uKey(u) { return u ? String(u.id || u.username || '') : ''; }
+    function isBoss(u) { u = u || me(); return !!(u && (u.isMaster || u.role === 'admin')); }
+    function enabledFor(u) { var c = cfg(); u = u || me(); if (c.mode === 'off') return false; if (c.mode === 'all') return true; return !!u && c.users.indexOf(uKey(u)) >= 0; }
+    function allUsers() { var L = []; try { L = JSON.parse(localStorage.getItem('covo_users') || '[]') || []; } catch (e) {} return L.filter(function (u) { return u && !u.isMaster && u.id !== 'USR-MASTER'; }); }
+    function plain(t) { return String(t || '').replace(/<br\s*\/?>/g, '. ').replace(/<[^>]+>/g, '').replace(/👉|⛔|⚠️|✅|🩺/g, '').replace(/« | »/g, ' ').replace(/\s+/g, ' ').trim(); }
+    var talking = false;
+    function speak(t, after) {
+        var c = cfg();
+        if (!c.voice || !window.speechSynthesis) { if (after) setTimeout(after, 50); return; }
+        try {
+            speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(plain(t)); u.lang = 'fr-FR'; u.rate = c.rate; var vc = {}; try { vc = JSON.parse(localStorage.getItem('covo_voice_cfg') || '{}') || {}; } catch (e) {} if (vc.pitch >= 0.3) u.pitch = vc.pitch; if (vc.vol >= 0 && vc.vol <= 1) u.volume = vc.vol; var want = vc.vname && speechSynthesis.getVoices().filter(function (x) { return x.name === vc.vname; })[0];
+            var v = speechSynthesis.getVoices().filter(function (x) { return /^fr/i.test(x.lang); }); try { if (want) { u.voice = want; u.lang = want.lang; } else if (v.length) u.voice = v.filter(function (x) { return /google|natural|online/i.test(x.name); })[0] || v[0]; } catch (e) {}
+            talking = true; u.onend = u.onerror = function () { talking = false; if (after) after(); };
+            speechSynthesis.speak(u);
+        } catch (e) { talking = false; if (after) after(); }
+    }
+    function hush() { try { speechSynthesis.cancel(); } catch (e) {} talking = false; }
+    function moneyOut() { var m = A.method(), t = A.total(); if (m === 'cash') { var r = readAmt(A.cash); if (r.state === 'ok' && r.v > t + 0.004) return r.v - t; } if (m === 'mixed') { var s2 = 0; A.mixed.forEach(function (f) { var x = readAmt(f[0]); if (x.state === 'ok') s2 += x.v; }); if (s2 > t + 0.004) return s2 - t; } return 0; }
+
+    /* ───── Accompagnement vocal : cadre sur le champ fautif, consigne parlée, suivi de la correction ───── */
+    var G = null;   // { key, raf, rec, timer }
+    function tgtEl(p) { if (!p) return null; var el = p.tgt ? $(p.tgt) : null; if (el && el.getClientRects().length) return el; return null; }
+    function stopGuide(silent) {
+        if (!G) return; cancelAnimationFrame(G.raf); clearInterval(G.timer); try { G.rec && G.rec.abort(); } catch (e) {}
+        ['cxd-ring', 'cxd-g'].forEach(function (id) { var e = $(id); if (e) e.remove(); });
+        if (G.inp) G.inp.forEach(function (x) { x.el.removeEventListener('input', x.fn); });
+        G = null; if (!silent) hush();
+    }
+    function guide(P, manual) {
+        css(); stopGuide(true);
+        G = { key: '', raf: 0, timer: 0, inp: [], manual: !!manual };
+        var onIn = function () { clearTimeout(G && G.deb); if (G) G.deb = setTimeout(function () { step(true); }, 700); };
+        [A.cash].concat(A.mixed.map(function (f) { return f[0]; })).forEach(function (id) { var el = $(id); if (el) { el.addEventListener('input', onIn); G.inp.push({ el: el, fn: onIn }); } });
+        G.timer = setInterval(function () { if (G && !talking) step(true); }, 1500);   // suit aussi les changements de mode, de client, de panier
+        step(false, P);
+        (function loop() {
+            if (!G) return;
+            var ring = $('cxd-ring'), el = G.el;
+            if (ring) { if (el && document.body.contains(el) && el.getClientRects().length) { var r = el.getBoundingClientRect(); ring.style.display = ''; ring.style.left = (r.left - 6) + 'px'; ring.style.top = (r.top - 6) + 'px'; ring.style.width = (r.width + 12) + 'px'; ring.style.height = (r.height + 12) + 'px'; } else ring.style.display = 'none'; }
+            place(); G.raf = requestAnimationFrame(loop);
+        })();
+    }
+    function place() {
+        var g = $('cxd-g'); if (!g || !G) return; var el = G.el, W = innerWidth, H = innerHeight, gw = g.offsetWidth, gh = g.offsetHeight, x, y;
+        if (el && el.getClientRects().length) { var r = el.getBoundingClientRect(); x = r.left + r.width / 2 - gw / 2; y = r.bottom + 14; if (y + gh > H - 8) y = r.top - gh - 14; if (y < 8) { y = Math.max(8, r.top); x = r.left - gw - 16; if (x < 8) x = r.right + 16; } }
+        else { x = W / 2 - gw / 2; y = H - gh - 20; }
+        g.style.left = Math.max(8, Math.min(W - gw - 8, x)) + 'px'; g.style.top = Math.max(8, Math.min(H - gh - 8, y)) + 'px';
+    }
+    function step(quiet, P0) {
+        if (!G) return;
+        var empty = !C().length, P = P0 || diagnose([]), p = empty ? null : P.filter(function (x) { return x.sev === 'block'; })[0], key = empty ? 'EMPTY' : (p ? p.title : 'OK|' + A.method() + '|' + (A.method() === 'cash' ? readAmt(A.cash).v : ''));
+        if (quiet && key === G.key) return;
+        if (key === 'EMPTY') { if (/^OK/.test(G.key)) done(); else stopGuide(); return; }   // panier vidé après la validation : vente enregistrée
+        var wasBlock = G.key && !/^OK/.test(G.key); G.key = key; G.p = p;
+        var rc = p ? null : recap(); G.rc = rc;
+        var el = p ? tgtEl(p) : A.btn(); G.el = el;
+        if (el) { try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {} if (p && /^INPUT$/.test(el.tagName)) try { el.focus({ preventScroll: true }); } catch (e) {} }
+        if (!$('cxd-ring')) { var rg = document.createElement('div'); rg.id = 'cxd-ring'; document.body.appendChild(rg); }
+        $('cxd-ring').className = p ? '' : 'ok';
+        var g = $('cxd-g'); if (!g) { g = document.createElement('div'); g.id = 'cxd-g'; g.setAttribute('role', 'dialog'); g.setAttribute('aria-live', 'assertive'); document.body.appendChild(g); g.addEventListener('click', onG); }
+        var out = moneyOut(), ok = !p;
+        g.className = ok ? 'ok' : '';
+        g.innerHTML = '<div class="gh"><span>🩺</span><b>' + (ok ? (wasBlock ? 'C’est corrigé !' : 'Vérification du panier') : 'Assistant caisse') + '</b><button type="button" data-g="mute" title="Couper / remettre la voix">' + (cfg().voice ? '🔊' : '🔇') + '</button>' + (isBoss() ? '<button type="button" data-g="set" title="Réglages de l’assistant">⚙️</button>' : '') + '<button type="button" data-g="x" title="Fermer">✕</button></div>'
+            + (ok ? '<div class="gt">✅ Rien ne bloque la validation' + (out ? ' · monnaie à rendre <b>' + eur(out) + '</b>' : '') + '</div><div class="grc">' + rc.lines.map(function (l) { return '<div>' + l + '</div>'; }).join('') + '</div>'
+                    + '<div class="fx">' + rc.fixes.map(function (f, j) { return '<button type="button" data-rc="' + j + '">' + esc(f.label) + '</button>'; }).join('') + '</div>'
+                  : '<div class="gt">⛔ ' + esc(p.title) + '</div><div class="gw"><b>Pourquoi :</b> ' + p.why + '</div><div class="gd">👉 ' + p.how + '</div>'
+                    + (p.fixes.length ? '<div class="fx">' + p.fixes.slice(0, 5).map(function (f, j) { return '<button type="button" data-fx="' + j + '">' + esc(f.label) + '</button>'; }).join('') + '</div>' : ''))
+            + '<div class="gb"><button type="button" data-g="rep">🔁 Répéter</button>' + (window.SpeechRecognition || window.webkitSpeechRecognition ? '<button type="button" data-g="mic">🎤 Parler</button>' : '') + (ok ? '<button type="button" class="go" data-g="val">✅ Valider la vente</button>' : '<button type="button" data-g="det">Détails</button>') + '</div>';
+        place();
+        var say = ok ? (wasBlock ? 'C’est corrigé. ' + (out ? 'Rendez ' + eur(out) + ' de monnaie. ' : '') + 'Vous pouvez valider la vente.' : rc.say) : p.title + '. ' + p.how;
+        if (!ok && G.manual && p.tgt === A.cash) say += ' Vous pouvez aussi dire : le client donne vingt euros, ou : montant exact.';
+        var lis = cfg().listen || G.manual;   // vérification demandée : on reste à l’écoute (« passe en espèces », « le client donne 20 euros »…)
+        speak(say, function () { if (G && lis) listen(); });
+    }
+    /* ───── Vérification : récapitulatif parlé du panier et du mode de règlement choisi ───── */
+    var MODE_TXT = { cb: 'le paiement par carte bancaire uniquement', cash: 'le paiement en espèces uniquement', mixed: 'le paiement mixte (carte, espèces et ticket)', ticket: 'le paiement par ticket restaurant', credit: 'la vente à crédit sur le compte du client', echel: 'le paiement en plusieurs fois' };
+    var MODE_FX = [['cash', '💶 Passer en espèces', 'passe en espèces'], ['cb', '💳 Passer en carte bancaire', 'passe en carte'], ['mixed', '🔀 Passer en paiement mixte', 'passe en mixte'], ['ticket', '🎟️ Passer en ticket restaurant', 'passe en ticket']];
+    function client() { var c = null; try { c = IS_CX ? A.client() : (window._ltyCu || null); } catch (e) {} return c; }
+    function recap() {
+        var items = C(), m = A.method(), t = A.total(), L = [], S = [];
+        var n = items.reduce(function (s2, it) { return s2 + (it.unitType === 'kg' ? 1 : (+it.quantity || +it.qty || 0)); }, 0);
+        var raw = items.reduce(function (s2, it) { var v = 0; try { v = A.lineTotal(it); } catch (e) {} return s2 + (isFinite(v) ? v : 0); }, 0);
+        L.push('🛒 <b>' + n + ' article' + (n > 1 ? 's' : '') + '</b> (' + items.length + ' ligne' + (items.length > 1 ? 's' : '') + ') · total à payer <b>' + eur(t) + '</b>');
+        S.push('Panier de ' + n + ' article' + (n > 1 ? 's' : '') + ', total à payer ' + eur(t) + '.');
+        if (raw - t > 0.004) { L.push('🏷️ Remise appliquée : <b>' + eur(raw - t) + '</b> (prix catalogue ' + eur(raw) + ')'); S.push('Une remise de ' + eur(raw - t) + ' est appliquée.'); }
+        var cp = items.filter(function (it) { return it.costPriceApplied; }).length, miss = items.filter(function (it) { return it._cpMissing; }).length;
+        if (cp) { L.push('💳 ' + cp + ' article' + (cp > 1 ? 's' : '') + ' au prix d’achat (carte fidélité)'); S.push(cp + ' article' + (cp > 1 ? 's sont' : ' est') + ' au prix d’achat.'); }
+        if (miss) { L.push('⚠️ ' + miss + ' article' + (miss > 1 ? 's' : '') + ' sans prix d’achat : prix normal conservé'); S.push('Attention, ' + miss + ' article' + (miss > 1 ? 's n’ont' : ' n’a') + ' pas de prix d’achat.'); }
+        var cl = client(); if (cl) { L.push('👤 Client : <b>' + esc(cl.name || cl.nom || cl.phone || 'carte fidélité') + '</b>' + (cl.points != null ? ' · ' + cl.points + ' point' + (cl.points > 1 ? 's' : '') : '') + (+cl.credit > 0 ? ' · doit déjà ' + eur(cl.credit) : '')); S.push('Client ' + (cl.name || cl.nom || 'fidélité') + '.'); }
+        if (window._ltyRed && window._ltyRed.euros > 0) { L.push('🎁 Points fidélité utilisés : −' + eur(window._ltyRed.euros)); S.push('Des points fidélité réduisent le montant de ' + eur(window._ltyRed.euros) + '.'); }
+        var mt = MODE_TXT[m] || ('le mode ' + (METHOD_L[m] || m || 'non choisi'));
+        L.push('👉 Vous avez choisi <b>' + mt + '</b>.'); S.push('Vous avez choisi ' + mt + '.');
+        if (m === 'cb') {
+            var su = false; try { su = typeof window._covoSumupReady === 'function' && window._covoSumupReady(); } catch (e) {}
+            L.push(su ? '📲 ' + eur(t) + ' seront envoyés automatiquement au terminal SumUp à la validation.' : '💳 Encaissez ' + eur(t) + ' sur le terminal de carte, puis validez.');
+            S.push(su ? 'Le montant sera envoyé automatiquement au terminal SumUp.' : 'Encaissez ' + eur(t) + ' sur le terminal de carte.');
+        } else if (m === 'cash') {
+            var r = readAmt(A.cash), o = r.state === 'ok' ? r.v - t : 0;
+            if (r.state === 'ok' && o >= -0.004) { L.push('💶 Reçu ' + eur(r.v) + ' · <b>monnaie à rendre ' + eur(Math.max(0, o)) + '</b>'); S.push(o > 0.004 ? 'Le client donne ' + eur(r.v) + ', rendez ' + eur(o) + '.' : 'Le montant reçu est exact, pas de monnaie à rendre.'); }
+            else { L.push('💶 Saisissez le montant remis par le client (au moins ' + eur(t) + ').'); S.push('Saisissez le montant remis par le client.'); }
+        } else if (m === 'mixed') {
+            var parts = A.mixed.map(function (f) { var x = readAmt(f[0]); return f[1] + ' ' + (x.state === 'ok' ? eur(x.v) : '—'); }).join(' · ');
+            L.push('🔀 ' + parts); S.push('Répartition : ' + parts.replace(/·/g, ',') + '.');
+        } else if (m === 'ticket') { L.push('🎟️ Ticket restaurant : ' + eur(t) + ', aucune monnaie rendue.'); S.push('Aucune monnaie n’est rendue sur un ticket restaurant.'); }
+        var others = MODE_FX.filter(function (x) { return x[0] !== m; });
+        var fixes = others.map(function (x) { return { label: x[1], run: (function (k) { return function () { A.setMethod(k); }; })(x[0]) }; });
+        var hint = others.slice(0, 2).map(function (x) { return '« ' + x[2] + ' »'; }).join(' ou ');
+        L.push('🎤 Pour changer, dites ' + hint + ' ; pour encaisser, dites « valide ».');
+        S.push('Pour ' + others[0][1].replace(/^\S+\s/, '').toLowerCase() + ', dites : ' + others[0][2] + '. Pour encaisser, dites : valide.');
+        return { lines: L, say: S.join(' '), fixes: fixes };
+    }
+    function done() { var t = 'Vente enregistrée. Bon travail !'; stopGuide(true); speak(t); try { showScanToast('🩺 ' + t, 'success'); } catch (e) {} }
+    function onG(e) {
+        var b = e.target.closest('[data-g],[data-fx],[data-rc]'); if (!b || !G) return; e.stopPropagation();
+        if (b.dataset.rc != null) { var f2 = G.rc && G.rc.fixes[+b.dataset.rc]; if (f2) { try { f2.run(); } catch (x) {} setTimeout(function () { step(true); }, 250); } return; }
+        if (b.dataset.fx != null) { var f = G.p && G.p.fixes[+b.dataset.fx]; if (f) { try { f.run(); } catch (x) {} setTimeout(function () { step(true); }, 250); } return; }
+        var k = b.dataset.g;
+        if (k === 'x') stopGuide();
+        else if (k === 'rep') { G.key = ''; step(); }
+        else if (k === 'mic') listen(true);
+        else if (k === 'det') { var P = diagnose([]); stopGuide(); show(P, false); }
+        else if (k === 'val') { hush(); A.validate(); }
+        else if (k === 'set') { stopGuide(); openSettings(); }
+        else if (k === 'mute') { var c = cfg(); c.voice = !c.voice; saveCfg(c); if (!c.voice) hush(); b.textContent = c.voice ? '🔊' : '🔇'; }
+    }
+    /* Commandes vocales pendant l'accompagnement */
+    function listen(manual) {
+        var R = window.SpeechRecognition || window.webkitSpeechRecognition; if (!R || !G) return;
+        try { G.rec && G.rec.abort(); } catch (e) {}
+        var r = new R(); r.lang = 'fr-FR'; r.interimResults = false; r.maxAlternatives = 1; G.rec = r;
+        var mic = document.querySelector('#cxd-g [data-g="mic"]'); if (mic) { mic.classList.add('on'); mic.textContent = '🎤 J’écoute…'; }
+        r.onresult = function (ev) { heard(String(ev.results[0][0].transcript || '')); };
+        r.onerror = function (ev) { if (ev.error === 'not-allowed' && manual) speak('Le micro est bloqué pour ce site.'); };
+        r.onend = function () { var m = document.querySelector('#cxd-g [data-g="mic"]'); if (m) { m.classList.remove('on'); m.textContent = '🎤 Parler'; } };
+        try { r.start(); } catch (e) {}
+    }
+    function heard(t) {
+        if (!G) return;
+        var n = t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''), p = G.p, fx = p ? p.fixes : (G.rc ? G.rc.fixes : []);
+        function pick(re) { return fx.filter(function (f) { return re.test(f.label.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')); })[0]; }
+        var num = /(\d+(?:[.,]\d{1,2})?)/.exec(n.replace(/(\d) (\d{2})\b/, '$1,$2'));
+        if (/(stop|ferme|arrete|annule|tais)/.test(n)) return stopGuide();
+        if (/(repete|redis|encore|pardon|quoi)/.test(n)) { G.key = ''; return step(); }
+        if (/(pourquoi|explique|detail)/.test(n) && p) return speak(p.why, function () { if (G && cfg().listen) listen(); });
+        if (/(recap|resume|panier|verifi)/.test(n) && !p) { G.key = ''; return step(); }
+        if (/(valide|encaisse|termine)/.test(n)) { hush(); return A.validate(); }
+        var f = /(exact|juste|pile)/.test(n) ? pick(/exact/) : /(virgule)/.test(n) ? pick(/virgule/) : /(efface|vide le champ|recommence)/.test(n) ? pick(/effacer/) : /(carte|cb)/.test(n) && !/mixte/.test(n) ? pick(/carte/) : /mixte/.test(n) ? pick(/mixte/) : /(complete|reste)/.test(n) ? pick(/completer/) : /(espece|liquide)/.test(n) && !num ? pick(/especes/) : /ticket/.test(n) ? pick(/ticket/) : null;
+        if (!f && num && $(A.cash) && A.method() === 'cash') { var v = parseFloat(num[1].replace(',', '.')); if (isFinite(v)) { setAmt(A.cash, v); speak('J’ai saisi ' + eur(v) + '.', function () { setTimeout(function () { step(true); }, 300); }); return; } }
+        if (f) { try { f.run(); } catch (e) {} setTimeout(function () { if (G) { G.manual = true; step(true); } }, 300); return; }
+        speak('Je n’ai pas compris. Dites par exemple : montant exact, le client donne vingt euros, passe en carte, ou répète.', function () { if (G && cfg().listen) listen(); });
+    }
+
+    /* ───── Réglages (administrateurs) : quels caissiers ont l'assistant ───── */
+    function settingsHtml(c) {
+        var us = allUsers();
+        return '<div class="sr"><b>Assistant activé pour</b><label><input type="radio" name="cxd-mode" value="all"' + (c.mode === 'all' ? ' checked' : '') + '> Tous les caissiers</label><label><input type="radio" name="cxd-mode" value="some"' + (c.mode === 'some' ? ' checked' : '') + '> Seulement les caissiers cochés</label><label><input type="radio" name="cxd-mode" value="off"' + (c.mode === 'off' ? ' checked' : '') + '> Personne (désactivé)</label></div>'
+            + '<div class="sr us' + (c.mode === 'some' ? '' : ' dim') + '" id="cxd-us">' + (us.length ? us.map(function (u) { var k = uKey(u); return '<label><input type="checkbox" data-u="' + esc(k) + '"' + (c.users.indexOf(k) >= 0 ? ' checked' : '') + '> ' + esc(u.name || u.username || k) + ' <small>' + esc(u.role === 'admin' ? 'admin' : 'caissier') + '</small></label>'; }).join('') : '<i>Aucun utilisateur enregistré.</i>') + '</div>'
+            + '<div class="sr"><b>Fonctionnement</b><label><input type="checkbox" id="cxd-voice"' + (c.voice ? ' checked' : '') + '> 🔊 Explications à voix haute</label><label><input type="checkbox" id="cxd-guide"' + (c.guide ? ' checked' : '') + '> 🎧 Accompagnement pas à pas (cadre sur le champ fautif, suivi de la correction)</label><label><input type="checkbox" id="cxd-listen"' + (c.listen ? ' checked' : '') + '> 🎤 Écoute des commandes vocales après chaque consigne (« montant exact », « le client donne 20 euros », « passe en carte », « valide »)</label>'
+            + '<label>Vitesse de la voix <input type="range" id="cxd-rate" min="0.7" max="1.4" step="0.05" value="' + c.rate + '" style="vertical-align:middle;width:120px"></label></div>'
+            + '<div class="sr"><button type="button" id="cxd-test">▶️ Tester la voix</button></div>';
+    }
+    function bindSettings(root) {
+        function save() {
+            var c = cfg(); var m = root.querySelector('input[name="cxd-mode"]:checked'); c.mode = m ? m.value : 'all';
+            c.users = Array.prototype.slice.call(root.querySelectorAll('[data-u]')).filter(function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-u'); });
+            c.voice = root.querySelector('#cxd-voice').checked; c.guide = root.querySelector('#cxd-guide').checked; c.listen = root.querySelector('#cxd-listen').checked; c.rate = +root.querySelector('#cxd-rate').value;
+            saveCfg(c); var us = root.querySelector('#cxd-us'); if (us) us.classList.toggle('dim', c.mode !== 'some');
+        }
+        root.addEventListener('change', save);
+        root.querySelector('#cxd-test').onclick = function () { save(); var c = cfg(); var was = c.voice; c.voice = true; saveCfg(c); speak('Bonjour, je suis l’assistant caisse. Si une vente ne passe pas, je vous explique pourquoi et je vous aide à corriger.'); c.voice = was; saveCfg(c); };
+    }
+    function openSettings() {
+        css(); close();
+        var o = document.createElement('div'); o.id = 'cxd-ov';
+        o.innerHTML = '<div id="cxd-box"><div class="h"><span style="font-size:1.5rem">⚙️</span><div><b>Réglages de l’assistant caisse</b><small>Réservé aux administrateurs · enregistré sur cet appareil</small></div><button type="button" data-x="close">✕</button></div><div class="cxd-set">' + settingsHtml(cfg()) + '</div><div class="f"><button type="button" class="go" data-x="close">Terminé</button></div></div>';
+        document.body.appendChild(o); bindSettings(o.querySelector('.cxd-set'));
+        o.addEventListener('click', function (e) { if (e.target === o || (e.target.closest('[data-x]') && e.target.closest('[data-x]').dataset.x === 'close')) close(); });
+    }
+    window._cxDiagSettings = openSettings;
+    function show(P, auto) {
+        css(); close();
+        var method = A.method(), total = A.total(), n = C().reduce(function (s, it) { return s + (+it.quantity || +it.qty || 0); }, 0);
+        var o = document.createElement('div'); o.id = 'cxd-ov';
+        var blocks = P.filter(function (p) { return p.sev === 'block'; });
+        var html = '<div id="cxd-box" role="dialog" aria-live="assertive"><div class="h"><span style="font-size:1.5rem">🩺</span><div><b>' + (blocks.length ? 'Pourquoi la vente ne peut pas être validée' : 'Assistant caisse') + '</b><small>' + (auto ? 'Diagnostic automatique après la tentative de validation' : 'Vérification du panier et du règlement') + '</small></div>' + (isBoss() ? '<button type="button" data-x="set" title="Réglages de l’assistant">⚙️</button>' : '') + '<button type="button" data-x="close" title="Fermer">✕</button></div>'
+            + '<div class="ctx"><span>🛒 ' + (+n.toFixed(3)) + ' article' + (n > 1 ? 's' : '') + '</span><span>💰 À payer : ' + (isFinite(total) ? eur(total) : '?') + '</span><span>' + esc(METHOD_L[method] || method || 'Mode ?') + '</span></div>';
+        var rc0 = (!blocks.length && C().length) ? recap() : null;
+        if (!P.length) html += '<div class="p ok"><div class="t">✅ Rien ne bloque la validation</div><div class="w">' + (rc0 ? rc0.lines.join('<br>') : 'Panier, mode de règlement et montants sont cohérents. Vous pouvez valider la vente.') + '</div></div>';
+        P.forEach(function (p, i) {
+            html += '<div class="p ' + (p.sev === 'warn' ? 'warn' : '') + '"><div class="t">' + (p.sev === 'warn' ? '⚠️ ' : '⛔ ') + esc(p.title) + '</div><div class="w"><b>Pourquoi :</b> ' + p.why + '</div><div class="hw"><b>👉 Comment corriger :</b> ' + p.how + '</div>'
+                + (p.fixes.length ? '<div class="fx">' + p.fixes.map(function (f, j) { return '<button type="button" data-fx="' + i + ':' + j + '">' + esc(f.label) + '</button>'; }).join('') + '</div>' : '') + '</div>';
+        });
+        html += '<div class="f"><button type="button" class="cl" data-x="close">Fermer</button>' + (blocks.length ? '<button type="button" class="gd2" data-x="guide">🎧 M’accompagner</button>' : '') + (C().length ? '<button type="button" class="go" data-x="retry">✅ Valider la vente</button>' : '') + '</div></div>';
+        o.innerHTML = html; document.body.appendChild(o);
+        o.addEventListener('click', function (e) {
+            if (e.target === o) return close();
+            var b = e.target.closest('[data-x],[data-fx]'); if (!b) return;
+            if (b.dataset.x === 'close') { hush(); return close(); }
+            if (b.dataset.x === 'set') return openSettings();
+            if (b.dataset.x === 'guide') { close(); return guide(diagnose([])); }
+            if (b.dataset.x === 'retry') { close(); setTimeout(function () { A.validate(); }, 30); return; }
+            var ij = b.dataset.fx.split(':'), f = P[+ij[0]].fixes[+ij[1]];
+            try { f.run(); } catch (x) {}
+            setTimeout(function () { var P2 = diagnose([]); if (!P2.some(function (p) { return p.sev === 'block'; })) { show(P2, false); } else show(P2, true); }, 220);
+        });
+        if (blocks.length) speak(blocks[0].title + '. ' + blocks[0].how); else if (!auto) speak(rc0 ? rc0.say : 'Rien ne bloque la validation. Vous pouvez valider la vente.');
+    }
+    window._cxDiag.open = function () { stopGuide(true); var P = diagnose([]); if (!C().length || !cfg().guide) return show(P, false); guide(P, true); };
+    window._cxDiag.guide = function () { guide(diagnose([])); };
+    window._cxDiag.stop = stopGuide;
+
+    /* ───── Détection automatique : un refus pendant la validation déclenche le diagnostic ───── */
+    var depth = 0, captured = [];
+    var BLOCK_RE = /^\s*(❌|⛔|⚠️)/;
+    function hookToast() {
+        var o = window.showScanToast; if (typeof o !== 'function' || o._cxd) return;
+        var w = function (msg, type) { if (depth > 0 && (BLOCK_RE.test(String(msg)) || type === 'error')) captured.push(String(msg).replace(BLOCK_RE, '').trim()); return o.apply(this, arguments); };
+        w._cxd = true; window.showScanToast = w;
+    }
+    function wrap(name) {
+        var o = window[name]; if (typeof o !== 'function' || o._cxd) return;
+        var w = function () {
+            hookToast();
+            if (depth === 0) captured = [];
+            depth++; var r;
+            try { r = o.apply(this, arguments); } finally {
+                depth--;
+                if (depth === 0 && captured.length) {
+                    var cap = captured.slice(); captured = [];
+                    setTimeout(function () { if (!enabledFor()) return; var P = diagnose(cap); if (!P.length) return; if (cfg().guide && P.some(function (p) { return p.sev === 'block'; })) guide(P); else show(P, true); }, 60);
+                }
+            }
+            return r;
+        };
+        for (var k in o) try { w[k] = o[k]; } catch (e) {}
+        w._cxd = true; window[name] = w;
+    }
+    function hookAll() { hookToast(); (IS_CX ? ['cxValidateSale'] : ['validateSale', '_doValidateSale', '_costPriceConfirmValidate']).forEach(wrap); }
+
+    /* ───── Aide en direct sous le bouton Valider ───── */
+    function mountUi() {
+        var b = A.btn(); if (!b || $('cxd-help')) return;
+        css();
+        var h = document.createElement('div'); h.id = 'cxd-hint'; h.className = 'cxd-hint';
+        var q = document.createElement('button'); q.type = 'button'; q.id = 'cxd-help'; q.className = 'cxd-help'; q.textContent = '🩺 Vérifier le panier (assistant caisse)';
+        q.onclick = function () { window._cxDiag.open(); };
+        b.insertAdjacentElement('afterend', q); b.insertAdjacentElement('afterend', h);
+        var row = b.parentNode; if (row && row !== document.body && /flex/.test(getComputedStyle(row).display)) { var wrapEl = document.createElement('div'); wrapEl.id = 'cxd-wrap'; wrapEl.style.cssText = 'width:100%'; row.insertAdjacentElement('afterend', wrapEl); wrapEl.appendChild(h); wrapEl.appendChild(q); }   // sous la rangée de boutons, sans la déformer
+    }
+    function liveHint() {
+        var h = $('cxd-hint'), q = $('cxd-help'); if (!h) return;
+        var on = enabledFor(); if (q) { q.style.display = on || isBoss() ? '' : 'none'; q.textContent = on ? '🩺 Vérifier le panier (assistant caisse)' : '⚙️ Assistant caisse désactivé pour ce compte — réglages'; q.onclick = on ? function () { window._cxDiag.open(); } : openSettings; }
+        if (!on) { h.className = 'cxd-hint'; if (G) stopGuide(); return; }
+        if (!C().length) { h.className = 'cxd-hint'; return; }
+        var P = diagnose([]), p = P.filter(function (x) { return x.sev === 'block'; })[0] || P[0];
+        var m = A.method(), r = m === 'cash' ? readAmt(A.cash) : null;
+        if (p && r && r.state === 'empty' && p.title === 'Montant reçu non saisi') { h.className = 'cxd-hint'; return; }   // pas d'alerte tant que le caissier n'a rien tapé
+        if (!p) { h.className = 'cxd-hint'; return; }
+        h.className = 'cxd-hint ' + (p.sev === 'block' ? 'b' : 'w'); h.textContent = (p.sev === 'block' ? '⛔ ' : '⚠️ ') + p.title;
+    }
+    function mountAdmin() {
+        if ($('admin-sec-cxdiag')) return true;
+        var first = document.querySelector('.admin-section'); if (!first) return false;
+        css();
+        var sec = document.createElement('div'); sec.className = 'admin-section'; sec.id = 'admin-sec-cxdiag'; sec.style.cssText = 'border:2px solid rgba(14,165,233,.4);';
+        sec.innerHTML = '<div style="padding:12px 14px"><div style="font-weight:900;font-size:.95rem;color:var(--text-main)">🩺 Assistant caisse vocal <span style="font-weight:600;font-size:.74rem;color:var(--text-muted)">— explique et aide à corriger une vente bloquée (Caisse Pro, panier COVO Pro)</span></div><div class="cxd-set" style="padding:0">' + settingsHtml(cfg()) + '</div></div>';
+        var anchor = $('admin-sec-staff'); (anchor || first).insertAdjacentElement(anchor ? 'afterend' : 'beforebegin', sec);
+        bindSettings(sec.querySelector('.cxd-set')); return true;
+    }
+    function boot() {
+        if (!document.body) return setTimeout(boot, 300);
+        if (/\/admin\//.test(location.pathname)) { var n = 0, t = setInterval(function () { if (mountAdmin() || ++n > 60) clearInterval(t); }, 1000); return; }
+        hookAll(); mountUi();
+        setInterval(function () { hookAll(); mountUi(); liveHint(); }, 900);   // ré-accroche si un autre module remplace la fonction de validation
+    }
+    boot();
+})();
+</script>
+
+<script>
+/* Fenêtre « 🕘 Articles annulés & paniers non validés » : état de la sauvegarde automatique Google Drive */
+(function () {
+    if (window._covoCartAuditDriveUi) return; window._covoCartAuditDriveUi = true;
+    function last() { var L = []; try { L = JSON.parse(localStorage.getItem('covo_cart_audit') || '[]') || []; } catch (e) {} var t = ''; L.forEach(function (r) { if (r && r.at > t) t = r.at; }); return { n: L.length, at: t }; }
+    function ago(iso) { var m = Math.round((Date.now() - Date.parse(iso)) / 60000); if (!isFinite(m)) return '—'; if (m < 1) return 'à l’instant'; if (m < 60) return 'il y a ' + m + ' min'; var h = Math.round(m / 60); if (h < 24) return 'il y a ' + h + ' h'; var d = Math.round(h / 24); return 'il y a ' + d + ' j'; }
+    function saveNow() {
+        var f = window._quickDriveSync || window.cpDriveBackupNow || window._quickManualSave || (typeof cpDriveBackupNow === 'function' ? cpDriveBackupNow : null);
+        if (!f) { try { showScanToast('⚠️ Sauvegarde Drive indisponible dans cette application', 'error'); } catch (e) {} return; }
+        try { f(false); } catch (e) {}
+        try { showScanToast('☁️ Sauvegarde Google Drive lancée…', 'info'); } catch (e) {}
+    }
+    function bar(box) {
+        var b = box.querySelector('#ca-drive'); if (!b) {
+            var head = box.querySelector('.ca-body'); if (!head) return;
+            b = document.createElement('div'); b.id = 'ca-drive';
+            b.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 18px 0;padding:9px 12px;border-radius:11px;font-size:.8rem;font-weight:700;border:1.5px solid';
+            head.parentNode.insertBefore(b, head);
+            b.addEventListener('click', function (e) { if (e.target.closest('[data-cad="save"]')) saveNow(); });
+        }
+        var L = last(), sv = localStorage.getItem('gdrive_last_save') || '', connected = !!(localStorage.getItem('gdrive_folder_id'));
+        var auto = !(window.CovoSync && typeof CovoSync.autoAllowed === 'function' && !CovoSync.autoAllowed());
+        var pend = !!(L.at && (!sv || sv < L.at));
+        var col = !connected ? ['#fef2f2', '#ef4444', '#b91c1c'] : pend ? ['#fffbeb', '#f59e0b', '#b45309'] : ['#f0fdf4', '#22c55e', '#15803d'];
+        b.style.background = col[0]; b.style.borderColor = col[1]; b.style.color = col[2];
+        var txt = !connected ? '☁️ Google Drive non relié sur cet appareil : le journal est conservé ici, il partira sur Drive dès la connexion (Admin Pro → Sauvegarde).'
+            : pend ? '☁️ Sauvegarde automatique Google Drive : <b>' + L.n.toLocaleString('fr-FR') + '</b> entrée(s) — dernières modifications <b>en attente d’envoi</b>' + (auto ? ' (envoi automatique dans quelques instants)' : ' (sauvegarde automatique désactivée pour ce compte)') + '.'
+            : '☁️ Journal sauvegardé automatiquement sur Google Drive — <b>' + L.n.toLocaleString('fr-FR') + '</b> entrée(s) · dernière sauvegarde ' + (sv ? ago(sv) : '—') + '. Restauré et fusionné automatiquement sur les autres appareils.';
+        var html = '<span style="flex:1;min-width:220px;line-height:1.4">' + txt + '</span>' + (connected ? '<button type="button" data-cad="save" style="border:none;border-radius:9px;padding:7px 12px;font-weight:800;cursor:pointer;background:' + col[1] + ';color:#fff">☁️ Sauvegarder maintenant</button>' : '');
+        if (b._h !== html) { b.innerHTML = html; b._h = html; }
+    }
+    setInterval(function () { var o = document.getElementById('ca-hist'); if (o) bar(o); }, 1500);
+    (function obs() { if (!document.body) return setTimeout(obs, 300); new MutationObserver(function () { var o = document.getElementById('ca-hist'); if (o && !o.querySelector('#ca-drive')) bar(o); }).observe(document.body, { childList: true }); })();
 })();
 </script>
 
