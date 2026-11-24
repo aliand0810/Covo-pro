@@ -8309,7 +8309,7 @@ function _printLabel(productId) {
     if (/^\d{13}$/.test(bc)) bcFormat = 'EAN13';
     else if (/^\d{8}$/.test(bc)) bcFormat = 'EAN8';
 
-    let bodyHTML = '<div class="lbl-wrap">';
+    let bodyHTML = '<div class="lbl-wrap">' + (window._lblImgHTML ? window._lblImgHTML(p, hMM) : '');
     if (s.showShop !== false && shopName)   bodyHTML += '<div class="lbl-shop">' + shopName.replace(/</g,'&lt;') + '</div>';
     if (s.showName !== false)                bodyHTML += '<div class="lbl-name">' + (p.name||'').replace(/</g,'&lt;') + '</div>';
     if (s.showCategory && p.category)        bodyHTML += '<div class="lbl-cat">' + p.category.replace(/</g,'&lt;') + '</div>';
@@ -8504,7 +8504,7 @@ window._printMultiLabels = function() {
         if (/^\d{13}$/.test(bc)) bcFormat = 'EAN13';
         else if (/^\d{8}$/.test(bc)) bcFormat = 'EAN8';
         var svgId = 'lbl-bc-' + p.id + '-' + Math.random().toString(36).slice(2);
-        var html = '<div class="lbl-wrap">';
+        var html = '<div class="lbl-wrap">' + (window._lblImgHTML ? window._lblImgHTML(p, hMM) : '');
         if (s.showShop !== false && shopName) html += '<div class="lbl-shop">' + shopName.replace(/</g, '&lt;') + '</div>';
         if (s.showName !== false) html += '<div class="lbl-name">' + (p.name || '').replace(/</g, '&lt;') + '</div>';
         if (s.showCategory && p.category) html += '<div class="lbl-cat">' + p.category.replace(/</g, '&lt;') + '</div>';
@@ -8602,7 +8602,7 @@ window._printMultiLabelsA4 = function() {
         if (/^\d{13}$/.test(bc)) bcFormat = 'EAN13';
         else if (/^\d{8}$/.test(bc)) bcFormat = 'EAN8';
         var svgId = 'lbl-bc-' + p.id + '-' + Math.random().toString(36).slice(2);
-        var html = '<div class="lbl-wrap">';
+        var html = '<div class="lbl-wrap">' + (window._lblImgHTML ? window._lblImgHTML(p, hMM) : '');
         if (s.showShop !== false && shopName) html += '<div class="lbl-shop">' + shopName.replace(/</g, '&lt;') + '</div>';
         if (s.showName !== false) html += '<div class="lbl-name">' + (p.name || '').replace(/</g, '&lt;') + '</div>';
         if (s.showCategory && p.category) html += '<div class="lbl-cat">' + p.category.replace(/</g, '&lt;') + '</div>';
@@ -17594,6 +17594,204 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         e.preventDefault(); e.stopPropagation();
         if (b.getAttribute('data-gpp') === 'mode') openMode(b.getAttribute('data-d'), b.getAttribute('data-p')); else openCancel(b.getAttribute('data-d'), b.getAttribute('data-p'));
     }, true);
+})();
+</script>
+
+<script>
+/* 🏷️ Gestion Pro — Étiquettes : contenu enrichi
+   • « 🖼️ Image de l'article » imprimée sur l'étiquette (au choix)
+   • « 🚫 N'imprimer que les articles disponibles » : les articles en rupture (stock ≤ 0) ne sont jamais imprimés
+   • Aperçu de l'étiquette avec l'article de votre choix (nom, prix, code-barres, image)
+   • Fenêtre d'impression en lot : filtres (stock, rayon, image), vignettes des articles au choix */
+(function () {
+    'use strict';
+    if (window._gstLblPlus) return; window._gstLblPlus = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function S() { return window._lblSettings || {}; }
+    function prods() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} try { return JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) { return []; } }
+    function byId(id) { return prods().find(function (p) { return String(p.id) === String(id); }) || null; }
+    function imgOf(p) { if (!p) return ''; var c = [p.img, p.imgUrl, p.image]; for (var i = 0; i < c.length; i++) { var v = c[i] != null ? String(c[i]).trim() : ''; if (v && (/^data:image\//.test(v) || /^https?:\/\//i.test(v) || /^blob:/.test(v))) return v; } return ''; }
+    function out(p) { return (+p.stock || 0) <= 0; }
+    function skipOut() { return S().skipOut !== false; }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    var F = { stock: null, cat: '', img: '' };   // filtres de la fenêtre d'impression en lot
+
+    /* ── Image sur l'étiquette imprimée (appelé par les 3 générateurs d'étiquettes) ── */
+    window._lblImgHTML = function (p, hMM) {
+        if (!S().showImage) return '';
+        var src = imgOf(p); if (!src) return '';
+        var h = Math.max(6, Math.round((+hMM || 30) * 0.3));
+        return '<div class="lbl-img" style="display:flex;justify-content:center;width:100%"><img src="' + esc(src) + '" alt="" style="display:block;max-width:70%;max-height:' + h + 'mm;object-fit:contain"></div>';
+    };
+
+    /* ── Réglages : nouvelles options enregistrées avec les autres ── */
+    function wrapSettings() {
+        var os = window._lblSaveSettings; if (typeof os === 'function' && !os._gp) {
+            var w = function () {
+                var r = os.apply(this, arguments);
+                try {
+                    var s = JSON.parse(localStorage.getItem('covo_label_settings') || '{}');
+                    var a = $('lbl-show-image'), b = $('lbl-skip-out'), c = $('lbl-list-img');
+                    if (a) s.showImage = a.checked; if (b) s.skipOut = b.checked; if (c) s.listImg = c.checked;
+                    var pv = $('lbl-prev-prod'); if (pv) s.previewId = pv.value || '';
+                    localStorage.setItem('covo_label_settings', JSON.stringify(s)); window._lblSettings = s;
+                } catch (e) {}
+                try { _lblUpdatePreview(); } catch (e) {}
+                return r;
+            };
+            w._gp = 1; window._lblSaveSettings = w;
+        }
+        var ol = window._lblLoadSettings; if (typeof ol === 'function' && !ol._gp) {
+            var w2 = function () { var r = ol.apply(this, arguments); try { window._lblSettings = JSON.parse(localStorage.getItem('covo_label_settings') || '{}'); } catch (e) {} syncUi(); return r; };
+            w2._gp = 1; window._lblLoadSettings = w2;
+        }
+    }
+    function syncUi() {
+        var s = S();
+        if ($('lbl-show-image')) $('lbl-show-image').checked = !!s.showImage;
+        if ($('lbl-skip-out')) $('lbl-skip-out').checked = s.skipOut !== false;
+        if ($('lbl-list-img')) $('lbl-list-img').checked = s.listImg !== false;
+    }
+    function lab(id, txt, title) { return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.84rem;color:var(--text-main);"' + (title ? ' title="' + esc(title) + '"' : '') + '><input type="checkbox" id="' + id + '" onchange="_lblSaveSettings()" style="accent-color:#f39c12;width:15px;height:15px;"> ' + txt + '</label>'; }
+    function injectContent() {
+        var shop = $('lbl-show-shop'); if (!shop || $('lbl-show-image')) return;
+        var row = shop.closest('label').parentNode;
+        row.insertAdjacentHTML('beforeend', lab('lbl-show-image', '🖼️ Image de l’article', 'Imprime la photo de l’article sur l’étiquette (si elle existe)'));
+        row.insertAdjacentHTML('afterend', '<div id="lbl-plus-opts" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-color,#e5e7eb)">'
+            + lab('lbl-skip-out', '🚫 N’imprimer que les articles disponibles <span style="font-size:.72rem;color:var(--text-muted)">(ruptures exclues)</span>', 'Les articles en rupture de stock (stock ≤ 0) ne sont pas imprimés')
+            + lab('lbl-list-img', '🖼️ Aperçu des images dans la liste d’impression', 'Affiche la vignette de chaque article dans la fenêtre « Impression en lot »') + '</div>');
+        syncUi();
+    }
+    /* ── Aperçu avec l'article choisi ── */
+    function injectPreviewPicker() {
+        var pw = $('lbl-preview-wrap'); if (!pw || $('lbl-prev-prod')) return;
+        var L = prods().filter(function (p) { return p.active !== false; }).sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+        pw.insertAdjacentHTML('beforebegin', '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:.78rem;font-weight:700;color:var(--text-muted)">Article de l’aperçu :</span>'
+            + '<select id="lbl-prev-prod" onchange="_lblSaveSettings()" style="flex:1;min-width:180px;padding:6px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:7px;font-size:.82rem;background:var(--bg-card,#fff);color:var(--text-main)"><option value="">— Produit test —</option>'
+            + L.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.name) + (out(p) ? ' ⛔ rupture' : '') + (imgOf(p) ? ' 🖼️' : '') + '</option>'; }).join('') + '</select>'
+            + '<span id="lbl-prev-note" style="font-size:.72rem;font-weight:700"></span></div>');
+        var v = S().previewId; if (v && byId(v)) $('lbl-prev-prod').value = v;
+    }
+    function priceTxt(p) {
+        var pr = p.unitType === 'kg' && p.pricePerKg ? +p.pricePerKg : +p.price || 0;
+        try { if (p.promo > 0 && typeof window._promoPrice === 'function') pr = window._promoPrice(pr, p.promo, p.costPrice); } catch (e) {}
+        return pr.toFixed(2) + (p.unitType === 'kg' ? ' €/kg' : ' €');
+    }
+    function wrapPreview() {
+        var o = window._lblUpdatePreview; if (typeof o !== 'function' || o._gp) return;
+        var w = function () {
+            var r = o.apply(this, arguments);
+            try {
+                var box = $('lbl-preview-inner'); if (!box) return r;
+                var sel = $('lbl-prev-prod'), p = sel && sel.value ? byId(sel.value) : null, s = S(), note = $('lbl-prev-note');
+                var col = box.firstElementChild;
+                if (p && col) {
+                    col.querySelectorAll('div').forEach(function (d) {
+                        var t = d.textContent;
+                        if (t === 'Produit Test') d.textContent = p.name || '';
+                        else if (t === 'Catégorie') d.textContent = p.category || '';
+                        else if (t === '4.99 €') d.textContent = priceTxt(p);
+                        else if (t === '3017620425400') d.textContent = p.barcode || '—';
+                    });
+                }
+                if (s.showImage && col) {
+                    var src = p ? imgOf(p) : '', h = Math.round((parseInt(box.style.height) || box.clientHeight) * 0.3) || 40;
+                    var im = document.createElement('div'); im.style.cssText = 'display:flex;justify-content:center;width:100%';
+                    im.innerHTML = src ? '<img src="' + esc(src) + '" alt="" style="max-width:70%;max-height:' + h + 'px;object-fit:contain">' : '<div style="width:' + Math.round(h * 1.3) + 'px;height:' + h + 'px;border-radius:4px;background:#eee;display:flex;align-items:center;justify-content:center;font-size:' + Math.round(h * 0.45) + 'px">🖼️</div>';
+                    col.insertBefore(im, col.firstChild);
+                    var h0 = box.style.height; box.style.height = 'auto'; box.style.minHeight = h0;
+                }
+                if (note) {
+                    if (p && out(p) && skipOut()) { note.textContent = '⛔ En rupture : cet article ne sera pas imprimé'; note.style.color = '#dc2626'; }
+                    else if (p && s.showImage && !imgOf(p)) { note.textContent = 'Pas d’image pour cet article'; note.style.color = '#d97706'; }
+                    else if (p) { note.textContent = '✅ Stock : ' + (+p.stock || 0); note.style.color = '#16a34a'; }
+                    else note.textContent = '';
+                }
+            } catch (e) {}
+            return r;
+        };
+        w._gp = 1; window._lblUpdatePreview = w;
+    }
+
+    /* ── Fenêtre « Impression en lot » : filtres + vignettes + ruptures ── */
+    function cats() { var m = {}; prods().forEach(function (p) { if (p.active !== false && p.category) m[p.category] = 1; }); return Object.keys(m).sort(); }
+    function injectFilters() {
+        var srch = $('lbl-multi-search'); if (!srch) return;
+        if (!$('lbl-flt')) {
+            srch.parentNode.insertAdjacentHTML('afterend', '<div id="lbl-flt" style="padding:8px 16px;border-bottom:1px solid var(--border-color,#eee);display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:var(--bg-body,#f4f7f6);font-size:.78rem"></div>');
+            $('lbl-flt').addEventListener('change', function (e) { var k = e.target.getAttribute('data-lf'); if (!k) return; if (k === 'thumbs') { var s = S(); s.listImg = e.target.checked; localStorage.setItem('covo_label_settings', JSON.stringify(s)); window._lblSettings = s; syncUi(); decorateRows(); } else F[k] = e.target.value; apply(); });
+        }
+        var st = F.stock == null ? (skipOut() ? 'dispo' : '') : F.stock;
+        var sel = function (k, cur, o) { return '<select data-lf="' + k + '" style="padding:6px 8px;border:1.5px solid var(--border-color,#ddd);border-radius:8px;font-size:.78rem;background:var(--input-bg,#fff);color:var(--text-main)">' + o.map(function (x) { return '<option value="' + esc(x[0]) + '"' + (x[0] === cur ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>'; };
+        $('lbl-flt').innerHTML = '<b>Filtrer :</b>' + sel('stock', st, [['dispo', '✅ Disponibles'], ['', '📦 Tous'], ['out', '⛔ En rupture'], ['low', '⚠️ Stock bas (≤ 5)']])
+            + sel('cat', F.cat, [['', 'Tous les rayons']].concat(cats().map(function (c) { return [c, c]; })))
+            + sel('img', F.img, [['', 'Avec ou sans image'], ['with', '🖼️ Avec image'], ['without', '🚫 Sans image']])
+            + '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin-left:auto"><input type="checkbox" data-lf="thumbs"' + (S().listImg !== false ? ' checked' : '') + ' style="accent-color:#16a085"> 🖼️ Vignettes</label>'
+            + '<span id="lbl-flt-n" style="width:100%;opacity:.75"></span>';
+    }
+    function decorateRows() {
+        var show = S().listImg !== false;
+        document.querySelectorAll('#lbl-multi-list .lbl-multi-row').forEach(function (row) {
+            var p = byId(row.getAttribute('data-id')); if (!p) return;
+            row.setAttribute('data-out', out(p) ? '1' : '0'); row.setAttribute('data-img', imgOf(p) ? '1' : '0'); row.setAttribute('data-stock', +p.stock || 0); row.setAttribute('data-catx', p.category || '');
+            var th = row.querySelector('.lbl-th');
+            if (show && !th) {
+                var src = imgOf(p);
+                row.querySelector('.lbl-multi-chk').insertAdjacentHTML('afterend', '<div class="lbl-th" style="width:40px;height:40px;flex:none;border-radius:8px;overflow:hidden;background:var(--bg-body,#f1f5f9);display:flex;align-items:center;justify-content:center;font-size:1.1rem;color:#94a3b8">' + (src ? '<img src="' + esc(src) + '" alt="" loading="lazy" style="width:100%;height:100%;object-fit:cover">' : '🖼️') + '</div>');
+            } else if (!show && th) th.remove();
+            var bd = row.querySelector('.lbl-st');
+            var txt = out(p) ? '⛔ Rupture' : 'Stock ' + (Math.round((+p.stock || 0) * 1000) / 1000);
+            if (!bd) { var nm = row.querySelector('div[style*="flex:1"]'); if (nm) nm.insertAdjacentHTML('beforeend', '<div class="lbl-st" style="font-size:.68rem;font-weight:800;margin-top:1px"></div>'); bd = row.querySelector('.lbl-st'); }
+            if (bd) { bd.textContent = txt; bd.style.color = out(p) ? '#dc2626' : (+p.stock || 0) <= 5 ? '#d97706' : '#16a34a'; }
+            var ck = row.querySelector('.lbl-multi-chk');
+            if (ck) { var dis = out(p) && skipOut(); ck.disabled = dis; if (dis) ck.checked = false; row.style.opacity = dis ? '.55' : ''; row.title = dis ? 'En rupture : non imprimé (option « N’imprimer que les articles disponibles »)' : ''; }
+        });
+    }
+    function apply() {
+        var q = (($('lbl-multi-search') || {}).value || '').toLowerCase().trim();
+        var st = F.stock == null ? (skipOut() ? 'dispo' : '') : F.stock, n = 0, tot = 0;
+        document.querySelectorAll('#lbl-multi-list .lbl-multi-row').forEach(function (row) {
+            tot++;
+            var name = row.getAttribute('data-name') || '', cat = row.getAttribute('data-cat') || '', o = row.getAttribute('data-out') === '1', im = row.getAttribute('data-img') === '1', sk = +row.getAttribute('data-stock') || 0;
+            var ok = (!q || name.indexOf(q) >= 0 || cat.indexOf(q) >= 0)
+                && (!st || (st === 'dispo' && !o) || (st === 'out' && o) || (st === 'low' && !o && sk <= 5))
+                && (!F.cat || row.getAttribute('data-catx') === F.cat)
+                && (!F.img || (F.img === 'with' ? im : !im));
+            row.style.display = ok ? 'flex' : 'none'; if (ok) n++;
+        });
+        var nOut = prods().filter(function (p) { return p.active !== false && out(p); }).length;
+        var e = $('lbl-flt-n'); if (e) e.textContent = n + ' article' + (n > 1 ? 's' : '') + ' affiché' + (n > 1 ? 's' : '') + ' sur ' + tot + (skipOut() && nOut ? ' · ' + nOut + ' en rupture non imprimable' + (nOut > 1 ? 's' : '') : '');
+        try { _lblMultiUpdateCount(); } catch (x) {}
+    }
+    function wrapMulti() {
+        var oo = window._openLblMultiModal; if (typeof oo === 'function' && !oo._gp) {
+            var w = function () { F.stock = null; var r = oo.apply(this, arguments); injectFilters(); decorateRows(); apply(); return r; };
+            w._gp = 1; window._openLblMultiModal = w;
+        }
+        window._lblMultiFilter = apply;
+        var sa = window._lblMultiSelectAll; if (typeof sa === 'function' && !sa._gp) {
+            var w2 = function () { var r = sa.apply(this, arguments); document.querySelectorAll('#lbl-multi-list .lbl-multi-chk:disabled').forEach(function (c) { c.checked = false; }); try { _lblMultiUpdateCount(); } catch (e) {} return r; };
+            w2._gp = 1; window._lblMultiSelectAll = w2;
+        }
+        ['_printMultiLabels', '_printMultiLabelsA4'].forEach(function (n) {
+            var o = window[n]; if (typeof o !== 'function' || o._gp) return;
+            var w3 = function () {
+                if (skipOut()) {
+                    var k = 0; document.querySelectorAll('#lbl-multi-list .lbl-multi-row').forEach(function (row) { var p = byId(row.getAttribute('data-id')), c = row.querySelector('.lbl-multi-chk'); if (p && c && c.checked && out(p)) { c.checked = false; k++; } });
+                    if (k) { toast('⛔ ' + k + ' article' + (k > 1 ? 's' : '') + ' en rupture retiré' + (k > 1 ? 's' : '') + ' de l’impression', 'warning'); try { _lblMultiUpdateCount(); } catch (e) {} }
+                }
+                return o.apply(this, arguments);
+            };
+            w3._gp = 1; window[n] = w3;
+        });
+        var op = window._printLabel; if (typeof op === 'function' && !op._gp) {
+            var w4 = function (id) { var p = byId(id); if (p && id !== 0 && skipOut() && out(p)) { toast('⛔ « ' + p.name + ' » est en rupture de stock : étiquette non imprimée (option « N’imprimer que les articles disponibles »)', 'warning'); return; } return op.apply(this, arguments); };
+            w4._gp = 1; window._printLabel = w4;
+        }
+    }
+    function tick() { try { wrapSettings(); wrapPreview(); wrapMulti(); injectContent(); injectPreviewPicker(); } catch (e) { console.warn('étiquettes+', e); } }
+    (function boot() { if (!document.body) return setTimeout(boot, 300); tick(); setInterval(tick, 1500); })();
 })();
 </script>
 
