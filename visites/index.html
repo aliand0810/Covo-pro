@@ -25,6 +25,52 @@
 </script>
 
 <script>
+/* Lecture à voix haute fluide pour TOUS les assistants COVO :
+   « ticket(s) » → « ticket », « réglé(e) » → « réglé », émojis et symboles retirés ou dits en mots
+   (→ « vers », n° « numéro », × « fois », · et — deviennent de simples pauses…).
+   Appliqué à chaque phrase juste avant qu'elle soit prononcée. */
+(function () {
+    if (window.covoSpeechClean || !window.speechSynthesis) return;
+    function clean(t) {
+        var s = String(t == null ? '' : t);
+        s = s.replace(/<br\s*\/?>/gi, '. ').replace(/<\/(div|p|li)>/gi, '. ').replace(/<[^>]+>/g, ' ').replace(/\[\[|\]\]|\*\*/g, '');
+        s = s.replace(/(^|[^\d,])(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\((s|x)\)/g, function (m0, a, n, w, p) { return a + n + ' ' + w + (+n > 1 ? p : ''); });
+        // marques de pluriel / féminin entre parenthèses collées au mot : on lit le mot seul
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\((?:e|s|es|x|nt|e\)\(s|ne|le|ère|ères|aux)\)/g, '$1');
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\(e\)s\b/g, '$1');
+        // émojis, pictogrammes, sélecteurs de variante
+        s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, ' ');
+        // symboles dits en mots
+        s = s.replace(/\b[nN]°\s*/g, 'numéro ').replace(/#(?=\s*\d)/g, 'numéro ')
+             .replace(/(\d)\s*×\s*/g, '$1 fois ').replace(/\s×\s/g, ' fois ')
+             .replace(/\s*→\s*/g, ' vers ').replace(/\s*↔\s*/g, ' et ').replace(/≈\s*/g, 'environ ')
+             .replace(/(^|[\s(])[−-]\s?(?=\d)/g, '$1moins ').replace(/(^|[\s(])\+\s?(?=\d)/g, '$1plus ')
+             .replace(/(\d{1,2})\s?h\s*[–—-]\s*(\d{1,2})\s?h/g, 'de $1 heures à $2 heures')
+             .replace(/(\d)\s?h\s?(\d{2})\b/g, '$1 heures $2').replace(/\b(\d{1,2})\s?h\b/g, '$1 heures')
+             .replace(/\b1re\b/g, 'première').replace(/\b1er\b/g, 'premier').replace(/\b(\d+)e\b/g, '$1ième')
+             .replace(/\s&\s/g, ' et ').replace(/([A-Za-zÀ-ÿ])\s?\/\s?([A-Za-zÀ-ÿ])/g, '$1 ou $2');
+        // heures, décimales, unités
+        s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, '$1 heures $2').replace(/(\d)\.(\d)/g, '$1,$2')
+             .replace(/(\d)\s?kg\b/gi, '$1 kilos').replace(/(\d)\s?g\b/g, '$1 grammes').replace(/(\d)\s?[lL]\b/g, '$1 litre').replace(/(\d)\s?cl\b/gi, '$1 centilitres')
+             .replace(/\s*÷\s*/g, ' divisé par ').replace(/\s*=\s*/g, ' égal ').replace(/[＋✚＊]/g, ' ');
+        // ponctuation qui se lit mal → pauses naturelles
+        s = s.replace(/[«»“”"]/g, ' ').replace(/[•·|]/g, ', ').replace(/\s[–—]\s/g, ', ').replace(/…/g, '. ')
+             .replace(/\s*\(\s*/g, ', ').replace(/\s*\)\s*([.,;:!?])/g, '$1').replace(/\s*\)\s*/g, ', ')
+             .replace(/[*_~^`]/g, ' ')
+             .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/,\s*\./g, '.').replace(/([:;])\s*\.+/g, '$1').replace(/\.\s*,/g, '.')
+             .replace(/([.!?])\s*[,;:]+/g, '$1').replace(/^\s*[,;:.]+\s*/, '').replace(/[,;:]\s*$/, '').replace(/\s{2,}/g, ' ').trim();
+        // les « : » ou « ! » français suivis d'un espace restent, la synthèse marque la pause
+        return s;
+    }
+    window.covoSpeechClean = clean;
+    try {
+        var sp = window.speechSynthesis, orig = sp.speak;
+        sp.speak = function (u) { try { if (u && typeof u.text === 'string') { var c = clean(u.text); if (!c) return; u.text = c; } } catch (e) {} return orig.apply(sp, arguments); };
+    } catch (e) {}
+})();
+</script>
+
+<script>
 /* ══════════════════════════════════════════════════════════════════════════
    COVO — LANGUE DE L'ASSISTANT : français / shimaoré
    • Traduction phrase par phrase des messages de l'assistant vocal et de l'assistant caisse

@@ -564,6 +564,52 @@ return tinf_uncompress;
 </script>
 
 <script>
+/* Lecture à voix haute fluide pour TOUS les assistants COVO :
+   « ticket(s) » → « ticket », « réglé(e) » → « réglé », émojis et symboles retirés ou dits en mots
+   (→ « vers », n° « numéro », × « fois », · et — deviennent de simples pauses…).
+   Appliqué à chaque phrase juste avant qu'elle soit prononcée. */
+(function () {
+    if (window.covoSpeechClean || !window.speechSynthesis) return;
+    function clean(t) {
+        var s = String(t == null ? '' : t);
+        s = s.replace(/<br\s*\/?>/gi, '. ').replace(/<\/(div|p|li)>/gi, '. ').replace(/<[^>]+>/g, ' ').replace(/\[\[|\]\]|\*\*/g, '');
+        s = s.replace(/(^|[^\d,])(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\((s|x)\)/g, function (m0, a, n, w, p) { return a + n + ' ' + w + (+n > 1 ? p : ''); });
+        // marques de pluriel / féminin entre parenthèses collées au mot : on lit le mot seul
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\((?:e|s|es|x|nt|e\)\(s|ne|le|ère|ères|aux)\)/g, '$1');
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\(e\)s\b/g, '$1');
+        // émojis, pictogrammes, sélecteurs de variante
+        s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, ' ');
+        // symboles dits en mots
+        s = s.replace(/\b[nN]°\s*/g, 'numéro ').replace(/#(?=\s*\d)/g, 'numéro ')
+             .replace(/(\d)\s*×\s*/g, '$1 fois ').replace(/\s×\s/g, ' fois ')
+             .replace(/\s*→\s*/g, ' vers ').replace(/\s*↔\s*/g, ' et ').replace(/≈\s*/g, 'environ ')
+             .replace(/(^|[\s(])[−-]\s?(?=\d)/g, '$1moins ').replace(/(^|[\s(])\+\s?(?=\d)/g, '$1plus ')
+             .replace(/(\d{1,2})\s?h\s*[–—-]\s*(\d{1,2})\s?h/g, 'de $1 heures à $2 heures')
+             .replace(/(\d)\s?h\s?(\d{2})\b/g, '$1 heures $2').replace(/\b(\d{1,2})\s?h\b/g, '$1 heures')
+             .replace(/\b1re\b/g, 'première').replace(/\b1er\b/g, 'premier').replace(/\b(\d+)e\b/g, '$1ième')
+             .replace(/\s&\s/g, ' et ').replace(/([A-Za-zÀ-ÿ])\s?\/\s?([A-Za-zÀ-ÿ])/g, '$1 ou $2');
+        // heures, décimales, unités
+        s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, '$1 heures $2').replace(/(\d)\.(\d)/g, '$1,$2')
+             .replace(/(\d)\s?kg\b/gi, '$1 kilos').replace(/(\d)\s?g\b/g, '$1 grammes').replace(/(\d)\s?[lL]\b/g, '$1 litre').replace(/(\d)\s?cl\b/gi, '$1 centilitres')
+             .replace(/\s*÷\s*/g, ' divisé par ').replace(/\s*=\s*/g, ' égal ').replace(/[＋✚＊]/g, ' ');
+        // ponctuation qui se lit mal → pauses naturelles
+        s = s.replace(/[«»“”"]/g, ' ').replace(/[•·|]/g, ', ').replace(/\s[–—]\s/g, ', ').replace(/…/g, '. ')
+             .replace(/\s*\(\s*/g, ', ').replace(/\s*\)\s*([.,;:!?])/g, '$1').replace(/\s*\)\s*/g, ', ')
+             .replace(/[*_~^`]/g, ' ')
+             .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/,\s*\./g, '.').replace(/([:;])\s*\.+/g, '$1').replace(/\.\s*,/g, '.')
+             .replace(/([.!?])\s*[,;:]+/g, '$1').replace(/^\s*[,;:.]+\s*/, '').replace(/[,;:]\s*$/, '').replace(/\s{2,}/g, ' ').trim();
+        // les « : » ou « ! » français suivis d'un espace restent, la synthèse marque la pause
+        return s;
+    }
+    window.covoSpeechClean = clean;
+    try {
+        var sp = window.speechSynthesis, orig = sp.speak;
+        sp.speak = function (u) { try { if (u && typeof u.text === 'string') { var c = clean(u.text); if (!c) return; u.text = c; } } catch (e) {} return orig.apply(sp, arguments); };
+    } catch (e) {}
+})();
+</script>
+
+<script>
 /* ══════════════════════════════════════════════════════════════════════════
    COVO — LANGUE DE L'ASSISTANT : français / shimaoré
    • Traduction phrase par phrase des messages de l'assistant vocal et de l'assistant caisse
@@ -8548,7 +8594,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         var ch = $('cav-chat'); if (ch) ch.scrollTop = ch.scrollHeight;
     }
     function say(html) {
-        var t = String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        var t = String(html).replace(/<br\s*\/?>/gi, '. ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
         try { var c = J('covo_voice_cfg', {}); if (c.enabled !== true || c.voice === false || !window.speechSynthesis) return;
             if (window.covoI18n && covoI18n.lang() === 'sh') { covoI18n.speak(covoI18n.seg(t)); return; }
             speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t); u.lang = 'fr-FR'; if (c.rate) u.rate = c.rate; if (c.pitch) u.pitch = c.pitch; if (c.vol != null) u.volume = c.vol; var v = window.covoI18n ? covoI18n.voice('fr') : null; if (v) try { u.voice = v; } catch (e) {} speechSynthesis.speak(u); } catch (e) {}
@@ -8563,7 +8609,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         if (/(panier moyen|moyenne)/.test(n)) return '🛒 Panier moyen ' + P + ' : <b>' + eur(S.avg) + '</b> (' + S.n + ' tickets).';
         if (/(heure|quand|moment|pic|affluence)/.test(n)) return S.peak != null ? '⏰ Votre meilleure heure ' + P + ' : <b>' + S.peak + ' h – ' + (+S.peak + 1) + ' h</b>.' : 'Pas encore de vente ' + P + '.';
         if (/(dernier|derniere)/.test(n)) { var l = D.sales[D.sales.length - 1]; return l ? '🧾 Dernier ticket : n° ' + esc(l.ticketNum || l.id) + ' à ' + new Date(l.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ', <b>' + eur(l.total) + '</b> (' + esc((PAY[l.method] || ['', l.method])[1]) + ').' : 'Aucun ticket ' + P + '.'; }
-        if (/(plus vendu|meilleur|top|populaire|marche le mieux)/.test(n)) return S.arts.length ? '🏆 Vos meilleures ventes ' + P + ' :<br>' + S.arts.slice(0, 3).map(function (a, i) { return (i + 1) + '. <b>' + esc(a.name) + '</b> — ' + num(a.q) + (a.kg ? ' kg' : '') + ', ' + eur(a.a); }).join('<br>') : 'Aucune vente ' + P + '.';
+        if (/(plus vendu|meilleur|top|populaire|marche le mieux)/.test(n)) return S.arts.length ? '🏆 Vos meilleures ventes ' + P + ' :<br>' + S.arts.slice(0, 3).map(function (a) { return '<b>' + esc(a.name) + '</b> : ' + num(a.q) + (a.kg ? ' kg' : (a.q > 1 ? ' vendus' : ' vendu')) + ' pour ' + eur(a.a); }).join('<br>') : 'Aucune vente ' + P + '.';
         if (/(combien|chiffre|vendu|vente|total|ca\b|recette|gagne)/.test(n)) {
             // un article précis ? (« combien de coca »)
             var words = n.replace(/combien|de|d|des|du|la|le|les|j ai|vendu|vendus|aujourd hui|hier|ce mois|article|articles|\?/g, ' ').split(/\s+/).filter(function (w) { return w.length > 2; });

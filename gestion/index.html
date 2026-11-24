@@ -564,6 +564,52 @@ return tinf_uncompress;
 </script>
 
 <script>
+/* Lecture à voix haute fluide pour TOUS les assistants COVO :
+   « ticket(s) » → « ticket », « réglé(e) » → « réglé », émojis et symboles retirés ou dits en mots
+   (→ « vers », n° « numéro », × « fois », · et — deviennent de simples pauses…).
+   Appliqué à chaque phrase juste avant qu'elle soit prononcée. */
+(function () {
+    if (window.covoSpeechClean || !window.speechSynthesis) return;
+    function clean(t) {
+        var s = String(t == null ? '' : t);
+        s = s.replace(/<br\s*\/?>/gi, '. ').replace(/<\/(div|p|li)>/gi, '. ').replace(/<[^>]+>/g, ' ').replace(/\[\[|\]\]|\*\*/g, '');
+        s = s.replace(/(^|[^\d,])(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\((s|x)\)/g, function (m0, a, n, w, p) { return a + n + ' ' + w + (+n > 1 ? p : ''); });
+        // marques de pluriel / féminin entre parenthèses collées au mot : on lit le mot seul
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\((?:e|s|es|x|nt|e\)\(s|ne|le|ère|ères|aux)\)/g, '$1');
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\(e\)s\b/g, '$1');
+        // émojis, pictogrammes, sélecteurs de variante
+        s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, ' ');
+        // symboles dits en mots
+        s = s.replace(/\b[nN]°\s*/g, 'numéro ').replace(/#(?=\s*\d)/g, 'numéro ')
+             .replace(/(\d)\s*×\s*/g, '$1 fois ').replace(/\s×\s/g, ' fois ')
+             .replace(/\s*→\s*/g, ' vers ').replace(/\s*↔\s*/g, ' et ').replace(/≈\s*/g, 'environ ')
+             .replace(/(^|[\s(])[−-]\s?(?=\d)/g, '$1moins ').replace(/(^|[\s(])\+\s?(?=\d)/g, '$1plus ')
+             .replace(/(\d{1,2})\s?h\s*[–—-]\s*(\d{1,2})\s?h/g, 'de $1 heures à $2 heures')
+             .replace(/(\d)\s?h\s?(\d{2})\b/g, '$1 heures $2').replace(/\b(\d{1,2})\s?h\b/g, '$1 heures')
+             .replace(/\b1re\b/g, 'première').replace(/\b1er\b/g, 'premier').replace(/\b(\d+)e\b/g, '$1ième')
+             .replace(/\s&\s/g, ' et ').replace(/([A-Za-zÀ-ÿ])\s?\/\s?([A-Za-zÀ-ÿ])/g, '$1 ou $2');
+        // heures, décimales, unités
+        s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, '$1 heures $2').replace(/(\d)\.(\d)/g, '$1,$2')
+             .replace(/(\d)\s?kg\b/gi, '$1 kilos').replace(/(\d)\s?g\b/g, '$1 grammes').replace(/(\d)\s?[lL]\b/g, '$1 litre').replace(/(\d)\s?cl\b/gi, '$1 centilitres')
+             .replace(/\s*÷\s*/g, ' divisé par ').replace(/\s*=\s*/g, ' égal ').replace(/[＋✚＊]/g, ' ');
+        // ponctuation qui se lit mal → pauses naturelles
+        s = s.replace(/[«»“”"]/g, ' ').replace(/[•·|]/g, ', ').replace(/\s[–—]\s/g, ', ').replace(/…/g, '. ')
+             .replace(/\s*\(\s*/g, ', ').replace(/\s*\)\s*([.,;:!?])/g, '$1').replace(/\s*\)\s*/g, ', ')
+             .replace(/[*_~^`]/g, ' ')
+             .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/,\s*\./g, '.').replace(/([:;])\s*\.+/g, '$1').replace(/\.\s*,/g, '.')
+             .replace(/([.!?])\s*[,;:]+/g, '$1').replace(/^\s*[,;:.]+\s*/, '').replace(/[,;:]\s*$/, '').replace(/\s{2,}/g, ' ').trim();
+        // les « : » ou « ! » français suivis d'un espace restent, la synthèse marque la pause
+        return s;
+    }
+    window.covoSpeechClean = clean;
+    try {
+        var sp = window.speechSynthesis, orig = sp.speak;
+        sp.speak = function (u) { try { if (u && typeof u.text === 'string') { var c = clean(u.text); if (!c) return; u.text = c; } } catch (e) {} return orig.apply(sp, arguments); };
+    } catch (e) {}
+})();
+</script>
+
+<script>
 /* ══════════════════════════════════════════════════════════════════════════
    COVO — LANGUE DE L'ASSISTANT : français / shimaoré
    • Traduction phrase par phrase des messages de l'assistant vocal et de l'assistant caisse
@@ -17286,6 +17332,202 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     function tick() { mountButtons(); mountSessionDate(); mountScanDlc(); syncScanDlc(); hookStart(); }
     setInterval(tick, 700);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tick); else tick();
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   GESTION PRO — FACTURES : modifier le mode d'un règlement / annuler un règlement
+   • ✏️ Modifier le mode (espèces, CB, mixte, crédit, à compte) : soldes espèces / CB corrigés,
+     ticket de caisse rattaché mis à jour
+   • ↩️ Annuler (oubli de prise en compte, erreur de saisie…) : soldes remis, ticket annulé
+     (ou ligne retirée du ticket existant), stock remis si c'était le règlement qui soldait la facture
+   • Chaque rectification / annulation laisse une trace : historique des mouvements (solde réel)
+     + historique de la facture (qui, quand, quoi, motif). Rien n'est effacé : les règlements annulés restent consultables.
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._gpPayFix) return; window._gpPayFix = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+    function r2(v) { return Math.round(num(v) * 100) / 100; }
+    function eur(v) { try { return _devisFmtEUR(v); } catch (e) { return r2(v).toFixed(2).replace('.', ',') + ' €'; } }
+    function modeLbl(m, emo) { try { return _devisPaymentModeLabel(m, emo); } catch (e) { return m; } }
+    function who() { var u = null; try { u = typeof _covoCurrentUser === 'function' ? _covoCurrentUser() : null; } catch (e) {} if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} } return u ? (u.username || u.name || '') : ''; }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    var MODES = ['especes', 'cb', 'mixte', 'credit', 'compte'];
+    function METHOD(m) { return m === 'cb' ? 'cb' : m === 'mixte' ? 'mixed' : (m === 'credit' || m === 'compte') ? 'credit' : 'cash'; }
+    function split(m, montant, esp, cb) { return m === 'especes' ? [montant, 0] : m === 'cb' ? [0, montant] : m === 'mixte' ? [r2(esp), r2(cb)] : [0, 0]; }
+    function devis(id) { var all = _devisGetAll(); return { all: all, d: all.find(function (x) { return x.id === id; }) }; }
+    function sales() { try { return (typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) ? salesHistory : JSON.parse(localStorage.getItem('covo_sales_history') || '[]'); } catch (e) { return []; } }
+    function saveSales(S) { localStorage.setItem('covo_sales_history', JSON.stringify(S)); try { if (typeof salesHistory !== 'undefined' && Array.isArray(salesHistory) && salesHistory !== S) salesHistory.splice.apply(salesHistory, [0, salesHistory.length].concat(S)); } catch (e) {} }
+    // Historique des mouvements (solde réel espèces / CB) : une ligne même sans mouvement d'argent
+    function move(bucket, delta, desc) {
+        if (delta && typeof _covoRealBalanceAdjust === 'function') { _covoRealBalanceAdjust(bucket, r2(delta), desc); return; }
+        var data; try { data = JSON.parse(localStorage.getItem('covo_real_balance')) || {}; } catch (e) { data = {}; }
+        if (typeof data.especes !== 'number') data.especes = 0; if (typeof data.cb !== 'number') data.cb = 0; if (!Array.isArray(data.log)) data.log = [];
+        data.log.unshift({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 8), ts: new Date().toISOString(), bucket: bucket, delta: 0, after: data[bucket], desc: desc, trace: true });
+        if (data.log.length > 300) data.log = data.log.slice(0, 300);
+        localStorage.setItem('covo_real_balance', JSON.stringify(data));
+    }
+    function trace(d, x) { if (!Array.isArray(d.trace)) d.trace = []; x.at = new Date().toISOString(); x.by = who(); d.trace.push(x); }
+    function refresh(id) { try { _devisRenderList(); } catch (e) {} try { _devisOpenPreview(id); } catch (e) {} if (typeof cpDriveMarkDirty === 'function') try { cpDriveMarkDirty(); } catch (e) {} }
+
+    /* ───── 1) Modifier le mode d'un règlement ───── */
+    function changeMode(devisId, payId, nm, esp, cb, motif) {
+        var o = devis(devisId), d = o.d; if (!d) return toast('Facture introuvable', 'error');
+        var p = (d.paiements || []).find(function (x) { return x.id === payId; }); if (!p) return toast('Règlement introuvable', 'error');
+        var m = r2(p.montant), om = p.mode, oe = r2(p.montantEspeces), oc = r2(p.montantCB), ne = split(nm, m, esp, cb);
+        if (nm === 'mixte' && Math.abs(ne[0] + ne[1] - m) > 0.01) return toast('⚠️ Espèces + CB doivent faire ' + eur(m), 'error');
+        if (om === nm && Math.abs(ne[0] - oe) < 0.005 && Math.abs(ne[1] - oc) < 0.005) return toast('Aucun changement', 'info');
+        var tag = 'Rectification règlement facture ' + d.numero + ' : ' + modeLbl(om, false) + ' → ' + modeLbl(nm, false) + (motif ? ' (' + motif + ')' : '');
+        var dE = r2(ne[0] - oe), dC = r2(ne[1] - oc);
+        if (dE) move('especes', dE, tag); if (dC) move('cb', dC, tag); if (!dE && !dC) move('especes', 0, tag);
+        // ticket de caisse rattaché
+        if (p.ticketId != null && p.ticketId !== '') {
+            var S = sales(), t = S.find(function (s) { return String(s.id) === String(p.ticketId); });
+            if (t) {
+                var own = p.autoTicket || t.devisPaymentId === p.id;
+                if (own) { t.method = METHOD(nm); t.receivedCash = ne[0]; t.receivedCB = ne[1]; }
+                else { t.receivedCash = r2(num(t.receivedCash) + dE); t.receivedCB = r2(num(t.receivedCB) + dC); }
+                (t.items || []).forEach(function (it) { if (String(it.id || '').indexOf('DEVIS-' + d.numero) === 0) { it.name = String(it.name || '').replace('(' + modeLbl(om, false) + ')', '(' + modeLbl(nm, false) + ')'); it.devisPaymentMode = nm; } });
+                t.rectifiedAt = new Date().toISOString();
+                saveSales(S);
+            }
+        }
+        if (!Array.isArray(p.history)) p.history = [];
+        p.history.push({ at: new Date().toISOString(), by: who(), action: 'mode', from: om, to: nm, fromEsp: oe, fromCB: oc, motif: motif || '' });
+        p.mode = nm; p.montantEspeces = ne[0]; p.montantCB = ne[1];
+        trace(d, { action: 'mode', paymentId: p.id, montant: m, from: om, to: nm, motif: motif || '' });
+        _devisSaveAll(o.all); refresh(d.id);
+        toast('✏️ Mode du règlement modifié : ' + modeLbl(om) + ' → ' + modeLbl(nm), 'success');
+    }
+
+    /* ───── 2) Annuler un règlement ───── */
+    function cancelPay(devisId, payId, motif) {
+        var o = devis(devisId), d = o.d; if (!d) return toast('Facture introuvable', 'error');
+        var i = (d.paiements || []).findIndex(function (x) { return x.id === payId; }); if (i < 0) return toast('Règlement introuvable', 'error');
+        var p = d.paiements[i], m = r2(p.montant), e = r2(p.montantEspeces), c = r2(p.montantCB);
+        var tag = 'Annulation règlement facture ' + d.numero + ' — ' + eur(m) + ' ' + modeLbl(p.mode, false) + (motif ? ' (' + motif + ')' : '');
+        if (e) move('especes', -e, tag); if (c) move('cb', -c, tag); if (!e && !c) move('especes', 0, tag);
+        var restock = 0;
+        if (p.ticketId != null && p.ticketId !== '') {
+            var S = sales(), t = S.find(function (s) { return String(s.id) === String(p.ticketId); });
+            if (t) {
+                if (p.autoTicket || t.devisPaymentId === p.id) {
+                    t.cancelled = true; t.cancelledAt = new Date().toISOString(); t.cancelledBy = who(); t.cancelReason = 'Règlement de facture annulé' + (motif ? ' : ' + motif : '');
+                    // ce ticket avait sorti les articles du stock (règlement qui soldait la facture) : on les remet
+                    var arts = (t.items || []).filter(function (it) { return it.fromInvoice; });
+                    if (arts.length && d.stockOutAt) {
+                        var P = []; try { P = JSON.parse(localStorage.getItem('covo_products') || '[]'); } catch (x) {}
+                        arts.forEach(function (it) {
+                            var pr = P.find(function (x) { return String(x.id) === String(it.id); }); if (!pr) return;
+                            var before = num(pr.stock), q = num(it.quantity);
+                            pr.stock = Math.round((before + q) * 1000) / 1000;
+                            if (typeof window._logStockChange === 'function') window._logStockChange(pr, before, pr.stock, 'retour', 'Annulation règlement facture ' + d.numero + ' — articles remis en stock', { devisId: d.id, saleId: t.id });
+                            restock++;
+                        });
+                        if (restock) try { localStorage.setItem('covo_products', JSON.stringify(P)); } catch (x) {}
+                        delete d.stockOutAt;   // le prochain règlement qui soldera la facture ressortira les articles
+                    }
+                } else {   // règlement ajouté à un ticket existant : on retire sa ligne
+                    var k = (t.items || []).findIndex(function (it) { return String(it.id || '').indexOf('DEVIS-' + d.numero) === 0 && Math.abs(num(it.price) - m) < 0.005; });
+                    if (k >= 0) t.items.splice(k, 1);
+                    t.total = r2(num(t.total) - m); t.received = r2(num(t.received) - m);
+                    if (e) t.receivedCash = r2(num(t.receivedCash) - e); if (c) t.receivedCB = r2(num(t.receivedCB) - c);
+                    t.rectifiedAt = new Date().toISOString();
+                }
+                saveSales(S);
+            }
+        }
+        d.paiements.splice(i, 1);
+        if (!Array.isArray(d.paiementsAnnules)) d.paiementsAnnules = [];
+        p.cancelledAt = new Date().toISOString(); p.cancelledBy = who(); p.cancelReason = motif || '';
+        d.paiementsAnnules.push(p);
+        trace(d, { action: 'annulation', paymentId: p.id, montant: m, from: p.mode, motif: motif || '', restock: restock });
+        _devisSaveAll(o.all); refresh(d.id);
+        toast('↩️ Règlement de ' + eur(m) + ' annulé' + (restock ? ' — ' + restock + ' article(s) remis en stock' : ''), 'success');
+    }
+    window._gpPayChangeMode = changeMode; window._gpPayCancel = cancelPay;
+
+    /* ───── Affichage : boutons sur chaque règlement + historique de la facture ───── */
+    var oRows = window._devisPaymentHistoryRowsHTML;
+    if (typeof oRows === 'function') window._devisPaymentHistoryRowsHTML = _devisPaymentHistoryRowsHTML = function (d) {
+        var P = Array.isArray(d.paiements) ? d.paiements : []; if (!P.length) return '';
+        return P.slice().reverse().map(function (p) {
+            var tk = p.ticketNumero ? (' · Ticket #' + esc(p.ticketNumero)) : (p.direct ? ' · ⚡ Sans ticket' : '');
+            var rect = (p.history || []).length ? ' <span title="Mode rectifié" style="color:#e67e22">✏️</span>' : '';
+            return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:0.78rem;color:var(--text-muted,#888);padding:4px 0;border-bottom:1px dashed var(--border-color,#e5e7eb)">'
+                + '<span style="flex:1;min-width:0">' + _devisFmtDateFR((p.date || '').slice(0, 10)) + ' · ' + modeLbl(p.mode) + tk + rect + '</span>'
+                + '<span style="font-weight:700;color:var(--text-main)">' + eur(p.montant) + '</span>'
+                + '<button type="button" data-gpp="mode" data-d="' + esc(d.id) + '" data-p="' + esc(p.id) + '" title="Modifier le mode de paiement" style="border:1px solid var(--border-color,#d1d5db);background:transparent;border-radius:7px;padding:2px 7px;cursor:pointer;font-size:.74rem;color:inherit">✏️ Mode</button>'
+                + '<button type="button" data-gpp="cancel" data-d="' + esc(d.id) + '" data-p="' + esc(p.id) + '" title="Annuler ce règlement (oubli, erreur de saisie…)" style="border:1px solid #f5b7b1;background:transparent;border-radius:7px;padding:2px 7px;cursor:pointer;font-size:.74rem;color:#c0392b">↩️ Annuler</button></div>';
+        }).join('');
+    };
+    var oSec = window._devisPaymentSectionHTML;
+    if (typeof oSec === 'function') window._devisPaymentSectionHTML = _devisPaymentSectionHTML = function (d) {
+        var h = oSec.apply(this, arguments), T = Array.isArray(d.trace) ? d.trace : [];
+        if (!T.length) return h;
+        var lines = T.slice().reverse().slice(0, 30).map(function (x) {
+            var dt = new Date(x.at), when = isNaN(dt) ? '' : dt.toLocaleDateString('fr-FR') + ' ' + dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            var what = x.action === 'mode' ? ('✏️ Mode modifié : ' + modeLbl(x.from) + ' → ' + modeLbl(x.to) + ' (' + eur(x.montant) + ')') : ('↩️ Règlement annulé : ' + eur(x.montant) + ' ' + modeLbl(x.from) + (x.restock ? ' · ' + x.restock + ' article(s) remis en stock' : ''));
+            return '<div style="font-size:.76rem;padding:3px 0;color:var(--text-main)">' + what + (x.motif ? ' — <i>' + esc(x.motif) + '</i>' : '') + '<br><span style="color:var(--text-muted,#888)">' + when + (x.by ? ' · ' + esc(x.by) : '') + '</span></div>';
+        }).join('');
+        return h + '<div style="background:var(--bg-body,#f4f7f6);border-radius:10px;padding:10px 14px;margin:-6px 0 14px;border-left:3px solid #e67e22"><div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted,#888);font-weight:700;margin-bottom:4px">🧾 Historique des rectifications</div>' + lines + '</div>';
+    };
+
+    /* ───── Fenêtres de saisie ───── */
+    function dlg(html, onOk) {
+        var o = document.createElement('div');
+        o.style.cssText = 'position:fixed;inset:0;z-index:100500;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:14px';
+        o.innerHTML = '<div style="width:min(440px,100%);background:var(--bg-card,#fff);color:var(--text-main,#1f2937);border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.35);overflow:hidden;font-size:.86rem">' + html
+            + '<div style="display:flex;gap:8px;padding:12px 16px 16px"><button type="button" data-x="no" style="flex:1;padding:10px;border-radius:10px;border:1px solid var(--border-color,#d1d5db);background:transparent;color:inherit;font-weight:800;cursor:pointer">Annuler</button><button type="button" data-x="ok" style="flex:1;padding:10px;border-radius:10px;border:none;background:#2c6fad;color:#fff;font-weight:800;cursor:pointer">Valider</button></div></div>';
+        document.body.appendChild(o);
+        o.addEventListener('click', function (e) { if (e.target === o || e.target.closest('[data-x="no"]')) o.remove(); else if (e.target.closest('[data-x="ok"]')) { if (onOk(o) !== false) o.remove(); } });
+        return o;
+    }
+    var IN = 'width:100%;box-sizing:border-box;padding:8px 10px;border-radius:9px;border:1px solid var(--border-color,#d1d5db);background:var(--bg-card,#fff);color:inherit;font:inherit';
+    function motifField(def) {
+        return '<label style="display:block;margin-top:10px;font-weight:700">Motif</label><select data-m="sel" style="' + IN + '"><option' + (def === 'erreur' ? ' selected' : '') + '>Erreur de saisie</option><option' + (def === 'oubli' ? ' selected' : '') + '>Oubli de prise en compte</option><option>Le client a changé de mode de paiement</option><option>Paiement refusé / non reçu</option><option value="">Autre…</option></select>'
+            + '<input data-m="txt" placeholder="Précision (facultatif)" style="' + IN + ';margin-top:6px">';
+    }
+    function motifOf(o) { var s = o.querySelector('[data-m="sel"]').value, t = o.querySelector('[data-m="txt"]').value.trim(); return [s, t].filter(Boolean).join(' — '); }
+    function openMode(devisId, payId) {
+        var o0 = devis(devisId), d = o0.d, p = d && (d.paiements || []).find(function (x) { return x.id === payId; }); if (!p) return;
+        var m = r2(p.montant);
+        var o = dlg('<div style="padding:14px 16px;background:linear-gradient(135deg,#2c6fad,#1e4f80);color:#fff"><b style="font-size:1rem">✏️ Modifier le mode de paiement</b><div style="font-size:.76rem;opacity:.9">Facture ' + esc(d.numero) + ' · règlement de ' + eur(m) + ' du ' + _devisFmtDateFR((p.date || '').slice(0, 10)) + '</div></div>'
+            + '<div style="padding:12px 16px">Mode actuel : <b>' + modeLbl(p.mode) + '</b>'
+            + '<label style="display:block;margin-top:10px;font-weight:700">Nouveau mode</label><select data-m="mode" style="' + IN + '">' + MODES.map(function (k) { return '<option value="' + k + '"' + (k === p.mode ? ' selected' : '') + '>' + modeLbl(k) + '</option>'; }).join('') + '</select>'
+            + '<div data-m="mix" style="display:none;gap:8px;margin-top:8px"><label style="flex:1">💵 Espèces<input data-m="e" type="number" step="0.01" min="0" value="' + r2(p.montantEspeces || 0).toFixed(2) + '" style="' + IN + '"></label><label style="flex:1">💳 CB<input data-m="c" type="number" step="0.01" min="0" value="' + r2(p.montantCB || 0).toFixed(2) + '" style="' + IN + '"></label></div>'
+            + motifField('erreur')
+            + '<div style="margin-top:10px;font-size:.76rem;color:var(--text-muted,#888);line-height:1.45">Le solde réel espèces / CB et le ticket de caisse rattaché sont corrigés automatiquement. Une trace est ajoutée à l’historique des mouvements et à celui de la facture.</div></div>',
+            function (o) { var nm = o.querySelector('[data-m="mode"]').value; changeMode(devisId, payId, nm, num(o.querySelector('[data-m="e"]').value), num(o.querySelector('[data-m="c"]').value), motifOf(o)); });
+        var sel = o.querySelector('[data-m="mode"]'), mix = o.querySelector('[data-m="mix"]');
+        var sync = function () { mix.style.display = sel.value === 'mixte' ? 'flex' : 'none'; if (sel.value === 'mixte' && num(o.querySelector('[data-m="e"]').value) + num(o.querySelector('[data-m="c"]').value) < 0.005) o.querySelector('[data-m="e"]').value = m.toFixed(2); };
+        sel.addEventListener('change', sync); sync();
+        o.querySelector('[data-m="e"]').addEventListener('input', function () { o.querySelector('[data-m="c"]').value = Math.max(0, r2(m - num(this.value))).toFixed(2); });
+        o.querySelector('[data-m="c"]').addEventListener('input', function () { o.querySelector('[data-m="e"]').value = Math.max(0, r2(m - num(this.value))).toFixed(2); });
+    }
+    function openCancel(devisId, payId) {
+        var o0 = devis(devisId), d = o0.d, p = d && (d.paiements || []).find(function (x) { return x.id === payId; }); if (!p) return;
+        var t = null; if (p.ticketId != null && p.ticketId !== '') t = sales().find(function (s) { return String(s.id) === String(p.ticketId); });
+        var own = t && (p.autoTicket || t.devisPaymentId === p.id), stock = own && d.stockOutAt && (t.items || []).some(function (it) { return it.fromInvoice; });
+        var o = dlg('<div style="padding:14px 16px;background:linear-gradient(135deg,#c0392b,#922b21);color:#fff"><b style="font-size:1rem">↩️ Annuler ce règlement</b><div style="font-size:.76rem;opacity:.9">Facture ' + esc(d.numero) + ' · ' + eur(p.montant) + ' ' + modeLbl(p.mode) + ' du ' + _devisFmtDateFR((p.date || '').slice(0, 10)) + '</div></div>'
+            + '<div style="padding:12px 16px;line-height:1.5">Ce qui sera fait :<ul style="margin:6px 0 0 18px;padding:0">'
+            + (r2(p.montantEspeces) ? '<li>solde espèces : −' + eur(p.montantEspeces) + '</li>' : '') + (r2(p.montantCB) ? '<li>solde CB : −' + eur(p.montantCB) + '</li>' : '')
+            + (t ? (own ? '<li>ticket #' + esc(t.ticketNum || t.id) + ' marqué <b>annulé</b> (retiré des ventes)</li>' : '<li>ligne du règlement retirée du ticket #' + esc(t.ticketNum || t.id) + '</li>') : '')
+            + (stock ? '<li>articles de la facture <b>remis en stock</b></li>' : '')
+            + '<li>la facture repasse à « reste à payer » ' + eur(r2(_devisResteAPayer(d) + num(p.montant))) + '</li><li>trace dans l’historique des mouvements et de la facture</li></ul>'
+            + motifField('oubli') + '</div>',
+            function (o) { cancelPay(devisId, payId, motifOf(o)); });
+        o.querySelector('[data-x="ok"]').style.background = '#c0392b'; o.querySelector('[data-x="ok"]').textContent = '↩️ Annuler le règlement';
+    }
+    document.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-gpp]'); if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (b.getAttribute('data-gpp') === 'mode') openMode(b.getAttribute('data-d'), b.getAttribute('data-p')); else openCancel(b.getAttribute('data-d'), b.getAttribute('data-p'));
+    }, true);
 })();
 </script>
 
