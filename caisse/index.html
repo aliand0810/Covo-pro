@@ -8372,8 +8372,8 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         if (L.at && L.at !== seen) { seen = L.at; if (autoOk() && folder()) trigger(false); }
         if (pending()) { if (!since) since = Date.now(); if (autoOk() && folder() && Date.now() - since > 45000 && (Date.now() - since) % 60000 < 3000) trigger(false); }   // relance douce
         else since = 0;
-        var o = document.getElementById('ca-hist'); if (o) bar(o);
     }, 3000);
+    // (plus de bandeau dans la fenêtre du journal : la sauvegarde se fait en arrière-plan, comme pour les autres données)
 
     // 2) Bandeau d'état dans la fenêtre du journal
     function bar(box) {
@@ -8401,7 +8401,193 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         var html = '<span style="flex:1;min-width:220px;line-height:1.4">' + txt + '</span>' + btn.replace(/<button /g, '<button style="border:none;border-radius:9px;padding:7px 12px;font-weight:800;cursor:pointer;background:' + col[1] + ';color:#fff" ');
         if (b._h !== html) { b.innerHTML = html; b._h = html; }
     }
-    (function obs() { if (!document.body) return setTimeout(obs, 300); new MutationObserver(function () { var o = document.getElementById('ca-hist'); if (o && !o.querySelector('#ca-drive')) bar(o); }).observe(document.body, { childList: true }); })();
+    (function obs() { if (!document.body) return setTimeout(obs, 300); new MutationObserver(function () { var o = document.getElementById('ca-hist'); if (o && !o._cadSent) { o._cadSent = 1; if (pending() && autoOk() && folder()) trigger(false); } }).observe(document.body, { childList: true }); })();
+})();
+</script>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   🕘 JOURNAL — onglets « Mes ventes » et « Assistant »
+   • 🛒 Mes ventes : articles vendus de la période, UNIQUEMENT ceux de l'utilisateur connecté
+     (un caissier ne voit jamais l'activité d'un administrateur ou de l'Admin-Développeur, et inversement)
+   • filtre par mode de paiement, par article ; vue par article ou par ticket
+   • 🤖 Assistant : répond aux questions sur la journée (ventes, paiements, annulations…), à voix haute si activé
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+    if (window._covoDayView) return; window._covoDayView = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(n) { return (Math.round((+n || 0) * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function num(n) { return (Math.round((+n || 0) * 1000) / 1000).toLocaleString('fr-FR'); }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’']/g, ' '); }
+    function J(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+    function me() { var u = null; try { u = typeof window._covoCurrentUser === 'function' ? window._covoCurrentUser() : null; } catch (e) {} if (!u) { try { u = currentUser; } catch (e) {} } if (!u) u = J('covo_current_user', null); return u || {}; }
+    function uname(u) { return u.username || u.name || ''; }
+    function mine(rec, u) {   // la ligne appartient-elle à l'utilisateur connecté ?
+        var id = rec.cashierId, n = rec.cashier;
+        if (id != null && u.id != null) return String(id) === String(u.id);
+        return !!n && n === uname(u);
+    }
+    var PAY = { cash: ['💶', 'Espèces'], cb: ['💳', 'Carte bancaire'], mixed: ['🔀', 'Mixte'], ticket: ['🎟️', 'Ticket resto'], credit: ['📒', 'Crédit client'], echel: ['📅', 'Plusieurs fois'], points: ['🎁', 'Points fidélité'] };
+    var V = { tab: 'cancel', period: 'today', pay: '', q: '', mode: 'art' };
+    function range() {
+        var d0 = new Date(); d0.setHours(0, 0, 0, 0); var day = 864e5;
+        return { today: [d0, null], yesterday: [new Date(d0 - day), d0], week: [new Date(d0 - 6 * day), null], month: [new Date(d0.getFullYear(), d0.getMonth(), 1), null], all: [null, null] }[V.period] || [d0, null];
+    }
+    function inRange(iso, r) { var t = new Date(iso); return (!r[0] || t >= r[0]) && (!r[1] || t < r[1]); }
+    function lineAmt(it) { var q = +(it.quantity != null ? it.quantity : it.qty) || 0, p = +it.price || 0; return Math.round(q * p * 100) / 100; }
+    // Données de l'utilisateur connecté seulement
+    function data() {
+        var u = me(), r = range(), q = norm(V.q).trim();
+        var sales = (J('covo_sales_history', []) || []).filter(function (s) { return s && !s.cancelled && s.type !== 'retour_article' && mine(s, u) && inRange(s.date, r); });
+        var returns = (J('covo_sales_history', []) || []).filter(function (s) { return s && s.type === 'retour_article' && mine(s, u) && inRange(s.date, r); });
+        var cancels = (J('covo_cart_audit', []) || []).filter(function (e) { return e && mine(e, u) && inRange(e.at, r); });
+        var shown = sales.filter(function (s) { return (!V.pay || (s.method || 'autre') === V.pay) && (!q || (s.items || []).some(function (it) { return norm(it.name + ' ' + (it.barcode || '')).indexOf(q) >= 0; })); });
+        return { u: u, sales: sales, shown: shown, returns: returns, cancels: cancels };
+    }
+    function stats(D) {
+        var arts = {}, ca = 0, n = 0, pay = {}, enc = { cash: 0, cb: 0, ticket: 0 }, hours = {}, q = norm(V.q).trim();
+        D.shown.forEach(function (s) {
+            ca += +s.total || 0; n++;
+            var m = s.method || 'autre'; pay[m] = pay[m] || { n: 0, a: 0 }; pay[m].n++; pay[m].a += +s.total || 0;
+            if (m === 'cash') enc.cash += +s.total || 0; else if (m === 'cb') enc.cb += +s.total || 0; else if (m === 'ticket') enc.ticket += +s.total || 0;
+            else if (m === 'mixed') { enc.cb += +s.receivedCB || 0; enc.ticket += +s.receivedTicket || 0; enc.cash += Math.max(0, (+s.receivedCash || 0) - (+s.change || 0)); }
+            var h = new Date(s.date).getHours(); hours[h] = (hours[h] || 0) + (+s.total || 0);
+            (s.items || []).forEach(function (it) {
+                if (q && norm(it.name + ' ' + (it.barcode || '')).indexOf(q) < 0) return;
+                var k = String(it.name || 'Article').replace(' 🏷️', ''); var a = arts[k] = arts[k] || { name: k, q: 0, a: 0, t: 0, kg: it.unitType === 'kg' };
+                a.q += +(it.quantity != null ? it.quantity : it.qty) || 0; a.a += lineAmt(it); a.t++;
+            });
+        });
+        var list = Object.keys(arts).map(function (k) { return arts[k]; }).sort(function (x, y) { return y.a - x.a; });
+        var items = list.reduce(function (s, a) { return s + (a.kg ? 1 : a.q); }, 0);
+        var ph = Object.keys(hours).sort(function (a, b) { return hours[b] - hours[a]; })[0];
+        var can = { n: 0, a: 0, carts: {}, nv: {}, top: {} };
+        D.cancels.forEach(function (e) { can.n += +e.qty || 0; can.a += +e.amount || 0; if (e.type === 'vide') can.carts[e.cartId || e.at] = 1; if (e.type === 'non_valide') can.nv[e.cartId || e.at] = 1; var k = e.name; can.top[k] = (can.top[k] || 0) + (+e.amount || 0); });
+        return { arts: list, ca: ca, n: n, items: items, avg: n ? ca / n : 0, pay: pay, enc: enc, peak: ph, can: can };
+    }
+    var PER = { today: "aujourd’hui", yesterday: 'hier', week: 'sur 7 jours', month: 'ce mois-ci', all: 'au total' };
+
+    /* ───── Onglets ───── */
+    function css() {
+        if ($('cav-css')) return;
+        var s = document.createElement('style'); s.id = 'cav-css';
+        s.textContent = '#cav-tabs{display:flex;gap:6px;padding:10px 18px 0;flex-wrap:wrap}#cav-tabs button{border:1.5px solid var(--border-color,rgba(0,0,0,.15));background:var(--bg-card,#fff);color:inherit;border-radius:10px 10px 0 0;padding:8px 14px;font-weight:800;cursor:pointer;font-size:.84rem}#cav-tabs button.on{background:linear-gradient(135deg,#7c2d12,#dc2626);color:#fff;border-color:transparent}'
+            + '.cav-body{padding:14px 18px}.cav-f{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}.cav-f select,.cav-f input{padding:7px;border-radius:8px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit}'
+            + '.cav-k{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}.cav-k>div{flex:1;min-width:120px;padding:10px 12px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04));border-left:4px solid #16a34a}.cav-k small{display:block;font-size:.72rem;opacity:.75}.cav-k b{font-size:1.15rem;font-weight:900}'
+            + '.cav-pay{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}.cav-pay button{border:1.5px solid var(--border-color,rgba(0,0,0,.15));background:transparent;color:inherit;border-radius:20px;padding:5px 11px;font-weight:700;cursor:pointer;font-size:.78rem}.cav-pay button.on{background:#16a34a;border-color:#16a34a;color:#fff}'
+            + '.cav-t{overflow:auto;border-radius:10px;border:1px solid var(--border-color,rgba(0,0,0,.1))}.cav-t table{width:100%;border-collapse:collapse;font-size:.8rem;min-width:560px}.cav-t th{padding:8px;text-align:left;background:var(--bg-card-2,rgba(0,0,0,.05))}.cav-t td{padding:7px 8px;border-top:1px solid var(--border-color,rgba(0,0,0,.07))}.cav-t td.r,.cav-t th.r{text-align:right}'
+            + '.cav-note{font-size:.76rem;opacity:.75;margin:8px 0}.cav-chat{display:flex;flex-direction:column;gap:8px;max-height:min(52vh,460px);overflow:auto;padding:4px 2px}.cav-m{max-width:85%;padding:9px 12px;border-radius:12px;font-size:.84rem;line-height:1.5}.cav-m.me{align-self:flex-end;background:#dc2626;color:#fff}.cav-m.bot{align-self:flex-start;background:var(--bg-card-2,rgba(0,0,0,.05))}'
+            + '.cav-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.cav-chips button{border:1.5px solid #dc2626;background:transparent;color:#dc2626;border-radius:20px;padding:5px 11px;font-weight:700;cursor:pointer;font-size:.78rem}.cav-in{display:flex;gap:6px;margin-top:8px}.cav-in input{flex:1;padding:9px 11px;border-radius:10px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit}.cav-in button{border:none;border-radius:10px;padding:0 14px;font-weight:800;cursor:pointer;background:#dc2626;color:#fff}';
+        document.head.appendChild(s);
+    }
+    function mount(o) {
+        if (o.querySelector('#cav-tabs')) return;
+        css();
+        var body = o.querySelector('.ca-body'); if (!body) return;
+        var tabs = document.createElement('div'); tabs.id = 'cav-tabs';
+        tabs.innerHTML = '<button type="button" data-t="cancel">🗑️ Annulés & non validés</button><button type="button" data-t="sales">🛒 Mes ventes</button><button type="button" data-t="ai">🤖 Assistant</button>';
+        body.parentNode.insertBefore(tabs, body);
+        var mine = document.createElement('div'); mine.className = 'cav-body'; mine.id = 'cav-body'; body.parentNode.insertBefore(mine, body.nextSibling);
+        tabs.addEventListener('click', function (e) { var b = e.target.closest('[data-t]'); if (!b) return; V.tab = b.getAttribute('data-t'); show(o); });
+        mine.addEventListener('click', onClick); mine.addEventListener('change', onChange); mine.addEventListener('input', function (e) { if (e.target.getAttribute('data-v') === 'q') { V.q = e.target.value; clearTimeout(onChange.t); onChange.t = setTimeout(function () { renderSales(true); }, 250); } });
+        mine.addEventListener('submit', function (e) { e.preventDefault(); var i = mine.querySelector('#cav-q'); var t = i && i.value.trim(); if (t) { i.value = ''; ask(t); } });
+        show(o);
+    }
+    function show(o) {
+        var body = o.querySelector('.ca-body'), mineB = $('cav-body');
+        o.querySelectorAll('#cav-tabs [data-t]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-t') === V.tab); });
+        body.style.display = V.tab === 'cancel' ? '' : 'none'; mineB.style.display = V.tab === 'cancel' ? 'none' : '';
+        if (V.tab === 'sales') renderSales(); else if (V.tab === 'ai') renderAi();
+    }
+    function sel(id, cur, opts) { return '<select data-v="' + id + '">' + opts.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === cur ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>'; }
+    function filters() {
+        return '<div class="cav-f">' + sel('period', V.period, [['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['week', '7 jours'], ['month', 'Ce mois'], ['all', 'Tout']])
+            + (V.tab === 'sales' ? sel('mode', V.mode, [['art', 'Par article'], ['tk', 'Par ticket']]) + '<input type="search" data-v="q" value="' + esc(V.q) + '" placeholder="🔎 Article, code-barres…" style="flex:1;min-width:150px">' : '') + '</div>';
+    }
+    function renderSales(keepFocus) {
+        var B = $('cav-body'); if (!B) return;
+        var D = data(), S = stats(D), u = D.u;
+        var pays = Object.keys(PAY).filter(function (k) { return D.sales.some(function (s) { return s.method === k; }); });
+        var html = filters()
+            + '<div class="cav-pay"><span style="font-size:.78rem;font-weight:800;align-self:center">Paiement :</span><button type="button" data-pay=""' + (V.pay ? '' : ' class="on"') + '>Tous</button>'
+            + pays.map(function (k) { return '<button type="button" data-pay="' + k + '"' + (V.pay === k ? ' class="on"' : '') + '>' + PAY[k][0] + ' ' + PAY[k][1] + '</button>'; }).join('') + '</div>'
+            + '<div class="cav-k"><div><small>🧾 Tickets</small><b>' + S.n + '</b></div><div><small>📦 Articles vendus</small><b>' + num(S.items) + '</b></div><div><small>💰 Chiffre ' + esc(PER[V.period]) + '</small><b>' + eur(S.ca) + '</b></div><div><small>🛒 Panier moyen</small><b>' + eur(S.avg) + '</b></div></div>'
+            + (S.n ? '<div class="cav-k" style="margin-top:-4px"><div style="border-left-color:#0ea5e9"><small>💶 Encaissé en espèces</small><b>' + eur(S.enc.cash) + '</b></div><div style="border-left-color:#2563eb"><small>💳 Encaissé par carte</small><b>' + eur(S.enc.cb) + '</b></div><div style="border-left-color:#f59e0b"><small>🎟️ Tickets resto</small><b>' + eur(S.enc.ticket) + '</b></div></div>' : '');
+        if (V.mode === 'art') {
+            html += '<div class="cav-t"><table><thead><tr><th>Article</th><th class="r">Quantité</th><th class="r">Tickets</th><th class="r">Montant</th></tr></thead><tbody>'
+                + (S.arts.length ? S.arts.slice(0, 400).map(function (a) { return '<tr><td>' + esc(a.name) + '</td><td class="r">' + num(a.q) + (a.kg ? ' kg' : '') + '</td><td class="r">' + a.t + '</td><td class="r"><b>' + eur(a.a) + '</b></td></tr>'; }).join('')
+                    : '<tr><td colspan="4" style="padding:22px;text-align:center;opacity:.7">Aucune vente ' + esc(PER[V.period]) + (V.pay ? ' en ' + esc(PAY[V.pay][1].toLowerCase()) : '') + '.</td></tr>') + '</tbody></table></div>';
+        } else {
+            html += '<div class="cav-t"><table><thead><tr><th>Heure</th><th>Ticket</th><th>Articles</th><th>Paiement</th><th class="r">Total</th></tr></thead><tbody>'
+                + (D.shown.length ? D.shown.slice().reverse().slice(0, 400).map(function (s) { var d = new Date(s.date), p = PAY[s.method] || ['💰', s.method || '—']; return '<tr><td style="white-space:nowrap">' + (V.period === 'today' ? '' : d.toLocaleDateString('fr-FR') + ' ') + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</td><td>n° ' + esc(s.ticketNum || s.id) + '</td><td>' + esc((s.items || []).map(function (it) { return (it.unitType === 'kg' ? num(it.quantity) + ' kg ' : (it.quantity || 1) + '× ') + String(it.name || '').replace(' 🏷️', ''); }).join(', ').slice(0, 120)) + '</td><td>' + p[0] + ' ' + esc(p[1]) + '</td><td class="r"><b>' + eur(s.total) + '</b></td></tr>'; }).join('')
+                    : '<tr><td colspan="5" style="padding:22px;text-align:center;opacity:.7">Aucun ticket.</td></tr>') + '</tbody></table></div>';
+        }
+        html += '<div class="cav-note">👤 Uniquement les ventes de <b>' + esc(uname(u) || 'l’utilisateur connecté') + '</b> : l’activité des autres comptes (caissiers, administrateurs, Admin-Développeur) n’apparaît pas ici.' + (D.returns.length ? ' · ↩️ ' + D.returns.length + ' retour(s) client sur la période (non comptés).' : '') + '</div>';
+        var foc = keepFocus && document.activeElement && document.activeElement.getAttribute('data-v') === 'q';
+        B.innerHTML = html;
+        if (foc) { var i = B.querySelector('[data-v="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+    }
+    function onChange(e) { var k = e.target.getAttribute('data-v'); if (!k || k === 'q') return; V[k] = e.target.value; if (V.tab === 'sales') renderSales(); else renderAi(); }
+    function onClick(e) {
+        var p = e.target.closest('[data-pay]'); if (p) { V.pay = p.getAttribute('data-pay'); renderSales(); return; }
+        var c = e.target.closest('[data-ask]'); if (c) { ask(c.getAttribute('data-ask')); return; }
+        if (e.target.closest('[data-mic]')) listen();
+    }
+
+    /* ───── Assistant de la vue ───── */
+    var LOG = [];
+    var SUG = ['Combien j’ai vendu aujourd’hui ?', 'Combien en espèces ?', 'Combien par carte ?', 'Quel article j’ai le plus vendu ?', 'Combien d’annulations ?', 'Quel est mon panier moyen ?', 'À quelle heure je vends le plus ?', 'Explique-moi cette fenêtre'];
+    function renderAi() {
+        var B = $('cav-body'); if (!B) return;
+        if (!LOG.length) LOG.push({ me: false, t: 'Bonjour ' + (uname(me()) || '') + ' ! Je réponds sur VOTRE activité (' + PER[V.period] + ') : ventes, paiements, articles, annulations. Choisissez une question ou écrivez la vôtre.' });
+        B.innerHTML = filters() + '<div class="cav-chat" id="cav-chat">' + LOG.map(function (m) { return '<div class="cav-m ' + (m.me ? 'me' : 'bot') + '">' + (m.me ? esc(m.t) : m.t) + '</div>'; }).join('') + '</div>'
+            + '<div class="cav-chips">' + SUG.map(function (s) { return '<button type="button" data-ask="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>'
+            + '<form class="cav-in" autocomplete="off"><input id="cav-q" placeholder="Votre question… (ex. combien de coca vendus ?)">' + (window.SpeechRecognition || window.webkitSpeechRecognition ? '<button type="button" data-mic="1" title="Parler">🎤</button>' : '') + '<button type="submit">➤</button></form>';
+        var ch = $('cav-chat'); if (ch) ch.scrollTop = ch.scrollHeight;
+    }
+    function say(html) {
+        var t = String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        try { var c = J('covo_voice_cfg', {}); if (c.enabled !== true || c.voice === false || !window.speechSynthesis) return;
+            if (window.covoI18n && covoI18n.lang() === 'sh') { covoI18n.speak(covoI18n.seg(t)); return; }
+            speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t); u.lang = 'fr-FR'; if (c.rate) u.rate = c.rate; if (c.pitch) u.pitch = c.pitch; if (c.vol != null) u.volume = c.vol; var v = window.covoI18n ? covoI18n.voice('fr') : null; if (v) try { u.voice = v; } catch (e) {} speechSynthesis.speak(u); } catch (e) {}
+    }
+    function answer(q) {
+        var n = norm(q), D = data(), S = stats(D), P = PER[V.period];
+        var payK = /espece|liquide|cash/.test(n) ? 'cash' : /\b(cb|carte)\b|carte bancaire|terminal/.test(n) ? 'cb' : /mixte/.test(n) ? 'mixed' : /ticket resto|ticket restaurant|tickets resto/.test(n) ? 'ticket' : /credit/.test(n) ? 'credit' : /plusieurs fois|echelon|2x|3x/.test(n) ? 'echel' : null;
+        if (/explique|aide|comment ca marche|a quoi sert|que veut dire|c est quoi|fenetre|onglet/.test(n)) return 'Cette fenêtre a 3 onglets :<br>• <b>🗑️ Annulés & non validés</b> : chaque article scanné puis retiré, chaque quantité diminuée, chaque panier vidé, et les paniers abandonnés sans validation. Utile pour repérer les erreurs ou les oublis.<br>• <b>🛒 Mes ventes</b> : les articles que <b>vous</b> avez vendus, par article ou par ticket, avec un filtre par mode de paiement.<br>• <b>🤖 Assistant</b> : posez une question sur votre journée.<br>Seule votre activité est affichée ; celle des autres comptes reste séparée. Le journal est sauvegardé automatiquement selon les règles de votre compte.';
+        if (/(non valid|abandon|oubli)/.test(n)) { var nv = Object.keys(S.can.nv).length; return nv ? '⏸️ ' + nv + ' panier' + (nv > 1 ? 's' : '') + ' non validé' + (nv > 1 ? 's' : '') + ' ' + P + ' : un panier était en cours quand la page a été fermée ou rechargée, ou il est resté sans action. Vérifiez qu’aucun client n’est reparti sans payer.' : '✅ Aucun panier non validé ' + P + '.'; }
+        if (/(annul|retir|supprim|enlev)/.test(n)) { var tp = Object.keys(S.can.top).sort(function (a, b) { return S.can.top[b] - S.can.top[a]; })[0]; return D.cancels.length ? '🗑️ ' + P + ' : <b>' + num(S.can.n) + '</b> article(s) retiré(s) ou annulé(s) pour <b>' + eur(S.can.a) + '</b>, ' + Object.keys(S.can.carts).length + ' panier(s) vidé(s), ' + Object.keys(S.can.nv).length + ' non validé(s).' + (tp ? ' Article le plus annulé : <b>' + esc(tp) + '</b>.' : '') : '✅ Aucune annulation ' + P + '.'; }
+        if (payK) { var x = S.pay[payK] || { n: 0, a: 0 }, lab = PAY[payK][1].toLowerCase(); var enc = payK === 'cash' ? S.enc.cash : payK === 'cb' ? S.enc.cb : payK === 'ticket' ? S.enc.ticket : null; return PAY[payK][0] + ' ' + P + ' : <b>' + x.n + '</b> ticket(s) payé(s) en ' + esc(lab) + ' pour <b>' + eur(x.a) + '</b>' + (enc != null && Math.abs(enc - x.a) > 0.005 ? ' ; avec les paiements mixtes, <b>' + eur(enc) + '</b> encaissés en ' + esc(lab) + '.' : '.'); }
+        if (/(panier moyen|moyenne)/.test(n)) return '🛒 Panier moyen ' + P + ' : <b>' + eur(S.avg) + '</b> (' + S.n + ' tickets).';
+        if (/(heure|quand|moment|pic|affluence)/.test(n)) return S.peak != null ? '⏰ Votre meilleure heure ' + P + ' : <b>' + S.peak + ' h – ' + (+S.peak + 1) + ' h</b>.' : 'Pas encore de vente ' + P + '.';
+        if (/(dernier|derniere)/.test(n)) { var l = D.sales[D.sales.length - 1]; return l ? '🧾 Dernier ticket : n° ' + esc(l.ticketNum || l.id) + ' à ' + new Date(l.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + ', <b>' + eur(l.total) + '</b> (' + esc((PAY[l.method] || ['', l.method])[1]) + ').' : 'Aucun ticket ' + P + '.'; }
+        if (/(plus vendu|meilleur|top|populaire|marche le mieux)/.test(n)) return S.arts.length ? '🏆 Vos meilleures ventes ' + P + ' :<br>' + S.arts.slice(0, 3).map(function (a, i) { return (i + 1) + '. <b>' + esc(a.name) + '</b> — ' + num(a.q) + (a.kg ? ' kg' : '') + ', ' + eur(a.a); }).join('<br>') : 'Aucune vente ' + P + '.';
+        if (/(combien|chiffre|vendu|vente|total|ca\b|recette|gagne)/.test(n)) {
+            // un article précis ? (« combien de coca »)
+            var words = n.replace(/combien|de|d|des|du|la|le|les|j ai|vendu|vendus|aujourd hui|hier|ce mois|article|articles|\?/g, ' ').split(/\s+/).filter(function (w) { return w.length > 2; });
+            if (words.length) { var hit = S.arts.filter(function (a) { var an = norm(a.name); return words.every(function (w) { return an.indexOf(w) >= 0; }); }); if (hit.length) return '📦 ' + hit.slice(0, 4).map(function (a) { return '<b>' + esc(a.name) + '</b> : ' + num(a.q) + (a.kg ? ' kg' : '') + ' vendus (' + eur(a.a) + ')'; }).join('<br>') + ' — ' + P + '.'; }
+            return '💰 ' + P[0].toUpperCase() + P.slice(1) + ', vous avez fait <b>' + S.n + '</b> ticket(s), <b>' + num(S.items) + '</b> article(s), pour <b>' + eur(S.ca) + '</b>. Espèces ' + eur(S.enc.cash) + ', carte ' + eur(S.enc.cb) + (S.enc.ticket ? ', tickets resto ' + eur(S.enc.ticket) : '') + '.';
+        }
+        var hit2 = S.arts.filter(function (a) { return norm(a.name).indexOf(n.trim()) >= 0; });
+        if (n.trim().length > 2 && hit2.length) return '📦 ' + hit2.slice(0, 4).map(function (a) { return '<b>' + esc(a.name) + '</b> : ' + num(a.q) + (a.kg ? ' kg' : '') + ' vendus (' + eur(a.a) + ')'; }).join('<br>') + ' — ' + P + '.';
+        return 'Je n’ai pas compris. Essayez : « combien j’ai vendu », « combien en espèces », « article le plus vendu », « combien d’annulations », « panier moyen », ou le nom d’un article.';
+    }
+    function ask(q) { LOG.push({ me: true, t: q }); var a = answer(q); LOG.push({ me: false, t: a }); if (LOG.length > 40) LOG.splice(0, LOG.length - 40); V.tab = 'ai'; var o = $('ca-hist'); if (o) show(o); say(a); }
+    function listen() {
+        var R = window.SpeechRecognition || window.webkitSpeechRecognition; if (!R) return;
+        var r = new R(); r.lang = 'fr-FR'; r.interimResults = false;
+        var b = document.querySelector('#cav-body [data-mic]'); if (b) b.textContent = '👂';
+        r.onresult = function (ev) { var t = ev.results[0][0].transcript; if (t) ask(t); };
+        r.onend = function () { var b2 = document.querySelector('#cav-body [data-mic]'); if (b2) b2.textContent = '🎤'; };
+        try { r.start(); } catch (e) {}
+    }
+    window.covoDayView = { ask: ask, answer: answer, data: data };
+    (function obs() {
+        if (!document.body) return setTimeout(obs, 300);
+        new MutationObserver(function () { var o = $('ca-hist'); if (o && !o.querySelector('#cav-tabs')) { V.tab = 'cancel'; LOG = []; mount(o); } }).observe(document.body, { childList: true });
+    })();
 })();
 </script>
 
