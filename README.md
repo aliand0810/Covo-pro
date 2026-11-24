@@ -5,7 +5,12 @@ COVO Pro et tous ses satellites réunis dans **un seul dépôt**, comme Restaura
 ```
 /
 ├── index.html      ← redirige vers app/
-├── app/            ← COVO Pro (application principale)
+├── app/            ← COVO Pro (application principale, découpée en modules)
+│   ├── index.html  ← la page
+│   ├── js/         ← 31 modules JavaScript (minifiés)
+│   ├── css/        ← 11 feuilles de style
+│   ├── img/        ← images
+│   └── sw.js       ← service worker (ouverture rapide, hors ligne)
 ├── caisse/         ← Caisse Pro
 ├── fidelite/       ← Fidélité Pro
 ├── gestion/        ← Gestion Pro
@@ -51,6 +56,10 @@ COVO Pro et tous ses satellites réunis dans **un seul dépôt**, comme Restaura
 - **Compte staff** : bloc « 🔐 Compte staff » (connexion, changement du mot de passe) en tête d'Admin Pro.
 - **Mot de passe Admin-Développeur** : plus jamais en clair (ni dans le code, ni dans le navigateur, ni sur Drive) ;
   empreinte PBKDF2-SHA256 salée, fragmentée et dispersée dans le code. **Changez le mot de passe après la mise en ligne.**
+- **COVO Pro découpé en modules** : la page (600 Ko) charge 31 modules JavaScript minifiés et 11 feuilles de style au lieu
+  d'un seul fichier de 6 Mo ; un service worker garde les modules sur l'appareil. Mesuré (réseau 20 Mbit/s) : réouverture
+  ≈ 0,4 s au lieu de ≈ 1,1 s, ouverture possible hors ligne, une mise à jour ne retélécharge que la page et les modules modifiés.
+- **Assistant en shimaoré** : ⚙️ → 🌍 Langue ; traductions modifiables dans ✏️ Traductions shimaoré (export / import).
 - Précédemment : journal des articles annulés et alarme panier oublié, garde-fou montant, codes-barres créés,
   assistant vocal et lecture des guides, inventaire papier daté + DLC, alertes de sécurité de connexion (Licence Pro).
 
@@ -86,4 +95,7 @@ Google Drive, Firebase et la licence : rien à changer.
 
 ## Mettre à jour une application
 
-Remplacez le fichier `index.html` du dossier concerné (ex. `caisse/index.html`).
+COVO Pro : remplacez **tout le dossier `app/`** (index.html, js/, css/, img/, sw.js). Les noms des modules changent à chaque
+version (empreinte) : les anciens fichiers peuvent rester, ils ne sont plus utilisés.
+
+Autres applications : remplacez le fichier `index.html` du dossier concerné (ex. `caisse/index.html`).
