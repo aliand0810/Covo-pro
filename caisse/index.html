@@ -8316,37 +8316,69 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
 </script>
 
 <script>
-/* Fenêtre « 🕘 Articles annulés & paniers non validés » : état de la sauvegarde automatique Google Drive */
+/* Journal « 🕘 Articles annulés & paniers non validés » : sauvegarde Google Drive AUTOMATIQUE,
+   avec les mêmes règles que toutes les autres données de l'utilisateur connecté
+   (caissier / administrateur : envoi automatique ; Admin-Développeur : selon son réglage « sauvegarde auto »). */
 (function () {
     if (window._covoCartAuditDriveUi) return; window._covoCartAuditDriveUi = true;
-    function last() { var L = []; try { L = JSON.parse(localStorage.getItem('covo_cart_audit') || '[]') || []; } catch (e) {} var t = ''; L.forEach(function (r) { if (r && r.at > t) t = r.at; }); return { n: L.length, at: t }; }
+    var KEY = 'covo_cart_audit';
+    function last() { var L = []; try { L = JSON.parse(localStorage.getItem(KEY) || '[]') || []; } catch (e) {} var t = ''; L.forEach(function (r) { if (r && r.at > t) t = r.at; }); return { n: L.length, at: t }; }
     function ago(iso) { var m = Math.round((Date.now() - Date.parse(iso)) / 60000); if (!isFinite(m)) return '—'; if (m < 1) return 'à l’instant'; if (m < 60) return 'il y a ' + m + ' min'; var h = Math.round(m / 60); if (h < 24) return 'il y a ' + h + ' h'; var d = Math.round(h / 24); return 'il y a ' + d + ' j'; }
-    function saveNow() {
-        var f = window._quickDriveSync || window.cpDriveBackupNow || window._quickManualSave || (typeof cpDriveBackupNow === 'function' ? cpDriveBackupNow : null);
-        if (!f) { try { showScanToast('⚠️ Sauvegarde Drive indisponible dans cette application', 'error'); } catch (e) {} return; }
-        try { f(false); } catch (e) {}
-        try { showScanToast('☁️ Sauvegarde Google Drive lancée…', 'info'); } catch (e) {}
+    function CS() { return window.CovoSync || null; }
+    function autoOk() { var c = CS(); return !(c && typeof c.autoAllowed === 'function' && !c.autoAllowed()); }
+    function isDev() { var c = CS(); try { return !!(c && c.isDevUser && c.isDevUser()); } catch (e) { return false; } }
+    function folder() { return !!localStorage.getItem('gdrive_folder_id'); }
+    function linked() {   // connexion Google active dans CETTE application
+        try { if (typeof _cpConnected !== 'undefined') return !!_cpConnected; } catch (e) {}
+        var d = document.getElementById('gdrive-disconnect-btn'); if (d) return d.style.display !== 'none';
+        return true;
     }
+    // Même déclencheur que toutes les autres modifications (envoi groupé quelques secondes plus tard)
+    function trigger(manual) {
+        try {
+            if (typeof window._gdTriggerAutoSave === 'function') { if (manual && typeof window._quickDriveSync === 'function') window._quickDriveSync(); else window._gdTriggerAutoSave(); return true; }
+            if (typeof cpDriveMarkDirty === 'function') { if (manual && typeof cpDriveBackupNow === 'function') cpDriveBackupNow(false); else cpDriveMarkDirty(); return true; }
+        } catch (e) {}
+        return false;
+    }
+    function pending() { var L = last(), sv = localStorage.getItem('gdrive_last_save') || ''; var c = CS(); var p = c && typeof c.pending === 'function' ? c.pending() : '1'; return !!(L.at && p && (!sv || sv < L.at)); }
+
+    // 1) Chaque nouvelle entrée du journal part automatiquement (si les règles de l'utilisateur le permettent)
+    var seen = last().at, since = 0;
+    setInterval(function () {
+        var L = last();
+        if (L.at && L.at !== seen) { seen = L.at; if (autoOk() && folder()) trigger(false); }
+        if (pending()) { if (!since) since = Date.now(); if (autoOk() && folder() && Date.now() - since > 45000 && (Date.now() - since) % 60000 < 3000) trigger(false); }   // relance douce
+        else since = 0;
+        var o = document.getElementById('ca-hist'); if (o) bar(o);
+    }, 3000);
+
+    // 2) Bandeau d'état dans la fenêtre du journal
     function bar(box) {
         var b = box.querySelector('#ca-drive'); if (!b) {
             var head = box.querySelector('.ca-body'); if (!head) return;
             b = document.createElement('div'); b.id = 'ca-drive';
             b.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 18px 0;padding:9px 12px;border-radius:11px;font-size:.8rem;font-weight:700;border:1.5px solid';
             head.parentNode.insertBefore(b, head);
-            b.addEventListener('click', function (e) { if (e.target.closest('[data-cad="save"]')) saveNow(); });
+            b.addEventListener('click', function (e) {
+                var x = e.target.closest('[data-cad]'); if (!x) return; var k = x.getAttribute('data-cad');
+                if (k === 'auto') { try { CS().setDevAuto(true); } catch (er) {} trigger(false); try { showScanToast('☁️ Sauvegarde automatique activée pour ce compte', 'success'); } catch (er) {} }
+                else if (k === 'now') { trigger(true); try { showScanToast('☁️ Envoi vers Google Drive…', 'info'); } catch (er) {} }
+                bar(box);
+            });
+            if (pending() && autoOk() && folder()) trigger(false);   // ouverture de la fenêtre : on envoie ce qui attend
         }
-        var L = last(), sv = localStorage.getItem('gdrive_last_save') || '', connected = !!(localStorage.getItem('gdrive_folder_id'));
-        var auto = !(window.CovoSync && typeof CovoSync.autoAllowed === 'function' && !CovoSync.autoAllowed());
-        var pend = !!(L.at && (!sv || sv < L.at));
-        var col = !connected ? ['#fef2f2', '#ef4444', '#b91c1c'] : pend ? ['#fffbeb', '#f59e0b', '#b45309'] : ['#f0fdf4', '#22c55e', '#15803d'];
+        var L = last(), sv = localStorage.getItem('gdrive_last_save') || '', pend = pending(), st, txt, btn = '';
+        if (!folder()) { st = 'r'; txt = '☁️ Google Drive n’est pas relié sur cet appareil : le journal est gardé ici et partira automatiquement dès la connexion (Admin Pro → Sauvegarde).'; }
+        else if (!autoOk()) { st = 'o'; txt = '👤 Compte Admin-Développeur : la sauvegarde automatique est désactivée pour ce compte, comme pour toutes vos données' + (pend ? ' — <b>modifications en attente</b>.' : '.'); btn = '<button type="button" data-cad="auto">Activer la sauvegarde auto</button>' + (pend ? '<button type="button" data-cad="now">Sauvegarder maintenant</button>' : ''); }
+        else if (pend && !linked()) { st = 'o'; txt = '☁️ Cette application n’est pas connectée à Google Drive : le journal sera envoyé automatiquement par COVO Pro ou dès la reconnexion (bouton « Se reconnecter »).'; }
+        else if (pend) { st = 'b'; txt = '⏳ Envoi automatique du journal vers Google Drive… (' + L.n.toLocaleString('fr-FR') + ' entrée' + (L.n > 1 ? 's' : '') + ')'; if (since && Date.now() - since > 45000) btn = '<button type="button" data-cad="now">Relancer l’envoi</button>'; }
+        else { st = 'g'; txt = '✅ Journal sauvegardé automatiquement sur Google Drive — ' + L.n.toLocaleString('fr-FR') + ' entrée' + (L.n > 1 ? 's' : '') + (sv ? ' · dernière sauvegarde ' + ago(sv) : '') + '. Repris et fusionné sur les autres appareils.'; }
+        var col = { r: ['#fef2f2', '#ef4444', '#b91c1c'], o: ['#fffbeb', '#f59e0b', '#b45309'], b: ['#eff6ff', '#3b82f6', '#1d4ed8'], g: ['#f0fdf4', '#22c55e', '#15803d'] }[st];
         b.style.background = col[0]; b.style.borderColor = col[1]; b.style.color = col[2];
-        var txt = !connected ? '☁️ Google Drive non relié sur cet appareil : le journal est conservé ici, il partira sur Drive dès la connexion (Admin Pro → Sauvegarde).'
-            : pend ? '☁️ Sauvegarde automatique Google Drive : <b>' + L.n.toLocaleString('fr-FR') + '</b> entrée(s) — dernières modifications <b>en attente d’envoi</b>' + (auto ? ' (envoi automatique dans quelques instants)' : ' (sauvegarde automatique désactivée pour ce compte)') + '.'
-            : '☁️ Journal sauvegardé automatiquement sur Google Drive — <b>' + L.n.toLocaleString('fr-FR') + '</b> entrée(s) · dernière sauvegarde ' + (sv ? ago(sv) : '—') + '. Restauré et fusionné automatiquement sur les autres appareils.';
-        var html = '<span style="flex:1;min-width:220px;line-height:1.4">' + txt + '</span>' + (connected ? '<button type="button" data-cad="save" style="border:none;border-radius:9px;padding:7px 12px;font-weight:800;cursor:pointer;background:' + col[1] + ';color:#fff">☁️ Sauvegarder maintenant</button>' : '');
+        var html = '<span style="flex:1;min-width:220px;line-height:1.4">' + txt + '</span>' + btn.replace(/<button /g, '<button style="border:none;border-radius:9px;padding:7px 12px;font-weight:800;cursor:pointer;background:' + col[1] + ';color:#fff" ');
         if (b._h !== html) { b.innerHTML = html; b._h = html; }
     }
-    setInterval(function () { var o = document.getElementById('ca-hist'); if (o) bar(o); }, 1500);
     (function obs() { if (!document.body) return setTimeout(obs, 300); new MutationObserver(function () { var o = document.getElementById('ca-hist'); if (o && !o.querySelector('#ca-drive')) bar(o); }).observe(document.body, { childList: true }); })();
 })();
 </script>
