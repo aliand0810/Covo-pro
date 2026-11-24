@@ -880,23 +880,42 @@ return tinf_uncompress;
 (function () {
     if (window._covoCartAuditRestore) return;
     var KEY = 'covo_cart_audit', MAX = 20000, SEND_MAX = 8000, DAYS = 180;
+    var DEL = 'covo_cart_audit_del';   // entrées supprimées définitivement par l'Admin-Développeur (ne reviennent jamais par Drive)
+    function rid(r) { return r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); }
+    function dels() { try { var v = JSON.parse(localStorage.getItem(DEL) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
     function load() { try { var v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
     function merge(a, b) {
         var seen = {}, out = [];
-        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object') return; var id = r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); if (seen[id]) return; seen[id] = 1; out.push(r); });
+        dels().forEach(function (id) { seen[id] = 1; });
+        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object' || r._covoDel) return; var id = rid(r); if (seen[id]) return; seen[id] = 1; out.push(r); });
         out.sort(function (x, y) { return String(x.at || '') < String(y.at || '') ? -1 : String(x.at || '') > String(y.at || '') ? 1 : 0; });
         return out.length > MAX ? out.slice(out.length - MAX) : out;
     }
     // Contenu envoyé sur Drive : les 180 derniers jours (8 000 entrées au plus) pour garder une sauvegarde légère
     window._covoCartAuditPayload = function () {
         var lim = new Date(Date.now() - DAYS * 864e5).toISOString(), L = load().filter(function (r) { return r && String(r.at || '') >= lim; });
-        return L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+        L = L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+        var D = dels(); if (D.length) L = L.concat([{ _covoDel: D.slice(-20000), at: '', type: '_del', id: '_covo_del_marker', name: '', qty: 0, amount: 0 }]);
+        return L;
     };
+    // Suppression définitive (Admin-Développeur) : retire les lignes et mémorise leurs identifiants
+    window._covoCartAuditDelete = function (ids) {
+        ids = (ids || []).map(String); if (!ids.length) return 0;
+        var set = {}; ids.forEach(function (i) { set[i] = 1; });
+        var D = dels(); D.forEach(function (i) { set[i] = 1; });
+        localStorage.setItem(DEL, JSON.stringify(Object.keys(set).slice(-20000)));
+        var L = load(), keep = L.filter(function (r) { return !(r && set[rid(r)]); });
+        localStorage.setItem(KEY, JSON.stringify(keep));
+        return L.length - keep.length;
+    };
+    window._covoCartAuditId = rid;
     window._covoCartAuditRestore = function (remote) {
         try {
             if (!Array.isArray(remote) || !remote.length) return;
+            var mk = remote.filter(function (r) { return r && r._covoDel; }), changed = false;
+            if (mk.length) { var set = {}; dels().forEach(function (i) { set[i] = 1; }); var n0 = Object.keys(set).length; mk.forEach(function (x) { (x._covoDel || []).forEach(function (i) { set[String(i)] = 1; }); }); if (Object.keys(set).length !== n0) { localStorage.setItem(DEL, JSON.stringify(Object.keys(set).slice(-20000))); changed = true; } }
             var local = load(), m = merge(local, remote);
-            if (m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
+            if (changed || m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
         } catch (e) {}
     };
     window._covoCartAuditMerge = merge;
@@ -8475,8 +8494,23 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         if (id != null && u.id != null) return String(id) === String(u.id);
         return !!n && n === uname(u);
     }
+    // Admin-Développeur : consultation de TOUS les utilisateurs + gestion (suppression définitive) du journal
+    function isM(u) { u = u || me(); return !!(u.isMaster || u.id === 'USR-MASTER'); }
+    function rkey(rec) { return String(rec.cashierId != null && rec.cashierId !== '' ? rec.cashierId : (rec.cashier || '?')); }
+    function rname(rec) { return rec.cashier || (rec.cashierId === 'USR-MASTER' ? 'Admin-Développeur' : rec.cashierId) || 'Inconnu'; }
+    function pick(rec, u) {   // portée : utilisateur connecté, ou choix de l'Admin-Développeur
+        if (!isM(u)) return mine(rec, u);
+        if (V.who === 'me') return mine(rec, u);
+        if (V.who) return rkey(rec) === V.who || (rec.cashier && rec.cashier === V.who);
+        return true;
+    }
+    function people() {
+        var m = {}; (J('covo_sales_history', []) || []).concat(J('covo_cart_audit', []) || []).forEach(function (r) { if (r && (r.cashierId != null || r.cashier)) { var k = rkey(r); if (!m[k]) m[k] = rname(r); } });
+        return Object.keys(m).map(function (k) { return [k, m[k]]; }).sort(function (a, b) { return a[1].localeCompare(b[1]); });
+    }
+    function scopeTxt() { if (!isM()) return 'vous'; if (V.who === 'me') return 'vous'; if (!V.who) return 'tous les utilisateurs'; var p = people().filter(function (x) { return x[0] === V.who; })[0]; return p ? p[1] : V.who; }
     var PAY = { cash: ['💶', 'Espèces'], cb: ['💳', 'Carte bancaire'], mixed: ['🔀', 'Mixte'], ticket: ['🎟️', 'Ticket resto'], credit: ['📒', 'Crédit client'], echel: ['📅', 'Plusieurs fois'], points: ['🎁', 'Points fidélité'] };
-    var V = { tab: 'cancel', period: 'today', pay: '', q: '', mode: 'art' };
+    var V = { tab: 'cancel', period: 'today', pay: '', q: '', mode: 'art', who: '', gt: '', gq: '', sel: {}, ask: 0 };
     function range() {
         var d0 = new Date(); d0.setHours(0, 0, 0, 0); var day = 864e5;
         return { today: [d0, null], yesterday: [new Date(d0 - day), d0], week: [new Date(d0 - 6 * day), null], month: [new Date(d0.getFullYear(), d0.getMonth(), 1), null], all: [null, null] }[V.period] || [d0, null];
@@ -8486,19 +8520,20 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
     // Données de l'utilisateur connecté seulement
     function data() {
         var u = me(), r = range(), q = norm(V.q).trim();
-        var sales = (J('covo_sales_history', []) || []).filter(function (s) { return s && !s.cancelled && s.type !== 'retour_article' && mine(s, u) && inRange(s.date, r); });
-        var returns = (J('covo_sales_history', []) || []).filter(function (s) { return s && s.type === 'retour_article' && mine(s, u) && inRange(s.date, r); });
-        var cancels = (J('covo_cart_audit', []) || []).filter(function (e) { return e && mine(e, u) && inRange(e.at, r); });
+        var sales = (J('covo_sales_history', []) || []).filter(function (s) { return s && !s.cancelled && s.type !== 'retour_article' && pick(s, u) && inRange(s.date, r); });
+        var returns = (J('covo_sales_history', []) || []).filter(function (s) { return s && s.type === 'retour_article' && pick(s, u) && inRange(s.date, r); });
+        var cancels = (J('covo_cart_audit', []) || []).filter(function (e) { return e && pick(e, u) && inRange(e.at, r); });
         var shown = sales.filter(function (s) { return (!V.pay || (s.method || 'autre') === V.pay) && (!q || (s.items || []).some(function (it) { return norm(it.name + ' ' + (it.barcode || '')).indexOf(q) >= 0; })); });
         return { u: u, sales: sales, shown: shown, returns: returns, cancels: cancels };
     }
     function stats(D) {
-        var arts = {}, ca = 0, n = 0, pay = {}, enc = { cash: 0, cb: 0, ticket: 0 }, hours = {}, q = norm(V.q).trim();
+        var arts = {}, per = {}, ca = 0, n = 0, pay = {}, enc = { cash: 0, cb: 0, ticket: 0 }, hours = {}, q = norm(V.q).trim();
         D.shown.forEach(function (s) {
             ca += +s.total || 0; n++;
             var m = s.method || 'autre'; pay[m] = pay[m] || { n: 0, a: 0 }; pay[m].n++; pay[m].a += +s.total || 0;
             if (m === 'cash') enc.cash += +s.total || 0; else if (m === 'cb') enc.cb += +s.total || 0; else if (m === 'ticket') enc.ticket += +s.total || 0;
             else if (m === 'mixed') { enc.cb += +s.receivedCB || 0; enc.ticket += +s.receivedTicket || 0; enc.cash += Math.max(0, (+s.receivedCash || 0) - (+s.change || 0)); }
+            var uk = rname(s); per[uk] = per[uk] || { n: 0, a: 0, pay: {} }; per[uk].n++; per[uk].a += +s.total || 0; per[uk].pay[m] = (per[uk].pay[m] || 0) + (+s.total || 0);
             var h = new Date(s.date).getHours(); hours[h] = (hours[h] || 0) + (+s.total || 0);
             (s.items || []).forEach(function (it) {
                 if (q && norm(it.name + ' ' + (it.barcode || '')).indexOf(q) < 0) return;
@@ -8511,7 +8546,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         var ph = Object.keys(hours).sort(function (a, b) { return hours[b] - hours[a]; })[0];
         var can = { n: 0, a: 0, carts: {}, nv: {}, top: {} };
         D.cancels.forEach(function (e) { can.n += +e.qty || 0; can.a += +e.amount || 0; if (e.type === 'vide') can.carts[e.cartId || e.at] = 1; if (e.type === 'non_valide') can.nv[e.cartId || e.at] = 1; var k = e.name; can.top[k] = (can.top[k] || 0) + (+e.amount || 0); });
-        return { arts: list, ca: ca, n: n, items: items, avg: n ? ca / n : 0, pay: pay, enc: enc, peak: ph, can: can };
+        return { per: per, arts: list, ca: ca, n: n, items: items, avg: n ? ca / n : 0, pay: pay, enc: enc, peak: ph, can: can };
     }
     var PER = { today: "aujourd’hui", yesterday: 'hier', week: 'sur 7 jours', month: 'ce mois-ci', all: 'au total' };
 
@@ -8533,11 +8568,13 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         css();
         var body = o.querySelector('.ca-body'); if (!body) return;
         var tabs = document.createElement('div'); tabs.id = 'cav-tabs';
-        tabs.innerHTML = '<button type="button" data-t="cancel">🗑️ Annulés & non validés</button><button type="button" data-t="sales">🛒 Mes ventes</button><button type="button" data-t="ai">🤖 Assistant</button>';
+        var M = isM(); V.who = '';
+        tabs.innerHTML = '<button type="button" data-t="cancel">🗑️ Annulés & non validés</button><button type="button" data-t="sales">' + (M ? '🛒 Ventes (tous)' : '🛒 Mes ventes') + '</button><button type="button" data-t="ai">🤖 Assistant</button>'
+            + (M ? '<button type="button" data-t="manage" title="Réservé à l’Admin-Développeur">🛠️ Gérer le journal</button>' : '');
         body.parentNode.insertBefore(tabs, body);
         var mine = document.createElement('div'); mine.className = 'cav-body'; mine.id = 'cav-body'; body.parentNode.insertBefore(mine, body.nextSibling);
         tabs.addEventListener('click', function (e) { var b = e.target.closest('[data-t]'); if (!b) return; V.tab = b.getAttribute('data-t'); show(o); });
-        mine.addEventListener('click', onClick); mine.addEventListener('change', onChange); mine.addEventListener('input', function (e) { if (e.target.getAttribute('data-v') === 'q') { V.q = e.target.value; clearTimeout(onChange.t); onChange.t = setTimeout(function () { renderSales(true); }, 250); } });
+        mine.addEventListener('click', onClick); mine.addEventListener('change', onChange); mine.addEventListener('input', function (e) { if (e.target.getAttribute('data-g') === 'gq') { V.gq = e.target.value; clearTimeout(onChange.g); onChange.g = setTimeout(function () { renderManage(); }, 250); return; } if (e.target.getAttribute('data-v') === 'q') { V.q = e.target.value; clearTimeout(onChange.t); onChange.t = setTimeout(function () { renderSales(true); }, 250); } });
         mine.addEventListener('submit', function (e) { e.preventDefault(); var i = mine.querySelector('#cav-q'); var t = i && i.value.trim(); if (t) { i.value = ''; ask(t); } });
         show(o);
     }
@@ -8545,11 +8582,13 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         var body = o.querySelector('.ca-body'), mineB = $('cav-body');
         o.querySelectorAll('#cav-tabs [data-t]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-t') === V.tab); });
         body.style.display = V.tab === 'cancel' ? '' : 'none'; mineB.style.display = V.tab === 'cancel' ? 'none' : '';
-        if (V.tab === 'sales') renderSales(); else if (V.tab === 'ai') renderAi();
+        if (V.tab === 'manage' && !isM()) { V.tab = 'cancel'; return show(o); }
+        if (V.tab === 'sales') renderSales(); else if (V.tab === 'ai') renderAi(); else if (V.tab === 'manage') renderManage();
     }
     function sel(id, cur, opts) { return '<select data-v="' + id + '">' + opts.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === cur ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>'; }
     function filters() {
-        return '<div class="cav-f">' + sel('period', V.period, [['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['week', '7 jours'], ['month', 'Ce mois'], ['all', 'Tout']])
+        var W = isM() ? sel('who', V.who, [['', '👥 Tous les utilisateurs'], ['me', '👤 Moi (Admin-Développeur)']].concat(people().filter(function (x) { return x[0] !== 'USR-MASTER'; }).map(function (x) { return [x[0], '👤 ' + x[1]]; }))) : '';
+        return '<div class="cav-f">' + W + sel('period', V.period, [['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['week', '7 jours'], ['month', 'Ce mois'], ['all', 'Tout']])
             + (V.tab === 'sales' ? sel('mode', V.mode, [['art', 'Par article'], ['tk', 'Par ticket']]) + '<input type="search" data-v="q" value="' + esc(V.q) + '" placeholder="🔎 Article, code-barres…" style="flex:1;min-width:150px">' : '') + '</div>';
     }
     function renderSales(keepFocus) {
@@ -8566,20 +8605,85 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
                 + (S.arts.length ? S.arts.slice(0, 400).map(function (a) { return '<tr><td>' + esc(a.name) + '</td><td class="r">' + num(a.q) + (a.kg ? ' kg' : '') + '</td><td class="r">' + a.t + '</td><td class="r"><b>' + eur(a.a) + '</b></td></tr>'; }).join('')
                     : '<tr><td colspan="4" style="padding:22px;text-align:center;opacity:.7">Aucune vente ' + esc(PER[V.period]) + (V.pay ? ' en ' + esc(PAY[V.pay][1].toLowerCase()) : '') + '.</td></tr>') + '</tbody></table></div>';
         } else {
-            html += '<div class="cav-t"><table><thead><tr><th>Heure</th><th>Ticket</th><th>Articles</th><th>Paiement</th><th class="r">Total</th></tr></thead><tbody>'
-                + (D.shown.length ? D.shown.slice().reverse().slice(0, 400).map(function (s) { var d = new Date(s.date), p = PAY[s.method] || ['💰', s.method || '—']; return '<tr><td style="white-space:nowrap">' + (V.period === 'today' ? '' : d.toLocaleDateString('fr-FR') + ' ') + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</td><td>n° ' + esc(s.ticketNum || s.id) + '</td><td>' + esc((s.items || []).map(function (it) { return (it.unitType === 'kg' ? num(it.quantity) + ' kg ' : (it.quantity || 1) + '× ') + String(it.name || '').replace(' 🏷️', ''); }).join(', ').slice(0, 120)) + '</td><td>' + p[0] + ' ' + esc(p[1]) + '</td><td class="r"><b>' + eur(s.total) + '</b></td></tr>'; }).join('')
-                    : '<tr><td colspan="5" style="padding:22px;text-align:center;opacity:.7">Aucun ticket.</td></tr>') + '</tbody></table></div>';
+            html += '<div class="cav-t"><table><thead>' + '<tr><th>Heure</th><th>Ticket</th>' + (isM() ? '<th>Vendeur</th>' : '') + '<th>Articles</th><th>Paiement</th><th class="r">Total</th></tr></thead><tbody>'
+                + (D.shown.length ? D.shown.slice().reverse().slice(0, 400).map(function (s) { var d = new Date(s.date), p = PAY[s.method] || ['💰', s.method || '—']; return '<tr><td style="white-space:nowrap">' + (V.period === 'today' ? '' : d.toLocaleDateString('fr-FR') + ' ') + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</td><td>n° ' + esc(s.ticketNum || s.id) + '</td>' + (isM() ? '<td>' + esc(rname(s)) + '</td>' : '') + '<td>' + esc((s.items || []).map(function (it) { return (it.unitType === 'kg' ? num(it.quantity) + ' kg ' : (it.quantity || 1) + '× ') + String(it.name || '').replace(' 🏷️', ''); }).join(', ').slice(0, 120)) + '</td><td>' + p[0] + ' ' + esc(p[1]) + '</td><td class="r"><b>' + eur(s.total) + '</b></td></tr>'; }).join('')
+                    : '<tr><td colspan="6" style="padding:22px;text-align:center;opacity:.7">Aucun ticket.</td></tr>') + '</tbody></table></div>';
         }
-        html += '<div class="cav-note">👤 Uniquement les ventes de <b>' + esc(uname(u) || 'l’utilisateur connecté') + '</b> : l’activité des autres comptes (caissiers, administrateurs, Admin-Développeur) n’apparaît pas ici.' + (D.returns.length ? ' · ↩️ ' + D.returns.length + ' retour(s) client sur la période (non comptés).' : '') + '</div>';
+        if (isM() && V.who === '' && Object.keys(S.per).length) {
+            var pl = Object.keys(S.per).sort(function (a, b) { return S.per[b].a - S.per[a].a; });
+            html += '<div class="cav-t" style="margin-top:10px"><table><thead><tr><th>👥 Vendeur</th><th class="r">Tickets</th>' + pays.map(function (k) { return '<th class="r">' + PAY[k][0] + ' ' + esc(PAY[k][1]) + '</th>'; }).join('') + '<th class="r">Total</th></tr></thead><tbody>'
+                + pl.map(function (k) { var x = S.per[k]; return '<tr><td><b>' + esc(k) + '</b></td><td class="r">' + x.n + '</td>' + pays.map(function (m) { return '<td class="r">' + (x.pay[m] ? eur(x.pay[m]) : '—') + '</td>'; }).join('') + '<td class="r"><b>' + eur(x.a) + '</b></td></tr>'; }).join('') + '</tbody></table></div>';
+        }
+        if (isM()) html += '<div class="cav-note">🛡️ Admin-Développeur : vous consultez <b>' + esc(scopeTxt()) + '</b>. Les autres comptes ne voient que leur propre activité.' + (D.returns.length ? ' · ↩️ ' + D.returns.length + ' retour(s) client sur la période (non comptés).' : '') + '</div>';
+        else html += '<div class="cav-note">👤 Uniquement les ventes de <b>' + esc(uname(u) || 'l’utilisateur connecté') + '</b> : l’activité des autres comptes (caissiers, administrateurs, Admin-Développeur) n’apparaît pas ici.' + (D.returns.length ? ' · ↩️ ' + D.returns.length + ' retour(s) client sur la période (non comptés).' : '') + '</div>';
         var foc = keepFocus && document.activeElement && document.activeElement.getAttribute('data-v') === 'q';
         B.innerHTML = html;
         if (foc) { var i = B.querySelector('[data-v="q"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
     }
-    function onChange(e) { var k = e.target.getAttribute('data-v'); if (!k || k === 'q') return; V[k] = e.target.value; if (V.tab === 'sales') renderSales(); else renderAi(); }
+    function onChange(e) {
+        var g = e.target.getAttribute('data-g');
+        if (g === 'ck') { var id = e.target.getAttribute('data-id'); if (e.target.checked) V.sel[id] = 1; else delete V.sel[id]; V.ask = 0; renderManage(); return; }
+        if (g === 'all') { mRows().forEach(function (r) { var id = String(rid(r)); if (e.target.checked) V.sel[id] = 1; else delete V.sel[id]; }); V.ask = 0; renderManage(); return; }
+        if (g) { V[g] = e.target.value; V.ask = 0; renderManage(); return; }
+        var k = e.target.getAttribute('data-v'); if (!k || k === 'q') return; V[k] = e.target.value;
+        if (k === 'who') LOG.push({ me: false, t: '👥 Je réponds maintenant pour <b>' + esc(scopeTxt()) + '</b>.' });
+        if (V.tab === 'sales') renderSales(); else if (V.tab === 'manage') { V.ask = 0; renderManage(); } else renderAi();
+    }
     function onClick(e) {
         var p = e.target.closest('[data-pay]'); if (p) { V.pay = p.getAttribute('data-pay'); renderSales(); return; }
         var c = e.target.closest('[data-ask]'); if (c) { ask(c.getAttribute('data-ask')); return; }
-        if (e.target.closest('[data-mic]')) listen();
+        if (e.target.closest('[data-mic]')) { listen(); return; }
+        var a = e.target.closest('[data-gm]'); if (a && isM()) {
+            var k = a.getAttribute('data-gm');
+            if (k === 'del') { if (Object.keys(V.sel).length) { V.ask = 1; renderManage(); } }
+            else if (k === 'no') { V.ask = 0; renderManage(); }
+            else if (k === 'none') { V.sel = {}; V.ask = 0; renderManage(); }
+            else if (k === 'yes') doDelete();
+        }
+    }
+
+    /* ───── 🛠️ Gestion du journal (Admin-Développeur uniquement) ───── */
+    var TY = { retire: ['Article retiré', '#f59e0b'], qte: ['Quantité diminuée', '#eab308'], vide: ['Panier annulé', '#dc2626'], non_valide: ['Non validé', '#7c3aed'] };
+    function rid(r) { return typeof window._covoCartAuditId === 'function' ? window._covoCartAuditId(r) : (r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty)); }
+    function mRows() {
+        var u = me(), r = range(), q = norm(V.gq).trim();
+        return (J('covo_cart_audit', []) || []).filter(function (e) { return e && !e._covoDel && pick(e, u) && inRange(e.at, r) && (!V.gt || e.type === V.gt) && (!q || norm(e.name + ' ' + (e.barcode || '') + ' ' + (e.cashier || '') + ' ' + (e.reason || '')).indexOf(q) >= 0); }).reverse();
+    }
+    function renderManage(keep) {
+        var B = $('cav-body'); if (!B) return;
+        if (!isM()) { B.innerHTML = '<div class="cav-note">⛔ Réservé à l’Admin-Développeur.</div>'; return; }
+        var rows = mRows(), ids = {}; rows.forEach(function (r) { ids[String(rid(r))] = 1; });
+        Object.keys(V.sel).forEach(function (k) { if (!ids[k]) delete V.sel[k]; });   // la sélection suit les filtres
+        var n = Object.keys(V.sel).length, amt = rows.reduce(function (s, r) { return s + (V.sel[String(rid(r))] ? +r.amount || 0 : 0); }, 0);
+        var all = rows.length && rows.slice(0, 1000).every(function (r) { return V.sel[String(rid(r))]; });
+        var gs = function (id, cur, opts) { return '<select data-g="' + id + '">' + opts.map(function (x) { return '<option value="' + x[0] + '"' + (x[0] === cur ? ' selected' : '') + '>' + esc(x[1]) + '</option>'; }).join('') + '</select>'; };
+        var html = filters().replace('</div>', gs('gt', V.gt, [['', 'Tous les types'], ['retire', 'Articles retirés'], ['qte', 'Quantités diminuées'], ['vide', 'Paniers annulés'], ['non_valide', 'Non validés']])
+                + '<input type="search" data-g="gq" value="' + esc(V.gq) + '" placeholder="🔎 Article, caissier, motif…" style="flex:1;min-width:150px"></div>')
+            + '<div class="cav-gbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;padding:9px 12px;border-radius:11px;background:rgba(220,38,38,.07);border:1.5px solid rgba(220,38,38,.35);font-size:.82rem">'
+            + '<b style="flex:1;min-width:200px">🛠️ ' + rows.length + ' ligne' + (rows.length > 1 ? 's' : '') + ' · ' + n + ' sélectionnée' + (n > 1 ? 's' : '') + (n ? ' (' + eur(amt) + ')' : '') + '</b>'
+            + (n ? '<button type="button" data-gm="none" style="border:1px solid currentColor;background:transparent;color:inherit;border-radius:9px;padding:6px 10px;font-weight:700;cursor:pointer">Tout désélectionner</button>' : '')
+            + '<button type="button" data-gm="del"' + (n ? '' : ' disabled') + ' style="border:none;border-radius:9px;padding:7px 12px;font-weight:800;cursor:' + (n ? 'pointer' : 'not-allowed') + ';background:#b91c1c;color:#fff;opacity:' + (n ? 1 : .45) + '">🗑️ Supprimer définitivement</button></div>'
+            + (V.ask && n ? '<div class="cav-confirm" style="margin-bottom:10px;padding:12px 14px;border-radius:12px;background:#7f1d1d;color:#fff;font-size:.86rem;line-height:1.5">⚠️ Supprimer définitivement <b>' + n + ' ligne' + (n > 1 ? 's' : '') + '</b> du journal (' + eur(amt) + ') ? ' + (n > 1 ? 'Elles disparaîtront' : 'Elle disparaîtra') + ' sur cet appareil et, à la prochaine sauvegarde Google Drive, sur les autres appareils. <b>Action irréversible.</b><div style="display:flex;gap:8px;margin-top:9px"><button type="button" data-gm="yes" style="border:none;border-radius:9px;padding:7px 14px;font-weight:900;cursor:pointer;background:#fff;color:#b91c1c">Oui, supprimer</button><button type="button" data-gm="no" style="border:1px solid #fff;border-radius:9px;padding:7px 14px;font-weight:800;cursor:pointer;background:transparent;color:#fff">Annuler</button></div></div>' : '')
+            + '<div class="cav-t"><table><thead><tr><th style="width:30px"><input type="checkbox" data-g="all" title="Tout sélectionner"' + (all ? ' checked' : '') + '></th><th>Date / heure</th><th>Appli</th><th>Utilisateur</th><th>Type</th><th>Article</th><th class="r">Qté</th><th class="r">Montant</th><th>Motif</th></tr></thead><tbody>'
+            + (rows.length ? rows.slice(0, 1000).map(function (e) { var id = String(rid(e)), d = new Date(e.at), t = TY[e.type] || [e.type, '#888']; return '<tr' + (V.sel[id] ? ' style="background:rgba(220,38,38,.09)"' : '') + '><td><input type="checkbox" data-g="ck" data-id="' + esc(id) + '"' + (V.sel[id] ? ' checked' : '') + '></td><td style="white-space:nowrap">' + d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) + '</td><td>' + esc(e.app || '') + '</td><td>' + esc(rname(e)) + '</td><td><span style="color:' + t[1] + ';font-weight:800">' + esc(t[0]) + '</span></td><td>' + esc(e.name || '') + '</td><td class="r">' + num(e.qty) + '</td><td class="r"><b>' + eur(e.amount) + '</b></td><td style="opacity:.8">' + esc(e.reason || '') + '</td></tr>'; }).join('')
+                : '<tr><td colspan="9" style="padding:22px;text-align:center;opacity:.7">Aucune ligne pour ces filtres.</td></tr>') + '</tbody></table></div>'
+            + (rows.length > 1000 ? '<div class="cav-note">1 000 premières lignes affichées : affinez la période ou les filtres.</div>' : '')
+            + '<div class="cav-note">🛡️ Onglet réservé à l’Admin-Développeur. Les lignes supprimées ne reviennent pas lors des restaurations Google Drive' + (window.CovoSync && CovoSync.autoAllowed && !CovoSync.autoAllowed() ? ' — votre sauvegarde automatique étant désactivée, la suppression partira vers Drive à votre prochaine sauvegarde.' : '.') + '</div>';
+        var foc = document.activeElement && document.activeElement.getAttribute('data-g') === 'gq';
+        B.innerHTML = html;
+        if (foc) { var i = B.querySelector('[data-g="gq"]'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+    }
+    function doDelete() {
+        if (!isM()) return;
+        var ids = Object.keys(V.sel); if (!ids.length) return;
+        var n = 0;
+        if (typeof window._covoCartAuditDelete === 'function') n = window._covoCartAuditDelete(ids);
+        else { var set = {}; ids.forEach(function (i) { set[i] = 1; }); var L = J('covo_cart_audit', []) || [], k = L.filter(function (r) { return !(r && set[String(rid(r))]); }); n = L.length - k.length; localStorage.setItem('covo_cart_audit', JSON.stringify(k)); var D = J('covo_cart_audit_del', []) || []; localStorage.setItem('covo_cart_audit_del', JSON.stringify(D.concat(ids).slice(-20000))); }
+        V.sel = {}; V.ask = 0;
+        try { if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave(); else if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {}
+        try { var f = document.querySelector('#ca-hist .ca-body select[data-f="type"]'); if (f) f.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+        renderManage();
+        try { showScanToast('🗑️ ' + n + ' ligne' + (n > 1 ? 's' : '') + ' supprimée' + (n > 1 ? 's' : '') + ' définitivement du journal', 'success'); } catch (e) {}
     }
 
     /* ───── Assistant de la vue ───── */
@@ -8587,9 +8691,10 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
     var SUG = ['Combien j’ai vendu aujourd’hui ?', 'Combien en espèces ?', 'Combien par carte ?', 'Quel article j’ai le plus vendu ?', 'Combien d’annulations ?', 'Quel est mon panier moyen ?', 'À quelle heure je vends le plus ?', 'Explique-moi cette fenêtre'];
     function renderAi() {
         var B = $('cav-body'); if (!B) return;
-        if (!LOG.length) LOG.push({ me: false, t: 'Bonjour ' + (uname(me()) || '') + ' ! Je réponds sur VOTRE activité (' + PER[V.period] + ') : ventes, paiements, articles, annulations. Choisissez une question ou écrivez la vôtre.' });
+        if (!LOG.length) LOG.push({ me: false, t: isM() ? 'Bonjour ' + (uname(me()) || '') + ' ! En tant qu’Admin-Développeur, je réponds sur <b>' + esc(scopeTxt()) + '</b> (' + PER[V.period] + ') : ventes, modes de paiement, vendeurs, annulations. Changez l’utilisateur dans le menu ci-dessous.' : 'Bonjour ' + (uname(me()) || '') + ' ! Je réponds sur VOTRE activité (' + PER[V.period] + ') : ventes, paiements, articles, annulations. Choisissez une question ou écrivez la vôtre.' });
+        var sug = isM() ? ['Qui a le plus vendu ?', 'Répartition par mode de paiement', 'Combien en espèces ?', 'Combien par carte ?', 'Qui a le plus d’annulations ?', 'Combien de paniers non validés ?', 'Quel article le plus vendu ?', 'Explique-moi cette fenêtre'] : SUG;
         B.innerHTML = filters() + '<div class="cav-chat" id="cav-chat">' + LOG.map(function (m) { return '<div class="cav-m ' + (m.me ? 'me' : 'bot') + '">' + (m.me ? esc(m.t) : m.t) + '</div>'; }).join('') + '</div>'
-            + '<div class="cav-chips">' + SUG.map(function (s) { return '<button type="button" data-ask="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>'
+            + '<div class="cav-chips">' + sug.map(function (s) { return '<button type="button" data-ask="' + esc(s) + '">' + esc(s) + '</button>'; }).join('') + '</div>'
             + '<form class="cav-in" autocomplete="off"><input id="cav-q" placeholder="Votre question… (ex. combien de coca vendus ?)">' + (window.SpeechRecognition || window.webkitSpeechRecognition ? '<button type="button" data-mic="1" title="Parler">🎤</button>' : '') + '<button type="submit">➤</button></form>';
         var ch = $('cav-chat'); if (ch) ch.scrollTop = ch.scrollHeight;
     }
@@ -8602,6 +8707,21 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
     function answer(q) {
         var n = norm(q), D = data(), S = stats(D), P = PER[V.period];
         var payK = /espece|liquide|cash/.test(n) ? 'cash' : /\b(cb|carte)\b|carte bancaire|terminal/.test(n) ? 'cb' : /mixte/.test(n) ? 'mixed' : /ticket resto|ticket restaurant|tickets resto/.test(n) ? 'ticket' : /credit/.test(n) ? 'credit' : /plusieurs fois|echelon|2x|3x/.test(n) ? 'echel' : null;
+        var M = isM(), WHO = scopeTxt();
+        if (M && /explique|aide|comment ca marche|a quoi sert|c est quoi|fenetre|onglet/.test(n)) return 'Vous êtes Admin-Développeur : cette fenêtre a 4 onglets.<br>• <b>🗑️ Annulés & non validés</b> : articles retirés, quantités diminuées, paniers vidés ou abandonnés, pour tous les caissiers.<br>• <b>🛒 Ventes</b> : les ventes de l’utilisateur choisi, ou de tous, avec le détail par vendeur et par mode de paiement.<br>• <b>🤖 Assistant</b> : demandez par exemple qui a le plus vendu, ou la répartition par mode de paiement.<br>• <b>🛠️ Gérer le journal</b> : cochez des lignes du journal et supprimez-les définitivement.<br>Ces vues globales et la suppression sont réservées à l’Admin-Développeur ; les autres comptes ne voient que leur propre activité.';
+        if (M && /(qui|vendeur|caissier|classement|par utilisateur|chaque utilisateur|equipe)/.test(n) && /(annul|retir|supprim)/.test(n)) {
+            var pc = {}; D.cancels.forEach(function (e) { var k = rname(e); pc[k] = pc[k] || { n: 0, a: 0 }; pc[k].n += +e.qty || 0; pc[k].a += +e.amount || 0; });
+            var kc = Object.keys(pc).sort(function (a, b) { return pc[b].a - pc[a].a; });
+            return kc.length ? '🗑️ Annulations ' + P + ' par utilisateur :<br>' + kc.slice(0, 8).map(function (k, i) { return (i + 1) + '. <b>' + esc(k) + '</b> : ' + num(pc[k].n) + ' article' + (pc[k].n > 1 ? 's' : '') + ' pour ' + eur(pc[k].a); }).join('<br>') : '✅ Aucune annulation ' + P + '.';
+        }
+        if (M && /(qui|vendeur|caissier|classement|par utilisateur|chaque utilisateur|equipe)/.test(n)) {
+            var kp = Object.keys(S.per).sort(function (a, b) { return S.per[b].a - S.per[a].a; });
+            return kp.length ? '🏆 Ventes ' + P + ' par utilisateur :<br>' + kp.slice(0, 8).map(function (k, i) { var x = S.per[k]; return (i + 1) + '. <b>' + esc(k) + '</b> : ' + x.n + ' ticket' + (x.n > 1 ? 's' : '') + ', ' + eur(x.a) + ' (' + Object.keys(x.pay).sort(function (a, b) { return x.pay[b] - x.pay[a]; }).map(function (m) { return ((PAY[m] || ['', m])[1]).toLowerCase() + ' ' + eur(x.pay[m]); }).join(', ') + ')'; }).join('<br>') : 'Aucune vente ' + P + ' pour ' + esc(WHO) + '.';
+        }
+        if (/(par mode|repartition|modes de paiement|mode de paiement|moyens de paiement|par paiement)/.test(n)) {
+            var km = Object.keys(S.pay).sort(function (a, b) { return S.pay[b].a - S.pay[a].a; });
+            return km.length ? '💳 Répartition ' + P + (M ? ' pour <b>' + esc(WHO) + '</b>' : '') + ' :<br>' + km.map(function (m) { var x = S.pay[m], p = PAY[m] || ['💰', m]; return p[0] + ' <b>' + esc(p[1]) + '</b> : ' + x.n + ' ticket' + (x.n > 1 ? 's' : '') + ', ' + eur(x.a) + (S.ca ? ' (' + Math.round(x.a / S.ca * 100) + ' %)' : ''); }).join('<br>') + '<br>Total : <b>' + eur(S.ca) + '</b>.' : 'Aucune vente ' + P + '.';
+        }
         if (/explique|aide|comment ca marche|a quoi sert|que veut dire|c est quoi|fenetre|onglet/.test(n)) return 'Cette fenêtre a 3 onglets :<br>• <b>🗑️ Annulés & non validés</b> : chaque article scanné puis retiré, chaque quantité diminuée, chaque panier vidé, et les paniers abandonnés sans validation. Utile pour repérer les erreurs ou les oublis.<br>• <b>🛒 Mes ventes</b> : les articles que <b>vous</b> avez vendus, par article ou par ticket, avec un filtre par mode de paiement.<br>• <b>🤖 Assistant</b> : posez une question sur votre journée.<br>Seule votre activité est affichée ; celle des autres comptes reste séparée. Le journal est sauvegardé automatiquement selon les règles de votre compte.';
         if (/(non valid|abandon|oubli)/.test(n)) { var nv = Object.keys(S.can.nv).length; return nv ? '⏸️ ' + nv + ' panier' + (nv > 1 ? 's' : '') + ' non validé' + (nv > 1 ? 's' : '') + ' ' + P + ' : un panier était en cours quand la page a été fermée ou rechargée, ou il est resté sans action. Vérifiez qu’aucun client n’est reparti sans payer.' : '✅ Aucun panier non validé ' + P + '.'; }
         if (/(annul|retir|supprim|enlev)/.test(n)) { var tp = Object.keys(S.can.top).sort(function (a, b) { return S.can.top[b] - S.can.top[a]; })[0]; return D.cancels.length ? '🗑️ ' + P + ' : <b>' + num(S.can.n) + '</b> article(s) retiré(s) ou annulé(s) pour <b>' + eur(S.can.a) + '</b>, ' + Object.keys(S.can.carts).length + ' panier(s) vidé(s), ' + Object.keys(S.can.nv).length + ' non validé(s).' + (tp ? ' Article le plus annulé : <b>' + esc(tp) + '</b>.' : '') : '✅ Aucune annulation ' + P + '.'; }
@@ -8614,6 +8734,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
             // un article précis ? (« combien de coca »)
             var words = n.replace(/combien|de|d|des|du|la|le|les|j ai|vendu|vendus|aujourd hui|hier|ce mois|article|articles|\?/g, ' ').split(/\s+/).filter(function (w) { return w.length > 2; });
             if (words.length) { var hit = S.arts.filter(function (a) { var an = norm(a.name); return words.every(function (w) { return an.indexOf(w) >= 0; }); }); if (hit.length) return '📦 ' + hit.slice(0, 4).map(function (a) { return '<b>' + esc(a.name) + '</b> : ' + num(a.q) + (a.kg ? ' kg' : '') + ' vendus (' + eur(a.a) + ')'; }).join('<br>') + ' — ' + P + '.'; }
+            if (M && WHO !== 'vous') return '💰 ' + P[0].toUpperCase() + P.slice(1) + ', <b>' + esc(WHO) + '</b> : <b>' + S.n + '</b> ticket(s), <b>' + num(S.items) + '</b> article(s), pour <b>' + eur(S.ca) + '</b>. Espèces ' + eur(S.enc.cash) + ', carte ' + eur(S.enc.cb) + (S.enc.ticket ? ', tickets resto ' + eur(S.enc.ticket) : '') + '.';
             return '💰 ' + P[0].toUpperCase() + P.slice(1) + ', vous avez fait <b>' + S.n + '</b> ticket(s), <b>' + num(S.items) + '</b> article(s), pour <b>' + eur(S.ca) + '</b>. Espèces ' + eur(S.enc.cash) + ', carte ' + eur(S.enc.cb) + (S.enc.ticket ? ', tickets resto ' + eur(S.enc.ticket) : '') + '.';
         }
         var hit2 = S.arts.filter(function (a) { return norm(a.name).indexOf(n.trim()) >= 0; });

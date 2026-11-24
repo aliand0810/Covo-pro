@@ -880,23 +880,42 @@ return tinf_uncompress;
 (function () {
     if (window._covoCartAuditRestore) return;
     var KEY = 'covo_cart_audit', MAX = 20000, SEND_MAX = 8000, DAYS = 180;
+    var DEL = 'covo_cart_audit_del';   // entrées supprimées définitivement par l'Admin-Développeur (ne reviennent jamais par Drive)
+    function rid(r) { return r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); }
+    function dels() { try { var v = JSON.parse(localStorage.getItem(DEL) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
     function load() { try { var v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
     function merge(a, b) {
         var seen = {}, out = [];
-        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object') return; var id = r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); if (seen[id]) return; seen[id] = 1; out.push(r); });
+        dels().forEach(function (id) { seen[id] = 1; });
+        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object' || r._covoDel) return; var id = rid(r); if (seen[id]) return; seen[id] = 1; out.push(r); });
         out.sort(function (x, y) { return String(x.at || '') < String(y.at || '') ? -1 : String(x.at || '') > String(y.at || '') ? 1 : 0; });
         return out.length > MAX ? out.slice(out.length - MAX) : out;
     }
     // Contenu envoyé sur Drive : les 180 derniers jours (8 000 entrées au plus) pour garder une sauvegarde légère
     window._covoCartAuditPayload = function () {
         var lim = new Date(Date.now() - DAYS * 864e5).toISOString(), L = load().filter(function (r) { return r && String(r.at || '') >= lim; });
-        return L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+        L = L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+        var D = dels(); if (D.length) L = L.concat([{ _covoDel: D.slice(-20000), at: '', type: '_del', id: '_covo_del_marker', name: '', qty: 0, amount: 0 }]);
+        return L;
     };
+    // Suppression définitive (Admin-Développeur) : retire les lignes et mémorise leurs identifiants
+    window._covoCartAuditDelete = function (ids) {
+        ids = (ids || []).map(String); if (!ids.length) return 0;
+        var set = {}; ids.forEach(function (i) { set[i] = 1; });
+        var D = dels(); D.forEach(function (i) { set[i] = 1; });
+        localStorage.setItem(DEL, JSON.stringify(Object.keys(set).slice(-20000)));
+        var L = load(), keep = L.filter(function (r) { return !(r && set[rid(r)]); });
+        localStorage.setItem(KEY, JSON.stringify(keep));
+        return L.length - keep.length;
+    };
+    window._covoCartAuditId = rid;
     window._covoCartAuditRestore = function (remote) {
         try {
             if (!Array.isArray(remote) || !remote.length) return;
+            var mk = remote.filter(function (r) { return r && r._covoDel; }), changed = false;
+            if (mk.length) { var set = {}; dels().forEach(function (i) { set[i] = 1; }); var n0 = Object.keys(set).length; mk.forEach(function (x) { (x._covoDel || []).forEach(function (i) { set[String(i)] = 1; }); }); if (Object.keys(set).length !== n0) { localStorage.setItem(DEL, JSON.stringify(Object.keys(set).slice(-20000))); changed = true; } }
             var local = load(), m = merge(local, remote);
-            if (m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
+            if (changed || m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
         } catch (e) {}
     };
     window._covoCartAuditMerge = merge;

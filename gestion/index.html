@@ -564,6 +564,52 @@ return tinf_uncompress;
 </script>
 
 <script>
+/* Lecture à voix haute fluide pour TOUS les assistants COVO :
+   « ticket(s) » → « ticket », « réglé(e) » → « réglé », émojis et symboles retirés ou dits en mots
+   (→ « vers », n° « numéro », × « fois », · et — deviennent de simples pauses…).
+   Appliqué à chaque phrase juste avant qu'elle soit prononcée. */
+(function () {
+    if (window.covoSpeechClean || !window.speechSynthesis) return;
+    function clean(t) {
+        var s = String(t == null ? '' : t);
+        s = s.replace(/<br\s*\/?>/gi, '. ').replace(/<\/(div|p|li)>/gi, '. ').replace(/<[^>]+>/g, ' ').replace(/\[\[|\]\]|\*\*/g, '');
+        s = s.replace(/(^|[^\d,])(\d+)\s+([A-Za-zÀ-ÖØ-öø-ÿ]+)\((s|x)\)/g, function (m0, a, n, w, p) { return a + n + ' ' + w + (+n > 1 ? p : ''); });
+        // marques de pluriel / féminin entre parenthèses collées au mot : on lit le mot seul
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\((?:e|s|es|x|nt|e\)\(s|ne|le|ère|ères|aux)\)/g, '$1');
+        s = s.replace(/([A-Za-zÀ-ÖØ-öø-ÿœŒ])\(e\)s\b/g, '$1');
+        // émojis, pictogrammes, sélecteurs de variante
+        s = s.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu, ' ');
+        // symboles dits en mots
+        s = s.replace(/\b[nN]°\s*/g, 'numéro ').replace(/#(?=\s*\d)/g, 'numéro ')
+             .replace(/(\d)\s*×\s*/g, '$1 fois ').replace(/\s×\s/g, ' fois ')
+             .replace(/\s*→\s*/g, ' vers ').replace(/\s*↔\s*/g, ' et ').replace(/≈\s*/g, 'environ ')
+             .replace(/(^|[\s(])[−-]\s?(?=\d)/g, '$1moins ').replace(/(^|[\s(])\+\s?(?=\d)/g, '$1plus ')
+             .replace(/(\d{1,2})\s?h\s*[–—-]\s*(\d{1,2})\s?h/g, 'de $1 heures à $2 heures')
+             .replace(/(\d)\s?h\s?(\d{2})\b/g, '$1 heures $2').replace(/\b(\d{1,2})\s?h\b/g, '$1 heures')
+             .replace(/\b1re\b/g, 'première').replace(/\b1er\b/g, 'premier').replace(/\b(\d+)e\b/g, '$1ième')
+             .replace(/\s&\s/g, ' et ').replace(/([A-Za-zÀ-ÿ])\s?\/\s?([A-Za-zÀ-ÿ])/g, '$1 ou $2');
+        // heures, décimales, unités
+        s = s.replace(/\b(\d{1,2}):(\d{2})\b/g, '$1 heures $2').replace(/(\d)\.(\d)/g, '$1,$2')
+             .replace(/(\d)\s?kg\b/gi, '$1 kilos').replace(/(\d)\s?g\b/g, '$1 grammes').replace(/(\d)\s?[lL]\b/g, '$1 litre').replace(/(\d)\s?cl\b/gi, '$1 centilitres')
+             .replace(/\s*÷\s*/g, ' divisé par ').replace(/\s*=\s*/g, ' égal ').replace(/[＋✚＊]/g, ' ');
+        // ponctuation qui se lit mal → pauses naturelles
+        s = s.replace(/[«»“”"]/g, ' ').replace(/[•·|]/g, ', ').replace(/\s[–—]\s/g, ', ').replace(/…/g, '. ')
+             .replace(/\s*\(\s*/g, ', ').replace(/\s*\)\s*([.,;:!?])/g, '$1').replace(/\s*\)\s*/g, ', ')
+             .replace(/[*_~^`]/g, ' ')
+             .replace(/\s+([,.;:!?])/g, '$1').replace(/([,;:])(?:\s*[,;:])+/g, '$1').replace(/,\s*\./g, '.').replace(/([:;])\s*\.+/g, '$1').replace(/\.\s*,/g, '.')
+             .replace(/([.!?])\s*[,;:]+/g, '$1').replace(/^\s*[,;:.]+\s*/, '').replace(/[,;:]\s*$/, '').replace(/\s{2,}/g, ' ').trim();
+        // les « : » ou « ! » français suivis d'un espace restent, la synthèse marque la pause
+        return s;
+    }
+    window.covoSpeechClean = clean;
+    try {
+        var sp = window.speechSynthesis, orig = sp.speak;
+        sp.speak = function (u) { try { if (u && typeof u.text === 'string') { var c = clean(u.text); if (!c) return; u.text = c; } } catch (e) {} return orig.apply(sp, arguments); };
+    } catch (e) {}
+})();
+</script>
+
+<script>
 /* ══════════════════════════════════════════════════════════════════════════
    COVO — LANGUE DE L'ASSISTANT : français / shimaoré
    • Traduction phrase par phrase des messages de l'assistant vocal et de l'assistant caisse
@@ -909,23 +955,42 @@ return tinf_uncompress;
 (function () {
     if (window._covoCartAuditRestore) return;
     var KEY = 'covo_cart_audit', MAX = 20000, SEND_MAX = 8000, DAYS = 180;
+    var DEL = 'covo_cart_audit_del';   // entrées supprimées définitivement par l'Admin-Développeur (ne reviennent jamais par Drive)
+    function rid(r) { return r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); }
+    function dels() { try { var v = JSON.parse(localStorage.getItem(DEL) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
     function load() { try { var v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
     function merge(a, b) {
         var seen = {}, out = [];
-        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object') return; var id = r.id || (r.at + '|' + r.productId + '|' + r.type + '|' + r.qty); if (seen[id]) return; seen[id] = 1; out.push(r); });
+        dels().forEach(function (id) { seen[id] = 1; });
+        (a || []).concat(b || []).forEach(function (r) { if (!r || typeof r !== 'object' || r._covoDel) return; var id = rid(r); if (seen[id]) return; seen[id] = 1; out.push(r); });
         out.sort(function (x, y) { return String(x.at || '') < String(y.at || '') ? -1 : String(x.at || '') > String(y.at || '') ? 1 : 0; });
         return out.length > MAX ? out.slice(out.length - MAX) : out;
     }
     // Contenu envoyé sur Drive : les 180 derniers jours (8 000 entrées au plus) pour garder une sauvegarde légère
     window._covoCartAuditPayload = function () {
         var lim = new Date(Date.now() - DAYS * 864e5).toISOString(), L = load().filter(function (r) { return r && String(r.at || '') >= lim; });
-        return L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+        L = L.length > SEND_MAX ? L.slice(L.length - SEND_MAX) : L;
+        var D = dels(); if (D.length) L = L.concat([{ _covoDel: D.slice(-20000), at: '', type: '_del', id: '_covo_del_marker', name: '', qty: 0, amount: 0 }]);
+        return L;
     };
+    // Suppression définitive (Admin-Développeur) : retire les lignes et mémorise leurs identifiants
+    window._covoCartAuditDelete = function (ids) {
+        ids = (ids || []).map(String); if (!ids.length) return 0;
+        var set = {}; ids.forEach(function (i) { set[i] = 1; });
+        var D = dels(); D.forEach(function (i) { set[i] = 1; });
+        localStorage.setItem(DEL, JSON.stringify(Object.keys(set).slice(-20000)));
+        var L = load(), keep = L.filter(function (r) { return !(r && set[rid(r)]); });
+        localStorage.setItem(KEY, JSON.stringify(keep));
+        return L.length - keep.length;
+    };
+    window._covoCartAuditId = rid;
     window._covoCartAuditRestore = function (remote) {
         try {
             if (!Array.isArray(remote) || !remote.length) return;
+            var mk = remote.filter(function (r) { return r && r._covoDel; }), changed = false;
+            if (mk.length) { var set = {}; dels().forEach(function (i) { set[i] = 1; }); var n0 = Object.keys(set).length; mk.forEach(function (x) { (x._covoDel || []).forEach(function (i) { set[String(i)] = 1; }); }); if (Object.keys(set).length !== n0) { localStorage.setItem(DEL, JSON.stringify(Object.keys(set).slice(-20000))); changed = true; } }
             var local = load(), m = merge(local, remote);
-            if (m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
+            if (changed || m.length !== local.length) localStorage.setItem(KEY, JSON.stringify(m));
         } catch (e) {}
     };
     window._covoCartAuditMerge = merge;
@@ -17326,7 +17391,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         localStorage.setItem('covo_real_balance', JSON.stringify(data));
     }
     function trace(d, x) { if (!Array.isArray(d.trace)) d.trace = []; x.at = new Date().toISOString(); x.by = who(); d.trace.push(x); }
-    function refresh(id) { try { _devisRenderList(); } catch (e) {} try { _devisOpenPreview(id); } catch (e) {} if (typeof cpDriveMarkDirty === 'function') try { cpDriveMarkDirty(); } catch (e) {} }
+    function refresh(id) { try { _devisRenderList(); } catch (e) {} var pm = $('devis-preview-modal'); if (pm && pm.style.display !== 'none' && getComputedStyle(pm).display !== 'none') { try { _devisOpenPreview(id); } catch (e) {} } if (typeof cpDriveMarkDirty === 'function') try { cpDriveMarkDirty(); } catch (e) {} }
 
     /* ───── 1) Modifier le mode d'un règlement ───── */
     function changeMode(devisId, payId, nm, esp, cb, motif) {
@@ -17405,6 +17470,23 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
     }
     window._gpPayChangeMode = changeMode; window._gpPayCancel = cancelPay;
 
+    /* ───── Modifier une facture sans rien perdre : l'éditeur ne reconstruisait que les champs du formulaire
+       (règlements, suivi, livraison, traces, bon de livraison… disparaissaient à l'enregistrement) ───── */
+    var oCollect = window._devisCollect;
+    if (typeof oCollect === 'function') window._devisCollect = _devisCollect = function () {
+        var r = oCollect.apply(this, arguments); if (!r || !r.id) return r;
+        var ex = null; try { ex = _devisGetAll().find(function (x) { return x.id === r.id; }); } catch (e) {}
+        if (!ex) return r;
+        Object.keys(ex).forEach(function (k) { if (!(k in r)) r[k] = ex[k]; });
+        if (!r.createdAt || r.createdAt === 'undefined') r.createdAt = ex.createdAt || r.updatedAt || new Date().toISOString();
+        if (ex.statut === 'accepte' && (Math.abs(num(ex.totalTTC) - num(r.totalTTC)) > 0.004)) {   // trace si le montant d'une facture change
+            if (!Array.isArray(r.trace)) r.trace = [];
+            r.trace.push({ at: new Date().toISOString(), by: who(), action: 'edit', from: num(ex.totalTTC), to: num(r.totalTTC), motif: 'Facture modifiée' });
+            move('especes', 0, 'Facture ' + r.numero + ' modifiée : total ' + eur(ex.totalTTC) + ' → ' + eur(r.totalTTC));
+        }
+        return r;
+    };
+
     /* ───── Affichage : boutons sur chaque règlement + historique de la facture ───── */
     var oRows = window._devisPaymentHistoryRowsHTML;
     if (typeof oRows === 'function') window._devisPaymentHistoryRowsHTML = _devisPaymentHistoryRowsHTML = function (d) {
@@ -17425,7 +17507,7 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
         if (!T.length) return h;
         var lines = T.slice().reverse().slice(0, 30).map(function (x) {
             var dt = new Date(x.at), when = isNaN(dt) ? '' : dt.toLocaleDateString('fr-FR') + ' ' + dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-            var what = x.action === 'mode' ? ('✏️ Mode modifié : ' + modeLbl(x.from) + ' → ' + modeLbl(x.to) + ' (' + eur(x.montant) + ')') : ('↩️ Règlement annulé : ' + eur(x.montant) + ' ' + modeLbl(x.from) + (x.restock ? ' · ' + x.restock + ' article(s) remis en stock' : ''));
+            var what = x.action === 'edit' ? ('📝 Facture modifiée : total ' + eur(x.from) + ' → ' + eur(x.to)) : x.action === 'mode' ? ('✏️ Mode modifié : ' + modeLbl(x.from) + ' → ' + modeLbl(x.to) + ' (' + eur(x.montant) + ')') : ('↩️ Règlement annulé : ' + eur(x.montant) + ' ' + modeLbl(x.from) + (x.restock ? ' · ' + x.restock + ' article(s) remis en stock' : ''));
             return '<div style="font-size:.76rem;padding:3px 0;color:var(--text-main)">' + what + (x.motif ? ' — <i>' + esc(x.motif) + '</i>' : '') + '<br><span style="color:var(--text-muted,#888)">' + when + (x.by ? ' · ' + esc(x.by) : '') + '</span></div>';
         }).join('');
         return h + '<div style="background:var(--bg-body,#f4f7f6);border-radius:10px;padding:10px 14px;margin:-6px 0 14px;border-left:3px solid #e67e22"><div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted,#888);font-weight:700;margin-bottom:4px">🧾 Historique des rectifications</div>' + lines + '</div>';
@@ -17477,7 +17559,37 @@ var QRCode;!function(){function a(a){this.mode=c.MODE_8BIT_BYTE,this.data=a,this
             function (o) { cancelPay(devisId, payId, motifOf(o)); });
         o.querySelector('[data-x="ok"]').style.background = '#c0392b'; o.querySelector('[data-x="ok"]').textContent = '↩️ Annuler le règlement';
     }
+    /* ───── Cartes « Factures » : bouton ✏️ Modifier + boutons sur chaque règlement du panneau « Suivi » ───── */
+    var BTN = 'border:1px solid var(--border-color,#d1d5db);background:transparent;border-radius:7px;padding:1px 6px;cursor:pointer;font-size:.72rem;color:inherit;margin-left:4px';
+    function decorate() {
+        var body = $('devis-list-body'); if (!body) return;
+        body.querySelectorAll('.fct-card[data-id]').forEach(function (card) {
+            var id = card.getAttribute('data-id'), acts = card.querySelector('.fct-acts');
+            if (acts && !acts.querySelector('[data-gpe]')) {
+                var b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-gpe', id); b.title = 'Modifier la facture (client, articles, prix, dates…)'; b.textContent = '✏️ Modifier';
+                var prev = acts.querySelector('[data-act="preview"]'); acts.insertBefore(b, prev || null);
+            }
+            var list = card.querySelector('.fct-plist'); if (!list || list.querySelector('[data-gpp]')) return;
+            var d = devis(id).d; if (!d) return;
+            var P = (d.paiements || []).slice().sort(function (a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
+            Array.prototype.slice.call(list.children).forEach(function (row, i) {
+                var p = P[i]; if (!p) return;
+                var bx = document.createElement('span'); bx.style.cssText = 'white-space:nowrap';
+                bx.innerHTML = '<button type="button" data-gpp="mode" data-d="' + esc(d.id) + '" data-p="' + esc(p.id) + '" title="Modifier le mode de paiement" style="' + BTN + '">✏️ Mode</button><button type="button" data-gpp="cancel" data-d="' + esc(d.id) + '" data-p="' + esc(p.id) + '" title="Annuler ce règlement" style="' + BTN + ';color:#c0392b;border-color:#f5b7b1">↩️ Annuler</button>';
+                row.appendChild(bx);
+            });
+            var T = Array.isArray(d.trace) ? d.trace : [];
+            if (T.length && !list.parentNode.querySelector('[data-gptr]')) {
+                var tr = document.createElement('div'); tr.setAttribute('data-gptr', '1'); tr.style.cssText = 'margin-top:6px;font-size:.72rem;color:var(--text-muted,#666);border-top:1px dashed var(--border-color,#ddd);padding-top:5px';
+                tr.innerHTML = '<b>🧾 Rectifications</b><br>' + T.slice().reverse().slice(0, 5).map(function (x) { var dt = new Date(x.at); return (x.action === 'edit' ? '📝 total ' + eur(x.from) + ' → ' + eur(x.to) : x.action === 'mode' ? '✏️ ' + modeLbl(x.from) + ' → ' + modeLbl(x.to) : '↩️ annulé ' + eur(x.montant)) + (x.motif ? ' — ' + esc(x.motif) : '') + ' · ' + (isNaN(dt) ? '' : dt.toLocaleDateString('fr-FR')) + (x.by ? ' · ' + esc(x.by) : ''); }).join('<br>');
+                list.parentNode.insertBefore(tr, list.nextSibling);
+            }
+        });
+    }
+    var decoT = 0;
+    (function obs() { var body = $('devis-list-body'); if (!body) return setTimeout(obs, 600); decorate(); new MutationObserver(function () { clearTimeout(decoT); decoT = setTimeout(decorate, 30); }).observe(body, { childList: true, subtree: true }); })();
     document.addEventListener('click', function (e) {
+        var ed = e.target.closest('[data-gpe]'); if (ed) { e.preventDefault(); e.stopPropagation(); if (typeof window._devisOpenEditor === 'function') window._devisOpenEditor(ed.getAttribute('data-gpe')); return; }
         var b = e.target.closest('[data-gpp]'); if (!b) return;
         e.preventDefault(); e.stopPropagation();
         if (b.getAttribute('data-gpp') === 'mode') openMode(b.getAttribute('data-d'), b.getAttribute('data-p')); else openCancel(b.getAttribute('data-d'), b.getAttribute('data-p'));
