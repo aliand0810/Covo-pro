@@ -8758,5 +8758,206 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
 })();
 </script>
 
+<script>
+/* 📦 « Stock modifiable » — fenêtre qui regroupe tous les articles dont l'utilisateur connecté peut ajuster le stock
+   • Caissier standard : uniquement les articles NON verrouillés (🔓) par l'administrateur
+   • Administrateur / Admin-Développeur : tous les articles, avec la bascule 🔓/🔒 « Caissier »
+   • Ajustement rapide : nouvelle quantité ou +/−, motif (comptage, réception, erreur de saisie, perte, autre), trace dans l'historique du stock
+   Disponible dans COVO Pro et Caisse Pro (même base covo_products). */
+(function () {
+    'use strict';
+    if (window._covoStockEdit) return; window._covoStockEdit = true;
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+    function user() {
+        var u = null; try { u = typeof currentUser !== 'undefined' ? currentUser : null; } catch (e) {}
+        if (!u) { try { u = typeof window._covoCurrentUser === 'function' ? window._covoCurrentUser() : null; } catch (e) {} }
+        if (!u) { try { u = JSON.parse(localStorage.getItem('covo_current_user') || 'null'); } catch (e) {} }
+        return u || {};
+    }
+    function isMgr(u) { u = u || user(); return !!(u.isMaster || u.id === 'USR-MASTER' || u.role === 'admin' || u.role === 'manager'); }
+    function uname() { var u = user(); return u.username || u.name || ''; }
+    function APP() { return typeof window.cxRenderProducts === 'function' && typeof window.saveAll !== 'function' ? 'caisse' : 'covo'; }
+    function mem() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} return null; }
+    function all() { var m = mem(); if (m && m.length) return m; try { return JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) { return []; } }
+    function isKg(p) { return p.unitType === 'kg'; }
+    function fmt(p, v) { v = +v || 0; return isKg(p) ? (Math.round(v * 1000) / 1000).toLocaleString('fr-FR') + ' kg' : Math.round(v).toLocaleString('fr-FR') + ' u.'; }
+    function locked(p) { return !!(p && p.cxStockLock !== false); }   // verrouillé par défaut
+    function toast(m, t) { try { if (typeof showScanToast === 'function') return showScanToast(m, t || 'info'); } catch (e) {} try { if (typeof showToast === 'function') return showToast(m, t || 'info'); } catch (e) {} }
+    var MOT = { comptage: ['🔢', 'Comptage / inventaire'], recep: ['📦', 'Réception marchandise'], saisie: ['✏️', 'Erreur de saisie'], perte: ['🔴', 'Perte / casse'], autre: ['📝', 'Autre'] };
+    var S = { q: '', cat: '', f: '', m: 'comptage', note: '', vals: {} };
+
+    /* ── Écriture d'un nouveau stock ── */
+    function apply(pid, after) {
+        var u = user(), lst = all(), p = lst.find(function (x) { return String(x.id) === String(pid); });
+        if (!p) return false;
+        // revérification depuis la base partagée (le verrou peut avoir changé sur un autre appareil)
+        var base = null; try { base = (JSON.parse(localStorage.getItem('covo_products') || '[]') || []).find(function (x) { return String(x.id) === String(pid); }); } catch (e) {}
+        if (!isMgr(u) && (locked(p) || locked(base))) { toast('🔒 Stock verrouillé pour « ' + p.name + ' » : seul un administrateur peut l’ajuster.', 'warning'); return false; }
+        var before = parseFloat(p.stock) || 0;
+        after = isKg(p) ? +(+after).toFixed(3) : Math.round(+after);
+        if (isNaN(after) || after < 0) { toast('⚠️ Quantité invalide (nombre ≥ 0)', 'warning'); return false; }
+        if (Math.abs(after - before) < 5e-4) { toast('Stock inchangé pour « ' + p.name + ' »', 'info'); return false; }
+        if (S.m === 'perte' && after > before) { toast('🔴 Une perte ne peut pas augmenter le stock — choisissez un autre motif', 'warning'); return false; }
+        var note = S.note.trim();
+        if (S.m === 'autre' && !note) { toast('📝 Précisez le motif « Autre » dans la note', 'warning'); var n = $('sed-note'); if (n) n.focus(); return false; }
+        var d = MOT[S.m] || MOT.autre, delta = +(after - before).toFixed(3);
+        var reason = d[0] + ' ' + (S.m === 'autre' ? note : d[1]) + (S.m !== 'autre' && note ? ' — ' + note : '') + ' · fenêtre « Stock modifiable »';
+        var type = S.m === 'comptage' ? 'inventaire' : S.m === 'recep' ? 'appro' : (S.m === 'perte' && delta < 0) ? 'defect' : 'manual';
+        var meta = { motif: S.m, source: 'stock_modifiable', app: APP() === 'caisse' ? 'Caisse Pro' : 'COVO Pro', user: uname() }; if (note) meta.note = note; if (type === 'defect') meta.qty = Math.abs(delta);
+        if (APP() === 'covo' && mem() && typeof window._logStockChange === 'function') {
+            p.stock = after;
+            window._logStockChange(p, before, after, type, reason, meta);
+            if (p.stock !== after) return false;   // refusé par le verrou
+            if (S.m === 'comptage') p.lastInventoryDate = new Date().toISOString();
+            try { if (typeof saveAll === 'function') saveAll(); else localStorage.setItem('covo_products', JSON.stringify(lst)); } catch (e) {}
+            try { if (typeof renderProducts === 'function') renderProducts(); } catch (e) {}
+        } else {
+            var L = []; try { L = JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) {}
+            var q = L.find(function (x) { return String(x.id) === String(pid); }); if (!q) return false;
+            before = parseFloat(q.stock) || 0; q.stock = after;
+            if (!Array.isArray(q.stockHistory)) q.stockHistory = [];
+            q.stockHistory.push({ date: new Date().toISOString(), type: type, before: before, after: after, delta: +(after - before).toFixed(3), reason: reason, user: uname(), meta: meta });
+            if (q.stockHistory.length > 500) q.stockHistory = q.stockHistory.slice(-500);
+            if (S.m === 'comptage') q.lastInventoryDate = new Date().toISOString();
+            localStorage.setItem('covo_products', JSON.stringify(L));
+            try { if (typeof cxLoadProducts === 'function') cxLoadProducts(); if (typeof cxRenderProducts === 'function') cxRenderProducts(); } catch (e) {}
+            try { if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); else if (typeof window._gdTriggerAutoSave === 'function') window._gdTriggerAutoSave(); } catch (e) {}
+        }
+        toast('✅ « ' + p.name + ' » : ' + fmt(p, before) + ' → ' + fmt(p, after) + ' (' + d[1].toLowerCase() + ')', 'success');
+        return true;
+    }
+
+    /* ── Fenêtre ── */
+    function css() {
+        if ($('sed-css')) return;
+        var s = document.createElement('style'); s.id = 'sed-css';
+        s.textContent = '#sed-ov{position:fixed;inset:0;z-index:100045;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:20px 12px;overflow:auto}'
+            + '#sed-box{background:var(--bg-main,var(--bg-card,#fff));color:var(--text-main,#222);width:100%;max-width:980px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden}'
+            + '#sed-box .sed-h{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(135deg,#065f46,#16a34a);color:#fff}#sed-box .sed-h b{font-size:1.08rem;font-weight:900}#sed-box .sed-h small{display:block;opacity:.85;font-size:.76rem}'
+            + '#sed-box .sed-x{margin-left:auto;border:none;background:rgba(255,255,255,.2);color:#fff;width:34px;height:34px;border-radius:10px;font-size:1.1rem;cursor:pointer}'
+            + '.sed-b{padding:14px 18px}.sed-f{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}.sed-f select,.sed-f input{padding:8px;border-radius:9px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit;font-size:.84rem}'
+            + '.sed-mot{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center}.sed-mot button{border:1.5px solid var(--border-color,rgba(0,0,0,.15));background:transparent;color:inherit;border-radius:20px;padding:5px 11px;font-weight:700;cursor:pointer;font-size:.78rem}.sed-mot button.on{background:#16a34a;border-color:#16a34a;color:#fff}'
+            + '.sed-list{display:flex;flex-direction:column;gap:6px;max-height:min(58vh,560px);overflow:auto;padding-right:2px}'
+            + '.sed-r{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:9px 11px;border-radius:12px;background:var(--bg-card-2,rgba(0,0,0,.04));border-left:4px solid #16a34a}.sed-r.lk{border-left-color:#dc2626}.sed-r.low{border-left-color:#f59e0b}'
+            + '.sed-n{min-width:0}.sed-n b{display:block;font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sed-n small{opacity:.72;font-size:.72rem}'
+            + '.sed-s{font-weight:900;font-size:.95rem;text-align:right;white-space:nowrap}.sed-a{display:flex;gap:5px;align-items:center}'
+            + '.sed-a button{border:none;border-radius:9px;min-width:34px;height:34px;font-weight:900;cursor:pointer;background:var(--bg-card,#fff);color:inherit;box-shadow:inset 0 0 0 1.5px var(--border-color,rgba(0,0,0,.15))}.sed-a button.ok{background:#16a34a;color:#fff;box-shadow:none;padding:0 12px}'
+            + '.sed-a input{width:86px;padding:7px;border-radius:9px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit;text-align:right;font-weight:800}'
+            + '.sed-lk{border:1.5px solid;border-radius:20px;padding:2px 8px;font-size:.7rem;font-weight:800;cursor:pointer;background:transparent}.sed-lk.on{color:#b91c1c;border-color:#dc2626}.sed-lk.off{color:#15803d;border-color:#16a34a}'
+            + '.sed-note{font-size:.76rem;opacity:.75;margin-top:10px}.sed-k{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.sed-k div{flex:1;min-width:120px;padding:8px 11px;border-radius:11px;background:var(--bg-card-2,rgba(0,0,0,.04));font-size:.74rem}.sed-k b{display:block;font-size:1.05rem}'
+            + '@media(max-width:620px){.sed-r{grid-template-columns:1fr auto}.sed-a{grid-column:1/-1;justify-content:flex-end}}';
+        document.head.appendChild(s);
+    }
+    function cats() { var m = {}; all().forEach(function (p) { if (p.category) m[p.category] = 1; }); return Object.keys(m).sort(); }
+    function rows() {
+        var q = norm(S.q).trim(), M = isMgr();
+        return all().filter(function (p) {
+            if (!p || p.active === false && !M) return false;
+            if (!M && locked(p)) return false;
+            if (S.cat && p.category !== S.cat) return false;
+            if (S.f === 'low' && !((+p.stock || 0) <= (+p.minStock || +p.alertThreshold || 5))) return false;
+            if (S.f === 'out' && (+p.stock || 0) > 0) return false;
+            if (S.f === 'lk' && !locked(p)) return false;
+            if (S.f === 'free' && locked(p)) return false;
+            if (q && norm(p.name + ' ' + (p.barcode || '') + ' ' + (p.category || '') + ' ' + (p.ficheNum || '')).indexOf(q) < 0) return false;
+            return true;
+        }).sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+    }
+    function render(keep) {
+        var ov = $('sed-ov'); if (!ov) return;
+        var M = isMgr(), R = rows(), A = all().filter(function (p) { return p && (M || p.active !== false); });
+        var nLk = A.filter(locked).length, nOk = A.length - nLk;
+        var html = '<div class="sed-k"><div>🔓 Modifiables par les caissiers<b>' + nOk + '</b></div>' + (M ? '<div>🔒 Réservés aux administrateurs<b>' + nLk + '</b></div>' : '') + '<div>📋 Affichés<b>' + R.length + '</b></div></div>'
+            + '<div class="sed-f"><input type="search" id="sed-q" data-s="q" value="' + esc(S.q) + '" placeholder="🔎 Article, code-barres, catégorie…" style="flex:1;min-width:180px">'
+            + '<select data-s="cat"><option value="">Toutes catégories</option>' + cats().map(function (c) { return '<option' + (S.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>'
+            + '<select data-s="f">' + [['', 'Tous'], ['low', '⚠️ Stock bas'], ['out', '⛔ Rupture']].concat(M ? [['free', '🔓 Modifiables caissier'], ['lk', '🔒 Verrouillés']] : []).map(function (x) { return '<option value="' + x[0] + '"' + (S.f === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></div>'
+            + (M && R.length ? '<div class="sed-f" style="margin-top:-2px"><span style="font-size:.78rem;font-weight:800">Pour les ' + R.length + ' article' + (R.length > 1 ? 's' : '') + ' affiché' + (R.length > 1 ? 's' : '') + ' :</span><button type="button" data-bulk="0" style="border:1.5px solid #16a34a;color:#15803d;background:transparent;border-radius:9px;padding:6px 10px;font-weight:800;cursor:pointer">🔓 Autoriser les caissiers</button><button type="button" data-bulk="1" style="border:1.5px solid #dc2626;color:#b91c1c;background:transparent;border-radius:9px;padding:6px 10px;font-weight:800;cursor:pointer">🔒 Verrouiller</button></div>' : '')
+            + '<div class="sed-mot"><span style="font-size:.78rem;font-weight:800">Motif :</span>' + Object.keys(MOT).map(function (k) { return '<button type="button" data-m="' + k + '"' + (S.m === k ? ' class="on"' : '') + '>' + MOT[k][0] + ' ' + MOT[k][1] + '</button>'; }).join('')
+            + '<input id="sed-note" data-s="note" value="' + esc(S.note) + '" placeholder="Note (facultatif)" style="flex:1;min-width:140px;padding:6px 9px;border-radius:9px;border:1px solid var(--border-color,#ccc);background:var(--bg-card,#fff);color:inherit;font-size:.8rem"></div>'
+            + '<div class="sed-list">' + (R.length ? R.slice(0, 600).map(function (p) {
+                var st = +p.stock || 0, lk = locked(p), low = st <= (+p.minStock || +p.alertThreshold || 5), id = esc(p.id);
+                var v = S.vals[p.id] != null ? S.vals[p.id] : '';
+                return '<div class="sed-r' + (lk ? ' lk' : low ? ' low' : '') + '" data-row="' + id + '"><div class="sed-n"><b>' + esc(p.name) + '</b><small>' + esc(p.category || 'Sans catégorie') + (p.barcode ? ' · ' + esc(p.barcode) : '') + (p.active === false ? ' · masqué' : '') + '</small>'
+                    + (M ? ' <button type="button" class="sed-lk ' + (lk ? 'on' : 'off') + '" data-lk="' + id + '" title="Cliquer pour changer l’autorisation des caissiers">' + (lk ? '🔒 Caissier' : '🔓 Caissier') + '</button>' : '') + '</div>'
+                    + '<div class="sed-s" style="color:' + (st <= 0 ? '#dc2626' : low ? '#d97706' : 'inherit') + '">' + fmt(p, st) + '</div>'
+                    + '<div class="sed-a"><button type="button" data-d="-1" data-p="' + id + '" title="Retirer 1">−</button><input type="number" min="0" step="' + (isKg(p) ? '0.001' : '1') + '" data-v="' + id + '" value="' + esc(v) + '" placeholder="' + esc(isKg(p) ? (Math.round(st * 1000) / 1000) : Math.round(st)) + '" title="Nouvelle quantité en stock"><button type="button" data-d="1" data-p="' + id + '" title="Ajouter 1">+</button><button type="button" class="ok" data-ok="' + id + '">✓</button></div></div>';
+            }).join('') : '<div style="padding:26px;text-align:center;opacity:.7">' + (M ? 'Aucun article pour ces filtres.' : (all().some(function (p) { return !locked(p); }) ? 'Aucun article modifiable pour ces filtres.' : 'Aucun article n’est encore autorisé : par défaut, le stock est verrouillé 🔒. Demandez à un administrateur d’autoriser 🔓 les articles concernés.')) + '</div>') + '</div>'
+            + (R.length > 600 ? '<div class="sed-note">600 premiers articles affichés : affinez la recherche.</div>' : '')
+            + '<div class="sed-note">' + (M ? '🛡️ Vue administrateur : tous les articles. Par défaut, chaque article est verrouillé 🔒 pour les caissiers. Le bouton 🔓/🔒 « Caissier » (ou les boutons groupés ci-dessus) décide si un caissier standard peut ajuster le stock de l’article (il n’apparaît alors plus dans sa fenêtre).' : '👤 Vous voyez uniquement les articles dont l’administrateur autorise l’ajustement du stock pour les caissiers.') + ' Saisissez la nouvelle quantité puis ✓ (ou Entrée) ; chaque ajustement est tracé dans l’historique du stock avec le motif et votre nom.</div>';
+        var foc = document.activeElement, fk = foc && foc.getAttribute && (foc.getAttribute('data-s') || (foc.getAttribute('data-v') ? 'v:' + foc.getAttribute('data-v') : '')), pos = foc && foc.selectionStart;
+        var b = ov.querySelector('.sed-b'), sc = (ov.querySelector('.sed-list') || {}).scrollTop || 0;
+        b.innerHTML = html;
+        var l = ov.querySelector('.sed-list'); if (l) l.scrollTop = sc;
+        if (keep && fk) { var el = fk.indexOf('v:') === 0 ? ov.querySelector('[data-v="' + fk.slice(2) + '"]') : ov.querySelector('[data-s="' + fk + '"]'); if (el) { el.focus(); try { if (pos != null) el.setSelectionRange(pos, pos); } catch (e) {} } }
+    }
+    function open() {
+        css();
+        var ov = $('sed-ov'); if (ov) ov.remove();
+        ov = document.createElement('div'); ov.id = 'sed-ov';
+        ov.innerHTML = '<div id="sed-box"><div class="sed-h"><span style="font-size:1.5rem">📦</span><div><b>Stock modifiable</b><small>' + (isMgr() ? 'Tous les articles · autorisations des caissiers' : 'Articles dont vous pouvez ajuster le stock · ' + esc(uname())) + '</small></div><button type="button" class="sed-x" data-x="1" title="Fermer">✕</button></div><div class="sed-b"></div></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener('click', function (e) {
+            if (e.target === ov || e.target.closest('[data-x]')) { ov.remove(); return; }
+            var m = e.target.closest('[data-m]'); if (m) { S.m = m.getAttribute('data-m'); render(); return; }
+            var bk = e.target.closest('[data-bulk]'); if (bk && isMgr()) { bulk(bk.getAttribute('data-bulk') === '1'); render(); return; }
+            var lk = e.target.closest('[data-lk]'); if (lk && isMgr()) { toggleLock(lk.getAttribute('data-lk')); render(); return; }
+            var d = e.target.closest('[data-d]'); if (d) { var pid = d.getAttribute('data-p'), p = all().find(function (x) { return String(x.id) === pid; }); if (!p) return; var base = S.vals[pid] != null && S.vals[pid] !== '' ? +S.vals[pid] : (+p.stock || 0); var nv = Math.max(0, base + (+d.getAttribute('data-d')) * (isKg(p) ? 0.1 : 1)); S.vals[pid] = isKg(p) ? +nv.toFixed(3) : Math.round(nv); render(); return; }
+            var ok = e.target.closest('[data-ok]'); if (ok) { save(ok.getAttribute('data-ok')); }
+        });
+        ov.addEventListener('input', function (e) {
+            var k = e.target.getAttribute('data-s'), v = e.target.getAttribute('data-v');
+            if (v) { S.vals[v] = e.target.value; return; }
+            if (k === 'note') { S.note = e.target.value; return; }
+            if (k === 'q') { S.q = e.target.value; clearTimeout(open.t); open.t = setTimeout(function () { render(true); }, 200); }
+        });
+        ov.addEventListener('change', function (e) { var k = e.target.getAttribute('data-s'); if (k === 'cat' || k === 'f') { S[k] = e.target.value; render(); } });
+        ov.addEventListener('keydown', function (e) { if (e.key === 'Escape') { ov.remove(); return; } var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (v && e.key === 'Enter') { e.preventDefault(); S.vals[v] = e.target.value; save(v); } });
+        render();
+        setTimeout(function () { var q = $('sed-q'); if (q && window.innerWidth > 700) q.focus(); }, 50);
+    }
+    function save(pid) {
+        var raw = S.vals[pid]; if (raw == null || String(raw).trim() === '') { toast('✏️ Saisissez la nouvelle quantité (ou utilisez − / +)', 'info'); var i = document.querySelector('#sed-ov [data-v="' + pid + '"]'); if (i) i.focus(); return; }
+        if (apply(pid, parseFloat(String(raw).replace(',', '.')))) { delete S.vals[pid]; }
+        render();
+    }
+    function bulk(lock) {
+        var ids = {}; rows().forEach(function (p) { ids[String(p.id)] = 1; }); var n = 0;
+        var m = mem(); if (m) m.forEach(function (p) { if (ids[String(p.id)] && locked(p) !== lock) { p.cxStockLock = lock; p.cxStockLockAt = new Date().toISOString(); p.cxStockLockBy = uname(); n++; } });
+        var L = []; try { L = JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) {}
+        L.forEach(function (p) { if (ids[String(p.id)] && locked(p) !== lock) { p.cxStockLock = lock; p.cxStockLockAt = new Date().toISOString(); p.cxStockLockBy = uname(); if (!m) n++; } });
+        if (APP() === 'covo' && typeof saveAll === 'function') { try { saveAll(); if (typeof renderProducts === 'function') renderProducts(); } catch (e) {} }
+        else { localStorage.setItem('covo_products', JSON.stringify(L)); try { if (typeof cxLoadProducts === 'function') cxLoadProducts(); if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {} }
+        toast(lock ? '🔒 ' + n + ' article(s) verrouillé(s) pour les caissiers' : '🔓 ' + n + ' article(s) autorisé(s) aux caissiers', lock ? 'warning' : 'success');
+    }
+    function toggleLock(pid) {
+        if (window.covoStockLock && typeof window.covoStockLock.toggle === 'function') { window.covoStockLock.toggle(pid); return; }
+        // Caisse Pro : bascule directement dans la base partagée
+        var L = []; try { L = JSON.parse(localStorage.getItem('covo_products') || '[]') || []; } catch (e) {}
+        var p = L.find(function (x) { return String(x.id) === String(pid); }); if (!p) return;
+        p.cxStockLock = !locked(p) ? true : false;
+        p.cxStockLockAt = new Date().toISOString(); p.cxStockLockBy = uname();
+        localStorage.setItem('covo_products', JSON.stringify(L));
+        try { if (typeof cxLoadProducts === 'function') cxLoadProducts(); } catch (e) {}
+        try { if (typeof cpDriveMarkDirty === 'function') cpDriveMarkDirty(); } catch (e) {}
+        toast(p.cxStockLock !== false ? '🔒 « ' + p.name + ' » : réservé aux administrateurs' : '🔓 « ' + p.name + ' » : modifiable par les caissiers', p.cxStockLock !== false ? 'warning' : 'success');
+    }
+    window.covoStockEditOpen = open;
+
+    /* ── Bouton d'accès (à côté du bouton « Articles annulés ») ── */
+    function addButton() {
+        if ($('sed-btn')) return;
+        var anchor = $('ca-btn') || document.querySelector('.cx-btn-row') || document.querySelector('button[onclick="emptyCart()"]');
+        if (!anchor) return;
+        var b = document.createElement('button'); b.id = 'sed-btn'; b.type = 'button';
+        b.style.cssText = 'width:100%;margin-top:6px;padding:8px;border-radius:10px;border:1px dashed #16a34a;background:transparent;color:#15803d;font-weight:800;font-size:.8rem;cursor:pointer';
+        b.textContent = '📦 Stock modifiable'; b.title = 'Articles dont vous pouvez ajuster le stock'; b.onclick = open;
+        anchor.parentNode.insertBefore(b, anchor.nextSibling);
+    }
+    (function boot() { if (!document.body) return setTimeout(boot, 300); addButton(); setInterval(addButton, 2000); })();
+})();
+</script>
+
 </body>
 </html>
