@@ -9104,14 +9104,20 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         var cur = null;
         function foot() {
             ft.innerHTML = '<button type="button" class="p" data-cd="print">🖨️ Imprimer le duplicata</button><select data-cd="w" title="Largeur du rouleau"><option value="80"' + (width() === 80 ? ' selected' : '') + '>80 mm</option><option value="58"' + (width() === 58 ? ' selected' : '') + '>58 mm</option></select>'
-                + '<button type="button" class="s" data-cd="sumup" title="Ouvrir votre espace SumUp pour renvoyer le reçu par e-mail ou SMS">📧 E-mail / SMS (SumUp)</button>';
+                + '<button type="button" class="s" data-cd="sumup" title="Ouvre votre espace SumUp et copie le code de la transaction pour la retrouver et renvoyer le reçu par e-mail ou SMS">📧 E-mail / SMS (SumUp)</button>';
         }
         foot();
         ft.addEventListener('change', function (e) { if (e.target.getAttribute('data-cd') === 'w') { try { localStorage.setItem('covo_dup_width', e.target.value); } catch (x) {} } });
         ft.addEventListener('click', function (e) {
             var b = e.target.closest('[data-cd]'); if (!b) return; var k = b.getAttribute('data-cd');
             if (k === 'print') { printTicket(receiptHtml(sale, cur), width()); try { var lg = J('covo_card_dup_log', []); lg.push({ at: new Date().toISOString(), saleId: sale.id, ticket: sale.ticketNum || sale.id, by: user().username || '', official: !!cur }); localStorage.setItem('covo_card_dup_log', JSON.stringify(lg.slice(-500))); } catch (x) {} }
-            if (k === 'sumup') window.open('https://me.sumup.com/fr-fr/transactions', '_blank', 'noopener');
+            if (k === 'sumup') {
+                // tableau de bord SumUp (page d'accueil : l'adresse directe des transactions n'est pas stable) + code de la transaction copié pour la retrouver
+                var code = (cur && cur.transaction_data && cur.transaction_data.transaction_code) || (sale.sumup && sale.sumup.txCode) || '';
+                var go = function () { window.open('https://me.sumup.com/', '_blank', 'noopener'); };
+                if (code && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(function () { toast('📋 Code transaction ' + code + ' copié — dans SumUp : Ventes / Transactions, collez-le dans la recherche puis « Renvoyer le reçu »', 'info'); go(); }, go);
+                else { if (code) toast('Code transaction SumUp : ' + code + ' — recherchez-le dans Ventes / Transactions', 'info'); go(); }
+            }
         });
         var msg = function (t, c) { var m = $('cdup-msg'); if (m) { m.className = c || ''; m.innerHTML = t; } };
         fetchReceipt(sale).then(function (r) {
