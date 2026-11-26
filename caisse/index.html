@@ -8975,5 +8975,239 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
 })();
 </script>
 
+<script>
+/* 🧾 Duplicata du ticket CARTE (SumUp) — COVO Pro et Caisse Pro
+   • Sur le ticket d'une vente payée par carte : bouton « 🧾 Duplicata carte »
+   • Le détail officiel du paiement est demandé à SumUp (GET /v1.1/receipts/{transaction}?mid=…) avec la clé API
+     programmée dans Gestion Pro › Terminal SumUp, puis imprimé au format ticket (58 ou 80 mm) avec la mention DUPLICATA
+   • « 🔎 Paiements carte » dans l'historique : retrouver un paiement par date, montant ou 4 derniers chiffres
+   • Sans référence SumUp (validation manuelle, hors ligne…) : justificatif COVO de la vente, clairement signalé */
+(function () {
+    'use strict';
+    if (window._covoCardDup) return; window._covoCardDup = true;
+    var API = 'https://api.sumup.com';
+    var IS_CX = !!document.getElementById('cx-hist-tbody') || typeof window.cxShowHistoryTicketDetail === 'function';
+    function $(id) { return document.getElementById(id); }
+    function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function eur(v, cur) { var n = Math.round((+v || 0) * 100) / 100; return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (cur && cur !== 'EUR' ? ' ' + cur : ' €'); }
+    function J(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+    function cfg() { return J('covo_sumup_cfg', {}) || {}; }
+    function toast(m, t) { try { showScanToast(m, t || 'info'); } catch (e) {} }
+    function user() { var u = null; try { u = typeof currentUser !== 'undefined' ? currentUser : null; } catch (e) {} if (!u) u = J('covo_current_user', null); return u || {}; }
+    function shop() { var s = {}; try { if (typeof appSettings !== 'undefined' && appSettings) s = appSettings; } catch (e) {} var a = J('covo_settings', {}) || {}; return { name: s.shopName || a.shopName || 'COVO', addr: s.shopAddress || a.shopAddress || '', phone: s.shopPhone || a.shopPhone || '' }; }
+    function fdt(iso, withS) { var d = new Date(iso); if (isNaN(d)) return String(iso || '—'); return d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', withS ? {} : { hour: '2-digit', minute: '2-digit' }); }
+
+    /* ── Une vente est-elle « carte » ? ── */
+    function cardPart(s) {
+        if (!s) return 0;
+        if (s.sumup && s.sumup.amount > 0) return +s.sumup.amount;
+        var m = s.method;
+        if (m === 'cb' || m === 'card') return +s.total || 0;
+        if (m === 'mixed') return +s.receivedCB || 0;
+        return 0;
+    }
+    function isCard(s) { return !!(s && !s.cancelled && (s.sumup || cardPart(s) > 0)); }
+    function sales() { var L = J('covo_sales_history', []); return Array.isArray(L) ? L : []; }
+    function last4(s) { var c = s && s.sumup && s.sumup.card || ''; var m = /(\d{4})\s*$/.exec(c); return m ? m[1] : ''; }
+
+    /* ── Reçu officiel SumUp ── */
+    function fetchReceipt(s) {
+        var c = cfg(), su = s.sumup || {}, id = su.txId || su.txCode;
+        if (!c.apiKey || !c.merchant) return Promise.reject({ why: 'cfg' });
+        if (!id) return Promise.reject({ why: su.manual ? 'manual' : 'noref' });
+        return fetch(API + '/v1.1/receipts/' + encodeURIComponent(id) + '?mid=' + encodeURIComponent(c.merchant), { headers: { 'Authorization': 'Bearer ' + c.apiKey, 'Accept': 'application/json' } })
+            .then(function (r) { return r.text().then(function (t) { var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {} if (!r.ok) throw { why: 'http', status: r.status, data: j }; return j || {}; }); },
+                  function () { throw { why: 'net' }; });
+    }
+    var ENTRY = { contactless: 'Sans contact', chip: 'Puce', magstripe: 'Piste magnétique', manual_entry: 'Saisie manuelle', moto: 'Vente à distance', ecom: 'En ligne', apple_pay: 'Apple Pay', google_pay: 'Google Pay' };
+    var VERIF = { pin: 'Code PIN', signature: 'Signature', none: 'Aucune', na: 'Aucune', offline_pin: 'Code PIN (hors ligne)', online_pin: 'Code PIN', cdcvm: 'Validation sur le téléphone', 'offline pin': 'Code PIN (hors ligne)' };
+    var STAT = { SUCCESSFUL: 'ACCEPTÉ', PAID: 'ACCEPTÉ', REFUNDED: 'REMBOURSÉ', CANCELLED: 'ANNULÉ', FAILED: 'REFUSÉ', PENDING: 'EN ATTENTE', CHARGE_BACK: 'CONTESTÉ' };
+    function L(a, b) { return '<div class="l"><span>' + a + '</span><b>' + b + '</b></div>'; }
+    function receiptHtml(s, r) {
+        var td = (r && r.transaction_data) || {}, mp = (r && r.merchant_data && r.merchant_data.merchant_profile) || {}, ad = (r && r.acquirer_data) || {}, ad2 = mp.address || {}, sh = shop(), su = s.sumup || {};
+        var cur = td.currency || 'EUR', h = '<div class="t">';
+        h += '<div class="c b big">' + esc(mp.business_name || sh.name) + '</div>';
+        var addr = [ad2.address_line1, ad2.address_line2, [ad2.post_code, ad2.city].filter(Boolean).join(' ')].filter(Boolean).join('<br>');
+        if (addr) h += '<div class="c">' + addr.split('<br>').map(esc).join('<br>') + '</div>'; else if (sh.addr) h += '<div class="c">' + esc(sh.addr) + '</div>';
+        if (mp.company_registration_number) h += '<div class="c">SIRET ' + esc(mp.company_registration_number) + '</div>';
+        if (mp.vat_id) h += '<div class="c">TVA ' + esc(mp.vat_id) + '</div>';
+        h += '<div class="c dup">*** DUPLICATA ***</div><div class="c b">TICKET CARTE BANCAIRE</div><hr>';
+        if (r) {
+            h += L('Date', esc(fdt(td.timestamp || su.at, true)));
+            var cd = td.card || {}; h += L('Carte', esc((cd.type || '') + (cd.last_4_digits ? ' •••• ' + cd.last_4_digits : '')) || '—');
+            if (td.entry_mode) h += L('Lecture', esc(ENTRY[String(td.entry_mode).toLowerCase()] || td.entry_mode));
+            if (td.verification_method) h += L('Vérification', esc(VERIF[String(td.verification_method).toLowerCase()] || td.verification_method));
+            if (td.process_as) h += L('Type', td.process_as === 'DEBIT' ? 'Débit' : td.process_as === 'CREDIT' ? 'Crédit' : esc(td.process_as));
+            h += '<hr><div class="l big"><span>MONTANT</span><b>' + eur(td.amount, cur) + '</b></div>';
+            if (+td.tip_amount > 0) h += L('dont pourboire', eur(td.tip_amount, cur));
+            if (+td.vat_amount > 0) h += L('dont TVA', eur(td.vat_amount, cur));
+            h += '<div class="c b">' + esc(STAT[String(td.status || '').toUpperCase()] || td.status || '') + '</div><hr>';
+            if (ad.authorization_code) h += L('N° autorisation', esc(ad.authorization_code));
+            if (ad.tid) h += L('Terminal (TID)', esc(ad.tid));
+            if (td.transaction_code) h += L('Transaction', esc(td.transaction_code));
+            if (td.receipt_no) h += L('Reçu n°', esc(td.receipt_no));
+            if (td.merchant_code) h += L('Code marchand', esc(td.merchant_code));
+            var ev = (td.events || []).filter(function (e) { return e && e.type === 'REFUND'; });
+            if (ev.length) { h += '<hr><div class="c b">REMBOURSEMENT' + (ev.length > 1 ? 'S' : '') + '</div>'; ev.forEach(function (e) { h += L(esc(fdt(e.timestamp)), '− ' + eur(e.amount, cur)); }); }
+        } else {
+            h += '<div class="c warn">Justificatif COVO — sans données bancaires SumUp</div>';
+            h += L('Date', esc(fdt(su.at || s.date, true)));
+            if (su.card) h += L('Carte', esc(su.card));
+            h += '<hr><div class="l big"><span>MONTANT CARTE</span><b>' + eur(cardPart(s)) + '</b></div>';
+            if (su.manual) h += '<div class="c">Paiement validé manuellement à la caisse</div>';
+            if (su.txCode) h += L('Transaction', esc(su.txCode));
+        }
+        h += '<hr>' + L('Ticket COVO', 'n° ' + esc(s.ticketNum || s.id)) + L('Vente du', esc(fdt(s.date))) + L('Total vente', eur(s.total));
+        h += '<div class="c sm">Duplicata édité le ' + esc(fdt(new Date().toISOString())) + (user().username ? ' par ' + esc(user().username) : '') + '</div>';
+        h += '<div class="c sm">Conservez ce ticket</div></div>';
+        return h;
+    }
+    var TCSS = '.t{font-family:"Courier New",monospace;color:#000;font-size:12px;line-height:1.35}.t .c{text-align:center}.t .b{font-weight:700}.t .big{font-size:14px}.t .sm{font-size:10px;margin-top:4px}.t .dup{font-weight:900;letter-spacing:1px;margin-top:6px}.t .warn{font-weight:700;border:1px dashed #000;padding:3px;margin:4px 0}.t hr{border:none;border-top:1px dashed #000;margin:5px 0}.t .l{display:flex;justify-content:space-between;gap:8px}.t .l b{text-align:right;font-weight:700}.t .l.big b,.t .l.big span{font-size:14px;font-weight:900}';
+    function printTicket(html, w) {
+        var f = document.createElement('iframe'); f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden'; document.body.appendChild(f);
+        var d = f.contentWindow.document;
+        d.open(); d.write('<!doctype html><html><head><meta charset="utf-8"><title>Duplicata carte</title><style>@page{size:' + w + 'mm auto;margin:0}html,body{margin:0;background:#fff}body{width:' + w + 'mm;padding:3mm ' + (w >= 80 ? 4 : 2) + 'mm;box-sizing:border-box}' + TCSS + '</style></head><body>' + html + '</body></html>'); d.close();
+        setTimeout(function () { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast('⚠️ Impression impossible', 'error'); } setTimeout(function () { f.remove(); }, 1500); }, 250);
+    }
+
+    /* ── Fenêtre « Duplicata carte » ── */
+    function css() {
+        if ($('cdup-css')) return;
+        var s = document.createElement('style'); s.id = 'cdup-css';
+        s.textContent = '#cdup-ov{position:fixed;inset:0;z-index:2147481500;background:rgba(15,23,42,.6);display:flex;align-items:center;justify-content:center;padding:14px}'
+            + '#cdup-box{background:var(--bg-card,#fff);color:var(--text-main,#0f172a);width:min(460px,100%);max-height:94vh;display:flex;flex-direction:column;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.4);overflow:hidden}'
+            + '#cdup-box .hd{display:flex;align-items:center;gap:10px;padding:13px 16px;background:linear-gradient(135deg,#0f172a,#1e3a8a);color:#fff}#cdup-box .hd b{font-size:1rem}#cdup-box .hd small{display:block;opacity:.8;font-size:.72rem}#cdup-box .hd button{margin-left:auto;border:none;background:rgba(255,255,255,.18);color:#fff;border-radius:9px;width:32px;height:32px;cursor:pointer}'
+            + '#cdup-body{padding:14px 16px;overflow:auto;flex:1}#cdup-paper{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;max-width:320px;margin:0 auto;box-shadow:0 4px 14px rgba(0,0,0,.08)}'
+            + '#cdup-msg{font-size:.8rem;font-weight:700;margin-bottom:10px;padding:8px 10px;border-radius:9px;line-height:1.45}#cdup-msg.ok{background:rgba(22,163,74,.1);color:#15803d}#cdup-msg.w{background:rgba(245,158,11,.12);color:#b45309}'
+            + '#cdup-ft{display:flex;gap:7px;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--border-color,#e5e7eb)}#cdup-ft button,#cdup-ft select{border:none;border-radius:10px;padding:10px 13px;font-weight:800;cursor:pointer;font-size:.84rem;font-family:inherit}'
+            + '#cdup-ft .p{flex:1;background:linear-gradient(135deg,#16a34a,#15803d);color:#fff}#cdup-ft .s{background:var(--bg-body,#f1f5f9);color:inherit}#cdup-ft select{background:var(--bg-body,#f1f5f9);color:inherit}'
+            + '.cdup-btn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:9px;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;font-size:.88rem}'
+            + '#cdup-find table{width:100%;border-collapse:collapse;font-size:.8rem}#cdup-find th{text-align:left;font-size:.68rem;color:var(--text-muted,#64748b);padding:6px}#cdup-find td{padding:7px 6px;border-top:1px solid var(--border-color,#eef2f7)}#cdup-find tr.r{cursor:pointer}#cdup-find tr.r:hover{background:rgba(37,99,235,.06)}'
+            + '#cdup-find .f{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}#cdup-find .f input{flex:1;min-width:90px;padding:8px;border-radius:9px;border:1.5px solid var(--border-color,#d1d5db);background:var(--bg-card,#fff);color:inherit;font-size:.84rem}';
+        document.head.appendChild(s);
+    }
+    function shell(title, sub) {
+        css(); var o = $('cdup-ov'); if (o) o.remove();
+        o = document.createElement('div'); o.id = 'cdup-ov';
+        o.innerHTML = '<div id="cdup-box"><div class="hd"><span style="font-size:1.4rem">🧾</span><div><b>' + esc(title) + '</b><small>' + esc(sub || '') + '</small></div><button type="button" data-cd="x" aria-label="Fermer">✕</button></div><div id="cdup-body"></div><div id="cdup-ft"></div></div>';
+        document.body.appendChild(o);
+        o.addEventListener('click', function (e) { if (e.target === o || e.target.closest('[data-cd="x"]')) o.remove(); });
+        document.addEventListener('keydown', function k(e) { if (e.key === 'Escape' && $('cdup-ov')) { e.stopPropagation(); $('cdup-ov').remove(); document.removeEventListener('keydown', k, true); } }, true);
+        return o;
+    }
+    function width() { var w = +(J('covo_dup_width', 80)); return w === 58 ? 58 : 80; }
+    function openDup(sale) {
+        if (!sale) { toast('⚠️ Vente introuvable', 'error'); return; }
+        var o = shell('Duplicata carte', 'Ticket n° ' + (sale.ticketNum || sale.id) + ' · ' + fdt(sale.date));
+        var body = $('cdup-body'), ft = $('cdup-ft');
+        body.innerHTML = '<div id="cdup-msg">⏳ Récupération du reçu officiel auprès de SumUp…</div><div id="cdup-paper"><style>' + TCSS + '</style>' + receiptHtml(sale, null) + '</div>';
+        var cur = null;
+        function foot() {
+            ft.innerHTML = '<button type="button" class="p" data-cd="print">🖨️ Imprimer le duplicata</button><select data-cd="w" title="Largeur du rouleau"><option value="80"' + (width() === 80 ? ' selected' : '') + '>80 mm</option><option value="58"' + (width() === 58 ? ' selected' : '') + '>58 mm</option></select>'
+                + '<button type="button" class="s" data-cd="sumup" title="Ouvrir votre espace SumUp pour renvoyer le reçu par e-mail ou SMS">📧 E-mail / SMS (SumUp)</button>';
+        }
+        foot();
+        ft.addEventListener('change', function (e) { if (e.target.getAttribute('data-cd') === 'w') { try { localStorage.setItem('covo_dup_width', e.target.value); } catch (x) {} } });
+        ft.addEventListener('click', function (e) {
+            var b = e.target.closest('[data-cd]'); if (!b) return; var k = b.getAttribute('data-cd');
+            if (k === 'print') { printTicket(receiptHtml(sale, cur), width()); try { var lg = J('covo_card_dup_log', []); lg.push({ at: new Date().toISOString(), saleId: sale.id, ticket: sale.ticketNum || sale.id, by: user().username || '', official: !!cur }); localStorage.setItem('covo_card_dup_log', JSON.stringify(lg.slice(-500))); } catch (x) {} }
+            if (k === 'sumup') window.open('https://me.sumup.com/fr-fr/transactions', '_blank', 'noopener');
+        });
+        var msg = function (t, c) { var m = $('cdup-msg'); if (m) { m.className = c || ''; m.innerHTML = t; } };
+        fetchReceipt(sale).then(function (r) {
+            cur = r; var p = $('cdup-paper'); if (p) p.innerHTML = '<style>' + TCSS + '</style>' + receiptHtml(sale, r);
+            msg('✅ Reçu officiel SumUp récupéré (carte, n° d’autorisation, transaction). Prêt à imprimer.', 'ok');
+        }).catch(function (er) {
+            var why = er && er.why;
+            var t = why === 'cfg' ? 'Terminal SumUp non programmé sur cet ordinateur (Gestion Pro › Système › Terminal SumUp).'
+                : why === 'manual' ? 'Ce paiement a été validé manuellement à la caisse : SumUp n’a pas de référence pour cette vente.'
+                : why === 'noref' ? 'Vente sans référence SumUp (encaissée sur un autre TPE ou avant la liaison du terminal).'
+                : why === 'net' ? 'Pas de connexion à SumUp (Internet ?).'
+                : why === 'http' ? (er.status === 401 ? 'Clé API SumUp refusée : vérifiez-la dans Gestion Pro.' : er.status === 404 ? 'Transaction introuvable chez SumUp.' : 'Erreur SumUp (' + er.status + ').') : 'Reçu SumUp indisponible.';
+            msg('⚠️ ' + esc(t) + '<br>Vous pouvez imprimer le <b>justificatif COVO</b> ci-dessous, ou renvoyer le reçu depuis votre espace SumUp.', 'w');
+        });
+        return o;
+    }
+    window.covoCardDup = openDup;
+
+    /* ── 🔎 Retrouver un paiement carte ── */
+    var FQ = { d: '', a: '', c: '' };
+    function openFinder() {
+        shell('Paiements carte', 'Retrouver un paiement pour imprimer un duplicata');
+        var body = $('cdup-body'); $('cdup-ft').style.display = 'none';
+        if (!FQ.d) { var t = new Date(); FQ.d = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); }
+        body.innerHTML = '<div id="cdup-find"><div class="f"><input type="date" data-q="d" value="' + FQ.d + '" title="Jour (vide = tous)"><input type="text" inputmode="decimal" data-q="a" value="' + esc(FQ.a) + '" placeholder="Montant (ex. 12,50)"><input type="text" inputmode="numeric" maxlength="4" data-q="c" value="' + esc(FQ.c) + '" placeholder="4 derniers chiffres"></div><div id="cdup-res"></div></div>';
+        function list() {
+            var a = parseFloat(String(FQ.a).replace(',', '.')), R = sales().filter(function (s) {
+                if (!isCard(s)) return false;
+                if (FQ.d && String(new Date(s.date).toISOString ? (function () { var d = new Date(s.date); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })() : '') !== FQ.d) return false;
+                if (!isNaN(a) && Math.abs(cardPart(s) - a) > 0.005 && Math.abs((+s.total || 0) - a) > 0.005) return false;
+                if (FQ.c && last4(s) !== FQ.c) return false;
+                return true;
+            }).sort(function (x, y) { return new Date(y.date) - new Date(x.date); }).slice(0, 200);
+            $('cdup-res').innerHTML = R.length ? '<table><thead><tr><th>Heure</th><th>Ticket</th><th>Carte</th><th style="text-align:right">Montant</th></tr></thead><tbody>' + R.map(function (s) {
+                var su = s.sumup || {};
+                return '<tr class="r" data-sid="' + esc(s.id) + '"><td>' + esc(FQ.d ? new Date(s.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : fdt(s.date)) + '</td><td>n° ' + esc(s.ticketNum || s.id) + '</td><td>' + (su.card ? esc(su.card) : su.manual ? '<i>manuel</i>' : su.txCode ? '💳' : '<i>autre TPE</i>') + '</td><td style="text-align:right;font-weight:800">' + eur(cardPart(s)) + '</td></tr>';
+            }).join('') + '</tbody></table>' : '<div style="text-align:center;padding:22px;opacity:.7">Aucun paiement carte pour ces critères.</div>';
+        }
+        body.addEventListener('input', function (e) { var k = e.target.getAttribute('data-q'); if (k) { FQ[k] = e.target.value.trim(); list(); } });
+        body.addEventListener('click', function (e) { var r = e.target.closest('[data-sid]'); if (!r) return; var id = r.getAttribute('data-sid'); var s = sales().find(function (x) { return String(x.id) === id; }); openDup(s); });
+        list();
+    }
+    window.covoCardFinder = openFinder;
+
+    /* ── Boutons dans les tickets et l'historique ── */
+    var curSale = null;
+    function hookShowReceipt() {
+        var o = window.showReceipt; if (typeof o !== 'function' || o._cdup) return;
+        var w = function (sale) { curSale = sale || null; var r = o.apply(this, arguments); setTimeout(decorate, 30); return r; };
+        w._cdup = 1; window.showReceipt = w;
+    }
+    function hookCx() {
+        var o = window.cxShowHistoryTicketDetail; if (typeof o !== 'function' || o._cdup) return;
+        var w = function (id) { var r = o.apply(this, arguments); curSale = sales().find(function (x) { return x.id === id; }) || null; setTimeout(decorate, 30); return r; };
+        w._cdup = 1; window.cxShowHistoryTicketDetail = w; try { cxShowHistoryTicketDetail = w; } catch (e) {}
+    }
+    function visible(el) { return !!(el && getComputedStyle(el).display !== 'none' && el.getClientRects().length > 0); }
+    function addBtn(host, sale, id) {
+        var b = $(id);
+        if (!isCard(sale)) { if (b) b.remove(); return; }
+        if (!b) { b = document.createElement('button'); b.type = 'button'; b.id = id; b.className = 'cdup-btn'; host.appendChild(b); b.addEventListener('click', function (e) { e.stopPropagation(); openDup(b._sale); }); }
+        b._sale = sale;
+        var t = '🧾 Duplicata carte' + (sale.sumup && (sale.sumup.txId || sale.sumup.txCode) ? ' (reçu SumUp)' : '');
+        if (b.textContent !== t) b.textContent = t;
+    }
+    function decorate() {
+        css();
+        // COVO Pro : fenêtre « Ticket de caisse »
+        var rm = $('receipt-modal');
+        if (rm && visible(rm)) { var host = rm.querySelector('.modal-classic-content'); if (host) { var g = host.querySelector('#receipt-admin-actions'); var wrap = $('cdup-wrap-app'); if (!wrap) { wrap = document.createElement('div'); wrap.id = 'cdup-wrap-app'; host.insertBefore(wrap, g || null); } addBtn(wrap, curSale, 'cdup-btn-app'); } }
+        // Caisse Pro : détail d'un ticket de l'historique et ticket de fin de vente
+        ['cx-histdetail-modal', 'cx-receipt-modal'].forEach(function (mid) {
+            var m = $(mid); if (!m || !visible(m)) return;
+            var s = mid === 'cx-histdetail-modal' ? curSale : null;
+            try { if (!s && typeof _cxLastReceiptSale !== 'undefined') s = _cxLastReceiptSale; } catch (e) {}
+            if (!s) try { if (typeof _cxLastReceiptSale !== 'undefined') s = _cxLastReceiptSale; } catch (e) {}
+            var body = m.querySelector('[id$="-body"]') || m.firstElementChild; if (!body) return;
+            var wid = 'cdup-wrap-' + mid, wrap = $(wid);
+            if (!wrap) { wrap = document.createElement('div'); wrap.id = wid; wrap.style.padding = '0 4px'; body.parentNode.insertBefore(wrap, body.nextSibling); }
+            addBtn(wrap, s, 'cdup-btn-' + mid);
+        });
+    }
+    function finderBtn() {
+        if ($('cdup-find-btn')) return; var a = $('cx-hist-search'), hl = !a && $('history-list');
+        if (!a && !hl) return;
+        var b = document.createElement('button'); b.type = 'button'; b.id = 'cdup-find-btn'; b.textContent = '🧾 Duplicata carte'; b.title = 'Retrouver un paiement carte et imprimer son duplicata';
+        b.style.cssText = 'padding:8px 12px;border:none;border-radius:9px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;font-weight:800;cursor:pointer;white-space:nowrap;font-size:.8rem;margin-left:6px;flex:none';
+        b.addEventListener('click', openFinder);
+        if (a) a.insertAdjacentElement('afterend', b); else { b.style.margin = '0 0 8px'; b.style.display = 'block'; b.style.width = '100%'; hl.parentNode.insertBefore(b, hl); }
+    }
+    (function boot() {
+        if (!document.body) return setTimeout(boot, 300);
+        setInterval(function () { try { hookShowReceipt(); hookCx(); finderBtn(); decorate(); } catch (e) {} }, 800);
+    })();
+})();
+</script>
+
 </body>
 </html>
