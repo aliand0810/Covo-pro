@@ -541,7 +541,7 @@ return tinf_uncompress;
 })();
 </script>
 <meta charset="UTF-8">
-<meta name="covo-version" content="v46 · 2026-11-28">
+<meta name="covo-version" content="v48 · 2026-11-28">
 <style id="covo-boot">body{visibility:hidden!important}html{background:#f4f6fb}html.covo-boot-dark{background:#0b1220}</style>
 <script>
 /* Ouverture sans « page compactée » : rien n'est affiché tant que la page n'a pas tous ses styles
@@ -6646,6 +6646,7 @@ function cxResvRefreshUi() {
         if (S.g && /^(precedent|precedente|retour|reviens)\b/.test(n)) { prev(); return; }
         if (S.g && /^(repete|repeter|redis|encore|pardon|quoi)\b/.test(n)) { sayStep(); return; }
         if (S.g && SP.info && SP.info.act && /^(fais le|fais la|fais le pour moi|fais le toi|vas y fais le|ouvre le|ouvre la|ouvre|lance le|lance la|lance|fais)\b/.test(n)) { doStepAct(); return; }
+        try { if (window.covoVoicePlus && window.covoVoicePlus.handle(text, n)) return; } catch (e) {}   // MAJ-48 : actions, questions sur les données, notes, rappels
         var DIRECT = /^(ouvre|ouvrir|ouvres|lance|lancer|demarre|demarrer|affiche|afficher|fais|faire|je veux faire|je voudrais faire|va dans|aller dans)\b/;
         if (DIRECT.test(n) && !/^(comment|ou)\b/.test(n)) {
             var da = actFor(n.replace(DIRECT, ''));
@@ -7001,7 +7002,7 @@ function cxResvRefreshUi() {
     }
     try { speechSynthesis.addEventListener && speechSynthesis.addEventListener('voiceschanged', function () { var b = $('cv-set'); if (b && b.querySelector('select[data-s="vname"]').options.length < 2) { b.remove(); openSettings(); } }); } catch (e) {}
 
-    window.covoVoiceAssistant = { listen: listen, stopListen: stopListen, stopTalk: stopTalk, cfg: cfg, saveCfg: saveCfg, bot: bot, open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S, settings: openSettings, app: HERE, routeApp: function (k, q) { var a = APPS.filter(function (x) { return x.k === k; })[0]; if (a) routeApp(a, q); } };
+    window.covoVoiceAssistant = { chips: chips, listen: listen, stopListen: stopListen, stopTalk: stopTalk, cfg: cfg, saveCfg: saveCfg, bot: bot, open: openPanel, ask: ask, search: search, findTarget: findTarget, state: S, settings: openSettings, app: HERE, routeApp: function (k, q) { var a = APPS.filter(function (x) { return x.k === k; })[0]; if (a) routeApp(a, q); } };
 
     function boot() {
         if (!document.body) return setTimeout(boot, 300); css(); mountStrip(); refreshFab();
@@ -9229,13 +9230,24 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
     function A() { return window.covoVoiceAssistant || null; }
     var MIC = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='2.5' width='6' height='11.5' rx='3'/%3E%3Cpath d='M5.5 10.5v.5a6.5 6.5 0 0 0 13 0v-.5'/%3E%3Cline x1='12' y1='17.5' x2='12' y2='21.5'/%3E%3Cline x1='8.5' y1='21.5' x2='15.5' y2='21.5'/%3E%3C/svg%3E";
     var R = '#dc2626', K = '#111111';
+    /* Logo « COVO Assistant » : le C de COVO, avec une onde sonore dans son ouverture */
+    function svgURI(x) { return 'data:image/svg+xml,' + encodeURIComponent(x); }
+    var C_MONO = "<path d='M18.1 6.5A8.2 8.2 0 1 0 18.1 17.5' stroke-width='3.8'/>";
+    var LOGO_MONO = svgURI("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#fff' stroke-linecap='round'>" + C_MONO + "<g stroke-width='1.9'><line x1='9.6' y1='10.2' x2='9.6' y2='13.8'/><line x1='12' y1='8' x2='12' y2='16'/><line x1='14.4' y1='9.6' x2='14.4' y2='14.4'/></g></svg>");
+    function bar(x, a, b, d) { return "<line x1='" + x + "' x2='" + x + "' y1='" + a + "' y2='" + (24 - a) + "'><animate attributeName='y1' values='" + a + ";" + b + ";" + a + "' dur='" + d + "s' repeatCount='indefinite'/><animate attributeName='y2' values='" + (24 - a) + ";" + (24 - b) + ";" + (24 - a) + "' dur='" + d + "s' repeatCount='indefinite'/></line>"; }
+    var LOGO_LIVE = svgURI("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#fff' stroke-linecap='round'>" + C_MONO + "<g stroke-width='1.9'>" + bar(9.6, 10.2, 7.6, .7) + bar(12, 8, 11, .5) + bar(14.4, 9.6, 7.2, .9) + "</g></svg>");
+    var LOGO_FULL = svgURI("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'><defs><linearGradient id='r' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#5b9bff'/><stop offset='1' stop-color='#1646a8'/></linearGradient><linearGradient id='o' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#ffb04a'/><stop offset='1' stop-color='#e8701a'/></linearGradient><radialGradient id='f' cx='.4' cy='.3' r='.9'><stop offset='0' stop-color='#fff'/><stop offset='1' stop-color='#e3e9f3'/></radialGradient></defs><circle cx='48' cy='48' r='46' fill='url(#r)'/><circle cx='48' cy='48' r='37.5' fill='url(#f)'/><path d='M63.6 33.95A21 21 0 1 0 63.6 62.05' fill='none' stroke='url(#o)' stroke-width='12.5'/><g stroke='#1d4ed8' stroke-width='5' stroke-linecap='round'><line x1='41.5' y1='42' x2='41.5' y2='54'/><line x1='48' y1='37' x2='48' y2='59'/><line x1='54.5' y1='40.5' x2='54.5' y2='55.5'/></g></svg>");
+    window.covoAssistantLogo = { full: LOGO_FULL, mono: LOGO_MONO, live: LOGO_LIVE };
     function css() {
         if ($('cvs-css')) return;
         var s = document.createElement('style'); s.id = 'cvs-css';
         s.textContent = [
             /* bouton flottant */
             '#cv-fab{background:' + K + '!important;color:#fff!important;border:2.5px solid #fff!important;box-shadow:0 0 0 1.5px ' + K + ',0 8px 22px rgba(0,0,0,.45)!important;font-size:0!important;transition:background .25s,box-shadow .25s,transform .15s!important}',
-            '#cv-fab::before{content:"";width:26px;height:26px;background:url("' + MIC + '") center/contain no-repeat;flex:none}',
+            '#cv-fab::before{content:"";width:36px;height:36px;background:url("' + LOGO_MONO + '") center/contain no-repeat;flex:none}',
+            '#cv-fab.cvs-on::before{background-image:url("' + LOGO_LIVE + '")}',
+            '#cv-head .cvs-logo{width:40px;height:40px;flex:none;border-radius:50%;background:url("' + LOGO_FULL + '") center/contain no-repeat;box-shadow:0 0 0 2px rgba(255,255,255,.9),0 2px 8px rgba(0,0,0,.4);font-size:0!important}',
+            '#cv-head b.cvs-t{line-height:1.15;font-size:.9rem!important;letter-spacing:.1px;white-space:nowrap}#cv-head b.cvs-t small{display:block;font-size:.66rem;font-weight:700;opacity:.75;letter-spacing:.3px;text-transform:uppercase}',
             '#cv-fab.guiding::after{content:attr(data-n);font:900 13px/1 system-ui,sans-serif;color:#fff;margin-left:6px}',
             '#cv-fab.cvs-on{background:' + R + '!important;box-shadow:0 0 0 1.5px ' + R + ',0 8px 24px rgba(220,38,38,.55)!important;animation:cvsPulse 1.3s ease-in-out infinite!important}',
             '@keyframes cvsPulse{0%,100%{box-shadow:0 0 0 1.5px ' + R + ',0 0 0 0 rgba(220,38,38,.55),0 8px 24px rgba(220,38,38,.45)}50%{box-shadow:0 0 0 1.5px ' + R + ',0 0 0 12px rgba(220,38,38,0),0 8px 24px rgba(220,38,38,.45)}}',
@@ -9244,7 +9256,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
             '#cv-head,#cv-set .cvs-h{background:' + K + '!important;color:#fff!important;transition:background .25s}',
             'body.cvs-active #cv-head{background:' + R + '!important}',
             '#cv-head [data-c="hands"]{display:none!important}',
-            '#cv-head .cvs-live{border:1.5px solid #fff!important;background:transparent!important;color:#fff!important;font-weight:900!important;padding:0 9px!important;border-radius:9px;height:30px;cursor:pointer;font-size:.76rem}',
+            '#cv-head .cvs-live{border:1.5px solid #fff!important;background:transparent!important;color:#fff!important;font-weight:900!important;padding:0 9px!important;border-radius:9px;height:30px;cursor:pointer;font-size:.76rem;white-space:nowrap;flex:none}',
             '#cv-head .cvs-live.on{background:#fff!important;color:' + R + '!important}',
             '#cvs-bar{display:none;align-items:center;gap:8px;padding:7px 12px;font-size:.78rem;font-weight:800;border-bottom:1px solid var(--border-color,#e5e7eb);background:#f5f5f5;color:' + K + '}',
             '#cvs-bar.on{display:flex}#cvs-bar.red{background:' + R + ';color:#fff;border-bottom-color:' + R + '}',
@@ -9283,6 +9295,11 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
     }
     function decoratePanel() {
         var h = $('cv-head'); if (!h) return;
+        if (!h.querySelector('.cvs-logo')) {
+            var first = h.firstElementChild, t = h.querySelector('b');
+            if (first && first.tagName === 'SPAN') { first.className = 'cvs-logo'; first.textContent = ''; first.removeAttribute('style'); first.setAttribute('role', 'img'); first.setAttribute('aria-label', 'COVO Assistant'); }
+            if (t && !t.classList.contains('cvs-t')) { var app = t.textContent.replace(/^Assistant\s*/i, '').trim(); t.className = 'cvs-t'; t.innerHTML = 'COVO Assistant<small></small>'; t.querySelector('small').textContent = app; }
+        }
         if (!h.querySelector('.cvs-live')) {
             var b = document.createElement('button'); b.type = 'button'; b.className = 'cvs-live'; b.title = 'Conversation en direct : le micro se rallume après chaque réponse';
             var set = h.querySelector('[data-c="set"]'); h.insertBefore(b, set || null);
@@ -9307,7 +9324,7 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
         if (f) {
             if (f.classList.contains('cvs-on') !== active) f.classList.toggle('cvs-on', active);
             var nb = f.querySelector('.cv-fab-n'), n = nb ? nb.textContent : ''; if (f.getAttribute('data-n') !== n) f.setAttribute('data-n', n);
-            var tt = lis ? 'Assistant : je vous écoute' : spk ? 'Assistant : je vous réponds' : g ? 'Assistant : démarche en cours' : 'Assistant vocal COVO — touchez pour me parler';
+            var tt = lis ? 'Assistant : je vous écoute' : spk ? 'Assistant : je vous réponds' : g ? 'Assistant : démarche en cours' : 'COVO Assistant — touchez pour me parler';
             if (f.title !== tt) f.title = tt;
         }
         document.body.classList.toggle('cvs-active', active);
@@ -9344,14 +9361,472 @@ body.dark-mode .cxui-kpi.main .v { color:#34d399; }
 </script>
 
 <script>
+/* 🎙️ Assistant vocal+ (MAJ-48) — COVO Pro et Caisse Pro
+   • Actions par la voix : « cherche coca », « ajoute 2 coca au panier », « ouvre le panier », « vide le panier », « va dans statistiques »
+   • Questions sur vos données : ventes du jour / hier / semaine / mois, ruptures, stock bas, DLC, stock et prix d'un produit, meilleures ventes
+   • Commandes rapides : rendu de monnaie, calculs, notes dictées, rappels (« rappelle-moi dans 10 minutes de … »)
+   • Suggestions dynamiques selon l'écran + alertes au démarrage
+   Rien n'est validé à votre place : la vente se valide toujours d'un clic. */
+(function () {
+    'use strict';
+    if (window.covoVoicePlus) return;
+    var IS_CX = !!document.getElementById('cx-search');
+    function $(id) { return document.getElementById(id); }
+    function VA() { return window.covoVoiceAssistant || {}; }
+    function norm(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’']/g, ' ').replace(/[^a-z0-9%€., ]+/g, ' ').replace(/(\d)[.,](\d)/g, '$1.$2').replace(/[.,]+(\s|$)/g, ' ').replace(/\s+/g, ' ').trim(); }
+    function J(k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+    function eur(n) { return (Math.round((+n || 0) * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+    function num(n) { return (Math.round((+n || 0) * 1000) / 1000).toLocaleString('fr-FR'); }
+    function plural(n, a, b) { return n + ' ' + (n > 1 ? b : a); }
+    function bot(t, say) { try { VA().bot(t, say !== false); } catch (e) {} }
+    function chips(list, cb) { try { VA().chips(list, cb); } catch (e) {} }
+    function ask(t) { try { VA().ask(t); } catch (e) {} }
+
+    /* ---------- accès aux données de l'application ---------- */
+    function prods() { try { if (typeof products !== 'undefined' && Array.isArray(products)) return products; } catch (e) {} return J('covo_products', []); }
+    function cartArr() { try { if (typeof cart !== 'undefined' && Array.isArray(cart)) return cart; } catch (e) {} return []; }
+    function sales() {
+        try { if (!IS_CX && typeof salesHistory !== 'undefined' && Array.isArray(salesHistory)) return salesHistory; } catch (e) {}
+        return J('covo_sales_history', []);
+    }
+    function threshold() { var s = J('covo_settings', {}) || {}; var t = parseFloat(s.lowStockThreshold); return t > 0 ? t : 5; }
+    function activeProds() { return prods().filter(function (p) { return p && p.active !== false; }); }
+    function cartTotal() {
+        try { if (IS_CX && typeof window.cxCartTotal === 'function') { var v = window.cxCartTotal(); if (typeof v === 'number') return v; if (v && typeof v.total === 'number') return v.total; } } catch (e) {}
+        return cartArr().reduce(function (s, l) { return s + (parseFloat(l.price) || 0) * (parseFloat(l.quantity) || 1); }, 0);
+    }
+    function dayStart(d) { var x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+    function period(n) {
+        var now = new Date(), a = dayStart(now), b = new Date(a.getTime() + 864e5), lab = 'Aujourd’hui';
+        if (/\bhier\b/.test(n)) { a = new Date(a.getTime() - 864e5); b = dayStart(now); lab = 'Hier'; }
+        else if (/(cette |la )?semaine/.test(n)) { var wd = (a.getDay() + 6) % 7; a = new Date(a.getTime() - wd * 864e5); b = new Date(now.getTime() + 1); lab = 'Cette semaine'; }
+        else if (/\b(ce )?mois\b/.test(n)) { a = new Date(now.getFullYear(), now.getMonth(), 1); b = new Date(now.getTime() + 1); lab = 'Ce mois-ci'; }
+        else if (/\b(cette )?annee\b/.test(n)) { a = new Date(now.getFullYear(), 0, 1); b = new Date(now.getTime() + 1); lab = 'Cette année'; }
+        return { a: a, b: b, lab: lab };
+    }
+    function salesIn(p) { return sales().filter(function (s) { if (!s || !s.date) return false; var d = new Date(s.date); return d >= p.a && d < p.b; }); }
+
+    /* ---------- recherche d'un produit par son nom ---------- */
+    var STOP = ['de', 'du', 'des', 'le', 'la', 'les', 'l', 'un', 'une', 'au', 'aux', 'a', 'et', 'pour', 'moi', 'svp', 'stp', 'sil', 'te', 'plait', 'vous', 'panier', 'dans', 'sur', 'mon', 'ma', 'mes', 'article', 'articles', 'produit', 'produits', 'stock', 'prix', 'combien', 'quel', 'quelle', 'est', 'il', 'en', 'reste', 'coute', 'coutent', 'fait'];
+    var NUMW = { un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9, dix: 10, douze: 12, quinze: 15, vingt: 20 };
+    function toks(s) { return norm(s).split(' ').filter(function (w) { return w && STOP.indexOf(w) < 0; }); }
+    function loose(w) { return w.length > 3 ? w.replace(/(s|x)$/, '') : w; }
+    function findProducts(q) {
+        var qt = toks(q).map(loose); if (!qt.length) return [];
+        var out = [];
+        activeProds().forEach(function (p) {
+            var nt = toks(p.name || '').map(loose), nn = norm(p.name || ''), hit = 0;
+            qt.forEach(function (w) { if (nt.indexOf(w) >= 0) hit += 1; else if (w.length > 2 && (nn.indexOf(w) >= 0)) hit += .7; });
+            if (!hit) return;
+            var sc = hit / qt.length; if (hit >= qt.length - .01) sc += .5; if (nt.length === qt.length) sc += .3;
+            if (String(p.barcode || '') === q.trim()) sc += 2;
+            out.push({ p: p, s: sc });
+        });
+        out.sort(function (a, b) { return b.s - a.s || String(a.p.name).length - String(b.p.name).length; });
+        return out.filter(function (x) { return x.s >= .6; });
+    }
+    function splitQty(text) {
+        var t = norm(text), m = t.match(/^(\d+(?:\.\d+)?|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|douze|quinze|vingt)\s+(?:x\s+|fois\s+)?(.+)$/), q = 1;
+        if (m) { q = NUMW[m[1]] || parseFloat(m[1]) || 1; t = m[2]; if (/^\d+(\.\d+)?[a-z]+/.test(m[2]) === false && /^\d/.test(m[1]) && /^(l|cl|ml|kg|g)\b/.test(m[2])) { q = 1; t = norm(text); } }
+        return { q: Math.max(1, Math.min(99, Math.round(q))), t: t.replace(/\s+(au|dans le|a la|sur le|dans mon|sur mon)\s+panier$/, '').replace(/\s+(s il te plait|s il vous plait|svp|stp)$/, '').trim() };
+    }
+
+    /* ---------- actions ---------- */
+    function goProducts() { try { if (!IS_CX && typeof switchTab === 'function') switchTab('products'); } catch (e) {} }
+    function setSearch(q) {
+        var el = IS_CX ? $('cx-search') : $('search-bar'); if (!el) return false;
+        goProducts(); el.value = q;
+        try { if (IS_CX && typeof cxRenderProducts === 'function') cxRenderProducts(); else if (typeof handleSearch === 'function') handleSearch(); else el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) { el.dispatchEvent(new Event('input', { bubbles: true })); }
+        return true;
+    }
+    function addOne(p) {
+        try {
+            if (IS_CX) { (window.cxAddToCart || cxAddToCart)(p.id); } else { addToCart(p.id); }
+            return true;
+        } catch (e) { return false; }
+    }
+    function doAdd(p, q) {
+        if (!(parseFloat(p.stock) > 0)) { bot('❌ « ' + p.name + ' » est en rupture de stock.'); return; }
+        if (p.unitType === 'kg') { addOne(p); bot('⚖️ « ' + p.name + ' » se vend au poids : je vous ouvre la saisie du poids.'); return; }
+        var before = cartArr().reduce(function (s, l) { return s + (parseFloat(l.quantity) || 0); }, 0), n = 0;
+        for (var i = 0; i < q; i++) { if (addOne(p)) n++; }
+        var after = cartArr().reduce(function (s, l) { return s + (parseFloat(l.quantity) || 0); }, 0), added = Math.round(after - before);
+        if (added <= 0) { bot('⚠️ Je n’ai pas pu ajouter « ' + p.name + ' » (stock insuffisant ?).'); return; }
+        var msg = '✅ ' + added + ' × « ' + p.name + ' » ajouté' + (added > 1 ? 's' : '') + ' au panier. Total du panier : ' + eur(cartTotal()) + '.';
+        if (added < q) msg += ' (Stock limité : ' + added + ' sur ' + q + ' demandés.)';
+        bot(msg);
+    }
+    function openCart() {
+        try {
+            if (IS_CX) { var f = $('cx-cart-fab'); if (f) f.click(); return true; }
+            var m = $('cart-modal'); if (m && !m.classList.contains('active')) toggleCart(); return true;
+        } catch (e) { return false; }
+    }
+    function cartOpen() { if (IS_CX) { var c = $('cx-cart-lines'); return !!(c && c.getClientRects().length); } var m = $('cart-modal'); return !!(m && m.classList.contains('active')); }
+    function readCart() {
+        var c = cartArr();
+        if (!c.length) { bot('Le panier est vide.'); return; }
+        var lines = c.slice(0, 8).map(function (l) { return num(l.quantity) + (l.unitType === 'kg' ? ' kg' : ' ×') + ' ' + String(l.name || '').replace(/\s*[🏷️🌙]+/gu, '').trim(); });
+        bot('🛒 Panier : ' + lines.join(', ') + (c.length > 8 ? ' … (+' + (c.length - 8) + ' lignes)' : '') + '. Total : ' + eur(cartTotal()) + '.');
+    }
+    function clearCartNow() {
+        try { if (IS_CX) cxClearCart(); else if (typeof emptyCart === 'function') emptyCart(); else cartArr().length = 0; } catch (e) { try { cartArr().length = 0; } catch (e2) {} }
+        bot('🗑️ Panier vidé.');
+    }
+    var TABS = [[/\bproduits?\b/, 'products', 'Produits'], [/\bcatalogue\b/, 'catalogue', 'Catalogue'], [/\bstat(istique)?s?\b/, 'stats', 'Statistiques'], [/\bprevisions?\b|\bpredictions?\b/, 'predictions', 'Prédictions'], [/\bretours?\b/, 'retours', 'Retours'], [/\bhistorique\b/, 'historique', 'Historique'], [/\bclotures?\b/, 'clotures', 'Clôtures'], [/\bpaiements?\b/, 'paiements', 'Paiements'], [/\bfidelite\b/, 'fidelite', 'Fidélité'], [/\bgestion\b/, 'gestionhub', 'Gestion']];
+
+    /* ---------- questions sur les données ---------- */
+    function salesReport(n) {
+        var p = period(n), L = salesIn(p), tot = 0, cnt = 0, pay = {}, items = {};
+        L.forEach(function (s) {
+            var t = parseFloat(s.total) || 0; tot += t; if (t > 0) cnt++;
+            var m = s.method === 'points' ? 'points' : (s.method || 'autre'); pay[m] = (pay[m] || 0) + t;
+            (s.items || []).forEach(function (l) { var k = String(l.name || '').replace(/\s*[🏷️🌙]+/gu, '').trim(); if (!k) return; items[k] = (items[k] || 0) + (parseFloat(l.quantity) || 0); });
+        });
+        if (!L.length) { bot('📊 ' + p.lab + ' : aucune vente enregistrée pour l’instant.'); return; }
+        var top = Object.keys(items).sort(function (a, b) { return items[b] - items[a]; }).slice(0, 3);
+        var msg = '📊 ' + p.lab + ' : ' + plural(cnt, 'vente', 'ventes') + ' pour ' + eur(tot) + (cnt ? ' (panier moyen ' + eur(tot / cnt) + ')' : '') + '.';
+        var pm = Object.keys(pay).filter(function (k) { return pay[k] > 0; }).map(function (k) { return ({ especes: 'espèces', cb: 'carte', cheque: 'chèque', virement: 'virement' }[k] || k) + ' ' + eur(pay[k]); });
+        if (pm.length) msg += ' Paiements : ' + pm.join(', ') + '.';
+        if (top.length) msg += ' Les plus vendus : ' + top.map(function (k) { return k + ' (' + num(items[k]) + ')'; }).join(', ') + '.';
+        bot(msg);
+    }
+    function topSales(n) {
+        var p = period(/mois|semaine|annee|hier|aujourd/.test(n) ? n : 'mois'), items = {};
+        salesIn(p).forEach(function (s) { (s.items || []).forEach(function (l) { var k = String(l.name || '').replace(/\s*[🏷️🌙]+/gu, '').trim(); if (k) items[k] = (items[k] || 0) + (parseFloat(l.quantity) || 0); }); });
+        var ks = Object.keys(items).sort(function (a, b) { return items[b] - items[a]; }).slice(0, 5);
+        if (!ks.length) { bot('Aucune vente sur la période (' + p.lab.toLowerCase() + ').'); return; }
+        bot('🏆 ' + p.lab + ', les plus vendus : ' + ks.map(function (k, i) { return (i + 1) + '. ' + k + ' (' + num(items[k]) + ')'; }).join(' · ') + '.');
+    }
+    function stockLists() {
+        var th = threshold(), A = activeProds(), now = dayStart(new Date()), soon = new Date(now.getTime() + 7 * 864e5);
+        var out = { rupt: [], bas: [], dlc: [], perime: [] };
+        A.forEach(function (p) {
+            var s = parseFloat(p.stock) || 0;
+            if (s <= 0) out.rupt.push(p); else if (s <= th) out.bas.push(p);
+            if (p.expiryDate && s > 0) { var d = new Date(p.expiryDate); if (!isNaN(d)) { if (d < now) out.perime.push(p); else if (d <= soon) out.dlc.push(p); } }
+        });
+        return out;
+    }
+    function listNames(a, max) { var s = a.slice(0, max || 8).map(function (p) { return p.name; }); return s.join(', ') + (a.length > s.length ? ' … (+' + (a.length - s.length) + ')' : ''); }
+    function stockAnswer(kind) {
+        var L = stockLists();
+        if (kind === 'rupt') bot(L.rupt.length ? '⛔ ' + plural(L.rupt.length, 'produit en rupture', 'produits en rupture') + ' : ' + listNames(L.rupt) + '.' : '✅ Aucun produit en rupture de stock.');
+        else if (kind === 'bas') bot(L.bas.length ? '⚠️ ' + plural(L.bas.length, 'produit', 'produits') + ' à stock bas (seuil ' + threshold() + ') : ' + L.bas.slice(0, 8).map(function (p) { return p.name + ' (' + num(p.stock) + ')'; }).join(', ') + (L.bas.length > 8 ? ' …' : '') + '.' : '✅ Aucun stock bas (seuil ' + threshold() + ').');
+        else {
+            var m = [];
+            if (L.perime.length) m.push('🚫 ' + plural(L.perime.length, 'produit périmé', 'produits périmés') + ' : ' + listNames(L.perime, 6));
+            if (L.dlc.length) m.push('⏳ ' + plural(L.dlc.length, 'produit', 'produits') + ' à DLC sous 7 jours : ' + listNames(L.dlc, 6));
+            bot(m.length ? m.join('. ') + '.' : '✅ Aucune DLC proche ni dépassée.');
+        }
+    }
+    function productInfo(n, what) {
+        var q = splitQty(n.replace(/^(quel est |quelle est |c est combien |combien |il reste |il en reste |reste t il )?(le |la |l |les )?(prix|stock|coute|couteent|reste|en stock|dispo|disponible)\s*(de |du |des |d |en )?/, '')).t;
+        var r = findProducts(q);
+        if (!r.length) { bot('Je ne trouve pas ce produit. Dites par exemple : « stock de coca » ou « prix du pain ».'); return true; }
+        var p = r[0].p;
+        bot('📦 ' + p.name + ' : ' + (what === 'prix' ? 'prix ' + eur(p.unitType === 'kg' && p.pricePerKg ? p.pricePerKg : p.price) + (p.unitType === 'kg' ? ' / kg' : '') + ' · stock ' + num(p.stock) : 'stock ' + num(p.stock) + (p.unitType === 'kg' ? ' kg' : '') + ' · prix ' + eur(p.unitType === 'kg' && p.pricePerKg ? p.pricePerKg : p.price)) + (parseFloat(p.stock) <= 0 ? ' — ⛔ rupture' : parseFloat(p.stock) <= threshold() ? ' — ⚠️ stock bas' : '') + '.');
+        if (r.length > 1) chips(r.slice(1, 4).map(function (x) { return { label: x.p.name, p: x.p }; }), function (x) { bot('📦 ' + x.p.name + ' : stock ' + num(x.p.stock) + ' · prix ' + eur(x.p.price) + '.'); });
+        return true;
+    }
+
+    /* ---------- clients fidélité & dettes clients ---------- */
+    function custs() { var L = J('covo_loyalty', null); return (L && Array.isArray(L.customers)) ? L.customers : []; }
+    function dueOf(c) { return +((c && c.credit) || 0); }
+    function limOf(c) { return +((c && c.creditLimit) || 0); }
+    function findCust(q) {
+        var qt = norm(q).split(' ').filter(function (w) { return w && STOP.indexOf(w) < 0 && ['client', 'cliente', 'madame', 'monsieur', 'mme', 'm'].indexOf(w) < 0; });
+        if (!qt.length) return [];
+        var out = [];
+        custs().forEach(function (c) {
+            var nt = norm(c.name || '').split(' '), hit = 0;
+            qt.forEach(function (w) { if (nt.some(function (x) { return x === w || (w.length > 2 && x.indexOf(w) === 0); })) hit++; });
+            if (hit === qt.length) out.push({ c: c, s: hit + (nt.length === qt.length ? .5 : 0) });
+        });
+        return out.sort(function (a, b) { return b.s - a.s; });
+    }
+    function fdate(d) { var x = new Date(d); return isNaN(x) ? '' : x.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }); }
+    function repayments(c) { return (c.history || []).filter(function (h) { return h && (h.type === 'credit_repay' || h.type === 'echel_repay'); }); }
+    function debtors() { return custs().filter(function (c) { return dueOf(c) > 0.004; }).sort(function (a, b) { return dueOf(b) - dueOf(a); }); }
+    function debtsReport() {
+        var D = debtors(), tot = D.reduce(function (s, c) { return s + dueOf(c); }, 0), av = custs().filter(function (c) { return dueOf(c) < -0.004; });
+        if (!D.length) { bot('✅ Aucune dette client : tous les comptes crédit sont à jour.' + (av.length ? ' (' + plural(av.length, 'client a', 'clients ont') + ' un avoir.)' : '')); return; }
+        var over = D.filter(function (c) { return limOf(c) > 0 && dueOf(c) >= limOf(c) - 0.004; });
+        bot('💳 Dettes clients : ' + eur(tot) + ' dus par ' + plural(D.length, 'client', 'clients') + '. Les plus importantes : ' + D.slice(0, 5).map(function (c) { return c.name + ' ' + eur(dueOf(c)); }).join(' · ') + (D.length > 5 ? ' …' : '') + '.' + (over.length ? ' ⚠️ ' + (over.length > 1 ? over.length + ' clients ont atteint leur plafond' : '1 client a atteint son plafond') + '.' : ''));
+        chips(D.slice(0, 4).map(function (c) { return { label: '👤 ' + c.name + ' · ' + eur(dueOf(c)), q: 'dette de ' + c.name }; }).concat([{ label: '📖 Comment enregistrer un règlement ?', q: 'comment enregistrer un règlement de crédit client' }]), function (x) { ask(x.q); });
+    }
+    function custReport(c) {
+        var due = dueOf(c), lim = limOf(c), rp = repayments(c).sort(function (a, b) { return new Date(b.date) - new Date(a.date); })[0], m = [];
+        m.push('👤 ' + c.name + (c.phone ? ' (' + c.phone + ')' : '') + ' : ' + (due > 0.004 ? 'doit ' + eur(due) : due < -0.004 ? 'a un avoir de ' + eur(-due) : 'compte à jour'));
+        if (lim > 0) m.push('plafond ' + eur(lim) + (due > 0 ? ' (' + Math.round(due / lim * 100) + ' % utilisé)' : ''));
+        if (c.points != null) m.push(num(c.points) + ' points fidélité');
+        if (c.totalSpent) m.push('a dépensé ' + eur(c.totalSpent) + ' au total');
+        if (rp) m.push('dernier règlement ' + eur(Math.abs(rp.amount || rp.delta || 0)) + (rp.date ? ' le ' + fdate(rp.date) : ''));
+        bot(m.join(' · ') + '.');
+    }
+    function overLimit() {
+        var A = debtors().filter(function (c) { return limOf(c) > 0 && dueOf(c) >= limOf(c) * 0.8 - 0.004; });
+        bot(A.length ? '⚠️ ' + plural(A.length, 'client proche ou au-delà de son plafond', 'clients proches ou au-delà de leur plafond') + ' : ' + A.slice(0, 8).map(function (c) { return c.name + ' ' + eur(dueOf(c)) + '/' + eur(limOf(c)); }).join(' · ') + '.' : '✅ Aucun client n’approche de son plafond de dette.');
+    }
+    function repaymentsReport(n) {
+        var p = period(n), ev = [];
+        custs().forEach(function (c) { repayments(c).forEach(function (h) { var d = new Date(h.date); if (d >= p.a && d < p.b) ev.push({ n: c.name, a: Math.abs(h.amount || h.delta || 0), d: d }); }); });
+        if (!ev.length) { bot('💵 ' + p.lab + ' : aucun règlement de dette enregistré.'); return; }
+        var tot = ev.reduce(function (s, x) { return s + x.a; }, 0);
+        bot('💵 ' + p.lab + ' : ' + plural(ev.length, 'règlement', 'règlements') + ' pour ' + eur(tot) + ' — ' + ev.slice(0, 6).map(function (x) { return x.n + ' ' + eur(x.a); }).join(' · ') + (ev.length > 6 ? ' …' : '') + '.');
+    }
+
+    /* ---------- notes et rappels ---------- */
+    function notes() { return J('covo_voice_notes', []) || []; }
+    function saveNotes(a) { try { localStorage.setItem('covo_voice_notes', JSON.stringify(a.slice(-200))); } catch (e) {} }
+    function rems() { return J('covo_voice_reminders', []) || []; }
+    function saveRems(a) { try { localStorage.setItem('covo_voice_reminders', JSON.stringify(a)); } catch (e) {} schedule(); }
+    var remTimer = 0;
+    function schedule() {
+        clearTimeout(remTimer); var a = rems(); if (!a.length) return;
+        var next = Math.min.apply(null, a.map(function (r) { return r.due; })), wait = Math.max(500, Math.min(next - Date.now(), 3e6));
+        remTimer = setTimeout(checkRems, wait);
+    }
+    function checkRems() {
+        var a = rems(), now = Date.now(), due = a.filter(function (r) { return r.due <= now + 500; }), rest = a.filter(function (r) { return r.due > now + 500; });
+        if (due.length) {
+            saveRems(rest);
+            try { if (!$('cv-panel') && VA().open) VA().open(); } catch (e) {}
+            setTimeout(function () { due.forEach(function (r) { bot('⏰ Rappel : ' + r.text); try { if (typeof showScanToast === 'function') showScanToast('⏰ ' + r.text, 'info'); } catch (e) {} }); }, 400);
+        } else schedule();
+    }
+    function fmtHour(ts) { var d = new Date(ts); return ('0' + d.getHours()).slice(-2) + ' h ' + ('0' + d.getMinutes()).slice(-2); }
+
+    /* ---------- calculs et monnaie ---------- */
+    function nums(s) { return (norm(s).match(/\d+(?:\.\d+)?/g) || []).map(parseFloat); }
+    function calc(n) {
+        var t = n.replace(/^(calcule|calculer|combien (font|fait|ca fait)|ca fait combien)\s*/, '').replace(/\bfois\b|\bmultiplie par\b|\bx\b/g, '*').replace(/\bplus\b/g, '+').replace(/\bmoins\b/g, '-').replace(/\bdivise par\b|\bsur\b/g, '/').replace(/\bpourcent(s)?\b/g, '%').replace(/(\d)\s+(\d)/g, '$1.$2');
+        var m = t.match(/^(\d+(?:\.\d+)?)\s*%\s*de\s*(\d+(?:\.\d+)?)$/); if (m) return { v: parseFloat(m[1]) * parseFloat(m[2]) / 100, e: m[1] + ' % de ' + m[2] };
+        if (!/^[\d+\-*/. ()]+$/.test(t) || !/[+\-*/]/.test(t)) return null;
+        try { var v = Function('"use strict";return (' + t + ')')(); if (typeof v === 'number' && isFinite(v)) return { v: v, e: t.replace(/\*/g, ' × ').replace(/\//g, ' ÷ ') }; } catch (e) {}
+        return null;
+    }
+
+    /* ---------- aiguillage des phrases ---------- */
+    function handle(text, n) {
+        n = n || norm(text);
+        var m;
+        // Aide : liste complète
+        if (n.split(' ').length <= 6 && /(que sais tu faire|tu sais faire quoi|que peux tu faire|commandes vocales|liste des commandes|aide moi|aide vocale|qu est ce que tu sais)/.test(n)) {
+            bot('Je peux vous guider pas à pas (« comment encaisser une vente ? ») et aussi AGIR et RÉPONDRE :', false);
+            var ex = [['🔎 Chercher', 'cherche coca'], ['➕ Panier', 'ajoute 2 coca au panier'], ['🧮 Monnaie', 'le client donne 50 pour 37,40'], ['📊 Ventes', 'ventes aujourd’hui'], ['⛔ Ruptures', 'produits en rupture'], ['⏳ DLC', 'dlc proche'], ['🏆 Top', 'meilleures ventes du mois'], ['📝 Note', 'note : rappeler le fournisseur'], ['💳 Dettes', 'dettes clients'], ['👤 Client', 'combien doit Marie'], ['🛍️ Vendus', 'combien de coca vendus aujourd’hui'], ['💹 Marge', 'marge du mois'], ['🧾 Dernière', 'dernière vente'], ['➖ Retirer', 'retire coca du panier'], ['⏰ Rappel', 'rappelle-moi dans 10 minutes de vérifier le four']];
+            chips(ex.map(function (e) { return { label: e[0] + ' : « ' + e[1] + ' »', q: e[1] }; }), function (x) { ask(x.q); });
+            bot('Touchez un exemple pour l’essayer. Je ne valide jamais une vente à votre place.', true); return true;
+        }
+        // Rendu de monnaie
+        if ((m = n.match(/(?:client|il|elle|me)\s+(?:donne|a donne|paie|paye|me donne)\s+(\d+(?:\.\d+)?)(?:\s*(?:euros?|€))?\s*(?:pour|sur|et|le total est|total)?\s*(\d+(?:\.\d+)?)?/)) || (m = n.match(/(?:rends?|rendre|monnaie)\b.*?\b(?:sur|de|pour)\s+(\d+(?:\.\d+)?)/))) {
+            var given = parseFloat(m[1]), due = m[2] != null && m[2] !== '' ? parseFloat(m[2]) : cartTotal();
+            if (!(due > 0)) { bot('Le panier est vide : dites « le client donne 50 pour 37,40 » avec le montant à payer.'); return true; }
+            var diff = Math.round((given - due) * 100) / 100;
+            bot(diff >= 0 ? '💶 Montant ' + eur(due) + ', reçu ' + eur(given) + ' → rendez ' + eur(diff) + '.' : '⚠️ Il manque ' + eur(-diff) + ' (reçu ' + eur(given) + ' pour ' + eur(due) + ').');
+            return true;
+        }
+        // Notes
+        if ((m = text.match(/^\s*(?:prends? en note|note(?:z)?(?: que)?|ajoute (?:une )?note|memorise|n oublie pas(?: de)?)\s*[:,]?\s+(.{3,})$/i)) && !/^note\s+(mes|les)\b/i.test(text)) {
+            var a = notes(); a.push({ t: Date.now(), text: m[1].trim() }); saveNotes(a);
+            bot('📝 Note enregistrée : « ' + m[1].trim() + ' ». (' + plural(a.length, 'note', 'notes') + ' au total — dites « lis mes notes ».)'); return true;
+        }
+        if (/^(lis|lire|montre|affiche|quelles sont|donne)?\s*(moi )?(mes|les) notes$/.test(n) || /^(mes notes|notes)$/.test(n)) {
+            var N = notes(); if (!N.length) { bot('Vous n’avez aucune note. Dites « note : … » pour en ajouter.'); return true; }
+            bot('📝 Vos notes : ' + N.slice(-8).map(function (x, i) { return (i + 1) + '. ' + x.text; }).join(' — ') + '.');
+            chips([{ label: '🗑️ Effacer mes notes', k: 1 }], function () { saveNotes([]); bot('🗑️ Notes effacées.'); }); return true;
+        }
+        if (/^(efface|supprime|vide)\s+(mes |les |toutes mes )?notes$/.test(n)) { saveNotes([]); bot('🗑️ Notes effacées.'); return true; }
+        // Rappels
+        if ((m = n.match(/^(?:rappelle moi|rappel|previens moi|reveille moi)\s+(?:dans|d ici)\s+(\d+|un|une|deux|trois|cinq|dix|quinze|vingt|trente)\s*(secondes?|minutes?|min|heures?|h)\s*(?:de |d |pour |que |:)?\s*(.*)$/))) {
+            var q = NUMW[m[1]] || ({ trente: 30 }[m[1]]) || parseFloat(m[1]), unit = /^h/.test(m[2]) ? 36e5 : /^s/.test(m[2]) ? 1e3 : 6e4, due2 = Date.now() + q * unit;
+            var txt = (m[3] || '').trim() || 'Rappel demandé'; var raw = text.match(/(?:de |d’|d'|pour |que |: ?)(.+)$/i); if (raw && m[3]) txt = raw[1].trim();
+            var R = rems(); R.push({ due: due2, text: txt }); saveRems(R);
+            bot('⏰ C’est noté : je vous rappelle à ' + fmtHour(due2) + ' — « ' + txt + ' ». (Le rappel sonne tant que l’application reste ouverte.)'); return true;
+        }
+        if (/^(mes rappels|quels sont mes rappels|liste des rappels)$/.test(n)) { var RR = rems(); bot(RR.length ? '⏰ Rappels : ' + RR.map(function (r) { return fmtHour(r.due) + ' — ' + r.text; }).join(' · ') + '.' : 'Aucun rappel programmé.'); return true; }
+        // Calculs
+        if (/^(calcule|calculer|combien (font|fait|ca fait)|ca fait combien)\b/.test(n) || /^\d+(\.\d+)?\s*(fois|x|plus|moins|divise par|\*|\+|-|\/|%|pourcent)\s*\d/.test(n)) {
+            var c = calc(n); if (c) { bot('🧮 ' + c.e.replace(/\./g, ',').replace(/\s+/g, ' ') + ' = ' + (Math.round(c.v * 1000) / 1000).toLocaleString('fr-FR') + '.'); return true; }
+        }
+        // Panier
+        if (/^(ouvre|ouvrir|montre|affiche|va dans|aller dans)\s+(moi )?(le |mon )?panier$/.test(n)) { openCart(); bot(cartArr().length ? '🛒 Voici le panier : ' + plural(cartArr().length, 'ligne', 'lignes') + ', total ' + eur(cartTotal()) + '.' : '🛒 Panier ouvert (il est vide).'); return true; }
+        if (/(total (du |de mon )?panier|combien (j ai |il y a |y a t il )?(dans (le |mon )?panier|a payer)|lis (moi )?(le |mon )?panier|contenu (du )?panier|c est combien le panier)/.test(n)) { readCart(); return true; }
+        if (/^(vide|vider|supprime|efface|annule)\s+(tout )?(le |mon |tout le )?panier$/.test(n)) {
+            if (!cartArr().length) { bot('Le panier est déjà vide.'); return true; }
+            bot('Vider le panier (' + plural(cartArr().length, 'ligne', 'lignes') + ', ' + eur(cartTotal()) + ') ? Cette action est immédiate.', true);
+            chips([{ label: '🗑️ Oui, vider', y: 1 }, { label: 'Non, garder', y: 0 }], function (x) { if (x.y) clearCartNow(); else bot('D’accord, je garde le panier.', true); }); return true;
+        }
+        if (/^(valide|valider|encaisse|encaisser|finalise|termine)\s+(la |cette )?(vente|commande|panier)$/.test(n)) {
+            openCart(); bot('Par sécurité je ne valide pas à votre place : le panier est ouvert (' + eur(cartTotal()) + '). Choisissez le mode de paiement puis touchez « Valider la vente ».', true); return true;
+        }
+        // Recherche
+        if ((m = n.match(/^(?:cherche|recherche|rechercher|chercher|trouve|trouver|filtre|filtrer)\s+(?:moi\s+)?(?:les |le |la |l |des |un |une )?(?:produits? |articles? )?(.+)$/)) || (m = n.match(/^(?:montre|affiche)\s+(?:moi\s+)?(?:les |le |la |l )?(?:produits? |articles? )(.+)$/))) {
+            var term = m[1].replace(/\s+(s il te plait|svp|stp)$/, '').trim(), res = findProducts(term);
+            if (!setSearch(term)) { bot('Je ne peux pas lancer la recherche depuis cet écran.'); return true; }
+            bot(res.length ? '🔎 « ' + term + ' » : ' + plural(res.length, 'produit trouvé', 'produits trouvés') + '.' + (res.length === 1 ? '' : ' Dites « ajoute … au panier » ou touchez un produit :') : '🔎 Aucun produit ne correspond à « ' + term + ' ».');
+            if (res.length) chips(res.slice(0, 4).map(function (x) { return { label: '➕ ' + x.p.name + ' · ' + eur(x.p.price) + (parseFloat(x.p.stock) > 0 ? '' : ' (rupture)'), p: x.p }; }), function (x) { doAdd(x.p, 1); });
+            return true;
+        }
+        // Ajout au panier
+        if ((m = n.match(/^(?:ajoute|ajouter|rajoute|mets|met|mettre|prends|prendre|vends|vendre|sers|donne moi|je veux|il me faut|j ai besoin de)\s+(?:moi\s+)?(?:encore\s+)?(.+)$/))) {
+            var sq = splitQty(m[1]), r2 = findProducts(sq.t);
+            if (r2.length) {
+                var top = r2[0], close = r2.filter(function (x) { return x.s >= top.s - .15; });
+                if (close.length > 1 && top.s < 1.4) {
+                    bot('Plusieurs produits correspondent à « ' + sq.t + ' ». Lequel ajouter (' + sq.q + ') ?', true);
+                    chips(close.slice(0, 5).map(function (x) { return { label: x.p.name + ' · ' + eur(x.p.price), p: x.p }; }), function (x) { doAdd(x.p, sq.q); });
+                } else doAdd(top.p, sq.q);
+                return true;
+            }
+            if (/panier/.test(n) || /^(ajoute|ajouter|rajoute|mets|met|prends|vends)\s/.test(n) && sq.t.split(' ').length <= 4 && !/\b(produit|fournisseur|client|promo|promotion|etiquette|categorie|rayon|inventaire|facture|note|rappel)\b/.test(sq.t)) { if (/panier/.test(n)) { bot('Je ne trouve pas « ' + sq.t + ' » dans vos produits actifs. Essayez « cherche … » pour voir les noms exacts.', true); return true; } }
+        }
+        // Navigation par onglets (COVO Pro)
+        if (!IS_CX && (m = n.match(/^(?:va|aller|ouvre|ouvrir|affiche|montre moi|retourne|retour)\s+(?:dans |sur |a |au |aux |vers )?(?:l |le |la |les )?(?:onglet |ecran |page |rubrique )?(.+)$/))) {
+            for (var i = 0; i < TABS.length; i++) if (TABS[i][0].test(m[1]) && m[1].split(' ').length <= 3) {
+                try { switchTab(TABS[i][1]); bot('✅ Onglet « ' + TABS[i][2] + ' » ouvert.', true); return true; } catch (e) {}
+            }
+        }
+        // Dettes clients
+        if (!/^(comment|ou|pourquoi|ou est)\b/.test(n)) {
+            if (/(dettes?|creances?|impayes?|endettes?|qui me doit|combien (on|l on|me|nous) (me |nous )?doit|ceux qui doivent|clients? (qui )?(doivent|a credit)|credits? clients?|argent (qu on|que l on) me doit)/.test(n) && !/\b(de|du|chez|d|pour)\s+[a-z]{3,}/.test(n.replace(/(dettes? clients?|dettes? des clients|dettes? de mes clients|dettes? du jour|total des dettes|dette totale|creances? clients?)/, ''))) { debtsReport(); return true; }
+            if (/(plafond|depasse(nt)? (leur |la )?limite|limite de credit|proches? du plafond)/.test(n)) { overLimit(); return true; }
+            if (/(reglements?|remboursements?|ont (rembourse|paye)|a rembourse|dettes? (payees|reglees)).*(aujourd|hier|semaine|mois|annee)|(aujourd|hier|cette semaine|ce mois).*(reglements?|remboursements?)/.test(n)) { repaymentsReport(n); return true; }
+            if ((m = n.match(/^(?:combien (?:doit|a rembourse|a paye|me doit)|dettes? (?:de|du|d|chez)|ce que doit|solde (?:de|du|d)|fiche (?:de|du|d)|infos? (?:sur|de|du)|points? (?:de|du|d)|credit (?:de|du|d)|compte (?:de|du|d)|le client|client)\s+(.+?)(?:\s+(?:doit|me doit|a payer|combien))?$/)) || (m = n.match(/^(.+?)\s+(?:me )?doit combien$/))) {
+                var rc = findCust(m[1]);
+                if (rc.length === 1 || (rc.length > 1 && rc[0].s > rc[1].s)) { custReport(rc[0].c); return true; }
+                if (rc.length > 1) { bot('Plusieurs clients correspondent à « ' + m[1] + ' ». Lequel ?', true); chips(rc.slice(0, 5).map(function (x) { return { label: x.c.name, c: x.c }; }), function (x) { custReport(x.c); }); return true; }
+                if (/dette|doit|solde|credit|compte|client|fiche/.test(n)) { bot('Je ne trouve pas de client « ' + m[1] + ' » dans la fidélité. Dites « dettes clients » pour voir la liste.'); return true; }
+            }
+            if (/^(combien de clients|nombre de clients|combien j ai de clients)\b/.test(n)) { var cs = custs(); bot('👥 ' + plural(cs.length, 'client', 'clients') + ' fidélité, dont ' + plural(debtors().length, 'avec une dette', 'avec une dette') + '.'); return true; }
+        }
+        // Dernière vente
+        if (/(derniere vente|dernier ticket|derniere commande|derniere transaction)/.test(n)) {
+            var SL = sales().filter(function (x) { return x && x.date; }).sort(function (a, b) { return new Date(b.date) - new Date(a.date); })[0];
+            if (!SL) { bot('Aucune vente enregistrée.'); return true; }
+            var dt = new Date(SL.date); bot('🧾 Dernière vente' + (SL.ticketNum ? ' (ticket n° ' + SL.ticketNum + ')' : '') + ' à ' + ('0' + dt.getHours()).slice(-2) + ' h ' + ('0' + dt.getMinutes()).slice(-2) + ' : ' + eur(SL.total) + ' · ' + (SL.items || []).slice(0, 4).map(function (l) { return num(l.quantity) + ' × ' + String(l.name || '').replace(/\s*[🏷️🌙]+/gu, '').trim(); }).join(', ') + ((SL.items || []).length > 4 ? ' …' : '') + (SL.cashier ? ' · par ' + SL.cashier : '') + '.');
+            return true;
+        }
+        // Combien de X vendus
+        if ((m = n.match(/^combien (?:de |d )?(.+?)\s+(?:ai je |j ai |on a |avons nous |a t on |ont ete )?(?:vendus?|vendues?)\b(.*)$/))) {
+            var pp = period(m[2] || ''), rs = findProducts(m[1]), want = toks(m[1]).map(loose), cnt2 = 0, rev = 0;
+            salesIn(pp).forEach(function (sa) { (sa.items || []).forEach(function (l) { var ln = norm(l.name || ''); if (want.length && want.every(function (w) { return ln.indexOf(w) >= 0; })) { cnt2 += parseFloat(l.quantity) || 0; rev += (parseFloat(l.price) || 0) * (parseFloat(l.quantity) || 0); } }); });
+            bot('🛍️ ' + pp.lab + ' : ' + num(cnt2) + ' × « ' + (rs.length ? rs[0].p.name : m[1]) + ' » vendu' + (cnt2 > 1 ? 's' : '') + (cnt2 ? ' pour ' + eur(rev) : '') + '.'); return true;
+        }
+        // Marge / bénéfice
+        if (/(marge|benefice|gain|profit)/.test(n) && !/comment/.test(n)) {
+            var pm2 = period(n), P = prods(), margin = 0, ca = 0, unk = 0;
+            salesIn(pm2).forEach(function (sa) { (sa.items || []).forEach(function (l) { var q2 = parseFloat(l.quantity) || 0, pr = parseFloat(l.price) || 0, ln = norm(String(l.name || '').replace(/\s*[🏷️🌙]+/gu, '')); var pd = P.filter(function (x) { return norm(x.name) === ln; })[0], cost = pd ? parseFloat(pd.costPrice) : NaN; ca += pr * q2; if (isNaN(cost) || cost <= 0) unk += pr * q2; else margin += (pr - cost) * q2; }); });
+            bot('💹 ' + pm2.lab + ' : marge estimée ' + eur(margin) + ' sur ' + eur(ca - unk) + ' de ventes avec prix d’achat connu' + (unk > 0.005 ? ' (' + eur(unk) + ' sans prix d’achat, non comptés)' : '') + '. Estimation d’après le prix d’achat actuel des fiches.'); return true;
+        }
+        // Valeur du stock
+        if (/(valeur (du |de mon )?stock|stock valorise|valeur de mon stock)/.test(n)) { var AA = activeProds(), vc = 0, vv = 0; AA.forEach(function (x) { var st = parseFloat(x.stock) || 0; vc += st * (parseFloat(x.costPrice) || 0); vv += st * (parseFloat(x.price) || 0); }); bot('📦 Valeur du stock : ' + eur(vc) + ' au prix d’achat · ' + eur(vv) + ' au prix de vente (' + plural(AA.length, 'produit actif', 'produits actifs') + ').'); return true; }
+        // Retirer du panier
+        if ((m = n.match(/^(?:retire|retirer|enleve|enlever|supprime|supprimer|ote|annule|annuler)\s+(.+?)(?:\s+du panier)?$/)) && cartArr().length && !/^(le |mon |tout le )?panier$/.test(m[1])) {
+            var rq = splitQty(m[1]), want2 = toks(rq.t).map(loose), cc = cartArr(), idx = -1;
+            for (var ci = 0; ci < cc.length; ci++) { var cn = norm(cc[ci].name || ''); if (want2.length && want2.every(function (w) { return cn.indexOf(w) >= 0; })) { idx = ci; break; } }
+            if (idx >= 0) {
+                var ln0 = cc[idx], nm = String(ln0.name || '').replace(/\s*[🏷️🌙]+/gu, '').trim();
+                try {
+                    if (rq.q < (parseFloat(ln0.quantity) || 0) && ln0.unitType !== 'kg' && /^\d|^(un|une|deux|trois)\b/.test(norm(m[1]))) { ln0.quantity -= rq.q; if (IS_CX) { cxRenderCart(); cxUpdateCartBadge(); } else updateCartUI(); bot('➖ ' + rq.q + ' × « ' + nm + ' » retiré. Total du panier : ' + eur(cartTotal()) + '.'); }
+                    else { if (IS_CX) cxRemoveFromCart(idx); else { cc.splice(idx, 1); updateCartUI(); } bot('🗑️ « ' + nm + ' » retiré du panier. Total : ' + eur(cartTotal()) + '.'); }
+                } catch (e) { bot('Je n’ai pas pu modifier le panier : retirez la ligne avec la corbeille.'); }
+                return true;
+            }
+        }
+        // Date et heure
+        if (/(quelle heure|l heure qu il est|quelle est l heure)/.test(n)) { var tn = new Date(); bot('🕐 Il est ' + ('0' + tn.getHours()).slice(-2) + ' h ' + ('0' + tn.getMinutes()).slice(-2) + '.'); return true; }
+        if (/(quel jour|quelle date|on est le combien|date d aujourd)/.test(n)) { bot('📅 Nous sommes le ' + new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + '.'); return true; }
+        // Questions chiffrées
+        if (/(meilleures? ventes?|plus vendus?|top (des )?(produits|ventes)|best[- ]?sellers?|produits? stars?)/.test(n)) { topSales(n); return true; }
+        if (/(chiffre d affaires|\bca\b|combien (j ai|on a|ai je|avons nous) (vendu|encaisse|fait)|ventes?\b.*(aujourd|hier|semaine|mois|annee)|(aujourd|hier|cette semaine|ce mois).*ventes?|bilan (du jour|de la journee)|recette)/.test(n) && !/comment/.test(n)) { salesReport(n); return true; }
+        if (/(en rupture|ruptures?|plus de stock|epuise)/.test(n) && !/comment|pourquoi/.test(n)) { stockAnswer('rupt'); return true; }
+        if (/(stocks? bas|bientot en rupture|presque (vide|epuise)|a reapprovisionner|a commander|sous le seuil)/.test(n)) { stockAnswer('bas'); return true; }
+        if (/(dlc|peremption|perime|expire|date limite|date de peremption)/.test(n) && !/comment/.test(n)) { stockAnswer('dlc'); return true; }
+        if (/^(?:quel est |quelle est |c est combien |combien )?(?:le |la |l )?(?:prix|coute|stock)\b/.test(n) || /^(?:combien (?:de |d )?(.+) (?:reste t il|il reste|en stock|il y a)|il reste combien (?:de |d )?.+|combien (?:coute|coutent|vaut) .+)/.test(n)) {
+            var kind = /prix|coute|vaut/.test(n) ? 'prix' : 'stock';
+            var nn = n.replace(/^(combien (?:de |d )?)/, '').replace(/\s*(reste t il|il reste|en stock|il y a|dispo|disponible)\s*$/, '').replace(/^(coute |coutent |vaut )/, 'prix ').replace(/^il reste combien (de |d )?/, 'stock ');
+            return productInfo(nn, kind);
+        }
+        if (/^(combien de produits|nombre de produits|combien d articles)\b/.test(n)) { var A = activeProds(); bot('📦 ' + plural(A.length, 'produit actif', 'produits actifs') + ' · valeur du stock ' + eur(A.reduce(function (s, p) { return s + (parseFloat(p.stock) || 0) * (parseFloat(p.costPrice) || parseFloat(p.price) || 0); }, 0)) + ' (au prix d’achat).'); return true; }
+        return false;
+    }
+
+    /* ---------- suggestions dynamiques ---------- */
+    function context() {
+        if (cartOpen() && cartArr().length) return 'panier';
+        if (IS_CX) { var h = $('cx-hist-tbody'); if (h && h.getClientRects().length) return 'historique'; return 'produits'; }
+        var act = ['stats', 'predictions', 'catalogue', 'retours', 'historique', 'clotures', 'paiements', 'fidelite', 'inventaire', 'stockhist'];
+        for (var i = 0; i < act.length; i++) { var e = $('tab-' + act[i]); if (e && e.getClientRects().length && e.offsetHeight > 40) return act[i]; }
+        return 'produits';
+    }
+    var _dc = { t: 0, L: null, D: 0, N: 0 };
+    function dyn() {
+        var cx = context(), out = [], c = cartArr();
+        if (Date.now() - _dc.t > 8000) { _dc.t = Date.now(); _dc.L = stockLists(); var DD = debtors(); _dc.N = DD.length; _dc.D = DD.reduce(function (x, y) { return x + dueOf(y); }, 0); }
+        var L = _dc.L;
+        if (cx === 'panier') {
+            out.push('Total du panier', 'Le client donne 50 pour ' + (cartTotal() > 0 ? String(Math.round(cartTotal() * 100) / 100).replace('.', ',') : '20'), 'Vide le panier', 'Valide la vente');
+        } else if (cx === 'stats' || cx === 'predictions' || cx === 'historique') {
+            out.push('Ventes aujourd’hui', 'Ventes de la semaine', 'Meilleures ventes du mois', 'Chiffre d’affaires du mois');
+        } else if (cx === 'catalogue' || cx === 'inventaire' || cx === 'stockhist') {
+            out.push('Produits en rupture', 'Stock bas', 'DLC proche', 'Combien de produits');
+        } else {
+            out.push('Ventes aujourd’hui', 'Cherche coca', c.length ? 'Total du panier' : 'Ouvre le panier', 'Meilleures ventes du mois');
+        }
+        var al = [];
+        if (L.rupt.length) al.push('⛔ ' + L.rupt.length + ' rupture' + (L.rupt.length > 1 ? 's' : '') + '|Produits en rupture');
+        if (L.bas.length) al.push('⚠️ ' + L.bas.length + ' stock bas|Stock bas');
+        if (L.dlc.length + L.perime.length) al.push('⏳ ' + (L.dlc.length + L.perime.length) + ' DLC|DLC proche');
+        if (_dc.N) al.push('💳 ' + eur(_dc.D) + ' dus|Dettes clients');
+        return { cx: cx, sug: out.slice(0, 3), alerts: al };
+    }
+    function css() {
+        if ($('cvp-css')) return;
+        var s = document.createElement('style'); s.id = 'cvp-css';
+        s.textContent = '#cvp-sug{display:flex;flex-wrap:wrap;gap:5px;padding:7px 10px;border-top:1px solid var(--border-color,#e5e7eb);background:rgba(0,0,0,.025)}#cvp-sug:empty{display:none}'
+            + '#cvp-sug button{border:1.5px solid #111;background:#fff;color:#111;border-radius:16px;padding:4px 10px;font:700 .72rem/1.2 inherit;font-family:inherit;cursor:pointer;white-space:nowrap}#cvp-sug button:hover{background:#111;color:#fff}'
+            + '#cvp-sug button.al{border-color:#dc2626;color:#dc2626}#cvp-sug button.al:hover{background:#dc2626;color:#fff}#cvp-sug .lb{font-size:.66rem;font-weight:800;opacity:.55;align-self:center;text-transform:uppercase;letter-spacing:.4px;margin-right:2px}'
+            + 'body.dark-mode #cvp-sug button{background:#1f2937;color:#f3f4f6;border-color:#9ca3af}body.dark-mode #cvp-sug button:hover{background:#f3f4f6;color:#111}body.dark-mode #cvp-sug button.al{border-color:#f87171;color:#fca5a5}body.dark-mode #cvp-sug button.al:hover{background:#dc2626;color:#fff}';
+        document.head.appendChild(s);
+    }
+    var lastSig = '';
+    function render() {
+        var p = $('cv-panel'); if (!p) { lastSig = ''; return; }
+        css();
+        var d = dyn(), sig = d.cx + '|' + d.sug.join(',') + '|' + d.alerts.join(','), bar = $('cvp-sug');
+        if (!bar) { bar = document.createElement('div'); bar.id = 'cvp-sug'; var ref = $('cv-mode') || $('cv-in'); ref.parentNode.insertBefore(bar, ref); lastSig = ''; bar.addEventListener('click', function (e) { var b = e.target.closest('button[data-q]'); if (b) ask(b.getAttribute('data-q')); }); }
+        if (sig !== lastSig) {
+            lastSig = sig;
+            var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+            bar.innerHTML = '<span class="lb">Suggestions</span>' + d.alerts.map(function (a) { var x = a.split('|'); return '<button type="button" class="al" data-q="' + esc(x[1]) + '">' + esc(x[0]) + '</button>'; }).join('') + d.sug.map(function (q) { return '<button type="button" data-q="' + esc(q) + '">' + esc(q) + '</button>'; }).join('');
+        }
+        if (!p._cvpHello) {
+            p._cvpHello = 1;
+            setTimeout(function () {
+                if (!$('cv-panel')) return; var L = stockLists(), T = salesIn(period('aujourd')), tot = T.reduce(function (s, x) { return s + (parseFloat(x.total) || 0); }, 0), n = T.filter(function (x) { return (parseFloat(x.total) || 0) > 0; }).length, a = [];
+                if (L.rupt.length) a.push(plural(L.rupt.length, 'rupture', 'ruptures')); if (L.bas.length) a.push(plural(L.bas.length, 'stock bas', 'stocks bas')); if (L.dlc.length + L.perime.length) a.push(plural(L.dlc.length + L.perime.length, 'DLC à surveiller', 'DLC à surveiller'));
+                var DB = debtors(), R0 = DB.length ? ' 💳 Dettes clients : ' + eur(DB.reduce(function (x, y) { return x + dueOf(y); }, 0)) + ' (' + plural(DB.length, 'client', 'clients') + ').' : '', R = rems().length ? ' ⏰ ' + plural(rems().length, 'rappel programmé', 'rappels programmés') + '.' : '';
+                bot('📊 Aujourd’hui : ' + plural(n, 'vente', 'ventes') + ' · ' + eur(tot) + '.' + (a.length ? ' ⚠️ ' + a.join(', ') + '.' : ' ✅ Stock et DLC OK.') + R + R0 + ' Dites « que sais-tu faire » pour voir tout ce que je peux faire.', false);
+            }, 700);
+        }
+    }
+    var iv = setInterval(function () { try { render(); } catch (e) {} }, 1500);
+    schedule();
+
+    window.covoVoicePlus = { handle: handle, render: render, notes: notes, stockLists: stockLists };
+})();
+</script>
+
+<script>
 /* 📦 Version de l'application (ajoutée automatiquement à chaque mise à jour de la suite COVO)
-   • petite mention « v46 » en bas à gauche ; un clic affiche les détails
+   • petite mention « v48 » en bas à gauche ; un clic affiche les détails
    • la version utilisée sur cet appareil est notée (covo_app_versions) pour le rapport de COVO Pro
    • COVO Pro : rapport « 📦 Versions de la suite » (version en ligne de chaque satellite, nouveautés, mises à jour à faire) */
 (function () {
     'use strict';
     if (window.COVO_VERSION) return;
-    var ME = { app: 'caisse', name: 'Caisse Pro', v: '46', date: '2026-11-28', maj: 'MAJ-46' };
+    var ME = { app: 'caisse', name: 'Caisse Pro', v: '48', date: '2026-11-28', maj: 'MAJ-48' };
     window.COVO_VERSION = ME;
     var MAN = {};            // copie du manifeste au moment de la mise à jour (sert hors ligne)
     var URL_MAN = '../versions.json';
